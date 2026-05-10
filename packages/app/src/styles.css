@@ -345,9 +345,13 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: 12px;
+  padding: 12px 20px;
   border-bottom: 1px solid #eee;
-  margin-bottom: 12px;
+  margin: -16px -20px 12px;
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
 
 .toolbar .name {
@@ -435,6 +439,9 @@ body {
   border-radius: 3px;
   font-size: 12px;
   color: #2155cd;
+  position: sticky;
+  top: 64px;
+  z-index: 10;
 }
 .thread-running .dot {
   width: 8px;

@@ -993,9 +993,12 @@ export function Tree({
             void (async () => {
               const parentId =
                 activeNodeId !== null && !lookup.get(activeNodeId) ? null : activeNodeId
+              const siblings = byParent.get(parentId) ?? []
+              const last = siblings[siblings.length - 1]
               const created = await call('outline.create', {
                 workspaceId,
                 parentId,
+                prevSiblingId: last?.id ?? null,
                 content: '',
               })
               await load()
