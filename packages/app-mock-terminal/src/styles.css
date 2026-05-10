@@ -1,0 +1,588 @@
+/* cedarpad — variant C (terminal aesthetic)
+ * ANSI-flavoured palette. Flat, dense, monospace. No cards, no shadows.
+ */
+
+:root {
+  /* Background tiers — true terminal feel, slightly off-black. */
+  --bg-0: #0c0d10;        /* app background */
+  --bg-1: #14161b;        /* selected row / palette overlay */
+  --bg-2: #1a1d24;        /* status line, header strips */
+  --bg-3: #232730;        /* hover, hairline blocks */
+
+  /* ANSI-ish foreground palette. */
+  --fg-0: #d6dae3;        /* default text */
+  --fg-1: #9ba2af;        /* dim text */
+  --fg-2: #6b7280;        /* muted / comments */
+  --fg-3: #3b4150;        /* hairline */
+
+  --ansi-red:     #ff6b6b;
+  --ansi-green:   #7cd992;
+  --ansi-yellow:  #f5c569;
+  --ansi-blue:    #6aa6ff;
+  --ansi-magenta: #c98bff;
+  --ansi-cyan:    #5ed3f3;
+  --ansi-white:   #e6e9ef;
+
+  --accent: var(--ansi-cyan);
+  --accent-dim: #2c5b69;
+
+  /* Typography — tight, terminal-tight. */
+  --font-mono:
+    "JetBrains Mono",
+    "Berkeley Mono",
+    ui-monospace,
+    "Cascadia Code",
+    "Source Code Pro",
+    "Menlo",
+    monospace;
+  --line-height: 1.45;
+  --indent: 1.4ch;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: var(--line-height);
+  font-feature-settings: "calt" 0; /* keep glyphs honest */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+::selection {
+  background: var(--accent-dim);
+  color: var(--ansi-white);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-0);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-3);
+}
+
+/* ────────────────────────────────────────── */
+/* App shell                                  */
+/* ────────────────────────────────────────── */
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Top tab bar — sibling threads as terminal-style tabs */
+.tabbar {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--fg-3);
+  background: var(--bg-2);
+  font-size: 12px;
+  user-select: none;
+}
+
+.tabbar__brand {
+  padding: 6px 12px;
+  border-right: 1px solid var(--fg-3);
+  color: var(--ansi-green);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.tabbar__brand .dim {
+  color: var(--fg-2);
+  font-weight: 400;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-right: 1px solid var(--fg-3);
+  color: var(--fg-1);
+  cursor: default;
+}
+.tab.is-active {
+  background: var(--bg-0);
+  color: var(--ansi-cyan);
+  border-bottom: 1px solid var(--bg-0);
+  margin-bottom: -1px;
+}
+.tab .marker {
+  color: var(--ansi-yellow);
+}
+.tab.is-active .marker {
+  color: var(--ansi-cyan);
+}
+.tab .badge {
+  color: var(--fg-2);
+  font-size: 11px;
+}
+
+.tabbar__spacer {
+  flex: 1;
+  border-right: 1px solid var(--fg-3);
+}
+.tabbar__meta {
+  padding: 6px 12px;
+  color: var(--fg-2);
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.tabbar__meta .key {
+  color: var(--ansi-yellow);
+}
+
+/* ────────────────────────────────────────── */
+/* Main outline area                          */
+/* ────────────────────────────────────────── */
+
+.main {
+  overflow: auto;
+  padding: 8px 12px 24px;
+}
+
+.breadcrumb {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--fg-2);
+  padding: 4px 4px 12px;
+  font-size: 12px;
+  border-bottom: 1px dashed var(--fg-3);
+  margin-bottom: 8px;
+}
+.breadcrumb .seg {
+  color: var(--fg-1);
+}
+.breadcrumb .seg.is-leaf {
+  color: var(--ansi-cyan);
+}
+.breadcrumb .sep {
+  color: var(--fg-3);
+}
+
+/* ────────────────────────────────────────── */
+/* Outline rows — Workflowy bullets, terminal */
+/* ────────────────────────────────────────── */
+
+.row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 0;
+  padding: 1px 4px;
+  white-space: pre-wrap;
+  border-left: 2px solid transparent;
+}
+
+.row:hover {
+  background: var(--bg-3);
+}
+.row.is-selected {
+  background: var(--bg-1);
+  border-left-color: var(--ansi-cyan);
+}
+
+/* indent rail — vertical lines between depths */
+.row__indent {
+  display: inline-block;
+  white-space: pre;
+  color: var(--fg-3);
+}
+
+.row__marker {
+  width: 2.5ch;
+  color: var(--fg-1);
+  user-select: none;
+}
+
+.row__body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+.row__text {
+  color: var(--fg-0);
+}
+.row__meta {
+  color: var(--fg-2);
+  font-size: 11px;
+}
+
+/* Content node markers */
+.row.kind-content .row__marker {
+  color: var(--fg-2);
+}
+.row.kind-content.completed .row__text {
+  color: var(--fg-2);
+  text-decoration: line-through;
+}
+.row.kind-content.completed .row__marker {
+  color: var(--ansi-green);
+}
+
+/* Thread root */
+.row.kind-thread-root .row__marker {
+  color: var(--ansi-magenta);
+}
+.row.kind-thread-root .row__text {
+  color: var(--ansi-magenta);
+  font-weight: 700;
+}
+.row.kind-thread-root .row__meta {
+  color: var(--fg-2);
+}
+
+/* Human prompt under a thread */
+.row.kind-prompt .row__marker {
+  color: var(--ansi-blue);
+}
+.row.kind-prompt .row__text {
+  color: var(--ansi-blue);
+}
+
+/* Turn header */
+.row.kind-turn .row__marker {
+  color: var(--ansi-green);
+}
+.row.kind-turn .row__text {
+  color: var(--ansi-green);
+}
+.row.kind-turn .row__meta {
+  color: var(--fg-2);
+}
+
+/* Block: text */
+.row.kind-block-text .row__marker {
+  color: var(--fg-2);
+}
+.row.kind-block-text .row__text {
+  color: var(--fg-0);
+}
+
+/* Block: tool_use — $ prompt style */
+.row.kind-block-tool .row__marker {
+  color: var(--ansi-yellow);
+}
+.row.kind-block-tool .row__text {
+  color: var(--ansi-yellow);
+}
+.row.kind-block-tool .tool-cmd {
+  color: var(--ansi-white);
+}
+
+/* Block: tool_result — indented under tool */
+.row.kind-block-result .row__marker {
+  color: var(--fg-2);
+}
+.row.kind-block-result .row__text {
+  color: var(--fg-1);
+  font-size: 12px;
+}
+.row.kind-block-result .row__text .ok {
+  color: var(--ansi-green);
+}
+.row.kind-block-result .row__text .err {
+  color: var(--ansi-red);
+}
+.row.kind-block-result pre {
+  margin: 4px 0 4px 0;
+  padding: 6px 8px;
+  background: var(--bg-1);
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border-left: 2px solid var(--fg-3);
+  white-space: pre-wrap;
+  width: 100%;
+}
+
+/* streaming caret on the active turn */
+.caret {
+  display: inline-block;
+  width: 1ch;
+  background: var(--ansi-cyan);
+  color: var(--ansi-cyan);
+  animation: blink 1s steps(1) infinite;
+  margin-left: 2px;
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Inline action menu shown beside selected block */
+.actions {
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+  margin: 4px 0 4px calc(var(--indent) * 6);
+  padding: 4px 8px;
+  border-left: 2px solid var(--ansi-cyan);
+  background: var(--bg-1);
+  color: var(--fg-1);
+  font-size: 12px;
+}
+.actions .label {
+  color: var(--fg-2);
+  margin-right: 4px;
+}
+.actions .item {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.actions .item .key {
+  color: var(--bg-0);
+  background: var(--ansi-yellow);
+  padding: 0 5px;
+  font-weight: 700;
+}
+.actions .item .name {
+  color: var(--fg-0);
+}
+.actions .item .name strong {
+  color: var(--ansi-cyan);
+}
+.actions .arrow {
+  color: var(--fg-3);
+}
+
+/* Sibling-threads splitter — two threads side by side under a root */
+.threads-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin: 6px 0 4px calc(var(--indent) * 1.5);
+  border-top: 1px dashed var(--fg-3);
+  border-bottom: 1px dashed var(--fg-3);
+}
+.threads-split__col {
+  padding: 4px 8px;
+  border-right: 1px dashed var(--fg-3);
+}
+.threads-split__col:last-child {
+  border-right: none;
+}
+.threads-split__col h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--fg-2);
+  text-transform: uppercase;
+}
+.threads-split__col h4 .badge {
+  margin-left: 6px;
+  color: var(--ansi-magenta);
+  text-transform: none;
+}
+.threads-split__col h4 .badge.alt {
+  color: var(--ansi-yellow);
+}
+
+/* ────────────────────────────────────────── */
+/* Bottom status line — vim-style             */
+/* ────────────────────────────────────────── */
+
+.statusline {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-2);
+  border-top: 1px solid var(--fg-3);
+  font-size: 12px;
+  user-select: none;
+}
+.statusline__mode {
+  padding: 4px 12px;
+  background: var(--ansi-green);
+  color: var(--bg-0);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.statusline__mode.is-insert {
+  background: var(--ansi-yellow);
+}
+.statusline__path {
+  padding: 4px 12px;
+  color: var(--fg-1);
+  border-right: 1px solid var(--fg-3);
+}
+.statusline__path .repo {
+  color: var(--ansi-cyan);
+}
+.statusline__thread {
+  padding: 4px 12px;
+  color: var(--fg-1);
+  border-right: 1px solid var(--fg-3);
+}
+.statusline__thread .name {
+  color: var(--ansi-magenta);
+}
+.statusline__hints {
+  flex: 1;
+  padding: 4px 12px;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--fg-2);
+  overflow: hidden;
+}
+.statusline__hints .key {
+  color: var(--ansi-yellow);
+}
+.statusline__hints .desc {
+  color: var(--fg-1);
+}
+.statusline__right {
+  padding: 4px 12px;
+  border-left: 1px solid var(--fg-3);
+  color: var(--fg-2);
+}
+.statusline__right .live {
+  color: var(--ansi-green);
+}
+
+/* ────────────────────────────────────────── */
+/* Workspace switcher palette                 */
+/* ────────────────────────────────────────── */
+
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  z-index: 10;
+}
+.palette {
+  width: min(720px, 92vw);
+  background: var(--bg-1);
+  border: 1px solid var(--fg-3);
+  font-family: var(--font-mono);
+}
+.palette__header {
+  display: flex;
+  align-items: baseline;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--fg-3);
+  gap: 10px;
+  background: var(--bg-2);
+}
+.palette__prompt {
+  color: var(--ansi-green);
+  font-weight: 700;
+}
+.palette__query {
+  flex: 1;
+  color: var(--ansi-white);
+}
+.palette__query .caret {
+  background: var(--ansi-white);
+  color: var(--ansi-white);
+}
+.palette__hint {
+  color: var(--fg-2);
+  font-size: 11px;
+}
+.palette__hint .k {
+  color: var(--ansi-yellow);
+}
+
+.palette__list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 50vh;
+  overflow: auto;
+}
+.palette__row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 4px 12px;
+  cursor: default;
+}
+.palette__row.is-active {
+  background: var(--accent-dim);
+}
+.palette__row .idx {
+  color: var(--fg-2);
+  width: 2ch;
+}
+.palette__row .name {
+  color: var(--fg-0);
+}
+.palette__row .name .match {
+  color: var(--ansi-yellow);
+  font-weight: 700;
+}
+.palette__row .path {
+  color: var(--fg-2);
+  font-size: 11px;
+}
+.palette__row.is-active .name {
+  color: var(--ansi-white);
+}
+.palette__row.is-active .path {
+  color: var(--fg-1);
+}
+.palette__row .meta {
+  color: var(--fg-2);
+  font-size: 11px;
+}
+
+.palette__footer {
+  border-top: 1px solid var(--fg-3);
+  padding: 6px 12px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  font-size: 11px;
+  display: flex;
+  gap: 16px;
+}
+.palette__footer .key {
+  color: var(--ansi-yellow);
+}
+
+/* ────────────────────────────────────────── */
+/* Tiny helpers                               */
+/* ────────────────────────────────────────── */
+
+.dim   { color: var(--fg-2); }
+.green { color: var(--ansi-green); }
+.cyan  { color: var(--ansi-cyan); }
+.yellow{ color: var(--ansi-yellow); }
+.red   { color: var(--ansi-red); }
+.magenta{ color: var(--ansi-magenta); }
+.blue  { color: var(--ansi-blue); }
+
+.kbd {
+  display: inline-block;
+  padding: 0 5px;
+  background: var(--bg-3);
+  color: var(--ansi-yellow);
+  border: 1px solid var(--fg-3);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
