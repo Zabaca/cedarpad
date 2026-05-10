@@ -27,7 +27,41 @@
 import type { OutlineStore } from '../outline/outlineStore.ts'
 import type { Node, BlockPayload } from '../outline/types.ts'
 import type { RunnerEvent } from '../../src/contract.ts'
-import { PromptMetadataSchema, SessionBearerMetadataSchema } from '../../src/contract.ts'
+import {
+  BranchMetadataSchema,
+  PromptMetadataSchema,
+  SessionBearerMetadataSchema,
+} from '../../src/contract.ts'
+import type { SdkClient } from '../sdk/sdkRunner.ts'
+
+/**
+ * Input for `forkAtPrompt` (Cmd+Shift+B). The single fork verb;
+ * behaviour varies with the kind of source node.
+ */
+export interface ForkAtPromptInput {
+  /**
+   * The Node the user selected when pressing Cmd+Shift+B. Two shapes:
+   *   - A Prompt (Content Node with `state`): fork the Prompt's
+   *     nearest session-bearer ancestor's session, inclusive of the
+   *     Prompt's `sdkMessageUuid`.
+   *   - A session-bearer (Content Node carrying `sdkSessionId`): fork
+   *     its session with no fork-point (v1's "new thread sibling").
+   */
+  sourceNodeId: string
+  /** Project directory passed to the SDK's session store. */
+  repoPath: string
+  /** Injected SDK adapter so tests stub `forkSession`. */
+  sdk: SdkClient
+}
+
+export interface ForkAtPromptOutput {
+  /** Id of the new Branch (a Content Node child of the Branches container). */
+  branchNodeId: string
+  /** Id of the empty Prompt child of the Branch — focus target. */
+  promptNodeId: string
+  /** Id of the Branches container (newly materialized or pre-existing). */
+  branchesContainerId: string
+}
 
 /**
  * SDK runner shape needed by `sendPrompt`. Subset of the full
@@ -95,6 +129,28 @@ export interface ThreadEngine {
    *     without invoking the SDK.
    */
   sendPrompt(input: SendPromptInput): Promise<SendPromptOutcome>
+
+  /**
+   * Branch verb (Cmd+Shift+B). Materializes a Branches container as the
+   * immediate next sibling of the source if one isn't already there,
+   * eagerly calls `sdk.forkSession` to produce a new session id, writes
+   * a new Branch (Content Node with `BranchMetadata`) inside the
+   * container, and creates an empty Prompt child of the Branch.
+   *
+   * Source kinds:
+   *   - A Prompt (Content Node with `state`): fork the Prompt's nearest
+   *     session-bearer ancestor's session, inclusive of the Prompt's
+   *     `sdkMessageUuid`.
+   *   - A session-bearer (Content Node carrying `sdkSessionId`): fork
+   *     that session with no fork-point (v1's "new thread sibling"
+   *     equivalence — `branchedFromMessageUuid: null`).
+   *
+   * Throws when:
+   *   - The source is not a Content Node.
+   *   - No session-bearer ancestor (or the source itself) carries a
+   *     real, non-null `sdkSessionId`.
+   */
+  forkAtPrompt(input: ForkAtPromptInput): Promise<ForkAtPromptOutput>
 
   /**
    * Append a Block Node child of the given Prompt Node. Used by the
@@ -343,6 +399,130 @@ export function createThreadEngine(store: OutlineStore): ThreadEngine {
       const merged = { ...node.metadata, sdkMessageUuid: uuid }
       PromptMetadataSchema.parse(merged)
       return store.updateNode({ id: promptNodeId, metadata: merged })
+    },
+
+    async forkAtPrompt({ sourceNodeId, repoPath, sdk }) {
+      const source = await store.getNode(sourceNodeId)
+      if (!source) throw new Error(`forkAtPrompt: source ${sourceNodeId} not found`)
+      if (source.kind !== 'content') {
+        throw new Error(
+          `forkAtPrompt: source ${sourceNodeId} is a ${source.kind} Node — only Content Nodes can be branched`,
+        )
+      }
+
+      // Decide fork base + branchedFromMessageUuid from the source's shape:
+      //   - source is a session-bearer (carries a real sdkSessionId) →
+      //     fork that session with no upToMessageId.
+      //   - source is a Prompt (or any other Content Node) → walk to the
+      //     nearest session-bearer ancestor; fork its session, inclusive
+      //     of source.sdkMessageUuid (may be undefined → null).
+      const sourceBearerMeta = SessionBearerMetadataSchema.safeParse(source.metadata)
+      const sourceIsBearer =
+        sourceBearerMeta.success && typeof sourceBearerMeta.data.sdkSessionId === 'string'
+
+      let forkSessionId: string
+      let branchedFromMessageUuid: string | null
+      if (sourceIsBearer) {
+        forkSessionId = sourceBearerMeta.data.sdkSessionId as string
+        branchedFromMessageUuid = null
+      } else {
+        // Find the nearest bearer ancestor (start from parent — the source
+        // is a Prompt, not the bearer itself).
+        const startId = source.parentId
+        let cursor: string | null = startId
+        let foundBearerSession: string | null = null
+        const seen = new Set<string>()
+        while (cursor !== null) {
+          if (seen.has(cursor)) break
+          seen.add(cursor)
+          const n = await store.getNode(cursor)
+          if (!n) break
+          if (n.kind === 'content' && hasSdkSessionId(n.metadata)) {
+            const meta = SessionBearerMetadataSchema.parse(n.metadata)
+            if (typeof meta.sdkSessionId === 'string') {
+              foundBearerSession = meta.sdkSessionId
+              break
+            }
+          }
+          cursor = n.parentId
+        }
+        if (!foundBearerSession) {
+          throw new Error(
+            `forkAtPrompt: source ${sourceNodeId} has no session-bearer ancestor with a captured sessionId`,
+          )
+        }
+        forkSessionId = foundBearerSession
+        const promptMeta = PromptMetadataSchema.safeParse(source.metadata)
+        const uuid =
+          promptMeta.success && typeof promptMeta.data.sdkMessageUuid === 'string'
+            ? promptMeta.data.sdkMessageUuid
+            : null
+        branchedFromMessageUuid = uuid
+      }
+
+      // Eager SDK fork. Done BEFORE any DB writes so a fork failure
+      // leaves the tree untouched (no orphan Branches container).
+      const forkOptions: { upToMessageId?: string; dir?: string } = { dir: repoPath }
+      if (branchedFromMessageUuid !== null) {
+        forkOptions.upToMessageId = branchedFromMessageUuid
+      }
+      const forkResult = await sdk.forkSession(forkSessionId, forkOptions)
+      if (!forkResult.sessionId || typeof forkResult.sessionId !== 'string') {
+        throw new Error('forkAtPrompt: sdk.forkSession returned no sessionId')
+      }
+
+      // Materialize a Branches container as the immediate next sibling of
+      // the source if one isn't already there.
+      const parentSiblings = await store.getChildren(source.parentId)
+      const sourceIdx = parentSiblings.findIndex((n) => n.id === source.id)
+      const nextSibling = parentSiblings[sourceIdx + 1] ?? null
+
+      let containerId: string
+      if (nextSibling && nextSibling.kind === 'branches') {
+        containerId = nextSibling.id
+      } else {
+        const container = await store.createNode({
+          parentId: source.parentId,
+          prevSiblingId: source.id,
+          kind: 'branches',
+          content: '',
+        })
+        containerId = container.id
+      }
+
+      // Count existing Branch children to pick the auto-name. We count
+      // BEFORE inserting the new one — `Branch 1` for the first.
+      const containerChildren = await store.getChildren(containerId)
+      const branchNumber = containerChildren.length + 1
+
+      // Append the new Branch (Content Node) at the end of the container.
+      const lastChildId =
+        containerChildren.length > 0 ? containerChildren[containerChildren.length - 1]!.id : null
+      const branchMetadata = BranchMetadataSchema.parse({
+        sdkSessionId: forkResult.sessionId,
+        branchedFromMessageUuid,
+        branchedFromNodeId: source.id,
+      })
+      const branchNode = await store.createNode({
+        parentId: containerId,
+        prevSiblingId: lastChildId,
+        kind: 'content',
+        content: `Branch ${branchNumber}`,
+        metadata: branchMetadata,
+      })
+
+      // Auto-create an empty Prompt child of the Branch.
+      const promptChild = await store.createNode({
+        parentId: branchNode.id,
+        kind: 'content',
+        content: '',
+      })
+
+      return {
+        branchNodeId: branchNode.id,
+        promptNodeId: promptChild.id,
+        branchesContainerId: containerId,
+      }
     },
   }
 }

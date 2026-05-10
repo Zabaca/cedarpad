@@ -109,6 +109,9 @@ function fakeSdk(opts: {
   recorded: RecordedCall[]
 }): SdkClient {
   return {
+    async forkSession() {
+      throw new Error('forkSession not exercised in sdkRunner tests')
+    },
     query: ({ prompt, options }) => {
       opts.recorded.push({
         prompt: prompt as string,
@@ -237,6 +240,9 @@ describe('sdkRunner.sendPrompt — Shape B writes Blocks under the Prompt', () =
     const promptId = await seedPrompt()
     const recorded: RecordedCall[] = []
     const sdk: SdkClient = {
+      async forkSession() {
+        throw new Error('forkSession not exercised in sdkRunner tests')
+      },
       query: ({ prompt, options }) => {
         recorded.push({
           prompt: prompt as string,
@@ -421,6 +427,9 @@ describe('sdkRunner.sendPrompt — Shape B writes Blocks under the Prompt', () =
     const emptyKeychain = createKeychainStore()
     const sdkSpy = vi.fn()
     const sdk: SdkClient = {
+      async forkSession() {
+        throw new Error('forkSession not exercised in sdkRunner tests')
+      },
       query: (params) => {
         sdkSpy(params)
         throw new Error('should not have been called')

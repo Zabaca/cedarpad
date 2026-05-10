@@ -118,6 +118,36 @@ export const BlockMetadataSchema = z.object({
 })
 export type BlockMetadata = z.infer<typeof BlockMetadataSchema>
 
+/**
+ * Metadata stored on a Branch — a session-bearer Content Node whose
+ * parent is a `branches` container. In addition to the bearer's
+ * `sdkSessionId` it records the fork point so the renderer / future
+ * tools can reason about provenance:
+ *   - `sdkSessionId`               — the FORKED session id (always a
+ *                                    non-empty string — `forkSession`
+ *                                    ran eagerly at branch-creation).
+ *   - `branchedFromMessageUuid`    — the SDK assistant-message uuid we
+ *                                    forked at (inclusive cut point).
+ *                                    Null when the source was a
+ *                                    session-bearer rather than a Prompt
+ *                                    (v1's "new thread sibling" mode).
+ *   - `branchedFromNodeId`         — the cedarpad source Node id we
+ *                                    forked from. Tree-position
+ *                                    provenance, independent of SDK
+ *                                    session graph.
+ *
+ * Passthrough so the renderer's auto-named placeholder (`Branch 1`,
+ * etc.) and any future fields coexist without breaking parsing.
+ */
+export const BranchMetadataSchema = z
+  .object({
+    sdkSessionId: z.string(),
+    branchedFromMessageUuid: z.string().nullable(),
+    branchedFromNodeId: z.string(),
+  })
+  .passthrough()
+export type BranchMetadata = z.infer<typeof BranchMetadataSchema>
+
 // ---------- JSON column schemas ----------
 
 /**
@@ -221,6 +251,30 @@ export const ThreadScanInterruptedOutputSchema = z.object({
   interruptedPromptIds: z.array(z.string()),
 })
 export type ThreadScanInterruptedOutput = z.infer<typeof ThreadScanInterruptedOutputSchema>
+
+/**
+ * `thread.branch` — Cmd+Shift+B. Operates on a Prompt selection (or a
+ * session-bearer, for v1's "new thread sibling" equivalence). Materializes
+ * a Branches container as the immediate next sibling of the source if one
+ * isn't already there, eagerly calls `SdkClient.forkSession` (storing the
+ * forked session id on the new Branch), and auto-creates an empty Prompt
+ * child of the Branch.
+ *
+ * Returns the new Branch's id and the new empty Prompt id (so the
+ * renderer can focus the prompt slot).
+ */
+export const ThreadBranchInputSchema = z.object({
+  workspaceId: z.string(),
+  sourceNodeId: z.string(),
+})
+export type ThreadBranchInput = z.infer<typeof ThreadBranchInputSchema>
+
+export const ThreadBranchOutputSchema = z.object({
+  branchNodeId: z.string(),
+  promptNodeId: z.string(),
+  branchesContainerId: z.string(),
+})
+export type ThreadBranchOutput = z.infer<typeof ThreadBranchOutputSchema>
 
 // ---------- Auth RPC (slice 3) ----------
 
@@ -428,6 +482,10 @@ export const Methods = {
   'thread.scanInterrupted': {
     input: ThreadScanInterruptedInputSchema,
     output: ThreadScanInterruptedOutputSchema,
+  },
+  'thread.branch': {
+    input: ThreadBranchInputSchema,
+    output: ThreadBranchOutputSchema,
   },
   // ---- Auth (slice 3) ----
   // Sidecar handlers are typically no-ops or delegate to its keychainStore;
