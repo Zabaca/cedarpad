@@ -98,6 +98,61 @@ body {
   background: #f1f5fb;
 }
 
+/* ---- Slice 2: per-kind visual treatment ---- */
+/* Thread Root: Content Node promoted via thread.start. */
+.tree-node.visual-thread-root .bullet {
+  color: #2155cd;
+  font-weight: 700;
+}
+.tree-node.visual-thread-root .content {
+  border-left: 3px solid #2155cd;
+  padding-left: 8px;
+  font-weight: 600;
+}
+
+/* Turn Node: one Claude turn — labelled, dimmer than a Thread Root. */
+.tree-node.visual-turn .bullet {
+  color: #777;
+}
+.tree-node.visual-turn .content {
+  color: #555;
+  font-style: italic;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.tree-node.visual-turn .content::before {
+  content: 'turn';
+}
+
+/* Block Nodes — three sub-styles, one per BlockKind. */
+.tree-node.visual-block-text .content {
+  color: #222;
+}
+.tree-node.visual-block-tool-use .bullet {
+  color: #b06e00;
+}
+.tree-node.visual-block-tool-use .content {
+  background: #fff7e6;
+  border: 1px solid #f3d9a4;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #6a4500;
+}
+.tree-node.visual-block-tool-result .bullet {
+  color: #2e7d32;
+}
+.tree-node.visual-block-tool-result .content {
+  background: #f1f8e9;
+  border-left: 2px solid #aed581;
+  padding: 2px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: #2e4a1c;
+}
+
 .workspace-picker {
   display: flex;
   flex-direction: column;

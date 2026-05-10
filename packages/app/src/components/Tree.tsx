@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { call } from '../ipc'
-import type { Node } from '../contract'
+import type { BlockMetadata, Node } from '../contract'
+import { BlockMetadataSchema } from '../contract'
 import { interpret } from '../keymap'
 
 interface Visible {
@@ -37,6 +38,58 @@ type DropPos =
   | { kind: 'before'; targetId: string; parentId: string | null }
   | { kind: 'after'; targetId: string; parentId: string | null }
   | { kind: 'inside'; targetId: string }
+
+/**
+ * Visual classification of a Node for rendering. Slice 2 distinguishes:
+ *   - 'content'     — default outline node
+ *   - 'thread-root' — Content Node promoted via thread.start
+ *   - 'turn'        — Turn Node (one Claude turn)
+ *   - 'block-text'  — Block Node carrying a `text` payload
+ *   - 'block-tool-use'    — Block Node carrying a `tool_use` payload
+ *   - 'block-tool-result' — Block Node carrying a `tool_result` payload
+ */
+type Visual =
+  | 'content'
+  | 'thread-root'
+  | 'turn'
+  | 'block-text'
+  | 'block-tool-use'
+  | 'block-tool-result'
+
+function classifyNode(n: Node): { visual: Visual; blockMeta?: BlockMetadata } {
+  if (n.kind === 'turn') return { visual: 'turn' }
+  if (n.kind === 'block') {
+    const parsed = BlockMetadataSchema.safeParse(n.metadata)
+    if (parsed.success) {
+      const k = parsed.data.payload.kind
+      if (k === 'text') return { visual: 'block-text', blockMeta: parsed.data }
+      if (k === 'tool_use') return { visual: 'block-tool-use', blockMeta: parsed.data }
+      if (k === 'tool_result') return { visual: 'block-tool-result', blockMeta: parsed.data }
+    }
+    return { visual: 'block-text' }
+  }
+  if (n.metadata && (n.metadata as { isThreadRoot?: unknown }).isThreadRoot === true) {
+    return { visual: 'thread-root' }
+  }
+  return { visual: 'content' }
+}
+
+function bulletForVisual(v: Visual): string {
+  switch (v) {
+    case 'thread-root':
+      return '>'
+    case 'turn':
+      return '~'
+    case 'block-text':
+      return '·'
+    case 'block-tool-use':
+      return '⚙'
+    case 'block-tool-result':
+      return '↳'
+    default:
+      return '·'
+  }
+}
 
 export function Tree({
   workspaceId,
@@ -264,6 +317,12 @@ export function Tree({
         setFocusId(intent.nodeId)
         return
       }
+      if (intent.kind === 'start-thread') {
+        await call('thread.start', { workspaceId, rootNodeId: intent.nodeId })
+        await load()
+        setFocusId(intent.nodeId)
+        return
+      }
     },
     [workspaceId, byParent, lookup, load, visible, activeNodeId, onZoomTo],
   )
@@ -411,6 +470,27 @@ export function Tree({
     [dropPos, byParent, isAncestor, workspaceId, load],
   )
 
+  // Test-only hook: lets the WebView e2e drive a fixture turn without a real
+  // Claude SDK. Exposed in dev / debug builds; harmless otherwise (the e2e
+  // calls it explicitly). Lives on `window.cedarpadE2E` to keep it off the
+  // public surface area.
+  useEffect(() => {
+    const hook = {
+      appendTurn: async (
+        threadRootId: string,
+        blocks: Parameters<typeof call<'thread.appendTurn'>>[1]['blocks'],
+      ) => {
+        await call('thread.appendTurn', { workspaceId, threadRootId, blocks })
+        await load()
+      },
+      reload: load,
+    }
+    ;(window as unknown as { cedarpadE2E?: typeof hook }).cedarpadE2E = hook
+    return () => {
+      delete (window as unknown as { cedarpadE2E?: typeof hook }).cedarpadE2E
+    }
+  }, [workspaceId, load])
+
   return (
     <div className="tree-wrap">
       <nav className="breadcrumbs" aria-label="zoom path">
@@ -443,6 +523,10 @@ export function Tree({
       </nav>
       <div className="tree">
         {visible.map(({ node, depth }) => {
+          const { visual, blockMeta } = classifyNode(node)
+          const editable = node.kind === 'content'
+          const displayContent =
+            node.kind === 'block' && blockMeta ? renderBlockContent(blockMeta) : node.content
           const isDropTarget = dropPos && (dropPos as { targetId?: string }).targetId === node.id
           const dropClass = isDropTarget ? `drop-${dropPos!.kind}` : ''
           const completedClass = node.completed ? 'completed' : ''
@@ -450,7 +534,12 @@ export function Tree({
           return (
             <div
               key={node.id}
-              className={`tree-node ${completedClass} ${dropClass} ${draggingClass}`.trim()}
+              className={`tree-node visual-${visual} ${completedClass} ${dropClass} ${draggingClass}`
+                .replace(/\s+/g, ' ')
+                .trim()}
+              data-visual={visual}
+              data-kind={node.kind}
+              data-node-id={node.id}
               style={{ paddingLeft: depth * 18 }}
               draggable
               onDragStart={(e) => handleDragStart(e, node)}
@@ -458,10 +547,9 @@ export function Tree({
               onDragOver={(e) => handleDragOver(e, node)}
               onDragLeave={(e) => handleDragLeave(e, node)}
               onDrop={(e) => void handleDrop(e, node)}
-              data-node-id={node.id}
             >
               <span className="bullet" aria-hidden>
-                ·
+                {bulletForVisual(visual)}
               </span>
               <div
                 ref={(el) => {
@@ -469,12 +557,14 @@ export function Tree({
                   else refs.current.delete(node.id)
                 }}
                 className="content"
-                contentEditable
+                contentEditable={editable}
                 suppressContentEditableWarning
-                onInput={(e) => handleInput(node.id, e.currentTarget.textContent ?? '')}
-                onKeyDown={(e) => void handleKeyDown(e, node)}
+                onInput={
+                  editable ? (e) => handleInput(node.id, e.currentTarget.textContent ?? '') : undefined
+                }
+                onKeyDown={editable ? (e) => void handleKeyDown(e, node) : undefined}
               >
-                {node.content}
+                {displayContent}
               </div>
             </div>
           )
@@ -482,4 +572,21 @@ export function Tree({
       </div>
     </div>
   )
+}
+
+/**
+ * Render a Block Node's content based on its payload kind. Minimal —
+ * UX iteration is a later slice. The point of slice 2 is the three
+ * payload kinds are visually distinct so a user can tell them apart.
+ */
+function renderBlockContent(meta: BlockMetadata): string {
+  const p = meta.payload
+  if (p.kind === 'text') return p.text
+  if (p.kind === 'tool_use') {
+    const inputJson = JSON.stringify(p.input)
+    return `${p.toolName}(${inputJson})`
+  }
+  // tool_result
+  const out = typeof p.output === 'string' ? p.output : JSON.stringify(p.output)
+  return p.isError ? `error: ${out}` : out
 }

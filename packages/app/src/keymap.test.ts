@@ -95,4 +95,29 @@ describe('keymap', () => {
     )
     expect(out).toEqual({ kind: 'toggle-complete', nodeId: 'cur', next: false })
   })
+
+  it('Cmd+Shift+T on a Content Node starts a Thread', () => {
+    const out = interpret(
+      { key: 't', shiftKey: true, metaKey: true },
+      { ...base, isContentEmpty: false },
+    )
+    expect(out).toEqual({ kind: 'start-thread', nodeId: 'cur' })
+  })
+
+  it('Ctrl+Shift+T on a Content Node starts a Thread (non-mac)', () => {
+    const out = interpret(
+      { key: 'T', shiftKey: true, ctrlKey: true },
+      { ...base, isContentEmpty: false },
+    )
+    expect(out).toEqual({ kind: 'start-thread', nodeId: 'cur' })
+  })
+
+  it('Cmd+Shift+T on a Turn Node is a no-op', () => {
+    const turnNode: Node = { ...n('cur'), kind: 'turn' }
+    const out = interpret(
+      { key: 't', shiftKey: true, metaKey: true },
+      { node: turnNode, parent: null, prevSibling: null, prevSiblingLastChildId: null, isContentEmpty: false },
+    )
+    expect(out).toEqual({ kind: 'noop' })
+  })
 })
