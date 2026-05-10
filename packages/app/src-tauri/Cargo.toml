@@ -16,6 +16,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
+# WebDriver plugin — embedded in debug builds only so e2e tests can drive
+# the WKWebView. Pulled in unconditionally because cargo features are global,
+# but only `init`'d behind `cfg(debug_assertions)` in lib.rs. Release builds
+# still link it; that's fine, it's dormant unless plugged in.
+tauri-plugin-webdriver = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

@@ -125,9 +125,18 @@ async fn rpc(method: String, params: Value) -> Result<Value, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    // WebDriver plugin: debug-only. Lets `tauri-webdriver` drive the WebView
+    // for e2e tests. See packages/app/e2e/webview/README in the repo for the
+    // full setup; users running `tauri:dev` or `tauri build --debug` get the
+    // server on port 4445 (native) / 4444 (intermediary).
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_webdriver::init());
+
+    builder
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -141,3 +150,4 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
