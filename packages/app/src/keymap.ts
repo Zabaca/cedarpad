@@ -12,47 +12,25 @@ import type { Node } from './contract'
  *   - Tab              → nest under prevSibling
  *   - Shift+Tab        → outdent to grandparent
  *   - Backspace (empty)→ delete this node
- *   - Cmd/Ctrl + .     → zoom into the focused node (slice 7)
- *   - Cmd/Ctrl + ,     → zoom out one level (slice 7)
- *   - Cmd/Ctrl+Enter   → on a Content Node inside a Thread (child of a
- *                        Thread Root): send the prompt to Claude.
- *                      → otherwise: toggle `completed` on the focused
- *                        Content Node (slice 9).
- *   - Cmd/Ctrl+Shift+. → cancel the in-flight Claude turn for the active
- *                        Thread (slice 4). Distinct from Cmd+. (zoom-in).
- *   - Cmd/Ctrl+Shift+T → start a Thread on this Content Node (slice 2)
+ *   - Cmd/Ctrl + .     → zoom into the focused node
+ *   - Cmd/Ctrl + ,     → zoom out one level
+ *   - Cmd/Ctrl+Enter   → on a Content Node: send it as a Prompt (v1.1).
+ *                        This is the SOLE conversation-starting verb.
+ *                        Cmd+Shift+T is gone (v1.0 removal per ADR-0006).
+ *   - Cmd/Ctrl+Shift+. → cancel the in-flight Claude turn for the
+ *                        Prompt's session-bearer.
  *
- * Branch verbs (slice 5 + 6) — the three ways to fork a Thread. All
- * three reduce to one internal op (`branchInternal`); they differ only
- * in how much prior context is carried into the new sibling Thread.
- * Discoverable via the toolbar hint in `App.tsx`.
+ * Cmd+Enter "Or" semantics (decided by the renderer based on tree
+ * position; the keymap returns one intent kind):
+ *   - On a Content Node whose parent is a session-bearer → send as
+ *     Prompt under existing session.
+ *   - On a Content Node whose parent is NOT a session-bearer →
+ *     auto-stamp parent + send as Prompt.
+ *   - On a root-level Content Node → self-stamp as session-bearer +
+ *     create empty child Prompt + focus it (no SDK call).
  *
- *   - Cmd/Ctrl+Shift+B → BRANCH from a selected Block Node (slice 5).
- *                        Sibling Thread with full history *including*
- *                        the source Block. "What if Claude had
- *                        continued differently from here?"
- *                        Dispatched by a window-level keydown handler
- *                        in Tree.tsx; not surfaced as an Intent because
- *                        Block rows aren't contentEditable.
- *   - Cmd/Ctrl+Shift+R → RETRY from a selected Block Node (slice 6).
- *                        Sibling Thread with full history *up to but
- *                        excluding* the source Block. "Regenerate /
- *                        edit-and-resend" expressed as a fork.
- *                        Same window-level dispatch as Cmd+Shift+B.
- *   - Cmd/Ctrl+Shift+N → NEW SIBLING when a Thread Root is selected
- *                        (slice 6). Empty Thread under the same Thread
- *                        Root, no history at all. "New conversation,
- *                        same topic seed." Dispatched at window level;
- *                        the Thread Root selection mirrors the Block
- *                        selection model from slice 5.
- *
- * Visual treatments paired with the kinds (slice 2):
- *   - Content Node: default bullet
- *   - Thread Root: Content Node whose metadata has `isThreadRoot: true`,
- *     rendered with a different bullet (>) and accent border.
- *   - Turn Node: rendered as a labelled "Claude turn" row.
- *   - Block Node: three sub-styles via metadata.payload.kind —
- *     text → prose, tool_use → inline tool call card, tool_result → output.
+ * The keymap surfaces a single `send-prompt` intent for all three;
+ * `threadEngine.sendPrompt` decides which behaviour to run.
  */
 export type Intent =
   | { kind: 'noop' }
@@ -63,10 +41,8 @@ export type Intent =
   | { kind: 'zoom-in'; nodeId: string }
   | { kind: 'zoom-out' }
   | { kind: 'toggle-complete'; nodeId: string; next: boolean }
-  | { kind: 'start-thread'; nodeId: string }
-  | { kind: 'send-prompt'; nodeId: string; threadRootId: string; prompt: string }
-  | { kind: 'cancel-turn'; threadRootId: string }
-  | { kind: 'branch-from-block'; blockId: string }
+  | { kind: 'send-prompt'; nodeId: string; prompt: string }
+  | { kind: 'cancel-prompt'; promptNodeId: string }
 
 export interface Visible {
   node: Node
@@ -83,28 +59,20 @@ export function interpret(
     /** Current text content of the focused cell (for send-prompt). */
     contentText?: string
     /**
-     * Id of the Thread Root the focused Content Node belongs to, if any.
-     * Set when the focused Node's parent (or further ancestor — but slice 4
-     * only sends from direct children) is a Thread Root. When set,
-     * Cmd+Enter sends the prompt instead of toggling complete.
+     * Id of the streaming Prompt the user might want to cancel —
+     * typically the most recent Prompt under the focused node's
+     * session-bearer ancestor that has `state: 'streaming'`. The
+     * renderer computes this; the keymap just routes Cmd+Shift+. to it.
      */
-    threadRootId?: string | null
-    /**
-     * True when there's a streaming Turn under the active Thread Root —
-     * Cmd+Shift+. routes to cancel-turn rather than no-op.
-     */
-    activeThreadHasStreamingTurn?: boolean
+    streamingPromptId?: string | null
   },
 ): Intent {
-  // Workflowy-style zoom: Cmd/Ctrl + . zooms into focused node, Cmd/Ctrl + ,
-  // zooms out one level. Both must be the modifier-combo (no plain `.`/`,`
-  // because those are valid text input).
   const mod = ev.metaKey || ev.ctrlKey
-  // Cancel-turn: Cmd/Ctrl + Shift + . — checked BEFORE plain Cmd+. so the
-  // shift-variant wins.
+  // Cancel-prompt: Cmd/Ctrl + Shift + . — checked BEFORE plain Cmd+. so
+  // the shift-variant wins.
   if (mod && ev.shiftKey && ev.key === '.') {
-    if (ctx.threadRootId && ctx.activeThreadHasStreamingTurn) {
-      return { kind: 'cancel-turn', threadRootId: ctx.threadRootId }
+    if (ctx.streamingPromptId) {
+      return { kind: 'cancel-prompt', promptNodeId: ctx.streamingPromptId }
     }
     return { kind: 'noop' }
   }
@@ -114,23 +82,22 @@ export function interpret(
   if (mod && ev.key === ',') {
     return { kind: 'zoom-out' }
   }
-  // Cmd/Ctrl+Enter on a prompt slot (Content Node child of a Thread Root)
-  // sends the prompt to Claude. Otherwise it toggles completion. The
-  // disambiguator is `threadRootId` — only set by the renderer for prompt
-  // slots, which makes "complete this prompt" semantically nonsensical
-  // anyway.
+  // Cmd/Ctrl+Enter on a Content Node sends it as a Prompt. v1.1 makes
+  // this the sole conversation-starting verb — there's no separate
+  // start-thread gesture. The threadEngine decides what "send" means
+  // based on the node's tree position (root-level "Or" semantics vs.
+  // ordinary send).
+  //
+  // Empty content + non-root → noop (no point sending an empty prompt).
+  // Empty content + root-level → still triggers (the "Or" bootstrap
+  // doesn't need text); the threadEngine ignores the prompt string in
+  // that branch.
   if (ev.key === 'Enter' && mod) {
-    if (ctx.threadRootId && ctx.node.kind === 'content') {
-      const prompt = (ctx.contentText ?? '').trim()
-      if (prompt.length === 0) return { kind: 'noop' }
-      return {
-        kind: 'send-prompt',
-        nodeId: ctx.node.id,
-        threadRootId: ctx.threadRootId,
-        prompt,
-      }
-    }
-    return { kind: 'toggle-complete', nodeId: ctx.node.id, next: !ctx.node.completed }
+    if (ctx.node.kind !== 'content') return { kind: 'noop' }
+    const prompt = (ctx.contentText ?? '').trim()
+    const isRootLevel = ctx.parent === null
+    if (prompt.length === 0 && !isRootLevel) return { kind: 'noop' }
+    return { kind: 'send-prompt', nodeId: ctx.node.id, prompt }
   }
   if (ev.key === 'Enter' && !ev.shiftKey) {
     return { kind: 'create-sibling', afterId: ctx.node.id, parentId: ctx.node.parentId }
@@ -155,11 +122,6 @@ export function interpret(
   }
   if (ev.key === 'Backspace' && ctx.isContentEmpty) {
     return { kind: 'delete-empty', nodeId: ctx.node.id }
-  }
-  // Cmd/Ctrl + Shift + T → start a Thread on a Content Node.
-  if ((ev.key === 't' || ev.key === 'T') && ev.shiftKey && (ev.metaKey || ev.ctrlKey)) {
-    if (ctx.node.kind !== 'content') return { kind: 'noop' }
-    return { kind: 'start-thread', nodeId: ctx.node.id }
   }
   return { kind: 'noop' }
 }

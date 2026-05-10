@@ -10,7 +10,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdirSync, readFileSync } from 'node:fs'
-import type { MethodName, MethodInput, MethodOutput, Node, RunnerEvent } from '../../src/contract.ts'
+import type { MethodName, MethodInput, MethodOutput, Node } from '../../src/contract.ts'
 import { createWorkspaceManager, type WorkspaceManager } from '../../modules/workspace/workspaceManager.ts'
 import { createOutlineStore, type OutlineStore } from '../../modules/outline/outlineStore.ts'
 import { createThreadEngine, type ThreadEngine } from '../../modules/thread/threadEngine.ts'
@@ -18,7 +18,7 @@ import type { DbClient } from '../../modules/db/libsqlClient.ts'
 import { createKeychainStore, type KeychainStore } from '../../modules/auth/keychainStore.ts'
 import { detectAuth, type AuthMode } from '../../modules/auth/authProbe.ts'
 import { createSdkRunner, type SdkRunner } from '../../modules/sdk/sdkRunner.ts'
-import { scanInterruptedTurns } from '../../modules/thread/crashRecovery.ts'
+import { scanInterruptedPrompts } from '../../modules/thread/crashRecovery.ts'
 import { chooseSdkClient } from './sdkClient.ts'
 import { readClaudeCodeKeychain } from './claudeCodeKeychain.ts'
 
@@ -216,38 +216,13 @@ export const handlers: Handlers = {
     return store.searchNodes(query)
   },
 
-  'thread.start': async ({ workspaceId, rootNodeId }) => {
-    const engine = await getThread(workspaceId)
-    return nodeOut(await engine.startThread(rootNodeId))
-  },
-  'thread.appendPrompt': async ({ workspaceId, threadRootId, content }) => {
-    const engine = await getThread(workspaceId)
-    return nodeOut(await engine.appendPrompt(threadRootId, content))
-  },
-  'thread.appendTurn': async ({ workspaceId, threadRootId, blocks }) => {
-    const engine = await getThread(workspaceId)
-    const result = await engine.appendTurn(threadRootId, blocks)
-    return { turn: nodeOut(result.turn), blocks: result.blocks.map(nodeOut) }
-  },
   'thread.scanInterrupted': async ({ workspaceId }) => {
-    // Walk the workspace's outline for any Turn Nodes left in
-    // `state: 'streaming'` — necessarily orphaned because the sidecar
-    // process is fresh and no runner is driving them. Stamp them
+    // Walk the workspace's outline for any Prompt Content Nodes left in
+    // `metadata.state: 'streaming'` — necessarily orphaned because the
+    // sidecar process is fresh and no runner is driving them. Stamp them
     // `state: 'interrupted'` so the renderer can show them as crashed.
     const store = await getOutline(workspaceId)
-    return scanInterruptedTurns(store)
-  },
-  'thread.branch': async ({ workspaceId, blockId }) => {
-    const engine = await getThread(workspaceId)
-    return engine.branch(blockId)
-  },
-  'thread.retry': async ({ workspaceId, blockId }) => {
-    const engine = await getThread(workspaceId)
-    return engine.retry(blockId)
-  },
-  'thread.newSibling': async ({ workspaceId, threadRootId }) => {
-    const engine = await getThread(workspaceId)
-    return engine.newSibling(threadRootId)
+    return scanInterruptedPrompts(store)
   },
 
   // ---- Auth (slice 3) ----
@@ -311,20 +286,20 @@ export const handlers: Handlers = {
   // Note: `sdk.sendPrompt` is the streaming case and is dispatched by
   // `server.ts` directly — it does not appear in this registry, because
   // its return value is an event stream, not a plain promise.
-  'sdk.cancel': async ({ threadRootId }) => {
-    // Cancellation is fire-and-forget: it only matters if a runner exists
-    // for the active workspace, but we don't know the workspaceId from
-    // this payload alone. Walk every runner and cancel the matching
-    // threadRootId on each — at most one will be in flight in v1 (single
-    // active workspace).
+  'sdk.cancel': async ({ promptNodeId }) => {
+    // Cancellation is fire-and-forget: it only matters if a runner
+    // exists for the active workspace, but we don't know the
+    // workspaceId from this payload alone. Walk every runner and cancel
+    // the matching promptNodeId on each — at most one will be in flight
+    // in v1.1 (single active workspace).
     for (const runner of sdkRunners.values()) {
-      await runner.cancel(threadRootId)
+      await runner.cancel(promptNodeId)
     }
     return { ok: true }
   },
-  'sdk.recycle': async ({ threadRootId }) => {
+  'sdk.recycle': async ({ promptNodeId }) => {
     for (const runner of sdkRunners.values()) {
-      await runner.recycle(threadRootId)
+      await runner.recycle(promptNodeId)
     }
     return { ok: true } as const
   },

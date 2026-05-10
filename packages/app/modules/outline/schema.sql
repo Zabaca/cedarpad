@@ -1,11 +1,11 @@
--- cedarpad outline schema (v2, slice 2)
+-- cedarpad outline schema (v1.1 Shape B, user_version=3)
 -- Live migrations are in migrations.ts (versioned via PRAGMA user_version).
 -- This file is the canonical reference for the current shape.
 CREATE TABLE IF NOT EXISTS nodes (
   id TEXT PRIMARY KEY,
   parent_id TEXT REFERENCES nodes(id) ON DELETE CASCADE,
   position TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('content', 'turn', 'block')),
+  kind TEXT NOT NULL CHECK (kind IN ('content', 'block', 'branches')),
   content TEXT NOT NULL DEFAULT '',
   metadata TEXT NOT NULL DEFAULT '{}',
   completed INTEGER NOT NULL DEFAULT 0,

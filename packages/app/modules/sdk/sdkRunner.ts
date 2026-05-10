@@ -1,29 +1,25 @@
 /**
- * Claude Code SDK runner.
+ * Claude Code SDK runner (v1.1 Shape B).
  *
- * Wraps the Claude Agent SDK's `query()` async generator and translates its
- * messages into Block Nodes via the Thread engine. Each `sendPrompt` call
- * runs one Claude turn; the runner emits a stream of {@link RunnerEvent}s
- * (text-delta / block-complete / turn-complete / error) and at the same
- * time persists Block Nodes through the Thread engine.
+ * Wraps the Claude Agent SDK's `query()` async generator and translates
+ * its messages into Block Nodes via the Thread engine. Each `sendPrompt`
+ * call runs one Claude turn for a given Prompt Node — Block children
+ * are written DIRECTLY under the Prompt (no Turn Node intermediate).
+ * The runner emits a stream of {@link RunnerEvent}s
+ * (text-delta / block-complete / prompt-complete / error).
  *
  * The SDK is configured with a hard read-only allowlist: `Read`, `Grep`,
  * `Glob`. This is enforced at the SDK boundary via the `tools` and
  * `allowedTools` options — Claude Code's `query()` will refuse to invoke
  * any tool not in the explicit `tools` list, regardless of model output.
  *
- * Process recycling (per ADR-0004): one Query handle exists per Thread Root
- * at a time. `recycle(threadId)` aborts the current handle (if any) and
- * lets the next `sendPrompt` start a fresh one. The Thread state in the
- * Outline DB is unaffected — recycle is a process-level reset, not a data
- * reset. We pick a simple "recycle on demand + recycle when an `error`
- * event fires" policy for v1; idle/age/token thresholds can come later
- * once the runner has telemetry to drive a smarter policy.
+ * Process recycling (per ADR-0004): one Query handle exists per Prompt
+ * at a time. `recycle(promptId)` aborts the current handle (if any) and
+ * lets the next `sendPrompt` start a fresh one. The Outline state is
+ * unaffected — recycle is a process-level reset, not a data reset.
  *
  * The SDK is injected (`SdkClient`) so unit tests can replay scripted
- * sequences. The production wiring lives in `src-sidecar/src/handlers.ts`,
- * which constructs a `realSdkClient()` adapter around
- * `@anthropic-ai/claude-agent-sdk`'s `query()`.
+ * sequences. The production wiring lives in `src-sidecar/src/handlers.ts`.
  */
 import { randomUUID } from 'node:crypto'
 import type { ThreadEngine } from '../thread/threadEngine.ts'
@@ -116,23 +112,22 @@ export interface SdkClient {
 export type RunnerEvent =
   | { kind: 'text-delta'; blockId: string; content: string }
   | { kind: 'block-complete'; blockId: string; nodeId?: string; payload: BlockPayload }
-  | { kind: 'turn-complete'; turnId: string }
+  | { kind: 'prompt-complete'; promptId: string }
   | { kind: 'error'; code: string; message: string }
 
 export interface SendPromptInput {
+  /** Id of the Prompt Content Node. Block children land under it. */
   threadId: string
   prompt: string
   repoPath: string
-  /** Reserved for future history-injection; slice 3 doesn't use it. */
-  contextHistory?: unknown
-  /** Optional caller-controlled abort. Rare — `cancel(threadId)` is the normal path. */
+  /** Optional caller-controlled abort. Rare — `cancel(promptId)` is the normal path. */
   abortSignal?: AbortSignal
 }
 
 export interface SdkRunner {
   sendPrompt(input: SendPromptInput): AsyncIterable<RunnerEvent>
-  cancel(threadId: string): Promise<void>
-  recycle(threadId: string): Promise<void>
+  cancel(promptId: string): Promise<void>
+  recycle(promptId: string): Promise<void>
 }
 
 /** Tools that are allowed during slice 3. Read-only is the v1 commitment. */
@@ -141,7 +136,7 @@ export const ALLOWED_TOOLS = ['Read', 'Grep', 'Glob'] as const
 interface ActiveRun {
   abortController: AbortController
   handle: SdkQueryHandle
-  turnId: string
+  promptId: string
   cancelled: boolean
 }
 
@@ -159,26 +154,32 @@ export interface CreateSdkRunnerOptions {
   getAuthMode?: () => AuthMode
 }
 
-export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: CreateSdkRunnerOptions): SdkRunner {
+export function createSdkRunner({
+  sdk,
+  threadEngine,
+  keychain,
+  getAuthMode,
+}: CreateSdkRunnerOptions): SdkRunner {
   const active = new Map<string, ActiveRun>()
 
   return {
     sendPrompt(input) {
-      const { threadId, prompt, repoPath } = input
+      const { threadId: promptId, prompt, repoPath } = input
       // We can't return an AsyncGenerator directly from the outer arrow
       // because we need access to the runner state in `cancel()`; build
       // the generator inline.
       async function* run(): AsyncGenerator<RunnerEvent, void, unknown> {
         const mode: AuthMode = getAuthMode
           ? getAuthMode()
-          : (keychain.hasApiKey() ? 'api-key' : 'none')
+          : keychain.hasApiKey()
+            ? 'api-key'
+            : 'none'
 
         if (mode === 'none') {
           yield {
             kind: 'error',
             code: 'NO_AUTH',
-            message:
-              'No Claude auth available. Sign in with `claude /login` or set an API key.',
+            message: 'No Claude auth available. Sign in with `claude /login` or set an API key.',
           }
           return
         }
@@ -201,17 +202,11 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
           }
         }
 
-        // Open the Turn Node up front so streaming events have a parent.
-        const turn = await threadEngine.beginTurn(threadId)
-        const turnId = turn.id
-
-        // Resume the SDK session if we've captured one for this Thread on
-        // a prior turn. Without `resume`, every `sdk.query()` call is a
-        // fresh session and Claude has no recollection of prior prompts
-        // — that's the bug this PR fixes. The SDK exposes `sessionId` on
-        // its `system.init` event the very first time a Thread runs;
-        // we persist it then read it back here on every subsequent turn.
-        const sdkSessionId = await threadEngine.getThreadRootSdkSessionId(threadId)
+        // Resume the SDK session if we've captured one for this Prompt's
+        // session-bearer ancestor on a prior turn. Without `resume`,
+        // every `sdk.query()` call is a fresh session and Claude has no
+        // recollection of prior prompts — that's the bug PR #27 fixed.
+        const sdkSessionId = await threadEngine.getSessionBearerSdkSessionId(promptId)
 
         const abortController = new AbortController()
         let handle: SdkQueryHandle
@@ -250,8 +245,8 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
           return
         }
 
-        const run: ActiveRun = { abortController, handle, turnId, cancelled: false }
-        active.set(threadId, run)
+        const run: ActiveRun = { abortController, handle, promptId, cancelled: false }
+        active.set(promptId, run)
 
         // In-flight text block state: when `stream_event` deltas arrive
         // before the wrapping `assistant` message lands, we accumulate
@@ -260,10 +255,6 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
         // canonical content and emit `block-complete` against the same
         // blockId so the renderer can reconcile.
         let inFlightTextBlockId: string | null = null
-        let inFlightTextAccumulator = ''
-        // Outstanding (id, payload) for in-progress tool_use → tool_result
-        // pairs is not strictly needed — the SDK emits both as discrete
-        // assistant/user messages and we surface them sequentially.
 
         try {
           for await (const raw of handle) {
@@ -274,21 +265,21 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
             switch (msg.type) {
               case 'system': {
                 // The SDK emits `subtype: 'init'` once per query with a
-                // `session_id`. On the FIRST turn for this Thread we
-                // persist it onto the Thread Root so subsequent turns
-                // can pass `resume: sessionId` and the SDK replays
-                // history server-side. On resumed turns the SDK still
-                // emits `init` with the same `session_id` we passed in
-                // via `resume` — re-stamping it is a no-op for
-                // correctness, but we skip the DB write when we already
-                // had it cached via `sdkSessionId`.
+                // `session_id`. On the FIRST turn for this Prompt's
+                // bearer we persist it onto the bearer so subsequent
+                // turns can pass `resume: sessionId` and the SDK
+                // replays history server-side. On resumed turns the SDK
+                // still emits `init` with the same `session_id` we
+                // passed in via `resume` — re-stamping it is a no-op
+                // for correctness, but we skip the DB write when we
+                // already had it cached via `sdkSessionId`.
                 if (
                   msg.subtype === 'init' &&
                   !sdkSessionId &&
                   typeof msg.session_id === 'string' &&
                   msg.session_id.length > 0
                 ) {
-                  await threadEngine.setThreadRootSdkSessionId(threadId, msg.session_id)
+                  await threadEngine.setSessionBearerSdkSessionId(promptId, msg.session_id)
                 }
                 break
               }
@@ -299,16 +290,13 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
                   const cb = (ev as { content_block?: { type?: string } }).content_block
                   if (cb && cb.type === 'text') {
                     inFlightTextBlockId = `blk_${randomUUID()}`
-                    inFlightTextAccumulator = ''
                   }
                 } else if (ev.type === 'content_block_delta') {
                   const delta = (ev as { delta?: { type?: string; text?: string } }).delta
                   if (delta && delta.type === 'text_delta' && typeof delta.text === 'string') {
                     if (!inFlightTextBlockId) {
                       inFlightTextBlockId = `blk_${randomUUID()}`
-                      inFlightTextAccumulator = ''
                     }
-                    inFlightTextAccumulator += delta.text
                     yield {
                       kind: 'text-delta',
                       blockId: inFlightTextBlockId,
@@ -319,16 +307,15 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
                 break
               }
               case 'assistant': {
-                // Stamp the SDK assistant-message uuid onto this Turn.
+                // Stamp the SDK assistant-message uuid onto the Prompt.
                 // Last-write-wins: when an SDK turn includes multiple
                 // assistant messages (e.g. text → tool_use → text after
                 // tool_result), `resumeSessionAt` for "branch from this
-                // Turn" wants the LAST assistant message of the Turn so
-                // the resumed history includes the full Turn. Per
-                // SDKAssistantMessage.uuid in the SDK's sdk.d.ts.
+                // Prompt" wants the LAST assistant message of the Prompt
+                // so the resumed history includes the full turn.
                 const assistantUuid = (msg as { uuid?: unknown }).uuid
                 if (typeof assistantUuid === 'string' && assistantUuid.length > 0) {
-                  await threadEngine.setTurnSdkMessageUuid(turnId, assistantUuid)
+                  await threadEngine.setPromptSdkMessageUuid(promptId, assistantUuid)
                 }
                 const blocks = msg.message?.content ?? []
                 for (const block of blocks) {
@@ -337,7 +324,7 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
                     const text = String((block as { text?: unknown }).text ?? '')
                     const blockId = inFlightTextBlockId ?? `blk_${randomUUID()}`
                     const payload: BlockPayload = { kind: 'text', text }
-                    const node = await threadEngine.appendBlock(turnId, payload)
+                    const node = await threadEngine.appendBlock(promptId, payload)
                     yield {
                       kind: 'block-complete',
                       blockId,
@@ -345,7 +332,6 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
                       payload,
                     }
                     inFlightTextBlockId = null
-                    inFlightTextAccumulator = ''
                   } else if (block.type === 'tool_use') {
                     const tu = block as { id?: string; name?: string; input?: unknown }
                     const payload: BlockPayload = {
@@ -354,7 +340,7 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
                       toolUseId: tu.id ? String(tu.id) : undefined,
                       input: tu.input,
                     }
-                    const node = await threadEngine.appendBlock(turnId, payload)
+                    const node = await threadEngine.appendBlock(promptId, payload)
                     yield {
                       kind: 'block-complete',
                       blockId: `blk_${node.id}`,
@@ -383,7 +369,7 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
                         output: tr.content,
                         isError: tr.is_error,
                       }
-                      const node = await threadEngine.appendBlock(turnId, payload)
+                      const node = await threadEngine.appendBlock(promptId, payload)
                       yield {
                         kind: 'block-complete',
                         blockId: `blk_${node.id}`,
@@ -396,8 +382,6 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
                 break
               }
               case 'result': {
-                // Terminal — nothing else to do; outer loop will exit on
-                // generator end.
                 if (msg.subtype && msg.subtype !== 'success') {
                   yield {
                     kind: 'error',
@@ -408,8 +392,6 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
                 break
               }
               default:
-                // Unknown message types are ignored; the SDK adds new
-                // ones over time and we forward-compat by skipping.
                 break
             }
           }
@@ -422,24 +404,24 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
             }
           }
         } finally {
-          if (active.get(threadId) === run) active.delete(threadId)
+          if (active.get(promptId) === run) active.delete(promptId)
         }
 
         if (run.cancelled) {
-          await threadEngine.markTurnCancelled(turnId)
-          // Don't emit a turn-complete on cancel — the consumer asked us to
-          // stop. The cancellation is observable via the Turn's metadata.
+          await threadEngine.markPromptCancelled(promptId)
+          // Don't emit a prompt-complete on cancel — the consumer asked us to
+          // stop. The cancellation is observable via the Prompt's metadata.
         } else {
-          await threadEngine.markTurnDone(turnId)
-          yield { kind: 'turn-complete', turnId }
+          await threadEngine.markPromptDone(promptId)
+          yield { kind: 'prompt-complete', promptId }
         }
       }
 
       return run()
     },
 
-    async cancel(threadId) {
-      const run = active.get(threadId)
+    async cancel(promptId) {
+      const run = active.get(promptId)
       if (!run) return
       run.cancelled = true
       run.abortController.abort()
@@ -450,10 +432,10 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
       }
     },
 
-    async recycle(threadId) {
+    async recycle(promptId) {
       // Tear down any in-flight handle; the next sendPrompt will start a
       // fresh one. Outline state is untouched — recycle is process-level.
-      const run = active.get(threadId)
+      const run = active.get(promptId)
       if (run) {
         run.cancelled = true
         run.abortController.abort()
@@ -462,7 +444,7 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
         } catch {
           // ignore
         }
-        active.delete(threadId)
+        active.delete(promptId)
       }
     },
   }

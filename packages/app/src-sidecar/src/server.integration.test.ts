@@ -144,58 +144,7 @@ describe('sidecar integration', () => {
     expect(roots.map((n) => n.id)).toContain(node.id)
   }, 15000)
 
-  it('drives thread.start + thread.appendPrompt + thread.appendTurn over IPC', async () => {
-    const repo = join(tmp, 'repo')
-    await mkdir(repo, { recursive: true })
-
-    const ws = (await sidecar.send({ id: '1', method: 'workspace.open', params: { repoPath: repo } })) as {
-      id: string
-    }
-
-    const root = (await sidecar.send({
-      id: '2',
-      method: 'outline.create',
-      params: { workspaceId: ws.id, parentId: null, content: 'idea' },
-    })) as { id: string }
-
-    const promoted = (await sidecar.send({
-      id: '3',
-      method: 'thread.start',
-      params: { workspaceId: ws.id, rootNodeId: root.id },
-    })) as { id: string; metadata: Record<string, unknown> }
-    expect(promoted.metadata.isThreadRoot).toBe(true)
-
-    const prompt = (await sidecar.send({
-      id: '4',
-      method: 'thread.appendPrompt',
-      params: { workspaceId: ws.id, threadRootId: root.id, content: 'how does X work?' },
-    })) as { id: string; parentId: string; kind: string; content: string }
-    expect(prompt.parentId).toBe(root.id)
-    expect(prompt.kind).toBe('content')
-    expect(prompt.content).toBe('how does X work?')
-
-    const turn = (await sidecar.send({
-      id: '5',
-      method: 'thread.appendTurn',
-      params: {
-        workspaceId: ws.id,
-        threadRootId: root.id,
-        blocks: [
-          { kind: 'text', text: 'Looking…' },
-          { kind: 'tool_use', toolName: 'Read', toolUseId: 't1', input: { path: 'a.md' } },
-          { kind: 'tool_result', toolUseId: 't1', output: 'ok' },
-        ],
-      },
-    })) as { turn: { id: string; kind: string }; blocks: Array<{ id: string; kind: string; parentId: string }> }
-    expect(turn.turn.kind).toBe('turn')
-    expect(turn.blocks).toHaveLength(3)
-    for (const b of turn.blocks) {
-      expect(b.kind).toBe('block')
-      expect(b.parentId).toBe(turn.turn.id)
-    }
-  }, 15000)
-
-  it('drives sdk.sendPrompt → streaming Block Nodes (e2e fake SDK)', async () => {
+  it('drives sdk.sendPrompt → streaming Block Nodes under the Prompt (Shape B, fake SDK)', async () => {
     // Spawn a fresh sidecar with the fake-SDK env flag flipped on so we
     // never touch the real Claude Agent SDK.
     sidecar.kill()
@@ -208,19 +157,38 @@ describe('sidecar integration', () => {
     const repo = join(tmp, 'repo')
     await mkdir(repo, { recursive: true })
 
-    const ws = (await sidecar.send({ id: '1', method: 'workspace.open', params: { repoPath: repo } })) as {
+    const ws = (await sidecar.send({
+      id: '1',
+      method: 'workspace.open',
+      params: { repoPath: repo },
+    })) as {
       id: string
     }
-    const root = (await sidecar.send({
+
+    // Set up a Shape B tree: a session-bearer Content Node with a
+    // Prompt child. The Prompt is the target of sdk.sendPrompt; its
+    // bearer parent gets the captured sdkSessionId.
+    const bearer = (await sidecar.send({
       id: '2',
       method: 'outline.create',
-      params: { workspaceId: ws.id, parentId: null, content: 'idea' },
+      params: {
+        workspaceId: ws.id,
+        parentId: null,
+        content: 'idea',
+        metadata: { sdkSessionId: null },
+      },
     })) as { id: string }
-    await sidecar.send({
+
+    const prompt = (await sidecar.send({
       id: '3',
-      method: 'thread.start',
-      params: { workspaceId: ws.id, rootNodeId: root.id },
-    })
+      method: 'outline.create',
+      params: {
+        workspaceId: ws.id,
+        parentId: bearer.id,
+        content: 'what is this repo?',
+        metadata: { state: 'streaming' },
+      },
+    })) as { id: string }
 
     // Push an API key into the sidecar (Rust would normally do this on
     // boot via the inject path).
@@ -235,14 +203,14 @@ describe('sidecar integration', () => {
       method: 'sdk.sendPrompt',
       params: {
         workspaceId: ws.id,
-        threadRootId: root.id,
+        promptNodeId: prompt.id,
         prompt: 'what is this repo?',
         repoPath: repo,
       },
-    })) as { events: unknown[]; result: { turnId: string; reason: string } }
+    })) as { events: unknown[]; result: { promptId: string; reason: string } }
 
     expect(result.result.reason).toBe('done')
-    expect(result.result.turnId).toBeTruthy()
+    expect(result.result.promptId).toBe(prompt.id)
 
     // The fake script emits 4 block-completes (text, tool_use, tool_result, text).
     const completes = result.events.filter(
@@ -250,18 +218,21 @@ describe('sidecar integration', () => {
     )
     expect(completes).toHaveLength(4)
 
-    // The turn-complete event also fires.
-    const turnComplete = result.events.find((e) => (e as { kind?: string }).kind === 'turn-complete')
-    expect(turnComplete).toBeTruthy()
+    // The prompt-complete event also fires.
+    const promptComplete = result.events.find(
+      (e) => (e as { kind?: string }).kind === 'prompt-complete',
+    )
+    expect(promptComplete).toBeTruthy()
 
-    // Block Nodes were persisted under the Turn.
-    const turnChildren = (await sidecar.send({
+    // Block Nodes were persisted as children of the Prompt directly —
+    // no Turn Node intermediate.
+    const blocks = (await sidecar.send({
       id: '6',
       method: 'outline.getChildren',
-      params: { workspaceId: ws.id, parentId: result.result.turnId },
+      params: { workspaceId: ws.id, parentId: prompt.id },
     })) as Array<{ id: string; kind: string }>
-    expect(turnChildren).toHaveLength(4)
-    for (const b of turnChildren) {
+    expect(blocks).toHaveLength(4)
+    for (const b of blocks) {
       expect(b.kind).toBe('block')
     }
   }, 30000)

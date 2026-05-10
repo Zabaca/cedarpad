@@ -139,32 +139,64 @@ async function reloadTree(): Promise<void> {
   await waitForBoot()
 }
 
-async function focusNodeByContent(text: string): Promise<void> {
-  await browser.execute((needle: string) => {
-    const cells = Array.from(document.querySelectorAll('.tree-node .content')) as HTMLElement[]
-    const found = cells.find((c) => (c.textContent ?? '').trim() === needle)
-    if (!found) throw new Error(`no .content cell with text "${needle}"`)
-    found.focus()
+/**
+ * v1.1: Cmd+Enter is the sole conversation-starting verb (ADR-0006), so
+ * it no longer toggles completion. The completion-toggle UX gesture is
+ * now click-the-bullet (or a future shortcut not yet bound). For this
+ * spec the gesture is incidental — we want to verify completion +
+ * hide-completed + drag-reorder, not the binding. Drive `outline.update`
+ * directly via IPC to flip `completed: true` on the focused node.
+ */
+async function toggleCompleteByContent(text: string): Promise<void> {
+  await browser.executeAsync(async (needle: string, done: () => void) => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> }
+      }
+    ).__TAURI_INTERNALS__
+    const hook = (window as unknown as { cedarpadE2E?: { reload: () => Promise<void> } })
+      .cedarpadE2E
+    if (!internals?.invoke || !hook) {
+      done()
+      return
+    }
+    const invoke = internals.invoke.bind(internals)
+    const active = (await invoke('rpc', { method: 'workspace.active', params: {} })) as {
+      id: string
+    } | null
+    if (!active) {
+      done()
+      return
+    }
+    // Find the node id by walking children-of-children for matching content.
+    const queue: (string | null)[] = [null]
+    let foundId: string | null = null
+    while (queue.length && !foundId) {
+      const parent = queue.shift()!
+      const kids = (await invoke('rpc', {
+        method: 'outline.getChildren',
+        params: { workspaceId: active.id, parentId: parent },
+      })) as { id: string; content: string }[]
+      for (const k of kids) {
+        if (k.content === needle) {
+          foundId = k.id
+          break
+        }
+        queue.push(k.id)
+      }
+    }
+    if (!foundId) {
+      done()
+      return
+    }
+    await invoke('rpc', {
+      method: 'outline.update',
+      params: { workspaceId: active.id, id: foundId, completed: true },
+    })
+    await hook.reload()
+    done()
   }, text)
-  await browser.pause(50)
-}
-
-async function pressCmdEnter(): Promise<void> {
-  await browser.execute(() => {
-    const el = document.activeElement as HTMLElement | null
-    if (!el) throw new Error('nothing focused')
-    el.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'Enter',
-        code: 'Enter',
-        metaKey: true,
-        bubbles: true,
-        cancelable: true,
-      }),
-    )
-  })
-  // Cmd+Enter → outline.update IPC → load() reload → re-render.
-  await browser.pause(400)
+  await browser.pause(150)
 }
 
 /**
@@ -304,9 +336,10 @@ describe('webview e2e: completion + drag-reorder', () => {
       throw new Error(`seed outline wrong: ${JSON.stringify(rows)}`)
     }
 
-    // ----- complete A.1 via Cmd+Enter -----
-    await focusNodeByContent('A.1')
-    await pressCmdEnter()
+    // ----- complete A.1 via IPC (v1.1: Cmd+Enter is now send-prompt; see
+    // ADR-0006). The completion behaviour itself is what this spec
+    // exercises, not the keybinding.
+    await toggleCompleteByContent('A.1')
     rows = await visibleRows()
     const a1Row = rows.find((r) => r.content === 'A.1')
     if (!a1Row || !a1Row.completed) {
