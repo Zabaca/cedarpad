@@ -63,6 +63,27 @@ export interface ThreadEngine {
   markTurnInterrupted(turnId: string): Promise<Node>
 
   /**
+   * Read the persisted Claude Agent SDK `sessionId` from the Thread
+   * Root's metadata, or null if it hasn't been captured yet (e.g. before
+   * the first turn). Used by the SDK runner to pass `resume: sessionId`
+   * on follow-up turns.
+   */
+  getThreadRootSdkSessionId(threadRootId: string): Promise<string | null>
+  /**
+   * Persist the SDK-emitted `sessionId` onto the Thread Root's metadata.
+   * Idempotent: re-stamping the same id is a no-op for correctness;
+   * stamping a different id late shouldn't happen in practice (SDK
+   * keeps the session id stable across `resume`).
+   */
+  setThreadRootSdkSessionId(threadRootId: string, sessionId: string): Promise<Node>
+  /**
+   * Stamp the SDK assistant-message uuid onto a Turn Node's metadata.
+   * Stored for future "branch from this Turn" wiring; nothing reads it
+   * yet.
+   */
+  setTurnSdkMessageUuid(turnId: string, uuid: string): Promise<Node>
+
+  /**
    * Branch from a Block Node. Creates a new sibling Thread (its own
    * Content-Node-as-Thread-Root marked `isThreadRoot: true`) under the
    * same parent as the original Thread Root. The new Thread's children
@@ -213,6 +234,31 @@ export function createThreadEngine(store: OutlineStore): ThreadEngine {
       return store.updateNode({
         id: turnId,
         metadata: { ...turn.metadata, state: 'interrupted' },
+      })
+    },
+
+    async getThreadRootSdkSessionId(threadRootId) {
+      const node = await store.getNode(threadRootId)
+      if (!node) return null
+      const sid = (node.metadata as { sdkSessionId?: unknown }).sdkSessionId
+      return typeof sid === 'string' && sid.length > 0 ? sid : null
+    },
+
+    async setThreadRootSdkSessionId(threadRootId, sessionId) {
+      const node = await store.getNode(threadRootId)
+      if (!node) throw new Error(`setThreadRootSdkSessionId: node ${threadRootId} not found`)
+      return store.updateNode({
+        id: threadRootId,
+        metadata: { ...node.metadata, sdkSessionId: sessionId },
+      })
+    },
+
+    async setTurnSdkMessageUuid(turnId, uuid) {
+      const turn = await store.getNode(turnId)
+      if (!turn) throw new Error(`setTurnSdkMessageUuid: turn ${turnId} not found`)
+      return store.updateNode({
+        id: turnId,
+        metadata: { ...turn.metadata, sdkMessageUuid: uuid },
       })
     },
 
