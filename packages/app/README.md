@@ -100,8 +100,14 @@ Caveats:
 - Tests use `mkdtempWorktreeScoped` (`modules/test-utils/worktreeTmp.ts`), which reads `CEDARPAD_TMP` with a fallback to `os.tmpdir()`. No fixed `/tmp/...` paths anywhere.
 - Per-repo workspace DBs are inherently worktree-safe (each repo has its own DB).
 
-## Known limitations (slice 1)
+## Building a self-installable .app
 
-- The Tauri shell is wired and `cargo check`s cleanly, but a full `tauri build` requires the Tauri CLI prerequisites (Xcode CLT on macOS, an icon set Tauri's bundler can read, and an Apple developer ID for signing). The `icons/icon.png` shipped is a 32×32 placeholder; replace with a proper icon set before distribution.
-- The release-mode sidecar path (`resources/sidecar/server.js`) expects you to bundle the sidecar with `bun build --compile` and copy it into Tauri resources. Slice 1 dev runs the unbundled `bun run src-sidecar/src/server.ts` directly.
+`bun run build:macos` produces `build/cedarpad.app` — ad-hoc signed,
+ready to `cp -R` into `/Applications/`. See `BUILD.md` for the full
+build pipeline, signing story, version-bump procedure, and known
+limitations of the v1 distribution.
+
+## Known limitations
+
 - The plan's Playwright `tauri-driver` e2e was deemed too brittle in the initial slice; the IPC-level vitest at `e2e/tests/persistence.spec.ts` covers the same persistence semantics without driving the WebView. A WebView-level equivalent now also exists at `e2e/webview/specs/restart.spec.ts` (see "Two e2e tiers" above) — it produces three nested nodes via real keystrokes and asserts they're rendered after a fresh launch. Acceptance criterion #8 is therefore now fully met.
+- Release builds embed the bundled sidecar JS plus its `@libsql/<platform>` native binding under `Contents/Resources/sidecar/`, but still rely on `bun` being on PATH for the launched .app process. See `BUILD.md` "Known limitations" for context and the deferred `bun build --compile` follow-up.
