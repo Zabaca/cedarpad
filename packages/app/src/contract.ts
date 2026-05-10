@@ -563,20 +563,6 @@ export const Methods = {
     input: z.object({}),
     output: z.object({ ok: z.literal(true) }),
   },
-  // Internal: Rust → sidecar push of the macOS Keychain item
-  // `Claude Code-credentials` (account = `$USER`). On modern macOS,
-  // `claude /login` writes only to the Keychain — there is no
-  // `~/.claude/.credentials.json` file — so the sidecar can't read it
-  // directly without prompting the OS ACL under Bun's identity. Rust
-  // owns the read (same binary as the BYOK store, so one ACL grant
-  // covers both items) and pushes the raw credentials JSON (or null
-  // when absent) to the sidecar at startup. `auth.detect` consults the
-  // cached value between the credentials-file check and the BYOK
-  // check.
-  'auth.injectClaudeCodeCredentials': {
-    input: z.object({ content: z.string().nullable() }),
-    output: z.object({ ok: z.literal(true) }),
-  },
 } as const satisfies Record<string, { input: z.ZodTypeAny; output: z.ZodTypeAny }>
 
 export type MethodName = keyof typeof Methods
