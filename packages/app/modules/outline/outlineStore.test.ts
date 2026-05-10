@@ -194,23 +194,23 @@ describe('outlineStore', () => {
     expect(a11Fetched?.parentId).toBe(a1.id)
   })
 
-  it('CRUDs all three kinds (content, turn, block) without CHECK violations', async () => {
+  it('CRUDs all three Shape B kinds (content, block, branches) without CHECK violations', async () => {
     const c = await store.createNode({ parentId: null, kind: 'content', content: 'c' })
-    const t = await store.createNode({ parentId: c.id, kind: 'turn', content: '' })
-    const b = await store.createNode({ parentId: t.id, kind: 'block', content: 'hello' })
+    const b = await store.createNode({ parentId: c.id, kind: 'block', content: 'hello' })
+    const br = await store.createNode({ parentId: c.id, kind: 'branches', content: '' })
 
     expect((await store.getNode(c.id))?.kind).toBe('content')
-    expect((await store.getNode(t.id))?.kind).toBe('turn')
     expect((await store.getNode(b.id))?.kind).toBe('block')
+    expect((await store.getNode(br.id))?.kind).toBe('branches')
 
     // getChildren preserves kinds
-    const tChildren = await store.getChildren(t.id)
-    expect(tChildren).toHaveLength(1)
-    expect(tChildren[0]!.kind).toBe('block')
+    const cChildren = await store.getChildren(c.id)
+    expect(cChildren).toHaveLength(2)
+    expect(cChildren.map((n) => n.kind).sort()).toEqual(['block', 'branches'])
 
     // delete cascades across kinds
     await store.deleteNode(c.id)
-    expect(await store.getNode(t.id)).toBeNull()
     expect(await store.getNode(b.id)).toBeNull()
+    expect(await store.getNode(br.id)).toBeNull()
   })
 })

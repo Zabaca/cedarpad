@@ -1,24 +1,25 @@
 /**
- * WebView e2e (slice 4): crash recovery.
+ * WebView e2e (v1.1 Shape B): crash recovery.
  *
- * The acceptance criterion: if the app crashes mid-turn, on next launch
- * the partial Turn must be marked `interrupted` (visually distinct from
- * `cancelled`).
+ * Acceptance criterion: if the app crashes mid-Prompt, on next launch
+ * the partial Prompt must be marked `interrupted` (visually distinct
+ * from `cancelled`).
  *
  * Scenario:
- *   1. Create a Thread Root and an orphan streaming Turn (a Turn Node
- *      with `metadata.state = 'streaming'`). We construct it directly via
- *      a renderer test hook rather than killing the sidecar mid-real-
- *      stream — the SCAN logic is the production code under test, and
- *      from its point of view "an orphan streaming Turn on disk" is the
- *      input regardless of how it got there. (The unit test
- *      `modules/thread/crashRecovery.test.ts` already covers the engine
- *      side; this spec verifies the renderer surfaces the recovered
- *      `interrupted` state.)
+ *   1. Create a session-bearer Content Node and an orphan streaming
+ *      Prompt (a Content Node with `metadata.state = 'streaming'`).
+ *      We construct it directly via a renderer test hook rather than
+ *      killing the sidecar mid-real-stream — the SCAN logic is the
+ *      production code under test, and from its point of view "an
+ *      orphan streaming Prompt on disk" is the input regardless of how
+ *      it got there. (The unit test
+ *      `modules/thread/crashRecovery.test.ts` already covers the
+ *      engine side; this spec verifies the renderer surfaces the
+ *      recovered `interrupted` state.)
  *   2. Run `thread.scanInterrupted` (the same call App.tsx fires on
  *      launch).
- *   3. Reload the tree and assert the Turn now carries
- *      `data-turn-state="interrupted"` — the visual treatment that
+ *   3. Reload the tree and assert the Prompt now carries
+ *      `data-prompt-state="interrupted"` — the visual treatment that
  *      tells the user this was a crash, not a deliberate cancel.
  */
 import { browser, $$ } from '@wdio/globals'
@@ -29,7 +30,7 @@ interface VisualRow {
   content: string
   depth: number
   nodeId: string
-  turnState?: string
+  promptState?: string
 }
 
 async function rows(): Promise<VisualRow[]> {
@@ -43,7 +44,7 @@ async function rows(): Promise<VisualRow[]> {
         content: (n.querySelector('.content')?.textContent ?? '').trim(),
         depth: Math.round(padding / 18),
         nodeId: n.dataset.nodeId ?? '',
-        turnState: n.dataset.turnState,
+        promptState: n.dataset.promptState,
       }
     })
   })
@@ -60,20 +61,21 @@ async function waitForBoot(): Promise<void> {
 }
 
 interface SetupResult {
-  threadRootId: string
+  bearerId: string
   workspaceId: string
 }
 
-async function createThreadRoot(content: string): Promise<SetupResult> {
+async function createBearer(content: string): Promise<SetupResult> {
   return browser.executeAsync<SetupResult, [string]>((c, done) => {
     const tauri = (
-      window as { __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> } }
+      window as {
+        __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> }
+      }
     ).__TAURI_INTERNALS__
-    const hook = (
-      window as unknown as { cedarpadE2E?: { reload: () => Promise<void> } }
-    ).cedarpadE2E
+    const hook = (window as unknown as { cedarpadE2E?: { reload: () => Promise<void> } })
+      .cedarpadE2E
     if (!tauri?.invoke || !hook) {
-      done({ threadRootId: '', workspaceId: '' })
+      done({ bearerId: '', workspaceId: '' })
       return
     }
     let workspaceId = ''
@@ -85,44 +87,43 @@ async function createThreadRoot(content: string): Promise<SetupResult> {
         workspaceId = list[0]!.id
         return tauri.invoke!('rpc', {
           method: 'outline.create',
-          params: { workspaceId, parentId: null, content: c },
+          params: {
+            workspaceId,
+            parentId: null,
+            content: c,
+            metadata: { sdkSessionId: null },
+          },
         })
       })
       .then((node) =>
-        tauri.invoke!('rpc', {
-          method: 'thread.start',
-          params: { workspaceId, rootNodeId: (node as { id: string }).id },
-        }).then(() => node),
-      )
-      .then((node) =>
         hook
           .reload()
-          .then(() => done({ threadRootId: (node as { id: string }).id, workspaceId })),
+          .then(() => done({ bearerId: (node as { id: string }).id, workspaceId })),
       )
-      .catch(() => done({ threadRootId: '', workspaceId: '' }))
+      .catch(() => done({ bearerId: '', workspaceId: '' }))
   }, content)
 }
 
-async function createOrphanStreamingTurn(threadRootId: string): Promise<string> {
+async function createOrphanStreamingPrompt(parentId: string): Promise<string> {
   return browser.executeAsync<string, [string]>((id, done) => {
     const hook = (
       window as unknown as {
-        cedarpadE2E?: { createOrphanStreamingTurn: (threadRootId: string) => Promise<string> }
+        cedarpadE2E?: { createOrphanStreamingPrompt: (parentId: string) => Promise<string> }
       }
     ).cedarpadE2E
-    if (!hook?.createOrphanStreamingTurn) {
+    if (!hook?.createOrphanStreamingPrompt) {
       done('')
       return
     }
     hook
-      .createOrphanStreamingTurn(id)
-      .then((turnId) => done(turnId))
+      .createOrphanStreamingPrompt(id)
+      .then((promptId) => done(promptId))
       .catch(() => done(''))
-  }, threadRootId)
+  }, parentId)
 }
 
 interface ScanResult {
-  interruptedTurnIds: string[]
+  interruptedPromptIds: string[]
 }
 
 async function runScan(): Promise<ScanResult> {
@@ -131,83 +132,82 @@ async function runScan(): Promise<ScanResult> {
       window as unknown as { cedarpadE2E?: { scanInterrupted: () => Promise<ScanResult> } }
     ).cedarpadE2E
     if (!hook?.scanInterrupted) {
-      done({ interruptedTurnIds: [] })
+      done({ interruptedPromptIds: [] })
       return
     }
     hook
       .scanInterrupted()
       .then((r) => done(r))
-      .catch(() => done({ interruptedTurnIds: [] }))
+      .catch(() => done({ interruptedPromptIds: [] }))
   })
 }
 
 async function deleteNode(workspaceId: string, id: string): Promise<void> {
-  await browser.executeAsync<void, [string, string]>((wsId, nodeId, done) => {
-    const tauri = (
-      window as { __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> } }
-    ).__TAURI_INTERNALS__
-    const hook = (
-      window as unknown as { cedarpadE2E?: { reload: () => Promise<void> } }
-    ).cedarpadE2E
-    if (!tauri?.invoke || !hook) {
-      done()
-      return
-    }
-    tauri
-      .invoke('rpc', { method: 'outline.delete', params: { workspaceId: wsId, id: nodeId } })
-      .then(() => hook.reload().then(() => done()))
-      .catch(() => done())
-  }, workspaceId, id)
+  await browser.executeAsync<void, [string, string]>(
+    (wsId, nodeId, done) => {
+      const tauri = (
+        window as {
+          __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const hook = (window as unknown as { cedarpadE2E?: { reload: () => Promise<void> } })
+        .cedarpadE2E
+      if (!tauri?.invoke || !hook) {
+        done()
+        return
+      }
+      tauri
+        .invoke('rpc', { method: 'outline.delete', params: { workspaceId: wsId, id: nodeId } })
+        .then(() => hook.reload().then(() => done()))
+        .catch(() => done())
+    },
+    workspaceId,
+    id,
+  )
 }
 
-describe('webview e2e (slice 4): crash recovery', () => {
-  it('marks orphan streaming Turn as interrupted after scan', async () => {
+describe('webview e2e (v1.1 Shape B): crash recovery', () => {
+  it('marks orphan streaming Prompt as interrupted after scan', async () => {
     await browser.url('tauri://localhost')
     await waitForBoot()
 
-    // Reset zoom in case a prior spec left things zoomed in.
     await browser.execute(() => {
       const root = document.querySelector('.breadcrumbs .crumb-root') as HTMLElement | null
       if (root && !(root as HTMLButtonElement).disabled) root.click()
     })
     await browser.pause(200)
 
-    const { threadRootId, workspaceId } = await createThreadRoot(
-      'cedarpad slice4 crash-recovery spec',
-    )
-    if (!threadRootId) throw new Error('createThreadRoot failed')
+    const { bearerId, workspaceId } = await createBearer('cedarpad v1.1 crash-recovery spec')
+    if (!bearerId) throw new Error('createBearer failed')
 
     try {
-      const turnId = await createOrphanStreamingTurn(threadRootId)
-      if (!turnId) throw new Error('createOrphanStreamingTurn failed')
+      const promptId = await createOrphanStreamingPrompt(bearerId)
+      if (!promptId) throw new Error('createOrphanStreamingPrompt failed')
 
-      // Sanity: before the scan, the Turn renders as `streaming`.
+      // Sanity: before the scan, the Prompt renders as `streaming`.
       const before = await rows()
-      const turnBefore = before.find((r) => r.nodeId === turnId)
-      if (!turnBefore || turnBefore.turnState !== 'streaming') {
+      const promptBefore = before.find((r) => r.nodeId === promptId)
+      if (!promptBefore || promptBefore.promptState !== 'streaming') {
         throw new Error(
-          `expected the orphan turn to render as streaming pre-scan; got ${JSON.stringify(turnBefore)}`,
+          `expected the orphan prompt to render as streaming pre-scan; got ${JSON.stringify(promptBefore)}`,
         )
       }
 
       const scan = await runScan()
-      if (!scan.interruptedTurnIds.includes(turnId)) {
+      if (!scan.interruptedPromptIds.includes(promptId)) {
         throw new Error(
-          `scan did not report our turn as interrupted; got ${JSON.stringify(scan)}`,
+          `scan did not report our prompt as interrupted; got ${JSON.stringify(scan)}`,
         )
       }
 
-      // After the scan, the renderer reflects state=interrupted.
       const after = await rows()
-      const turnAfter = after.find((r) => r.nodeId === turnId)
-      if (!turnAfter) throw new Error('orphan turn vanished after scan')
-      if (turnAfter.turnState !== 'interrupted') {
-        throw new Error(
-          `expected state=interrupted; got ${JSON.stringify(turnAfter)}`,
-        )
+      const promptAfter = after.find((r) => r.nodeId === promptId)
+      if (!promptAfter) throw new Error('orphan prompt vanished after scan')
+      if (promptAfter.promptState !== 'interrupted') {
+        throw new Error(`expected state=interrupted; got ${JSON.stringify(promptAfter)}`)
       }
     } finally {
-      if (threadRootId) await deleteNode(workspaceId, threadRootId)
+      if (bearerId) await deleteNode(workspaceId, bearerId)
     }
   })
 })

@@ -16,14 +16,14 @@
 // namespace form mirrors zod's own index.js (`import * as z`).
 import * as z from 'zod'
 
-// ---------- Block / Thread shapes (slice 2) ----------
+// ---------- Block / Prompt shapes (v1.1 Shape B) ----------
 
 /**
  * The structured pieces of a Claude turn. Each Block Node carries one of
  * these as the canonical encoding of its payload via `nodes.metadata`.
  *
- * Slice 2 introduces fixture turns only; the Claude SDK (slice 3) feeds
- * real `tool_use` / `tool_result` blocks through the same shape.
+ * In Shape B (ADR-0006) Block Nodes are children of Prompts directly —
+ * there is no Turn Node intermediate.
  */
 export const BlockKindSchema = z.enum(['text', 'tool_use', 'tool_result'])
 export type BlockKind = z.infer<typeof BlockKindSchema>
@@ -52,84 +52,88 @@ export const BlockPayloadSchema = z.discriminatedUnion('kind', [
 export type BlockPayload = z.infer<typeof BlockPayloadSchema>
 
 /**
- * Lifecycle of a Turn Node (slice 4):
- *   - `streaming`   — beginTurn fired; SDK runner is producing blocks. If
+ * Lifecycle of a Prompt (ADR-0006):
+ *   - `streaming`   — sendPrompt fired; SDK runner is producing blocks. If
  *                     the app is killed in this state, crash recovery on
  *                     next launch transitions it to `interrupted`.
  *   - `done`        — turn-complete fired naturally.
  *   - `cancelled`   — user fired sdk.cancel; intentional stop.
  *   - `interrupted` — runner was no longer alive when next launch saw a
- *                     `streaming` Turn. Visually distinct from `cancelled`
+ *                     `streaming` Prompt. Visually distinct from `cancelled`
  *                     so the user knows the partial output is not a real
  *                     Claude response.
+ *
+ * Absence of `state` indicates an unsent draft (a Content Node that has
+ * not yet been sent as a Prompt).
  */
-export const TurnStateSchema = z.enum(['streaming', 'done', 'cancelled', 'interrupted'])
-export type TurnState = z.infer<typeof TurnStateSchema>
+export const PromptStateSchema = z.enum(['streaming', 'done', 'cancelled', 'interrupted'])
+export type PromptState = z.infer<typeof PromptStateSchema>
 
-/** Marker stored in metadata of a Turn Node. */
-export const TurnMetadataSchema = z.object({
-  role: z.literal('turn'),
-  threadRootId: z.string(),
-  /**
-   * Lifecycle state. Optional for back-compat with slice 2 fixture turns
-   * that pre-date this field; missing is treated as `done` by the
-   * renderer (slice 2 fixture turns were always one-shot).
-   */
-  state: TurnStateSchema.optional(),
-  /**
-   * Legacy slice 3 marker — kept for back-compat with already-persisted
-   * turns. New code reads `state === 'cancelled'` instead.
-   */
-  cancelled: z.boolean().optional(),
-  /**
-   * Claude Agent SDK assistant-message uuid for this Turn. Captured from
-   * the SDK's `assistant` messages so a future "branch from this Turn" PR
-   * can pass `resumeSessionAt: sdkMessageUuid` to fork at the exact
-   * boundary. Null when not yet captured (e.g. cancelled before any
-   * assistant message landed) or when the Turn predates this field.
-   */
-  sdkMessageUuid: z.string().nullable().optional(),
-})
-export type TurnMetadata = z.infer<typeof TurnMetadataSchema>
+/**
+ * Marker stored in metadata of a Content Node that has been sent as a
+ * Prompt. Open-ended (`passthrough`) so a Content Node that's also a
+ * session-bearer (the root-level "Or" case) can carry both Prompt and
+ * session-bearer fields on the same metadata object.
+ */
+export const PromptMetadataSchema = z
+  .object({
+    state: PromptStateSchema.optional(),
+    /**
+     * Claude Agent SDK assistant-message uuid for this Prompt. Captured
+     * from the SDK's `assistant` messages so a future "branch from this
+     * Prompt" PR can pass `resumeSessionAt: sdkMessageUuid` to fork at
+     * the exact boundary. Last-write-wins per Prompt: when an SDK turn
+     * includes multiple assistant messages, the LAST one is the
+     * resumeSessionAt boundary.
+     */
+    sdkMessageUuid: z.string().nullable().optional(),
+  })
+  .passthrough()
+export type PromptMetadata = z.infer<typeof PromptMetadataSchema>
+
+/**
+ * Marker stored in metadata of a Content Node that carries a Claude SDK
+ * session — i.e. a session-bearer. Open-ended so Prompt+session-bearer
+ * can coexist on the same node (the root-level "Or" case).
+ */
+export const SessionBearerMetadataSchema = z
+  .object({
+    /**
+     * Claude Agent SDK session id for this conversation (captured from
+     * the SDK's `system.init` event on the first Prompt under the
+     * bearer). Persisted so subsequent `sdk.query()` calls can pass
+     * `resume: sdkSessionId` and the SDK replays prior conversation
+     * history server-side. Null/absent until the first Prompt lands;
+     * once set, sticks for the life of the bearer.
+     */
+    sdkSessionId: z.string().nullable().optional(),
+  })
+  .passthrough()
+export type SessionBearerMetadata = z.infer<typeof SessionBearerMetadataSchema>
 
 /** Marker stored in metadata of a Block Node — wraps its payload. */
 export const BlockMetadataSchema = z.object({
   role: z.literal('block'),
-  threadRootId: z.string(),
   payload: BlockPayloadSchema,
 })
 export type BlockMetadata = z.infer<typeof BlockMetadataSchema>
-
-/** Marker stored in metadata of a Content Node that has been promoted to a Thread Root. */
-export const ThreadRootMetadataSchema = z.object({
-  isThreadRoot: z.literal(true),
-  /**
-   * Claude Agent SDK session id for this Thread (captured from the SDK's
-   * `system.init` event on the first turn). Persisted so subsequent
-   * `sdk.query()` calls can pass `resume: sdkSessionId` and the SDK
-   * replays prior conversation history server-side. Null/absent until
-   * the first turn lands; once set, sticks for the life of the Thread.
-   */
-  sdkSessionId: z.string().nullable().optional(),
-})
-export type ThreadRootMetadata = z.infer<typeof ThreadRootMetadataSchema>
 
 // ---------- JSON column schemas ----------
 
 /**
  * Open-ended union: Content Nodes carry arbitrary metadata (incl. the
- * thread-root marker), Turn / Block Nodes carry the typed shapes above.
+ * Prompt + session-bearer markers above), Block Nodes carry the strict
+ * BlockMetadata shape.
  *
- * We use `passthrough` + an optional discriminator rather than a strict
- * discriminated union so legacy rows (`metadata: {}`) keep parsing.
- * `threadEngine` parses metadata against the strict shapes when it cares.
+ * We use `passthrough` rather than a strict discriminated union so legacy
+ * rows (`metadata: {}`) keep parsing.
  */
 export const NodeMetadataSchema = z.object({}).passthrough()
 export type NodeMetadata = z.infer<typeof NodeMetadataSchema>
 
 // ---------- Domain shapes ----------
 
-export const NodeKindSchema = z.enum(['content', 'turn', 'block'])
+export const NodeKindSchema = z.enum(['content', 'block', 'branches'])
 export type NodeKind = z.infer<typeof NodeKindSchema>
 
 export const NodeSchema = z.object({
@@ -198,40 +202,15 @@ export const OutlineSearchInputSchema = z.object({
 })
 export type OutlineSearchInput = z.infer<typeof OutlineSearchInputSchema>
 
-// ---------- Thread RPC (slice 2) ----------
-
-export const ThreadStartInputSchema = z.object({
-  workspaceId: z.string(),
-  rootNodeId: z.string(),
-})
-export type ThreadStartInput = z.infer<typeof ThreadStartInputSchema>
-
-export const ThreadAppendPromptInputSchema = z.object({
-  workspaceId: z.string(),
-  threadRootId: z.string(),
-  content: z.string(),
-})
-export type ThreadAppendPromptInput = z.infer<typeof ThreadAppendPromptInputSchema>
-
-export const ThreadAppendTurnInputSchema = z.object({
-  workspaceId: z.string(),
-  threadRootId: z.string(),
-  blocks: z.array(BlockPayloadSchema),
-})
-export type ThreadAppendTurnInput = z.infer<typeof ThreadAppendTurnInputSchema>
-
-export const ThreadAppendTurnOutputSchema = z.object({
-  turn: NodeSchema,
-  blocks: z.array(NodeSchema),
-})
-export type ThreadAppendTurnOutput = z.infer<typeof ThreadAppendTurnOutputSchema>
+// ---------- Thread RPC (v1.1 Shape B) ----------
 
 /**
- * Crash recovery (slice 4). On launch the renderer asks the sidecar to scan
- * for any Turn Nodes left in `state: 'streaming'` (no live runner is
- * driving them — necessarily so, since the sidecar process is fresh) and
- * stamp them `state: 'interrupted'`. Returns the ids that were transitioned
- * so the UI can surface them.
+ * Crash recovery (slice 4 / v1.1). On launch the renderer asks the
+ * sidecar to scan for any Prompt Content Nodes left in
+ * `metadata.state: 'streaming'` (no live runner is driving them —
+ * necessarily so, since the sidecar process is fresh) and stamp them
+ * `state: 'interrupted'`. Returns the ids that were transitioned so the
+ * UI can surface them.
  */
 export const ThreadScanInterruptedInputSchema = z.object({
   workspaceId: z.string(),
@@ -239,61 +218,9 @@ export const ThreadScanInterruptedInputSchema = z.object({
 export type ThreadScanInterruptedInput = z.infer<typeof ThreadScanInterruptedInputSchema>
 
 export const ThreadScanInterruptedOutputSchema = z.object({
-  interruptedTurnIds: z.array(z.string()),
+  interruptedPromptIds: z.array(z.string()),
 })
 export type ThreadScanInterruptedOutput = z.infer<typeof ThreadScanInterruptedOutputSchema>
-
-/**
- * Branch verb (slice 5). From any Block Node, fork the conversation
- * into a sibling Thread under the same Thread Root with full prior
- * history through the source Block. Returns the new Thread Root id and
- * the empty prompt slot id (the renderer focuses the latter).
- */
-export const ThreadBranchInputSchema = z.object({
-  workspaceId: z.string(),
-  blockId: z.string(),
-})
-export type ThreadBranchInput = z.infer<typeof ThreadBranchInputSchema>
-
-export const ThreadBranchOutputSchema = z.object({
-  newThreadId: z.string(),
-  promptNodeId: z.string(),
-})
-export type ThreadBranchOutput = z.infer<typeof ThreadBranchOutputSchema>
-
-/**
- * Retry verb (slice 6). Same shape as branch, distinct method so the
- * sidecar dispatches to `engine.retry` (mode = 'retry'). The cloned
- * history goes up to but EXCLUDES the source Block.
- */
-export const ThreadRetryInputSchema = z.object({
-  workspaceId: z.string(),
-  blockId: z.string(),
-})
-export type ThreadRetryInput = z.infer<typeof ThreadRetryInputSchema>
-
-export const ThreadRetryOutputSchema = z.object({
-  newThreadId: z.string(),
-  promptNodeId: z.string(),
-})
-export type ThreadRetryOutput = z.infer<typeof ThreadRetryOutputSchema>
-
-/**
- * NewSibling verb (slice 6). Argument is the Thread Root id, not a
- * Block — the new sibling Thread carries no conversation history at
- * all.
- */
-export const ThreadNewSiblingInputSchema = z.object({
-  workspaceId: z.string(),
-  threadRootId: z.string(),
-})
-export type ThreadNewSiblingInput = z.infer<typeof ThreadNewSiblingInputSchema>
-
-export const ThreadNewSiblingOutputSchema = z.object({
-  newThreadId: z.string(),
-  promptNodeId: z.string(),
-})
-export type ThreadNewSiblingOutput = z.infer<typeof ThreadNewSiblingOutputSchema>
 
 // ---------- Auth RPC (slice 3) ----------
 
@@ -337,18 +264,18 @@ export const AuthDetectOutputSchema = z.object({
 })
 export type AuthDetectOutput = z.infer<typeof AuthDetectOutputSchema>
 
-// ---------- SDK runner RPC (slice 3) ----------
+// ---------- SDK runner RPC (v1.1 Shape B) ----------
 
 /**
  * SDK runner events as they flow back from the sidecar. The runner translates
  * Claude Code SDK message types into these — text deltas accumulate into a
  * single Block Node's content; tool_use / tool_result land as discrete Block
- * Nodes when complete; turn-complete fires once at the end.
+ * Nodes when complete; prompt-complete fires once at the end.
  *
- * `block-complete` carries the full `BlockPayload` so the renderer (or the
- * sidecar's appendTurn fan-out) can persist the Block. `text-delta` is for
- * incremental UI rendering of an in-flight text block; the sidecar still
- * appends a single Block Node when the block completes.
+ * `block-complete` carries the full `BlockPayload` so the renderer can
+ * persist the Block. `text-delta` is for incremental UI rendering of an
+ * in-flight text block; the sidecar still appends a single Block Node
+ * when the block completes.
  */
 export const RunnerEventSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -364,8 +291,8 @@ export const RunnerEventSchema = z.discriminatedUnion('kind', [
     payload: BlockPayloadSchema,
   }),
   z.object({
-    kind: z.literal('turn-complete'),
-    turnId: z.string(),
+    kind: z.literal('prompt-complete'),
+    promptId: z.string(),
   }),
   z.object({
     kind: z.literal('error'),
@@ -375,9 +302,14 @@ export const RunnerEventSchema = z.discriminatedUnion('kind', [
 ])
 export type RunnerEvent = z.infer<typeof RunnerEventSchema>
 
+/**
+ * Streaming send. The Prompt is the focused Content Node (its parent
+ * carries `sdkSessionId` — the renderer ensures that before this call).
+ * Block children of the Prompt are written as the SDK streams them.
+ */
 export const SdkSendPromptInputSchema = z.object({
   workspaceId: z.string(),
-  threadRootId: z.string(),
+  promptNodeId: z.string(),
   prompt: z.string(),
   /** Absolute path to the repo Claude is allowed to read. */
   repoPath: z.string(),
@@ -385,18 +317,18 @@ export const SdkSendPromptInputSchema = z.object({
 export type SdkSendPromptInput = z.infer<typeof SdkSendPromptInputSchema>
 
 export const SdkCancelInputSchema = z.object({
-  threadRootId: z.string(),
+  promptNodeId: z.string(),
 })
 export type SdkCancelInput = z.infer<typeof SdkCancelInputSchema>
 
 export const SdkRecycleInputSchema = z.object({
-  threadRootId: z.string(),
+  promptNodeId: z.string(),
 })
 export type SdkRecycleInput = z.infer<typeof SdkRecycleInputSchema>
 
 export const SdkSendPromptResultSchema = z.object({
-  /** ID of the Turn Node that was written. */
-  turnId: z.string(),
+  /** ID of the Prompt Node whose Block children were written. */
+  promptId: z.string(),
   /** Reason the run ended. `done` = SDK reported success; otherwise SDK error code. */
   reason: z.enum(['done', 'cancelled', 'error']),
 })
@@ -493,33 +425,9 @@ export const Methods = {
     input: OutlineSearchInputSchema,
     output: z.array(NodeSchema),
   },
-  'thread.start': {
-    input: ThreadStartInputSchema,
-    output: NodeSchema,
-  },
-  'thread.appendPrompt': {
-    input: ThreadAppendPromptInputSchema,
-    output: NodeSchema,
-  },
-  'thread.appendTurn': {
-    input: ThreadAppendTurnInputSchema,
-    output: ThreadAppendTurnOutputSchema,
-  },
   'thread.scanInterrupted': {
     input: ThreadScanInterruptedInputSchema,
     output: ThreadScanInterruptedOutputSchema,
-  },
-  'thread.branch': {
-    input: ThreadBranchInputSchema,
-    output: ThreadBranchOutputSchema,
-  },
-  'thread.retry': {
-    input: ThreadRetryInputSchema,
-    output: ThreadRetryOutputSchema,
-  },
-  'thread.newSibling': {
-    input: ThreadNewSiblingInputSchema,
-    output: ThreadNewSiblingOutputSchema,
   },
   // ---- Auth (slice 3) ----
   // Sidecar handlers are typically no-ops or delegate to its keychainStore;
@@ -550,7 +458,7 @@ export const Methods = {
     input: z.object({ mode: AuthModeSchema.nullable() }),
     output: z.object({ ok: z.literal(true) }),
   },
-  // ---- SDK runner (slice 3) ----
+  // ---- SDK runner ----
   // `sdk.sendPrompt` is the streaming case. Its `output` schema describes the
   // FINAL result envelope (sent in the wire `ok` response); the streaming
   // events flow as discriminated `RunnerEventSchema` messages over a

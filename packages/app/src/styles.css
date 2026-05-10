@@ -98,60 +98,57 @@ body {
   background: #f1f5fb;
 }
 
-/* ---- Slice 2: per-kind visual treatment ---- */
-/* Thread Root: Content Node promoted via thread.start. */
-.tree-node.visual-thread-root .bullet {
+/* ---- v1.1 Shape B: per-kind visual treatment ---- */
+/* Session-bearer: Content Node carrying metadata.sdkSessionId. */
+.tree-node.visual-session-bearer .bullet {
   color: #2155cd;
   font-weight: 700;
 }
-.tree-node.visual-thread-root .content {
+.tree-node.visual-session-bearer .content {
   border-left: 3px solid #2155cd;
   padding-left: 8px;
   font-weight: 600;
 }
 
-/* Turn Node: one Claude turn — labelled, dimmer than a Thread Root. */
-.tree-node.visual-turn .bullet {
-  color: #777;
+/* Prompt: Content Node that has been sent (carries metadata.state). */
+.tree-node.visual-prompt .bullet {
+  color: #444;
+  font-weight: 600;
 }
-.tree-node.visual-turn .content {
-  color: #555;
-  font-style: italic;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.tree-node.visual-turn .content::before {
-  content: 'turn';
+.tree-node.visual-prompt .content {
+  border-left: 2px solid #444;
+  padding-left: 8px;
 }
 
-/* Slice 4: lifecycle states for a Turn Node. */
-.tree-node.visual-turn.turn-state-streaming .content::before {
-  content: 'turn · streaming';
-  color: #2155cd;
+/* A Prompt that's also a session-bearer (root-level "Or" case). */
+.tree-node.visual-prompt.session-bearer .content {
+  border-left: 3px solid #2155cd;
 }
-.tree-node.visual-turn.turn-state-streaming .bullet {
+
+/* Per-state lifecycle treatments on a Prompt. */
+.tree-node.visual-prompt.prompt-state-streaming .bullet {
   color: #2155cd;
   animation: cedarpad-pulse 1.2s ease-in-out infinite;
 }
-.tree-node.visual-turn.turn-state-cancelled .content::before {
-  content: 'turn · cancelled';
-  color: #b06e00;
-}
-.tree-node.visual-turn.turn-state-cancelled {
+.tree-node.visual-prompt.prompt-state-cancelled {
   opacity: 0.7;
 }
-.tree-node.visual-turn.turn-state-interrupted .content::before {
-  content: 'turn · interrupted (app crashed)';
-  color: #b00020;
+.tree-node.visual-prompt.prompt-state-cancelled .content::after {
+  content: ' · cancelled';
+  color: #b06e00;
+  font-weight: 400;
+  font-size: 11px;
 }
-.tree-node.visual-turn.turn-state-interrupted {
+.tree-node.visual-prompt.prompt-state-interrupted {
   background: #fff4f4;
   border-left: 3px solid #f5b3b3;
   border-radius: 3px;
 }
-.tree-node.visual-turn.turn-state-done .content::before {
-  content: 'turn';
+.tree-node.visual-prompt.prompt-state-interrupted .content::after {
+  content: ' · interrupted (app crashed)';
+  color: #b00020;
+  font-weight: 400;
+  font-size: 11px;
 }
 
 @keyframes cedarpad-pulse {
@@ -332,27 +329,6 @@ body {
 .toggle-hide-completed[aria-pressed='true'] {
   background: #eef2ff;
   border-color: #93a4ff;
-}
-
-/* Slice 5: branch selection + sibling-Thread badge. */
-.tree-node.block-selected .content {
-  background: #fef3c7;
-  outline: 2px solid #f59e0b;
-  outline-offset: 1px;
-  border-radius: 3px;
-}
-
-/* A Thread Root that was created by branching carries
- * data-branched-from. Show a small "branch" badge on its bullet so the
- * user can spot sibling Threads at a glance. */
-.tree-node.visual-thread-root.branched-thread .bullet::after {
-  content: '⎇';
-  margin-left: 4px;
-  color: #7c3aed;
-  font-weight: 700;
-}
-.tree-node.visual-thread-root.branched-thread .content {
-  border-left-color: #7c3aed;
 }
 
 /* Slice 4: running indicator while a Claude turn is streaming. */

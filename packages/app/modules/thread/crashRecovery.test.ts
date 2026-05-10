@@ -1,11 +1,12 @@
 /**
- * Unit tests for crash-recovery scan (slice 4).
+ * Unit tests for crash-recovery scan (v1.1 Shape B).
  *
- * On app launch the renderer asks the sidecar to find any Turn Nodes left
- * in `state: 'streaming'` — these are necessarily orphaned because the
- * sidecar process is fresh and no runner can be driving them. The scan
- * stamps them `state: 'interrupted'` so the user can tell partial output
- * from a crashed turn apart from a deliberately-cancelled one.
+ * On app launch the renderer asks the sidecar to find any Prompt
+ * Content Nodes left in `metadata.state: 'streaming'` — these are
+ * necessarily orphaned because the sidecar process is fresh and no
+ * runner can be driving them. The scan stamps them
+ * `state: 'interrupted'` so the user can tell partial output from a
+ * crashed run apart from a deliberately-cancelled one.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { join } from 'node:path'
@@ -14,9 +15,9 @@ import { createClient } from '../db/libsqlClient.ts'
 import { runMigrations } from '../outline/migrations.ts'
 import { createOutlineStore, type OutlineStore } from '../outline/outlineStore.ts'
 import { createThreadEngine, type ThreadEngine } from './threadEngine.ts'
-import { scanInterruptedTurns } from './crashRecovery.ts'
+import { scanInterruptedPrompts } from './crashRecovery.ts'
 import { mkdtempWorktreeScoped } from '../test-utils/worktreeTmp.ts'
-import { TurnMetadataSchema } from '../../src/contract.ts'
+import { PromptMetadataSchema } from '../../src/contract.ts'
 
 let store: OutlineStore
 let engine: ThreadEngine
@@ -34,67 +35,100 @@ afterEach(async () => {
   await rm(tmpDir, { recursive: true, force: true })
 })
 
-describe('scanInterruptedTurns', () => {
-  it('marks streaming turns as interrupted', async () => {
-    const root = await store.createNode({ parentId: null, content: 'idea' })
-    await engine.startThread(root.id)
+async function makeStreamingPrompt(parentId: string | null): Promise<string> {
+  // Simulate what `sendPrompt` would have written before a crash:
+  // a Content Node Prompt under a session-bearer parent, stamped
+  // `state: 'streaming'`.
+  const node = await store.createNode({
+    parentId,
+    kind: 'content',
+    content: 'hi',
+    metadata: { state: 'streaming' },
+  })
+  return node.id
+}
 
-    const streaming = await engine.beginTurn(root.id)
-    // Sanity check: beginTurn stamps state=streaming.
-    const streamingMeta = TurnMetadataSchema.parse(streaming.metadata)
-    expect(streamingMeta.state).toBe('streaming')
+describe('scanInterruptedPrompts', () => {
+  it('marks streaming prompts as interrupted', async () => {
+    const root = await store.createNode({
+      parentId: null,
+      content: 'idea',
+      metadata: { sdkSessionId: 'sess-1' },
+    })
+    const promptId = await makeStreamingPrompt(root.id)
 
-    const result = await scanInterruptedTurns(store)
-    expect(result.interruptedTurnIds).toEqual([streaming.id])
+    const result = await scanInterruptedPrompts(store)
+    expect(result.interruptedPromptIds).toEqual([promptId])
 
-    const after = await store.getNode(streaming.id)
-    const afterMeta = TurnMetadataSchema.parse(after!.metadata)
-    expect(afterMeta.state).toBe('interrupted')
+    const after = await store.getNode(promptId)
+    expect(PromptMetadataSchema.parse(after!.metadata).state).toBe('interrupted')
   })
 
-  it('does not touch turns that are done, cancelled, or already interrupted', async () => {
-    const root = await store.createNode({ parentId: null, content: 'idea' })
-    await engine.startThread(root.id)
+  it('does not touch prompts that are done, cancelled, or already interrupted', async () => {
+    const root = await store.createNode({
+      parentId: null,
+      content: 'idea',
+      metadata: { sdkSessionId: 'sess-1' },
+    })
+    const p1 = await makeStreamingPrompt(root.id)
+    await engine.markPromptDone(p1)
+    const p2 = await makeStreamingPrompt(root.id)
+    await engine.markPromptCancelled(p2)
+    const p3 = await makeStreamingPrompt(root.id)
+    await engine.markPromptInterrupted(p3)
 
-    const t1 = await engine.beginTurn(root.id)
-    await engine.markTurnDone(t1.id)
-    const t2 = await engine.beginTurn(root.id)
-    await engine.markTurnCancelled(t2.id)
-    const t3 = await engine.beginTurn(root.id)
-    await engine.markTurnInterrupted(t3.id)
+    const result = await scanInterruptedPrompts(store)
+    expect(result.interruptedPromptIds).toEqual([])
 
-    const result = await scanInterruptedTurns(store)
-    expect(result.interruptedTurnIds).toEqual([])
-
-    // Verify states unchanged.
-    const m1 = TurnMetadataSchema.parse((await store.getNode(t1.id))!.metadata)
-    const m2 = TurnMetadataSchema.parse((await store.getNode(t2.id))!.metadata)
-    const m3 = TurnMetadataSchema.parse((await store.getNode(t3.id))!.metadata)
-    expect(m1.state).toBe('done')
-    expect(m2.state).toBe('cancelled')
-    expect(m3.state).toBe('interrupted')
+    expect(PromptMetadataSchema.parse((await store.getNode(p1))!.metadata).state).toBe('done')
+    expect(PromptMetadataSchema.parse((await store.getNode(p2))!.metadata).state).toBe('cancelled')
+    expect(PromptMetadataSchema.parse((await store.getNode(p3))!.metadata).state).toBe(
+      'interrupted',
+    )
   })
 
-  it('finds streaming turns in any thread / nesting level', async () => {
-    const a = await store.createNode({ parentId: null, content: 'a' })
-    const b = await store.createNode({ parentId: null, content: 'b' })
-    await engine.startThread(a.id)
-    await engine.startThread(b.id)
-    const ta = await engine.beginTurn(a.id)
-    const tb = await engine.beginTurn(b.id)
+  it('finds streaming prompts in any nesting level', async () => {
+    const a = await store.createNode({
+      parentId: null,
+      content: 'a',
+      metadata: { sdkSessionId: 'sess-a' },
+    })
+    const b = await store.createNode({
+      parentId: null,
+      content: 'b',
+      metadata: { sdkSessionId: 'sess-b' },
+    })
+    const pa = await makeStreamingPrompt(a.id)
+    const pb = await makeStreamingPrompt(b.id)
 
-    const result = await scanInterruptedTurns(store)
-    expect(new Set(result.interruptedTurnIds)).toEqual(new Set([ta.id, tb.id]))
+    const result = await scanInterruptedPrompts(store)
+    expect(new Set(result.interruptedPromptIds)).toEqual(new Set([pa, pb]))
   })
 
-  it('returns empty when there are no streaming turns', async () => {
-    const root = await store.createNode({ parentId: null, content: 'idea' })
-    await engine.startThread(root.id)
-    // Append a fixture (one-shot) Turn — its metadata has no `state` field;
-    // it must NOT be re-classified as interrupted.
-    await engine.appendTurn(root.id, [{ kind: 'text', text: 'hi' }])
+  it('returns empty when there are no streaming prompts', async () => {
+    const root = await store.createNode({
+      parentId: null,
+      content: 'idea',
+      metadata: { sdkSessionId: 'sess-1' },
+    })
+    // A plain Content Node draft (no `state` field) must NOT be
+    // re-classified as interrupted.
+    await store.createNode({ parentId: root.id, content: 'draft' })
 
-    const result = await scanInterruptedTurns(store)
-    expect(result.interruptedTurnIds).toEqual([])
+    const result = await scanInterruptedPrompts(store)
+    expect(result.interruptedPromptIds).toEqual([])
+  })
+
+  it('idempotent on a second run', async () => {
+    const root = await store.createNode({
+      parentId: null,
+      content: 'idea',
+      metadata: { sdkSessionId: 'sess-1' },
+    })
+    await makeStreamingPrompt(root.id)
+    const first = await scanInterruptedPrompts(store)
+    expect(first.interruptedPromptIds).toHaveLength(1)
+    const second = await scanInterruptedPrompts(store)
+    expect(second.interruptedPromptIds).toEqual([])
   })
 })

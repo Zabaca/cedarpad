@@ -53,16 +53,16 @@ async function dispatch(line: string): Promise<void> {
   if (method === 'sdk.sendPrompt') {
     const params = inputParse.data as {
       workspaceId: string
-      threadRootId: string
+      promptNodeId: string
       prompt: string
       repoPath: string
     }
     try {
       const runner = await getSdkRunnerForWorkspace(params.workspaceId)
-      let lastTurnId = ''
+      let lastPromptId = params.promptNodeId
       let reason: 'done' | 'cancelled' | 'error' = 'done'
       for await (const event of runner.sendPrompt({
-        threadId: params.threadRootId,
+        threadId: params.promptNodeId,
         prompt: params.prompt,
         repoPath: params.repoPath,
       })) {
@@ -72,10 +72,10 @@ async function dispatch(line: string): Promise<void> {
           continue
         }
         send({ kind: 'stream', id: req.data.id, event: evParse.data })
-        if (evParse.data.kind === 'turn-complete') lastTurnId = evParse.data.turnId
+        if (evParse.data.kind === 'prompt-complete') lastPromptId = evParse.data.promptId
         if (evParse.data.kind === 'error') reason = 'error'
       }
-      const result = { turnId: lastTurnId, reason }
+      const result = { promptId: lastPromptId, reason }
       const outputParse = spec.output.safeParse(result)
       if (!outputParse.success) {
         send({ kind: 'err', id: req.data.id, error: { code: 'BAD_OUTPUT', message: outputParse.error.message } })

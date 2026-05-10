@@ -17,7 +17,12 @@ function n(id: string, parentId: string | null = null): Node {
 }
 
 describe('keymap', () => {
-  const base = { node: n('cur', 'p1'), parent: n('p1'), prevSibling: null, prevSiblingLastChildId: null }
+  const base = {
+    node: n('cur', 'p1'),
+    parent: n('p1'),
+    prevSibling: null,
+    prevSiblingLastChildId: null,
+  }
 
   it('Enter creates a new sibling after current', () => {
     const out = interpret({ key: 'Enter', shiftKey: false }, { ...base, isContentEmpty: false })
@@ -25,7 +30,12 @@ describe('keymap', () => {
   })
 
   it('Tab nests under prevSibling', () => {
-    const ctx = { ...base, prevSibling: n('prev'), prevSiblingLastChildId: 'last', isContentEmpty: false }
+    const ctx = {
+      ...base,
+      prevSibling: n('prev'),
+      prevSiblingLastChildId: 'last',
+      isContentEmpty: false,
+    }
     const out = interpret({ key: 'Tab', shiftKey: false }, ctx)
     expect(out).toEqual({ kind: 'nest', nodeId: 'cur', newParentId: 'prev', prevSiblingId: 'last' })
   })
@@ -41,7 +51,13 @@ describe('keymap', () => {
   })
 
   it('Shift+Tab is a no-op at root', () => {
-    const ctx = { node: n('cur', null), parent: null, prevSibling: null, prevSiblingLastChildId: null, isContentEmpty: false }
+    const ctx = {
+      node: n('cur', null),
+      parent: null,
+      prevSibling: null,
+      prevSiblingLastChildId: null,
+      isContentEmpty: false,
+    }
     const out = interpret({ key: 'Tab', shiftKey: true }, ctx)
     expect(out).toEqual({ kind: 'noop' })
   })
@@ -57,12 +73,18 @@ describe('keymap', () => {
   })
 
   it('Cmd+. zooms into the focused node', () => {
-    const out = interpret({ key: '.', shiftKey: false, metaKey: true }, { ...base, isContentEmpty: false })
+    const out = interpret(
+      { key: '.', shiftKey: false, metaKey: true },
+      { ...base, isContentEmpty: false },
+    )
     expect(out).toEqual({ kind: 'zoom-in', nodeId: 'cur' })
   })
 
   it('Cmd+, zooms out one level', () => {
-    const out = interpret({ key: ',', shiftKey: false, metaKey: true }, { ...base, isContentEmpty: false })
+    const out = interpret(
+      { key: ',', shiftKey: false, metaKey: true },
+      { ...base, isContentEmpty: false },
+    )
     expect(out).toEqual({ kind: 'zoom-out' })
   })
 
@@ -71,132 +93,73 @@ describe('keymap', () => {
     expect(out).toEqual({ kind: 'noop' })
   })
 
-  it('Cmd+Enter toggles completion (uncompleted → completed)', () => {
+  // ---- v1.1: Cmd+Enter is the sole conversation-starting verb ----
+
+  it('Cmd+Enter on a non-root Content Node sends it as a Prompt', () => {
     const out = interpret(
       { key: 'Enter', shiftKey: false, metaKey: true },
-      { ...base, isContentEmpty: false },
+      { ...base, isContentEmpty: false, contentText: 'what is in README?' },
     )
-    expect(out).toEqual({ kind: 'toggle-complete', nodeId: 'cur', next: true })
+    expect(out).toEqual({ kind: 'send-prompt', nodeId: 'cur', prompt: 'what is in README?' })
   })
 
-  it('Ctrl+Enter toggles completion (Linux/Windows)', () => {
+  it('Ctrl+Enter sends as Prompt (Linux/Windows)', () => {
     const out = interpret(
       { key: 'Enter', shiftKey: false, ctrlKey: true },
-      { ...base, isContentEmpty: false },
+      { ...base, isContentEmpty: false, contentText: 'hello' },
     )
-    expect(out).toEqual({ kind: 'toggle-complete', nodeId: 'cur', next: true })
+    expect(out).toEqual({ kind: 'send-prompt', nodeId: 'cur', prompt: 'hello' })
   })
 
-  it('Cmd+Enter on already-complete node toggles back to incomplete', () => {
-    const completed: Node = { ...n('cur', 'p1'), completed: true }
+  it('Cmd+Enter on a non-root Content Node with empty text is a no-op', () => {
     const out = interpret(
       { key: 'Enter', shiftKey: false, metaKey: true },
-      { ...base, node: completed, isContentEmpty: false },
+      { ...base, isContentEmpty: true, contentText: '   ' },
     )
-    expect(out).toEqual({ kind: 'toggle-complete', nodeId: 'cur', next: false })
+    expect(out).toEqual({ kind: 'noop' })
   })
 
-  it('Cmd+Shift+T on a Content Node starts a Thread', () => {
+  it('Cmd+Enter on a root-level (parent=null) Content Node is "Or" bootstrap — still send-prompt with empty text', () => {
+    const ctx = {
+      node: n('root', null),
+      parent: null,
+      prevSibling: null,
+      prevSiblingLastChildId: null,
+      isContentEmpty: true,
+      contentText: '',
+    }
+    const out = interpret({ key: 'Enter', shiftKey: false, metaKey: true }, ctx)
+    expect(out).toEqual({ kind: 'send-prompt', nodeId: 'root', prompt: '' })
+  })
+
+  it('Cmd+Shift+T (the v1 start-thread chord) is now a no-op (binding removed)', () => {
     const out = interpret(
       { key: 't', shiftKey: true, metaKey: true },
       { ...base, isContentEmpty: false },
     )
-    expect(out).toEqual({ kind: 'start-thread', nodeId: 'cur' })
-  })
-
-  it('Ctrl+Shift+T on a Content Node starts a Thread (non-mac)', () => {
-    const out = interpret(
-      { key: 'T', shiftKey: true, ctrlKey: true },
-      { ...base, isContentEmpty: false },
-    )
-    expect(out).toEqual({ kind: 'start-thread', nodeId: 'cur' })
-  })
-
-  it('Cmd+Shift+T on a Turn Node is a no-op', () => {
-    const turnNode: Node = { ...n('cur'), kind: 'turn' }
-    const out = interpret(
-      { key: 't', shiftKey: true, metaKey: true },
-      { node: turnNode, parent: null, prevSibling: null, prevSiblingLastChildId: null, isContentEmpty: false },
-    )
     expect(out).toEqual({ kind: 'noop' })
   })
 
-  // ---- Slice 4: send-prompt + cancel-turn ----
-
-  it('Cmd+Enter on a prompt slot (Content Node under a Thread Root) sends the prompt', () => {
-    const out = interpret(
-      { key: 'Enter', shiftKey: false, metaKey: true },
-      {
-        ...base,
-        isContentEmpty: false,
-        contentText: 'what is in README?',
-        threadRootId: 'tr1',
-      },
-    )
-    expect(out).toEqual({
-      kind: 'send-prompt',
-      nodeId: 'cur',
-      threadRootId: 'tr1',
-      prompt: 'what is in README?',
-    })
-  })
-
-  it('Cmd+Enter on a prompt slot with empty text is a no-op', () => {
-    const out = interpret(
-      { key: 'Enter', shiftKey: false, metaKey: true },
-      {
-        ...base,
-        isContentEmpty: true,
-        contentText: '   ',
-        threadRootId: 'tr1',
-      },
-    )
-    expect(out).toEqual({ kind: 'noop' })
-  })
-
-  it('Cmd+Enter without a threadRootId still toggles completion (default)', () => {
-    const out = interpret(
-      { key: 'Enter', shiftKey: false, metaKey: true },
-      { ...base, isContentEmpty: false, contentText: 'plain content' },
-    )
-    expect(out).toEqual({ kind: 'toggle-complete', nodeId: 'cur', next: true })
-  })
-
-  it('Cmd+Shift+. cancels the active streaming turn', () => {
+  it('Cmd+Shift+. cancels the streaming prompt when one is provided', () => {
     const out = interpret(
       { key: '.', shiftKey: true, metaKey: true },
-      {
-        ...base,
-        isContentEmpty: false,
-        threadRootId: 'tr1',
-        activeThreadHasStreamingTurn: true,
-      },
+      { ...base, isContentEmpty: false, streamingPromptId: 'prompt-1' },
     )
-    expect(out).toEqual({ kind: 'cancel-turn', threadRootId: 'tr1' })
+    expect(out).toEqual({ kind: 'cancel-prompt', promptNodeId: 'prompt-1' })
   })
 
-  it('Cmd+Shift+. with no streaming turn is a no-op', () => {
+  it('Cmd+Shift+. with no streaming prompt is a no-op', () => {
     const out = interpret(
       { key: '.', shiftKey: true, metaKey: true },
-      {
-        ...base,
-        isContentEmpty: false,
-        threadRootId: 'tr1',
-        activeThreadHasStreamingTurn: false,
-      },
+      { ...base, isContentEmpty: false, streamingPromptId: null },
     )
     expect(out).toEqual({ kind: 'noop' })
   })
 
-  it('Cmd+. (no shift) still zooms in even when a thread is active', () => {
+  it('Cmd+. (no shift) still zooms in even when a prompt is streaming', () => {
     const out = interpret(
       { key: '.', shiftKey: false, metaKey: true },
-      {
-        ...base,
-        isContentEmpty: false,
-        threadRootId: 'tr1',
-        activeThreadHasStreamingTurn: true,
-      },
+      { ...base, isContentEmpty: false, streamingPromptId: 'prompt-1' },
     )
     expect(out).toEqual({ kind: 'zoom-in', nodeId: 'cur' })
   })

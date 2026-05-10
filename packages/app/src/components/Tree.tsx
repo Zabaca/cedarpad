@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { call, streamSendPrompt } from '../ipc'
-import type { BlockMetadata, Node, RunnerEvent, TurnMetadata } from '../contract'
-import { BlockMetadataSchema, TurnMetadataSchema } from '../contract'
+import type { BlockMetadata, Node, RunnerEvent, PromptMetadata } from '../contract'
+import {
+  BlockMetadataSchema,
+  PromptMetadataSchema,
+  SessionBearerMetadataSchema,
+} from '../contract'
 import { interpret } from '../keymap'
 
 interface Visible {
@@ -27,65 +31,71 @@ interface Props {
   navigateRequest?: { id: string; nonce: number } | null
 }
 
-/**
- * Drop target for a drag operation. We only support sibling-position drops:
- * the dragged node lands as a sibling of `targetId` (or first child of
- * `parentId` when `targetId` is null), under the indicated parent.
- *
- * Special case: dropping over a node with `position: 'inside'` nests the
- * dragged node as the FIRST child of that target. This gives a single-DOM
- * coverage of "drop into" without needing a separate visual zone.
- */
 type DropPos =
   | { kind: 'before'; targetId: string; parentId: string | null }
   | { kind: 'after'; targetId: string; parentId: string | null }
   | { kind: 'inside'; targetId: string }
 
 /**
- * Visual classification of a Node for rendering. Slice 2 distinguishes:
- *   - 'content'     — default outline node
- *   - 'thread-root' — Content Node promoted via thread.start
- *   - 'turn'        — Turn Node (one Claude turn)
- *   - 'block-text'  — Block Node carrying a `text` payload
- *   - 'block-tool-use'    — Block Node carrying a `tool_use` payload
+ * Visual classification of a Node for rendering (v1.1 Shape B):
+ *   - 'content'         — default outline node (or unsent draft)
+ *   - 'session-bearer'  — Content Node carrying `metadata.sdkSessionId`
+ *                         (the v1.1 replacement for Thread Root)
+ *   - 'prompt'          — Content Node carrying `metadata.state`
+ *                         (it's been sent — streaming/done/cancelled/interrupted)
+ *   - 'block-text'      — Block Node carrying a `text` payload
+ *   - 'block-tool-use'  — Block Node carrying a `tool_use` payload
  *   - 'block-tool-result' — Block Node carrying a `tool_result` payload
+ *
+ * A node may be BOTH a session-bearer and a Prompt (the root-level "Or"
+ * case). We pick the more specific 'prompt' visual when both apply, and
+ * surface the bearer status via `data-session-bearer="true"`.
  */
 type Visual =
   | 'content'
-  | 'thread-root'
-  | 'turn'
+  | 'session-bearer'
+  | 'prompt'
   | 'block-text'
   | 'block-tool-use'
   | 'block-tool-result'
 
-function classifyNode(
-  n: Node,
-): { visual: Visual; blockMeta?: BlockMetadata; turnMeta?: TurnMetadata } {
-  if (n.kind === 'turn') {
-    const parsed = TurnMetadataSchema.safeParse(n.metadata)
-    return { visual: 'turn', turnMeta: parsed.success ? parsed.data : undefined }
-  }
+interface Classification {
+  visual: Visual
+  blockMeta?: BlockMetadata
+  promptMeta?: PromptMetadata
+  isSessionBearer: boolean
+}
+
+function classifyNode(n: Node): Classification {
   if (n.kind === 'block') {
     const parsed = BlockMetadataSchema.safeParse(n.metadata)
     if (parsed.success) {
       const k = parsed.data.payload.kind
-      if (k === 'text') return { visual: 'block-text', blockMeta: parsed.data }
-      if (k === 'tool_use') return { visual: 'block-tool-use', blockMeta: parsed.data }
-      if (k === 'tool_result') return { visual: 'block-tool-result', blockMeta: parsed.data }
+      if (k === 'text') return { visual: 'block-text', blockMeta: parsed.data, isSessionBearer: false }
+      if (k === 'tool_use')
+        return { visual: 'block-tool-use', blockMeta: parsed.data, isSessionBearer: false }
+      if (k === 'tool_result')
+        return { visual: 'block-tool-result', blockMeta: parsed.data, isSessionBearer: false }
     }
-    return { visual: 'block-text' }
+    return { visual: 'block-text', isSessionBearer: false }
   }
-  if (n.metadata && (n.metadata as { isThreadRoot?: unknown }).isThreadRoot === true) {
-    return { visual: 'thread-root' }
-  }
-  return { visual: 'content' }
+  // Content Node — could be a draft, a Prompt, a session-bearer, or both.
+  const bearerParsed = SessionBearerMetadataSchema.safeParse(n.metadata)
+  const isSessionBearer =
+    bearerParsed.success &&
+    Object.prototype.hasOwnProperty.call(n.metadata, 'sdkSessionId')
+  const promptParsed = PromptMetadataSchema.safeParse(n.metadata)
+  const promptMeta = promptParsed.success && promptParsed.data.state ? promptParsed.data : undefined
+  if (promptMeta) return { visual: 'prompt', promptMeta, isSessionBearer }
+  if (isSessionBearer) return { visual: 'session-bearer', isSessionBearer: true }
+  return { visual: 'content', isSessionBearer: false }
 }
 
 function bulletForVisual(v: Visual): string {
   switch (v) {
-    case 'thread-root':
+    case 'session-bearer':
       return '>'
-    case 'turn':
+    case 'prompt':
       return '~'
     case 'block-text':
       return '·'
@@ -112,49 +122,17 @@ export function Tree({
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropPos, setDropPos] = useState<DropPos | null>(null)
   /**
-   * Slice 4: streaming run state.
-   *
-   * `streamingThreadRootId` is non-null while a Claude turn is in flight
-   * for that Thread. Drives the running indicator and the cancel-shortcut
-   * context. Cleared once the underlying `streamSendPrompt` promise
-   * resolves (whether via natural completion, cancel, or error).
-   *
-   * `inFlightText` carries the accumulated `text-delta` content for any
-   * currently-streaming text block, keyed by blockId. We render the
-   * running text as an inline preview under the active streaming Turn so
-   * the user sees Claude typing in real time. When `block-complete`
-   * fires for a blockId we drop its entry — at that point a real Block
-   * Node has been persisted and the next tree reload renders it.
+   * v1.1: streaming Prompts (by id) and their accumulated in-flight
+   * text. The Prompt id replaces v1's Thread Root id as the keying
+   * concept — Block children land under the Prompt itself.
    */
-  const [streamingThreadRootId, setStreamingThreadRootId] = useState<string | null>(null)
+  const [streamingPromptIds, setStreamingPromptIds] = useState<Set<string>>(new Set())
   const [inFlightText, setInFlightText] = useState<Map<string, string>>(new Map())
-  /**
-   * Slice 5: which Block Node the user has selected as the source for a
-   * branch / retry operation. Block rows aren't contentEditable, so they
-   * don't carry React's onKeyDown wiring; we track selection separately
-   * and window-level Cmd+Shift+B / Cmd+Shift+R handlers read this state.
-   */
-  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
-  /**
-   * Slice 6: which Thread Root the user has selected as the target for
-   * a newSibling operation. Mirrors Block selection. Thread Root rows
-   * ARE contentEditable (Content Nodes), but we use the same selection
-   * model so the user has an explicit "this is the Thread Root I'm
-   * acting on" cue and the Cmd+Shift+N dispatch is unambiguous when
-   * focus is somewhere else.
-   */
-  const [selectedThreadRootId, setSelectedThreadRootId] = useState<string | null>(null)
   const refs = useRef(new Map<string, HTMLDivElement>())
-  // Mirror dragId / dropPos in refs so synthetic drag sequences (where
-  // dragstart, dragover and drop dispatch back-to-back in the same
-  // tick — see the WebView e2e harness) can read current values
-  // without waiting for React's state batches to flush. State drives
-  // rendering; refs drive the imperative branch logic.
   const dragIdRef = useRef<string | null>(null)
   const dropPosRef = useRef<DropPos | null>(null)
 
   const load = useCallback(async () => {
-    // Load all nodes by walking from roots. Slice 1: simple, no virtualization.
     const acc = new Map<string | null, Node[]>()
     const queue: (string | null)[] = [null]
     while (queue.length) {
@@ -171,8 +149,7 @@ export function Tree({
   }, [load])
 
   // Ensure at least one node exists under the current zoom root so the user
-  // has something to type into. When zoomed in, the zoom root itself is
-  // hidden, so we seed an empty child of it.
+  // has something to type into.
   useEffect(() => {
     void (async () => {
       const children = byParent.get(activeNodeId)
@@ -193,7 +170,6 @@ export function Tree({
     const el = refs.current.get(focusId)
     if (el) {
       el.focus()
-      // Move caret to end
       const range = document.createRange()
       range.selectNodeContents(el)
       range.collapse(false)
@@ -203,10 +179,6 @@ export function Tree({
     }
   }, [focusId])
 
-  // Honour external navigation requests (search palette → jump to node).
-  // Slice 1 has no collapse state, so "expand ancestors" is a no-op; we
-  // focus the cell and scroll it into view. The nonce key ensures the
-  // effect re-runs even when targeting the same id twice in a row.
   useEffect(() => {
     if (!navigateRequest) return
     const el = refs.current.get(navigateRequest.id)
@@ -220,16 +192,11 @@ export function Tree({
     function walk(parentId: string | null, depth: number) {
       const children = byParent.get(parentId) ?? []
       for (const c of children) {
-        // When hiding completed, skip the entire subtree rooted at a
-        // completed node — Workflowy parity (a completed parent hides its
-        // children too).
         if (hideCompleted && c.completed) continue
         out.push({ node: c, depth })
         walk(c.id, depth + 1)
       }
     }
-    // When zoomed in, render only descendants of activeNodeId; otherwise the
-    // whole workspace tree (parentId === null roots).
     walk(activeNodeId, 0)
     return out
   }, [byParent, activeNodeId, hideCompleted])
@@ -240,11 +207,6 @@ export function Tree({
     return map
   }, [byParent])
 
-  /**
-   * Path from the workspace root down to (and including) the currently zoomed
-   * Node. Empty when we're at the workspace root view. The breadcrumb bar
-   * always renders the workspace crumb plus this trail.
-   */
   const ancestors: Node[] = useMemo(() => {
     if (!activeNodeId) return []
     const trail: Node[] = []
@@ -263,41 +225,25 @@ export function Tree({
 
   const handleInput = useCallback(
     (id: string, content: string) => {
-      // Fire-and-forget; debounce later if needed.
       void call('outline.update', { workspaceId, id, content })
     },
     [workspaceId],
   )
 
   /**
-   * True when there's a Turn Node child of `threadRootId` whose metadata
-   * says `state: 'streaming'`. Used as the cancel-shortcut precondition.
-   */
-  const threadHasStreamingTurn = useCallback(
-    (threadRootId: string): boolean => {
-      const children = byParent.get(threadRootId) ?? []
-      for (const c of children) {
-        if (c.kind !== 'turn') continue
-        const meta = TurnMetadataSchema.safeParse(c.metadata)
-        if (meta.success && meta.data.state === 'streaming') return true
-      }
-      return false
-    },
-    [byParent],
-  )
-
-  /**
-   * Run a Claude turn against the named Thread Root + prompt. Streams
-   * RunnerEvents back; reloads the tree as Block Nodes land so the user
-   * sees them appear; auto-creates a fresh empty prompt sibling on
-   * natural completion so the next prompt slot is ready to type into.
-   *
-   * On cancel / error we don't auto-create the next prompt — the user is
-   * presumably going to look at what happened first.
+   * Run a Claude turn for the given Prompt Node. Streams RunnerEvents
+   * back and reloads the tree as Block Nodes land. On natural completion
+   * an empty Content Node is auto-created as the next sibling of the
+   * Prompt (under the same parent), and focused. On cancel/error we
+   * leave the user in place to inspect.
    */
   const runPrompt = useCallback(
-    async (threadRootId: string, promptNodeId: string, prompt: string) => {
-      setStreamingThreadRootId(threadRootId)
+    async (promptNodeId: string, prompt: string) => {
+      setStreamingPromptIds((prev) => {
+        const next = new Set(prev)
+        next.add(promptNodeId)
+        return next
+      })
       setInFlightText(new Map())
       // Optimistically rewrite the prompt content (in case the user edited it).
       try {
@@ -307,7 +253,7 @@ export function Tree({
       }
       try {
         const result = await streamSendPrompt(
-          { workspaceId, threadRootId, prompt, repoPath },
+          { workspaceId, promptNodeId, prompt, repoPath },
           (ev) => {
             if (ev.kind === 'text-delta') {
               setInFlightText((prev) => {
@@ -316,7 +262,6 @@ export function Tree({
                 return next
               })
             } else if (ev.kind === 'block-complete') {
-              // Persisted Block Node will appear after the next reload.
               setInFlightText((prev) => {
                 if (!prev.has(ev.blockId)) return prev
                 const next = new Map(prev)
@@ -324,41 +269,40 @@ export function Tree({
                 return next
               })
               void load()
-            } else if (ev.kind === 'turn-complete') {
+            } else if (ev.kind === 'prompt-complete') {
               void load()
             }
-            // 'error' falls through; resolution is via `result.reason`.
           },
         )
         await load()
         if (result.reason === 'done') {
-          // Auto-create a fresh empty prompt sibling under the Thread Root
-          // so the user can keep typing without manually adding rows.
-          // Without `prevSiblingId`, createNode prepends to the start —
-          // here we want it appended after the most recent Turn.
+          // Auto-create empty next-prompt-slot as the immediate next
+          // sibling of the Prompt (under whatever container it lives in).
           try {
-            const siblings = await call('outline.getChildren', {
-              workspaceId,
-              parentId: threadRootId,
-            })
-            const lastSibling = siblings[siblings.length - 1]
-            const created = await call('outline.create', {
-              workspaceId,
-              parentId: threadRootId,
-              prevSiblingId: lastSibling?.id ?? null,
-              content: '',
-            })
-            await load()
-            setFocusId(created.id)
+            const promptNode = await call('outline.get', { workspaceId, id: promptNodeId })
+            if (promptNode) {
+              const created = await call('outline.create', {
+                workspaceId,
+                parentId: promptNode.parentId,
+                prevSiblingId: promptNode.id,
+                content: '',
+              })
+              await load()
+              setFocusId(created.id)
+            }
           } catch {
             /* non-fatal */
           }
         }
       } catch {
-        // Underlying Tauri/sidecar error — leave streaming state cleared
-        // below; the tree may still reflect partial Blocks.
+        /* non-fatal */
       } finally {
-        setStreamingThreadRootId(null)
+        setStreamingPromptIds((prev) => {
+          if (!prev.has(promptNodeId)) return prev
+          const next = new Set(prev)
+          next.delete(promptNodeId)
+          return next
+        })
         setInFlightText(new Map())
         await load()
       }
@@ -366,176 +310,108 @@ export function Tree({
     [workspaceId, repoPath, load],
   )
 
-  const cancelTurn = useCallback(
-    async (threadRootId: string) => {
-      try {
-        await call('sdk.cancel', { threadRootId })
-      } catch {
-        /* non-fatal */
-      }
-    },
-    [],
-  )
-
-  /**
-   * Slice 5: branch from a Block Node. Creates a sibling Thread under
-   * the same Thread Root with full prior history through the source
-   * Block, then focuses the new empty prompt slot.
-   *
-   * Cross-feature interaction with zoom (slice 7): if we're zoomed in
-   * such that the new Thread would not be visible (it's outside the
-   * zoom subtree), clear the zoom — the least-surprising of the two
-   * options. Documented in the slice 5 issue.
-   */
-  const branchFromBlock = useCallback(
-    async (blockId: string) => {
-      try {
-        const out = await call('thread.branch', { workspaceId, blockId })
-        // If we're zoomed, decide whether the new Thread is visible.
-        // Cheapest check: walk up `out.newThreadId`'s ancestry; if we
-        // don't pass through `activeNodeId`, it's outside zoom — clear.
-        if (activeNodeId !== null) {
-          // We don't have the new Thread's parent chain in `lookup` yet
-          // (we just inserted it). The parent IS the Thread Root the
-          // user branched from, which is in `lookup`. So look up the
-          // Thread Root via the source block's chain.
-          const block = lookup.get(blockId)
-          let cursor: string | null = block?.parentId ?? null
-          let inZoom = false
-          const seen = new Set<string>()
-          while (cursor !== null) {
-            if (cursor === activeNodeId) {
-              inZoom = true
-              break
-            }
-            if (seen.has(cursor)) break
-            seen.add(cursor)
-            const n = lookup.get(cursor)
-            cursor = n?.parentId ?? null
-          }
-          if (!inZoom) onZoomTo(null)
-        }
-        await load()
-        setSelectedBlockId(null)
-        setFocusId(out.promptNodeId)
-      } catch {
-        /* non-fatal */
-      }
-    },
-    [workspaceId, load, activeNodeId, lookup, onZoomTo],
-  )
-
-  /**
-   * Slice 6: retry from a Block Node. Same internal plumbing as branch
-   * but the cloned history excludes the source Block.
-   *
-   * Cross-feature with zoom is identical to branch — same parent
-   * ancestry walk, same fallback to clear zoom when the new Thread
-   * would be outside the current zoom subtree.
-   */
-  const retryFromBlock = useCallback(
-    async (blockId: string) => {
-      try {
-        const out = await call('thread.retry', { workspaceId, blockId })
-        if (activeNodeId !== null) {
-          const block = lookup.get(blockId)
-          let cursor: string | null = block?.parentId ?? null
-          let inZoom = false
-          const seen = new Set<string>()
-          while (cursor !== null) {
-            if (cursor === activeNodeId) {
-              inZoom = true
-              break
-            }
-            if (seen.has(cursor)) break
-            seen.add(cursor)
-            const n = lookup.get(cursor)
-            cursor = n?.parentId ?? null
-          }
-          if (!inZoom) onZoomTo(null)
-        }
-        await load()
-        setSelectedBlockId(null)
-        setFocusId(out.promptNodeId)
-      } catch {
-        /* non-fatal */
-      }
-    },
-    [workspaceId, load, activeNodeId, lookup, onZoomTo],
-  )
-
-  /**
-   * Slice 6: new sibling Thread under the named Thread Root. Empty —
-   * no history is cloned. Mirrors the branch flow's zoom handling:
-   * if we're zoomed somewhere that doesn't include the original Thread
-   * Root in its ancestry, clear the zoom.
-   */
-  const newSiblingFromThreadRoot = useCallback(
-    async (threadRootId: string) => {
-      try {
-        const out = await call('thread.newSibling', { workspaceId, threadRootId })
-        if (activeNodeId !== null) {
-          const root = lookup.get(threadRootId)
-          let cursor: string | null = root?.id ?? null
-          let inZoom = false
-          const seen = new Set<string>()
-          while (cursor !== null) {
-            if (cursor === activeNodeId) {
-              inZoom = true
-              break
-            }
-            if (seen.has(cursor)) break
-            seen.add(cursor)
-            const n = lookup.get(cursor)
-            cursor = n?.parentId ?? null
-          }
-          if (!inZoom) onZoomTo(null)
-        }
-        await load()
-        setSelectedThreadRootId(null)
-        setFocusId(out.promptNodeId)
-      } catch {
-        /* non-fatal */
-      }
-    },
-    [workspaceId, load, activeNodeId, lookup, onZoomTo],
-  )
-
-  // Window-level branch-verb shortcuts.
-  //   Cmd/Ctrl+Shift+B → branch from selected Block (slice 5)
-  //   Cmd/Ctrl+Shift+R → retry  from selected Block (slice 6)
-  //   Cmd/Ctrl+Shift+N → newSibling under selected Thread Root (slice 6)
-  // Block + Thread-Root rows aren't always the focused contentEditable,
-  // so we attach at the document level and dispatch on the tracked
-  // selection ids.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey
-      if (!mod || !e.shiftKey) return
-      const k = e.key.toLowerCase()
-      if (k === 'b') {
-        if (!selectedBlockId) return
-        e.preventDefault()
-        void branchFromBlock(selectedBlockId)
-      } else if (k === 'r') {
-        if (!selectedBlockId) return
-        e.preventDefault()
-        void retryFromBlock(selectedBlockId)
-      } else if (k === 'n') {
-        if (!selectedThreadRootId) return
-        e.preventDefault()
-        void newSiblingFromThreadRoot(selectedThreadRootId)
-      }
+  const cancelPrompt = useCallback(async (promptNodeId: string) => {
+    try {
+      await call('sdk.cancel', { promptNodeId })
+    } catch {
+      /* non-fatal */
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [
-    selectedBlockId,
-    selectedThreadRootId,
-    branchFromBlock,
-    retryFromBlock,
-    newSiblingFromThreadRoot,
-  ])
+  }, [])
+
+  /**
+   * v1.1 send-prompt routing. Implements the three behaviours the
+   * threadEngine's `sendPrompt` would handle, but inline against the
+   * IPC + outline layer:
+   *   - Root-level Content Node → "Or" bootstrap: stamp self as
+   *     session-bearer, create empty child, focus it. No SDK call.
+   *   - Non-root + parent already a session-bearer → just run the SDK
+   *     under the existing session.
+   *   - Non-root + parent not a session-bearer → stamp parent first,
+   *     then run the SDK.
+   *
+   * The threadEngine's `sendPrompt` is the canonical implementation;
+   * the renderer reproduces the dispatch here because the SDK runner's
+   * IPC entry (`sdk.sendPrompt`) is a streaming method and the renderer
+   * needs to thread its result through `runPrompt` for UI side effects.
+   */
+  const handleSendPrompt = useCallback(
+    async (nodeId: string, prompt: string) => {
+      const node = lookup.get(nodeId)
+      if (!node) return
+      const isRootLevel = node.parentId === null
+      if (isRootLevel) {
+        // "Or" bootstrap.
+        await call('outline.update', {
+          workspaceId,
+          id: nodeId,
+          metadata: { ...node.metadata, sdkSessionId: null },
+        })
+        const existingChildren = byParent.get(nodeId) ?? []
+        const lastChildId =
+          existingChildren.length > 0 ? existingChildren[existingChildren.length - 1]!.id : null
+        const created = await call('outline.create', {
+          workspaceId,
+          parentId: nodeId,
+          prevSiblingId: lastChildId,
+          content: '',
+        })
+        await load()
+        setFocusId(created.id)
+        return
+      }
+      // Non-root: stamp parent if needed, then run.
+      const parent = node.parentId ? lookup.get(node.parentId) : null
+      if (parent && !Object.prototype.hasOwnProperty.call(parent.metadata, 'sdkSessionId')) {
+        await call('outline.update', {
+          workspaceId,
+          id: parent.id,
+          metadata: { ...parent.metadata, sdkSessionId: null },
+        })
+      }
+      // Mark the Prompt as streaming up front so the UI shows the
+      // pulse + cancel option before the SDK begins yielding.
+      await call('outline.update', {
+        workspaceId,
+        id: nodeId,
+        metadata: { ...node.metadata, state: 'streaming' },
+      })
+      await load()
+      void runPrompt(nodeId, prompt)
+    },
+    [workspaceId, lookup, byParent, load, runPrompt],
+  )
+
+  /**
+   * Pick a streaming Prompt id to cancel given the focused node.
+   * Walks the focused node's subtree (then ancestry as a fallback)
+   * looking for a Content Node currently in `state: 'streaming'`.
+   */
+  const findStreamingPromptId = useCallback(
+    (focusedId: string | null): string | null => {
+      if (!focusedId) return null
+      // First: is the focused node itself a streaming Prompt?
+      if (streamingPromptIds.has(focusedId)) return focusedId
+      // Otherwise walk ancestry: find a streaming sibling under the
+      // same session-bearer ancestor.
+      let cursor: string | null = focusedId
+      const seen = new Set<string>()
+      while (cursor !== null) {
+        if (seen.has(cursor)) break
+        seen.add(cursor)
+        const node = lookup.get(cursor)
+        if (!node) break
+        const siblings = byParent.get(node.parentId) ?? []
+        for (const s of siblings) {
+          if (streamingPromptIds.has(s.id)) return s.id
+        }
+        cursor = node.parentId
+      }
+      // Last resort: any streaming prompt anywhere.
+      const it = streamingPromptIds.values().next()
+      return it.done ? null : it.value
+    },
+    [streamingPromptIds, lookup, byParent],
+  )
 
   const handleKeyDown = useCallback(
     async (e: React.KeyboardEvent<HTMLDivElement>, n: Node) => {
@@ -552,20 +428,6 @@ export function Tree({
       const contentText = el.textContent ?? ''
       const isContentEmpty = contentText.trim().length === 0
 
-      // Slice 4: a Content Node is a "prompt slot" when its parent is a
-      // Thread Root. The keymap routes Cmd+Enter to send-prompt for prompt
-      // slots and Cmd+Shift+. to cancel-turn when a Turn is streaming
-      // under the same Thread Root.
-      const promptThreadRootId =
-        n.kind === 'content' &&
-        parent &&
-        parent.metadata &&
-        (parent.metadata as { isThreadRoot?: unknown }).isThreadRoot === true
-          ? parent.id
-          : null
-      const activeThreadHasStreamingTurn =
-        promptThreadRootId !== null && threadHasStreamingTurn(promptThreadRootId)
-
       const intent = interpret(
         { key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
         {
@@ -575,8 +437,7 @@ export function Tree({
           prevSiblingLastChildId,
           isContentEmpty,
           contentText,
-          threadRootId: promptThreadRootId,
-          activeThreadHasStreamingTurn,
+          streamingPromptId: findStreamingPromptId(n.id),
         },
       )
 
@@ -588,9 +449,6 @@ export function Tree({
         return
       }
       if (intent.kind === 'zoom-out') {
-        // One level out: walk to the parent of the current zoom root. If
-        // there's no parent (already at the workspace root, or zoom root
-        // is a top-level node), clear the zoom entirely.
         if (!activeNodeId) return
         const zoomRoot = lookup.get(activeNodeId)
         onZoomTo(zoomRoot?.parentId ?? null)
@@ -630,7 +488,6 @@ export function Tree({
         return
       }
       if (intent.kind === 'delete-empty') {
-        // Find prev visible to focus
         const flat = visible
         const myIdx = flat.findIndex((v) => v.node.id === intent.nodeId)
         const prev = myIdx > 0 ? flat[myIdx - 1] : null
@@ -646,37 +503,34 @@ export function Tree({
           completed: intent.next,
         })
         await load()
-        // Keep focus on the same node so further toggles work.
-        setFocusId(intent.nodeId)
-        return
-      }
-      if (intent.kind === 'start-thread') {
-        await call('thread.start', { workspaceId, rootNodeId: intent.nodeId })
-        await load()
         setFocusId(intent.nodeId)
         return
       }
       if (intent.kind === 'send-prompt') {
-        // Fire-and-forget — runPrompt manages its own streaming state and
-        // tree reloads. We don't await here so the keydown handler stays
-        // responsive (cancel must remain dispatchable while streaming).
-        void runPrompt(intent.threadRootId, intent.nodeId, intent.prompt)
+        void handleSendPrompt(intent.nodeId, intent.prompt)
         return
       }
-      if (intent.kind === 'cancel-turn') {
-        void cancelTurn(intent.threadRootId)
+      if (intent.kind === 'cancel-prompt') {
+        void cancelPrompt(intent.promptNodeId)
         return
       }
     },
-    [workspaceId, byParent, lookup, load, visible, activeNodeId, onZoomTo, threadHasStreamingTurn, runPrompt, cancelTurn],
+    [
+      workspaceId,
+      byParent,
+      lookup,
+      load,
+      visible,
+      activeNodeId,
+      onZoomTo,
+      handleSendPrompt,
+      cancelPrompt,
+      findStreamingPromptId,
+    ],
   )
 
   // ---------- Drag-and-drop ----------
 
-  /**
-   * Test whether `candidateAncestorId` is an ancestor of (or equal to)
-   * `descendantId`. Used to reject drops that would create a cycle.
-   */
   const isAncestor = useCallback(
     (candidateAncestorId: string, descendantId: string): boolean => {
       let cur: string | null = descendantId
@@ -691,16 +545,12 @@ export function Tree({
     [lookup],
   )
 
-  const handleDragStart = useCallback(
-    (e: React.DragEvent<HTMLDivElement>, n: Node) => {
-      // Use the node id as the dataTransfer payload so external drops are no-ops.
-      e.dataTransfer.setData('application/x-cedarpad-node', n.id)
-      e.dataTransfer.effectAllowed = 'move'
-      dragIdRef.current = n.id
-      setDragId(n.id)
-    },
-    [],
-  )
+  const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>, n: Node) => {
+    e.dataTransfer.setData('application/x-cedarpad-node', n.id)
+    e.dataTransfer.effectAllowed = 'move'
+    dragIdRef.current = n.id
+    setDragId(n.id)
+  }, [])
 
   const handleDragEnd = useCallback(() => {
     dragIdRef.current = null
@@ -709,17 +559,10 @@ export function Tree({
     setDropPos(null)
   }, [])
 
-  /**
-   * Compute drop position from the pointer's Y within the target row:
-   *   - top third → before
-   *   - middle third → inside (nest as first child)
-   *   - bottom third → after
-   */
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>, n: Node) => {
       const draggedId = dragIdRef.current
       if (!draggedId || draggedId === n.id) return
-      // Reject drops onto a descendant of the dragged node — would create a cycle.
       if (isAncestor(draggedId, n.id)) return
       e.preventDefault()
       e.dataTransfer.dropEffect = 'move'
@@ -749,25 +592,18 @@ export function Tree({
     [isAncestor],
   )
 
-  const handleDragLeave = useCallback(
-    (e: React.DragEvent<HTMLDivElement>, n: Node) => {
-      // Only clear when leaving the row entirely (not when crossing into a child).
-      const related = e.relatedTarget as HTMLElement | null
-      if (related && e.currentTarget.contains(related)) return
-      if (
-        dropPosRef.current &&
-        (dropPosRef.current as { targetId?: string }).targetId === n.id
-      ) {
-        dropPosRef.current = null
-      }
-      setDropPos((cur) => {
-        if (!cur) return null
-        if ((cur as { targetId?: string }).targetId === n.id) return null
-        return cur
-      })
-    },
-    [],
-  )
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>, n: Node) => {
+    const related = e.relatedTarget as HTMLElement | null
+    if (related && e.currentTarget.contains(related)) return
+    if (dropPosRef.current && (dropPosRef.current as { targetId?: string }).targetId === n.id) {
+      dropPosRef.current = null
+    }
+    setDropPos((cur) => {
+      if (!cur) return null
+      if ((cur as { targetId?: string }).targetId === n.id) return null
+      return cur
+    })
+  }, [])
 
   const handleDrop = useCallback(
     async (e: React.DragEvent<HTMLDivElement>, n: Node) => {
@@ -786,10 +622,6 @@ export function Tree({
       let prevSiblingId: string | null
       if (pos.kind === 'before') {
         newParentId = pos.parentId
-        // Find the sibling immediately before targetId in pos.parentId.
-        // Skip the dragged node itself if it's currently a sibling here, so
-        // when reordering within the same parent we don't compute its
-        // current slot as the prevSibling.
         const siblings = byParent.get(pos.parentId) ?? []
         const filtered = siblings.filter((s) => s.id !== draggedId)
         const targetIdx = filtered.findIndex((s) => s.id === pos.targetId)
@@ -798,7 +630,6 @@ export function Tree({
         newParentId = pos.parentId
         prevSiblingId = pos.targetId
       } else {
-        // inside → nest as first child
         newParentId = pos.targetId
         prevSiblingId = null
       }
@@ -814,31 +645,14 @@ export function Tree({
     [dropPos, byParent, isAncestor, workspaceId, load],
   )
 
-  // Test-only hook: lets the WebView e2e drive fixture turns without a
-  // real Claude SDK. Exposed in dev / debug builds; harmless otherwise
-  // (the e2e calls it explicitly). Lives on `window.cedarpadE2E` to keep
-  // it off the public surface area.
-  //
-  // Slice 3 adds `sendPrompt` for the SDK runner end-to-end test —
-  // streams events into a callback while the underlying IPC is in
-  // flight, then reloads the tree once the turn completes.
+  // Test-only hook for the WebView e2e harness. Lives on
+  // `window.cedarpadE2E` to keep it off the public surface area.
   useEffect(() => {
     const hook = {
-      appendTurn: async (
-        threadRootId: string,
-        blocks: Parameters<typeof call<'thread.appendTurn'>>[1]['blocks'],
-      ) => {
-        await call('thread.appendTurn', { workspaceId, threadRootId, blocks })
-        await load()
-      },
-      sendPrompt: async (
-        threadRootId: string,
-        prompt: string,
-        repoPath: string,
-      ) => {
+      sendPrompt: async (promptNodeId: string, prompt: string) => {
         const events: RunnerEvent[] = []
         const result = await streamSendPrompt(
-          { workspaceId, threadRootId, prompt, repoPath },
+          { workspaceId, promptNodeId, prompt, repoPath },
           (ev) => {
             events.push(ev)
           },
@@ -846,87 +660,36 @@ export function Tree({
         await load()
         return { events, result }
       },
-      sendPromptFireAndForget: (
-        threadRootId: string,
-        prompt: string,
-        repoPath: string,
-      ) => {
-        // Kick off a stream but don't await it — the spec drives the next
-        // step (cancel) while it's still in flight.
+      sendPromptFireAndForget: (promptNodeId: string, prompt: string) => {
         void streamSendPrompt(
-          { workspaceId, threadRootId, prompt, repoPath },
+          { workspaceId, promptNodeId, prompt, repoPath },
           () => {
             void load()
           },
         ).then(() => load())
       },
-      cancel: async (threadRootId: string) => {
-        await call('sdk.cancel', { threadRootId })
+      cancel: async (promptNodeId: string) => {
+        await call('sdk.cancel', { promptNodeId })
         await load()
       },
       /**
-       * Slice 4 crash-recovery test hook. Creates a Turn Node directly via
-       * outline.create with `metadata.state = 'streaming'`, simulating
-       * what we'd see on disk after a crash mid-turn — without needing to
-       * actually kill the sidecar. The scan logic is the real subject of
-       * the test, and it doesn't care HOW the streaming Turn got there.
+       * Crash-recovery test hook (v1.1): create a Content Node directly
+       * with `metadata.state = 'streaming'`, simulating an interrupted
+       * Prompt without needing to actually kill the sidecar.
        */
-      createOrphanStreamingTurn: async (threadRootId: string) => {
-        const turn = await call('outline.create', {
+      createOrphanStreamingPrompt: async (parentId: string) => {
+        const node = await call('outline.create', {
           workspaceId,
-          parentId: threadRootId,
+          parentId,
           content: '',
-          kind: 'turn',
-          metadata: { role: 'turn', threadRootId, state: 'streaming' },
+          kind: 'content',
+          metadata: { state: 'streaming' },
         })
         await load()
-        return turn.id
+        return node.id
       },
       scanInterrupted: async () => {
         const out = await call('thread.scanInterrupted', { workspaceId })
-        await load()
-        return out
-      },
-      /**
-       * Slice 5: drive the branch flow from an e2e spec without
-       * synthesising a Cmd+Shift+B chord (modifier+letter chords are
-       * unreliable against contentEditable in WebKit's WebDriver).
-       *
-       * `selectBlock` mirrors the user's click-to-select; `branch`
-       * fires `thread.branch` and reloads the tree, returning the new
-       * Thread Root and prompt slot ids so the spec can navigate to
-       * them.
-       */
-      selectBlock: (blockId: string | null) => {
-        setSelectedBlockId(blockId)
-      },
-      branch: async (blockId: string) => {
-        const out = await call('thread.branch', { workspaceId, blockId })
-        await load()
-        return out
-      },
-      /**
-       * Slice 6: drive retry / newSibling flows from an e2e spec.
-       *   - `selectThreadRoot(id)` mirrors clicking a Thread Root row.
-       *   - `retry(blockId)` fires `thread.retry`.
-       *   - `newSibling(threadRootId)` fires `thread.newSibling`.
-       *
-       * Same rationale as slice 5's `branch`: modifier+letter chords
-       * are unreliable in WebKit's WebDriver against contentEditable
-       * cells, so we drive the IPC directly while the unit-tested
-       * keymap doc + window-keydown wiring covers the user-visible
-       * keystroke path.
-       */
-      selectThreadRoot: (threadRootId: string | null) => {
-        setSelectedThreadRootId(threadRootId)
-      },
-      retry: async (blockId: string) => {
-        const out = await call('thread.retry', { workspaceId, blockId })
-        await load()
-        return out
-      },
-      newSibling: async (threadRootId: string) => {
-        const out = await call('thread.newSibling', { workspaceId, threadRootId })
         await load()
         return out
       },
@@ -936,7 +699,7 @@ export function Tree({
     return () => {
       delete (window as unknown as { cedarpadE2E?: typeof hook }).cedarpadE2E
     }
-  }, [workspaceId, load])
+  }, [workspaceId, load, repoPath])
 
   return (
     <div className="tree-wrap">
@@ -968,7 +731,7 @@ export function Tree({
           )
         })}
       </nav>
-      {streamingThreadRootId !== null && (
+      {streamingPromptIds.size > 0 && (
         <div className="thread-running" data-testid="thread-running" role="status">
           <span className="dot" aria-hidden="true" />
           <span className="label">Claude is working — Cmd+Shift+. to cancel</span>
@@ -981,7 +744,7 @@ export function Tree({
       )}
       <div className="tree">
         {visible.map(({ node, depth }) => {
-          const { visual, blockMeta, turnMeta } = classifyNode(node)
+          const { visual, blockMeta, promptMeta, isSessionBearer } = classifyNode(node)
           const editable = node.kind === 'content'
           const displayContent =
             node.kind === 'block' && blockMeta ? renderBlockContent(blockMeta) : node.content
@@ -989,36 +752,20 @@ export function Tree({
           const dropClass = isDropTarget ? `drop-${dropPos!.kind}` : ''
           const completedClass = node.completed ? 'completed' : ''
           const draggingClass = dragId === node.id ? 'dragging' : ''
-          const turnState = turnMeta?.state
-          const turnStateClass = turnState ? `turn-state-${turnState}` : ''
-          const branchedFrom =
-            visual === 'thread-root'
-              ? (node.metadata as { branchedFromBlockId?: unknown }).branchedFromBlockId
-              : undefined
-          const isBranchedThread = typeof branchedFrom === 'string'
-          const branchClass = isBranchedThread ? 'branched-thread' : ''
-          const selectedBlockClass =
-            node.kind === 'block' && selectedBlockId === node.id ? 'block-selected' : ''
-          const isThreadRoot = visual === 'thread-root'
-          const selectedThreadRootClass =
-            isThreadRoot && selectedThreadRootId === node.id ? 'thread-root-selected' : ''
+          const promptState = promptMeta?.state
+          const promptStateClass = promptState ? `prompt-state-${promptState}` : ''
+          const sessionBearerClass = isSessionBearer ? 'session-bearer' : ''
           return (
             <div
               key={node.id}
-              className={`tree-node visual-${visual} ${completedClass} ${dropClass} ${draggingClass} ${turnStateClass} ${branchClass} ${selectedBlockClass} ${selectedThreadRootClass}`
+              className={`tree-node visual-${visual} ${completedClass} ${dropClass} ${draggingClass} ${promptStateClass} ${sessionBearerClass}`
                 .replace(/\s+/g, ' ')
                 .trim()}
               data-visual={visual}
               data-kind={node.kind}
               data-node-id={node.id}
-              data-turn-state={turnState ?? undefined}
-              data-branched-from={typeof branchedFrom === 'string' ? branchedFrom : undefined}
-              data-block-selected={
-                node.kind === 'block' && selectedBlockId === node.id ? 'true' : undefined
-              }
-              data-thread-root-selected={
-                isThreadRoot && selectedThreadRootId === node.id ? 'true' : undefined
-              }
+              data-prompt-state={promptState ?? undefined}
+              data-session-bearer={isSessionBearer ? 'true' : undefined}
               style={{ paddingLeft: depth * 18 }}
               draggable
               onDragStart={(e) => handleDragStart(e, node)}
@@ -1026,30 +773,8 @@ export function Tree({
               onDragOver={(e) => handleDragOver(e, node)}
               onDragLeave={(e) => handleDragLeave(e, node)}
               onDrop={(e) => void handleDrop(e, node)}
-              onClick={
-                node.kind === 'block'
-                  ? () => setSelectedBlockId((cur) => (cur === node.id ? null : node.id))
-                  : undefined
-              }
             >
-              <span
-                className="bullet"
-                aria-hidden
-                // For Thread Roots, clicking the bullet toggles the
-                // newSibling-selection. Stop propagation so the row
-                // click doesn't intercept caret placement, and don't
-                // override block-row clicks (handled at the row level
-                // above).
-                onClick={
-                  isThreadRoot
-                    ? (e) => {
-                        e.stopPropagation()
-                        setSelectedThreadRootId((cur) => (cur === node.id ? null : node.id))
-                      }
-                    : undefined
-                }
-                style={isThreadRoot ? { cursor: 'pointer' } : undefined}
-              >
+              <span className="bullet" aria-hidden>
                 {bulletForVisual(visual)}
               </span>
               <div
@@ -1061,7 +786,9 @@ export function Tree({
                 contentEditable={editable}
                 suppressContentEditableWarning
                 onInput={
-                  editable ? (e) => handleInput(node.id, e.currentTarget.textContent ?? '') : undefined
+                  editable
+                    ? (e) => handleInput(node.id, e.currentTarget.textContent ?? '')
+                    : undefined
                 }
                 onKeyDown={editable ? (e) => void handleKeyDown(e, node) : undefined}
               >
@@ -1077,8 +804,8 @@ export function Tree({
 
 /**
  * Render a Block Node's content based on its payload kind. Minimal —
- * UX iteration is a later slice. The point of slice 2 is the three
- * payload kinds are visually distinct so a user can tell them apart.
+ * UX iteration is a later slice. The point is that the three payload
+ * kinds are visually distinct so a user can tell them apart.
  */
 function renderBlockContent(meta: BlockMetadata): string {
   const p = meta.payload
