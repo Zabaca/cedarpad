@@ -168,19 +168,10 @@ async fn start_sidecar(app: &tauri::AppHandle) -> Result<(), String> {
         }
     }
 
-    // Push the macOS Keychain item `Claude Code-credentials` content (or
-    // null) into the sidecar so `auth.detect` can recognise users who
-    // signed in with `claude /login` on modern macOS — where the SDK
-    // writes only to the keychain and never creates
-    // `~/.claude/.credentials.json`. On non-macOS this returns None and
-    // we still push a null so the sidecar's cache is explicitly
-    // initialised.
-    let cc_creds = auth::read_claude_code_credentials();
-    let _ = push_sidecar(
-        "auth.injectClaudeCodeCredentials",
-        serde_json::json!({ "content": cc_creds }),
-    )
-    .await;
+    // The sidecar reads the macOS Keychain item `Claude Code-credentials`
+    // itself, lazily on the first `auth.detect`. See
+    // `claudeCodeKeychain.ts` — Bun's stable signature keeps the user's
+    // "Always Allow" grant alive across cedarpad rebuilds.
     Ok(())
 }
 

@@ -31,9 +31,12 @@
  *      macOS, `claude /login` writes *only* to this keychain item —
  *      no credentials file is created — so without this step the
  *      probe falls through to `none` even when the user is signed in.
- *      The Rust shell owns the keychain read (same binary as the BYOK
- *      store, so one ACL grant covers both items) and pushes the raw
- *      JSON into the sidecar; the seam below just consults that cache.
+ *      The Bun sidecar shells out to `security(1)` to read this item
+ *      (lazily, cached for the sidecar's lifetime). Reading from Bun
+ *      rather than the Tauri Rust shell means the user's macOS
+ *      "Always Allow" grant is bound to Bun's stable signature, not
+ *      cedarpad's per-build signature — so the grant survives
+ *      `cargo build`. The seam below just consults that lazy cache.
  *
  * Source-of-truth for SDK behaviour: claude-agent-sdk@0.2.138 (May
  * 2026) reads, in order, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
@@ -58,8 +61,7 @@ export interface AuthDetectDeps {
   homedir: () => string
   /**
    * Returns the raw contents of the macOS Keychain item
-   * `Claude Code-credentials`, or null when absent / not on macOS /
-   * not yet pushed in by the Rust shell.
+   * `Claude Code-credentials`, or null when absent / not on macOS.
    */
   readClaudeCodeKeychain: () => string | null
 }
