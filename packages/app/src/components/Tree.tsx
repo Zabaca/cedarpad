@@ -128,6 +128,13 @@ export function Tree({
    */
   const [streamingThreadRootId, setStreamingThreadRootId] = useState<string | null>(null)
   const [inFlightText, setInFlightText] = useState<Map<string, string>>(new Map())
+  /**
+   * Slice 5: which Block Node the user has selected as the source for a
+   * branch operation. Block rows aren't contentEditable, so they don't
+   * carry React's onKeyDown wiring; we track selection separately and a
+   * window-level Cmd+Shift+B handler reads this state.
+   */
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
   const refs = useRef(new Map<string, HTMLDivElement>())
   // Mirror dragId / dropPos in refs so synthetic drag sequences (where
   // dragstart, dragover and drop dispatch back-to-back in the same
@@ -352,6 +359,72 @@ export function Tree({
     },
     [],
   )
+
+  /**
+   * Slice 5: branch from a Block Node. Creates a sibling Thread under
+   * the same Thread Root with full prior history through the source
+   * Block, then focuses the new empty prompt slot.
+   *
+   * Cross-feature interaction with zoom (slice 7): if we're zoomed in
+   * such that the new Thread would not be visible (it's outside the
+   * zoom subtree), clear the zoom — the least-surprising of the two
+   * options. Documented in the slice 5 issue.
+   */
+  const branchFromBlock = useCallback(
+    async (blockId: string) => {
+      try {
+        const out = await call('thread.branch', { workspaceId, blockId })
+        // If we're zoomed, decide whether the new Thread is visible.
+        // Cheapest check: walk up `out.newThreadId`'s ancestry; if we
+        // don't pass through `activeNodeId`, it's outside zoom — clear.
+        if (activeNodeId !== null) {
+          // We don't have the new Thread's parent chain in `lookup` yet
+          // (we just inserted it). The parent IS the Thread Root the
+          // user branched from, which is in `lookup`. So look up the
+          // Thread Root via the source block's chain.
+          const block = lookup.get(blockId)
+          let cursor: string | null = block?.parentId ?? null
+          let inZoom = false
+          const seen = new Set<string>()
+          while (cursor !== null) {
+            if (cursor === activeNodeId) {
+              inZoom = true
+              break
+            }
+            if (seen.has(cursor)) break
+            seen.add(cursor)
+            const n = lookup.get(cursor)
+            cursor = n?.parentId ?? null
+          }
+          if (!inZoom) onZoomTo(null)
+        }
+        await load()
+        setSelectedBlockId(null)
+        setFocusId(out.promptNodeId)
+      } catch {
+        /* non-fatal */
+      }
+    },
+    [workspaceId, load, activeNodeId, lookup, onZoomTo],
+  )
+
+  // Window-level Cmd/Ctrl+Shift+B → branch from the selected Block.
+  // Block rows aren't contentEditable so they don't carry per-row
+  // onKeyDown; we attach at the document level and dispatch on the
+  // tracked `selectedBlockId`. Down-arrow / up-arrow over sibling
+  // Threads is handled here too — across sibling Thread Roots only.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'b') {
+        if (!selectedBlockId) return
+        e.preventDefault()
+        void branchFromBlock(selectedBlockId)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedBlockId, branchFromBlock])
 
   const handleKeyDown = useCallback(
     async (e: React.KeyboardEvent<HTMLDivElement>, n: Node) => {
@@ -703,6 +776,24 @@ export function Tree({
         await load()
         return out
       },
+      /**
+       * Slice 5: drive the branch flow from an e2e spec without
+       * synthesising a Cmd+Shift+B chord (modifier+letter chords are
+       * unreliable against contentEditable in WebKit's WebDriver).
+       *
+       * `selectBlock` mirrors the user's click-to-select; `branch`
+       * fires `thread.branch` and reloads the tree, returning the new
+       * Thread Root and prompt slot ids so the spec can navigate to
+       * them.
+       */
+      selectBlock: (blockId: string | null) => {
+        setSelectedBlockId(blockId)
+      },
+      branch: async (blockId: string) => {
+        const out = await call('thread.branch', { workspaceId, blockId })
+        await load()
+        return out
+      },
       reload: load,
     }
     ;(window as unknown as { cedarpadE2E?: typeof hook }).cedarpadE2E = hook
@@ -764,16 +855,28 @@ export function Tree({
           const draggingClass = dragId === node.id ? 'dragging' : ''
           const turnState = turnMeta?.state
           const turnStateClass = turnState ? `turn-state-${turnState}` : ''
+          const branchedFrom =
+            visual === 'thread-root'
+              ? (node.metadata as { branchedFromBlockId?: unknown }).branchedFromBlockId
+              : undefined
+          const isBranchedThread = typeof branchedFrom === 'string'
+          const branchClass = isBranchedThread ? 'branched-thread' : ''
+          const selectedBlockClass =
+            node.kind === 'block' && selectedBlockId === node.id ? 'block-selected' : ''
           return (
             <div
               key={node.id}
-              className={`tree-node visual-${visual} ${completedClass} ${dropClass} ${draggingClass} ${turnStateClass}`
+              className={`tree-node visual-${visual} ${completedClass} ${dropClass} ${draggingClass} ${turnStateClass} ${branchClass} ${selectedBlockClass}`
                 .replace(/\s+/g, ' ')
                 .trim()}
               data-visual={visual}
               data-kind={node.kind}
               data-node-id={node.id}
               data-turn-state={turnState ?? undefined}
+              data-branched-from={typeof branchedFrom === 'string' ? branchedFrom : undefined}
+              data-block-selected={
+                node.kind === 'block' && selectedBlockId === node.id ? 'true' : undefined
+              }
               style={{ paddingLeft: depth * 18 }}
               draggable
               onDragStart={(e) => handleDragStart(e, node)}
@@ -781,6 +884,11 @@ export function Tree({
               onDragOver={(e) => handleDragOver(e, node)}
               onDragLeave={(e) => handleDragLeave(e, node)}
               onDrop={(e) => void handleDrop(e, node)}
+              onClick={
+                node.kind === 'block'
+                  ? () => setSelectedBlockId((cur) => (cur === node.id ? null : node.id))
+                  : undefined
+              }
             >
               <span className="bullet" aria-hidden>
                 {bulletForVisual(visual)}

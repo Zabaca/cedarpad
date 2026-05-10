@@ -334,6 +334,27 @@ body {
   border-color: #93a4ff;
 }
 
+/* Slice 5: branch selection + sibling-Thread badge. */
+.tree-node.block-selected .content {
+  background: #fef3c7;
+  outline: 2px solid #f59e0b;
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* A Thread Root that was created by branching carries
+ * data-branched-from. Show a small "branch" badge on its bullet so the
+ * user can spot sibling Threads at a glance. */
+.tree-node.visual-thread-root.branched-thread .bullet::after {
+  content: '⎇';
+  margin-left: 4px;
+  color: #7c3aed;
+  font-weight: 700;
+}
+.tree-node.visual-thread-root.branched-thread .content {
+  border-left-color: #7c3aed;
+}
+
 /* Slice 4: running indicator while a Claude turn is streaming. */
 .thread-running {
   display: flex;

@@ -202,7 +202,7 @@ export function App() {
               >
                 {hideCompleted ? 'Show completed' : 'Hide completed'}
               </button>
-              <div className="hint">Cmd+P · switch · Cmd+K · search · Cmd+Shift+H · hide done · Cmd+Enter · complete · Cmd+. zoom in · Cmd+, zoom out</div>
+              <div className="hint">Cmd+P · switch · Cmd+K · search · Cmd+Shift+H · hide done · Cmd+Enter · complete · Cmd+. zoom in · Cmd+, zoom out · Cmd+Shift+B · branch from selected block</div>
             </div>
           </div>
           <Tree

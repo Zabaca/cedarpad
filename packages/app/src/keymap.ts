@@ -21,6 +21,10 @@ import type { Node } from './contract'
  *   - Cmd/Ctrl+Shift+. → cancel the in-flight Claude turn for the active
  *                        Thread (slice 4). Distinct from Cmd+. (zoom-in).
  *   - Cmd/Ctrl+Shift+T → start a Thread on this Content Node (slice 2)
+ *   - Cmd/Ctrl+Shift+B → branch from a Block Node — fork into a sibling
+ *                        Thread carrying full history through this Block
+ *                        (slice 5). The renderer translates the intent
+ *                        into a `thread.branch` call.
  *
  * Visual treatments paired with the kinds (slice 2):
  *   - Content Node: default bullet
@@ -42,6 +46,7 @@ export type Intent =
   | { kind: 'start-thread'; nodeId: string }
   | { kind: 'send-prompt'; nodeId: string; threadRootId: string; prompt: string }
   | { kind: 'cancel-turn'; threadRootId: string }
+  | { kind: 'branch-from-block'; blockId: string }
 
 export interface Visible {
   node: Node

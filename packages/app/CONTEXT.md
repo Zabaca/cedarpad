@@ -55,6 +55,34 @@ Start a fresh Thread under the same Thread Root, no conversation history. "New c
 
 - "Branch" and "Thread" overlap in casual speech. **Resolution**: a Thread is the subtree (a noun); to Branch is to create a new Thread (a verb). Branching produces a new Thread.
 
+## Slice 5 additions
+
+- `threadEngine.branch(sourceBlockId)` — the killer verb. Implemented as a
+  thin wrapper over `branchInternal({ sourceBlockId, mode })`; only `mode:
+  'branch'` is publicly surfaced in slice 5. Slice 6 adds `retry` and
+  `new-sibling` wrappers over the same internal op.
+- The new sibling Thread is a Content Node child of the original Thread
+  Root, stamped `{ isThreadRoot: true, branchedFromBlockId: <id> }`.
+  Cloned history (each prompt + Turn with all blocks, then the source
+  Turn with blocks sliced per mode) is appended under it, followed by an
+  empty Content Node = the next prompt slot. This satisfies CONTEXT.md's
+  "A Thread Root has one or more Threads as direct children — multiple
+  Threads exist when branching has occurred."
+- `thread.branch` IPC method takes `{ workspaceId, blockId }`, returns
+  `{ newThreadId, promptNodeId }`. Renderer focuses `promptNodeId` after
+  the call.
+- Renderer keymap: `Cmd/Ctrl+Shift+B` over a selected Block triggers
+  branch. Block rows aren't contentEditable, so a window-level keydown
+  handler dispatches based on `selectedBlockId` state (clicking a Block
+  row toggles selection; the `block-selected` class + outline gives a
+  visible cue).
+- Cross-feature with zoom: when branching while zoomed and the new
+  Thread would land outside the current zoom, the renderer clears zoom
+  (`onZoomTo(null)`). Per slice 5 issue's option (a) — least surprising.
+- E2E hooks: `cedarpadE2E.selectBlock(id|null)` mirrors click-selection,
+  `cedarpadE2E.branch(blockId)` fires `thread.branch` and reloads the
+  tree. Used by `e2e/webview/specs/branch.spec.ts`.
+
 ## Slice 4 additions
 
 - Turn lifecycle: `metadata.state` is one of
