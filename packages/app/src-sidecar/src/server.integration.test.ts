@@ -20,9 +20,26 @@ interface Sidecar {
   kill: () => void
 }
 
-function startSidecar(env: NodeJS.ProcessEnv): Sidecar {
+// (extended below with streaming support)
+
+interface SidecarStream extends Sidecar {
+  /** Drive a streaming method; resolves with all stream events + the final result. */
+  sendStream: (
+    req: { id: string; method: string; params?: unknown },
+    onEvent?: (event: unknown) => void,
+  ) => Promise<{ events: unknown[]; result: unknown }>
+}
+
+function startSidecar(env: NodeJS.ProcessEnv): SidecarStream {
   const proc = spawn('bun', ['run', serverPath], { stdio: ['pipe', 'pipe', 'pipe'], env })
   const pending = new Map<string, (resp: { kind: string; result?: unknown; error?: unknown }) => void>()
+  const streamCollectors = new Map<
+    string,
+    {
+      events: unknown[]
+      onEvent?: (event: unknown) => void
+    }
+  >()
   let buf = ''
   proc.stdout.on('data', (b: Buffer) => {
     buf += b.toString('utf8')
@@ -31,7 +48,21 @@ function startSidecar(env: NodeJS.ProcessEnv): Sidecar {
       const line = buf.slice(0, idx).trim()
       buf = buf.slice(idx + 1)
       if (!line) continue
-      const parsed = JSON.parse(line) as { id: string; kind: string; result?: unknown; error?: unknown }
+      const parsed = JSON.parse(line) as {
+        id: string
+        kind: string
+        result?: unknown
+        error?: unknown
+        event?: unknown
+      }
+      if (parsed.kind === 'stream') {
+        const c = streamCollectors.get(parsed.id)
+        if (c) {
+          c.events.push(parsed.event)
+          c.onEvent?.(parsed.event)
+        }
+        continue
+      }
       const cb = pending.get(parsed.id)
       if (cb) {
         pending.delete(parsed.id)
@@ -53,6 +84,18 @@ function startSidecar(env: NodeJS.ProcessEnv): Sidecar {
         })
         proc.stdin.write(JSON.stringify({ id, method: req.method, params: req.params ?? {} }) + '\n')
       }),
+    sendStream: (req, onEvent) =>
+      new Promise((resolve, reject) => {
+        const id = req.id
+        const collector = { events: [] as unknown[], onEvent }
+        streamCollectors.set(id, collector)
+        pending.set(id, (resp) => {
+          streamCollectors.delete(id)
+          if (resp.kind === 'ok') resolve({ events: collector.events, result: resp.result })
+          else reject(new Error(`sidecar err: ${JSON.stringify(resp.error)}`))
+        })
+        proc.stdin.write(JSON.stringify({ id, method: req.method, params: req.params ?? {} }) + '\n')
+      }),
     kill: () => {
       proc.kill()
     },
@@ -60,7 +103,7 @@ function startSidecar(env: NodeJS.ProcessEnv): Sidecar {
 }
 
 let tmp: string
-let sidecar: Sidecar
+let sidecar: SidecarStream
 
 beforeEach(async () => {
   tmp = await mkdtempWorktreeScoped('sidecar-int-')
@@ -151,4 +194,75 @@ describe('sidecar integration', () => {
       expect(b.parentId).toBe(turn.turn.id)
     }
   }, 15000)
+
+  it('drives sdk.sendPrompt → streaming Block Nodes (e2e fake SDK)', async () => {
+    // Spawn a fresh sidecar with the fake-SDK env flag flipped on so we
+    // never touch the real Claude Agent SDK.
+    sidecar.kill()
+    sidecar = startSidecar({
+      ...process.env,
+      CEDARPAD_GLOBAL_DIR: join(tmp, 'global'),
+      CEDARPAD_E2E_FAKE_SDK: '1',
+    })
+
+    const repo = join(tmp, 'repo')
+    await mkdir(repo, { recursive: true })
+
+    const ws = (await sidecar.send({ id: '1', method: 'workspace.open', params: { repoPath: repo } })) as {
+      id: string
+    }
+    const root = (await sidecar.send({
+      id: '2',
+      method: 'outline.create',
+      params: { workspaceId: ws.id, parentId: null, content: 'idea' },
+    })) as { id: string }
+    await sidecar.send({
+      id: '3',
+      method: 'thread.start',
+      params: { workspaceId: ws.id, rootNodeId: root.id },
+    })
+
+    // Push an API key into the sidecar (Rust would normally do this on
+    // boot via the inject path).
+    await sidecar.send({
+      id: '4',
+      method: 'auth.injectApiKey',
+      params: { key: 'sk-ant-fake' },
+    })
+
+    const result = (await sidecar.sendStream({
+      id: '5',
+      method: 'sdk.sendPrompt',
+      params: {
+        workspaceId: ws.id,
+        threadRootId: root.id,
+        prompt: 'what is this repo?',
+        repoPath: repo,
+      },
+    })) as { events: unknown[]; result: { turnId: string; reason: string } }
+
+    expect(result.result.reason).toBe('done')
+    expect(result.result.turnId).toBeTruthy()
+
+    // The fake script emits 4 block-completes (text, tool_use, tool_result, text).
+    const completes = result.events.filter(
+      (e) => (e as { kind?: string }).kind === 'block-complete',
+    )
+    expect(completes).toHaveLength(4)
+
+    // The turn-complete event also fires.
+    const turnComplete = result.events.find((e) => (e as { kind?: string }).kind === 'turn-complete')
+    expect(turnComplete).toBeTruthy()
+
+    // Block Nodes were persisted under the Turn.
+    const turnChildren = (await sidecar.send({
+      id: '6',
+      method: 'outline.getChildren',
+      params: { workspaceId: ws.id, parentId: result.result.turnId },
+    })) as Array<{ id: string; kind: string }>
+    expect(turnChildren).toHaveLength(4)
+    for (const b of turnChildren) {
+      expect(b.kind).toBe('block')
+    }
+  }, 30000)
 })

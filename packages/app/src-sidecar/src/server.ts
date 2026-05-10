@@ -7,8 +7,8 @@
  *
  * The Tauri shell spawns this process and pipes stdin/stdout to it.
  */
-import { Methods, RpcRequestSchema, type RpcResponse, type MethodName } from '../../src/contract.ts'
-import { handlers } from './handlers.ts'
+import { Methods, RpcRequestSchema, RunnerEventSchema, type RpcResponse, type MethodName } from '../../src/contract.ts'
+import { handlers, getSdkRunnerForWorkspace } from './handlers.ts'
 
 function send(resp: RpcResponse): void {
   process.stdout.write(JSON.stringify(resp) + '\n')
@@ -43,6 +43,49 @@ async function dispatch(line: string): Promise<void> {
   const inputParse = spec.input.safeParse(req.data.params)
   if (!inputParse.success) {
     send({ kind: 'err', id: req.data.id, error: { code: 'BAD_INPUT', message: inputParse.error.message } })
+    return
+  }
+
+  // Streaming method — special-cased because its return is an AsyncIterable
+  // of events, not a plain promise. The wire shape: zero or more
+  // {kind:'stream', id, event} frames followed by exactly one terminal
+  // {kind:'ok', id, result} frame, all sharing the request id.
+  if (method === 'sdk.sendPrompt') {
+    const params = inputParse.data as {
+      workspaceId: string
+      threadRootId: string
+      prompt: string
+      repoPath: string
+    }
+    try {
+      const runner = await getSdkRunnerForWorkspace(params.workspaceId)
+      let lastTurnId = ''
+      let reason: 'done' | 'cancelled' | 'error' = 'done'
+      for await (const event of runner.sendPrompt({
+        threadId: params.threadRootId,
+        prompt: params.prompt,
+        repoPath: params.repoPath,
+      })) {
+        const evParse = RunnerEventSchema.safeParse(event)
+        if (!evParse.success) {
+          log('skipping malformed runner event', evParse.error.message)
+          continue
+        }
+        send({ kind: 'stream', id: req.data.id, event: evParse.data })
+        if (evParse.data.kind === 'turn-complete') lastTurnId = evParse.data.turnId
+        if (evParse.data.kind === 'error') reason = 'error'
+      }
+      const result = { turnId: lastTurnId, reason }
+      const outputParse = spec.output.safeParse(result)
+      if (!outputParse.success) {
+        send({ kind: 'err', id: req.data.id, error: { code: 'BAD_OUTPUT', message: outputParse.error.message } })
+        return
+      }
+      send({ kind: 'ok', id: req.data.id, result: outputParse.data })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      send({ kind: 'err', id: req.data.id, error: { code: 'HANDLER_ERROR', message } })
+    }
     return
   }
 
