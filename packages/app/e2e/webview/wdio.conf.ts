@@ -1,0 +1,110 @@
+/**
+ * webdriverio config for the WebView e2e harness.
+ *
+ * The flow:
+ *   1. `globalSetup` mints a worktree-scoped temp dir, seeds the recents
+ *      store with a fresh repo, and spawns `tauri-webdriver` with
+ *      `CEDARPAD_GLOBAL_DIR` set so the launched app inherits it.
+ *   2. wdio connects to `tauri-webdriver` on :4444. Each spec gets a fresh
+ *      session — `tauri-webdriver` launches the cedarpad binary, which
+ *      auto-restores the seeded workspace via existing recents code.
+ *   3. `globalTeardown` kills `tauri-webdriver` and rms the temp dir.
+ *
+ * Worktree-safe: `CEDARPAD_TMP` (set by `scripts/with-worktree-env.sh`) is
+ * honoured by `mkdtempWorktreeScoped`, so two worktrees never collide on
+ * temp paths. `tauri-webdriver`'s port (4444) is currently the only fixed
+ * point — if you need to run two e2e suites in parallel from two
+ * worktrees, override via `--port` in onPrepare. For slice 1 we accept
+ * the single-port limitation: only one WebView e2e run per machine at a
+ * time.
+ */
+import { spawn, type ChildProcess } from 'node:child_process'
+import { rm } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { mkdtempWorktreeScoped } from '../../modules/test-utils/worktreeTmp.ts'
+import { seedRecentRepo } from './seedRecents.ts'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const appRoot = resolve(here, '../..')
+const launchScript = join(here, 'launch-app.sh')
+
+let driverProc: ChildProcess | null = null
+let tmpDir: string | null = null
+
+export const config: WebdriverIO.Config = {
+  runner: 'local',
+  specs: [join(here, 'specs/**/*.spec.ts')],
+  maxInstances: 1,
+  capabilities: [
+    {
+      'tauri:options': {
+        application: launchScript,
+      },
+    },
+  ],
+  hostname: 'localhost',
+  port: 4444,
+  path: '/',
+  logLevel: 'warn',
+  framework: 'mocha',
+  reporters: ['spec'],
+  mochaOpts: {
+    ui: 'bdd',
+    timeout: 60000,
+  },
+  // Pass per-test context (the seeded repo path) via the wdio shared store.
+  // We can't put it in capabilities directly because tauri-webdriver only
+  // forwards `application` and `args`; we expose it via a global on
+  // process.env that the spec reads.
+  onPrepare: async () => {
+    tmpDir = await mkdtempWorktreeScoped('e2e-webview-')
+    const seeded = await seedRecentRepo({ baseTmp: tmpDir })
+    process.env.CEDARPAD_E2E_REPO = seeded.repoPath
+    process.env.CEDARPAD_GLOBAL_DIR = seeded.globalDir
+
+    driverProc = spawn('tauri-webdriver', ['--port', '4444'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    })
+    driverProc.stdout?.on('data', (b: Buffer) => {
+      process.stderr.write(`[tauri-webdriver] ${b}`)
+    })
+    driverProc.stderr?.on('data', (b: Buffer) => {
+      process.stderr.write(`[tauri-webdriver] ${b}`)
+    })
+    // Wait for port to be reachable.
+    await waitForPort('localhost', 4444, 10000)
+  },
+  onComplete: async () => {
+    if (driverProc) {
+      driverProc.kill()
+      driverProc = null
+    }
+    if (tmpDir) {
+      await rm(tmpDir, { recursive: true, force: true })
+      tmpDir = null
+    }
+  },
+}
+
+async function waitForPort(host: string, port: number, timeoutMs: number): Promise<void> {
+  const { connect } = await import('node:net')
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const ok = await new Promise<boolean>((resolve) => {
+      const s = connect({ host, port })
+      s.once('connect', () => {
+        s.end()
+        resolve(true)
+      })
+      s.once('error', () => resolve(false))
+    })
+    if (ok) return
+    await new Promise((r) => setTimeout(r, 200))
+  }
+  throw new Error(`tauri-webdriver did not open port ${port} within ${timeoutMs}ms`)
+}
+
+// Make appRoot available for debugging output.
+void appRoot
