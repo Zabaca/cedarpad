@@ -10,9 +10,14 @@ interface Visible {
 
 interface Props {
   workspaceId: string
+  /**
+   * Request to navigate to a node (e.g. from the search palette). The
+   * `nonce` lets repeated requests for the same id re-trigger focus.
+   */
+  navigateRequest?: { id: string; nonce: number } | null
 }
 
-export function Tree({ workspaceId }: Props) {
+export function Tree({ workspaceId, navigateRequest }: Props) {
   const [byParent, setByParent] = useState<Map<string | null, Node[]>>(new Map())
   const [focusId, setFocusId] = useState<string | null>(null)
   const refs = useRef(new Map<string, HTMLDivElement>())
@@ -60,6 +65,18 @@ export function Tree({ workspaceId }: Props) {
       sel?.addRange(range)
     }
   }, [focusId])
+
+  // Honour external navigation requests (search palette → jump to node).
+  // Slice 1 has no collapse state, so "expand ancestors" is a no-op; we
+  // focus the cell and scroll it into view. The nonce key ensures the
+  // effect re-runs even when targeting the same id twice in a row.
+  useEffect(() => {
+    if (!navigateRequest) return
+    const el = refs.current.get(navigateRequest.id)
+    if (!el) return
+    setFocusId(navigateRequest.id)
+    el.scrollIntoView({ block: 'center', behavior: 'auto' })
+  }, [navigateRequest])
 
   const visible: Visible[] = useMemo(() => {
     const out: Visible[] = []

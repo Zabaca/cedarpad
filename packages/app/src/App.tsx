@@ -3,11 +3,14 @@ import { call, isTauri } from './ipc'
 import { Tree } from './components/Tree'
 import { WorkspacePicker } from './components/WorkspacePicker'
 import { WorkspaceSwitcher } from './components/WorkspaceSwitcher'
+import { SearchPalette } from './components/SearchPalette'
 import type { WorkspaceSummary } from './contract'
 
 export function App() {
   const [active, setActive] = useState<WorkspaceSummary | null>(null)
   const [showSwitcher, setShowSwitcher] = useState(false)
+  const [showSearch, setShowSearch] = useState(false)
+  const [navigateRequest, setNavigateRequest] = useState<{ id: string; nonce: number } | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
   const [booted, setBooted] = useState(false)
 
@@ -33,13 +36,18 @@ export function App() {
     })()
   }, [])
 
-  // Cmd+P → toggle switcher (only in Tauri to avoid clobbering print).
+  // Cmd+P → toggle switcher, Cmd+K → toggle search palette.
+  // Only in Tauri to avoid clobbering native browser bindings during dev.
   useEffect(() => {
     if (!isTauri()) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'p' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         setShowSwitcher((s) => !s)
+      }
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        setShowSearch((s) => !s)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -87,9 +95,9 @@ export function App() {
               <div className="name">{active.displayName}</div>
               <div className="hint">{active.repoPath}</div>
             </div>
-            <div className="hint">Cmd+P · switch workspace</div>
+            <div className="hint">Cmd+P · switch workspace · Cmd+K · search</div>
           </div>
-          <Tree workspaceId={active.id} />
+          <Tree workspaceId={active.id} navigateRequest={navigateRequest} />
         </>
       )}
       {showSwitcher && (
@@ -97,6 +105,16 @@ export function App() {
           activeId={active?.id ?? null}
           onSelect={handleSwitched}
           onClose={() => setShowSwitcher(false)}
+        />
+      )}
+      {showSearch && active && (
+        <SearchPalette
+          workspaceId={active.id}
+          onSelect={(id) => {
+            setNavigateRequest({ id, nonce: Date.now() })
+            setShowSearch(false)
+          }}
+          onClose={() => setShowSearch(false)}
         />
       )}
     </div>

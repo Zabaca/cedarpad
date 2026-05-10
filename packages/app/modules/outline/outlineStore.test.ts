@@ -98,6 +98,33 @@ describe('outlineStore', () => {
     expect(hits[0]?.content).toBe('hello world')
   })
 
+  it('searchNodes handles multi-term queries and returns no rows on miss', async () => {
+    await store.createNode({ parentId: null, content: 'red apple pie' })
+    await store.createNode({ parentId: null, content: 'green apple jam' })
+    await store.createNode({ parentId: null, content: 'banana split' })
+    // Multi-term implicit AND (FTS5 default)
+    const both = await store.searchNodes('red apple')
+    expect(both.map((n) => n.content)).toEqual(['red apple pie'])
+    // No matches
+    const none = await store.searchNodes('zzznotpresent')
+    expect(none).toEqual([])
+  })
+
+  it('searchNodes finds matches anywhere in the tree (across depths/parents)', async () => {
+    // Slice 1 only models 'content' Node kind, but searchNodes must work
+    // regardless of where in the tree the node lives — root and descendants
+    // alike. (Once Turn/Block kinds land in slice 3+ the same code path
+    // covers them.)
+    const root = await store.createNode({ parentId: null, content: 'project alpha' })
+    const child = await store.createNode({ parentId: root.id, content: 'subtask alpha' })
+    const grand = await store.createNode({ parentId: child.id, content: 'leaf alpha' })
+    const hits = await store.searchNodes('alpha')
+    const ids = new Set(hits.map((n) => n.id))
+    expect(ids.has(root.id)).toBe(true)
+    expect(ids.has(child.id)).toBe(true)
+    expect(ids.has(grand.id)).toBe(true)
+  })
+
   it('50 sequential inserts at same parent keep positions unique and sorted', async () => {
     const ids: string[] = []
     let prev: string | null = null
