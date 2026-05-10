@@ -39,6 +39,17 @@ const threadEngines = new Map<string, ThreadEngine>()
 // it via auth.injectApiKey. The OS keychain itself lives in the Rust shell.
 const keychain: KeychainStore = createKeychainStore()
 
+// Cache of the macOS Keychain item `Claude Code-credentials` content
+// pushed in from the Rust shell at startup via
+// `auth.injectClaudeCodeCredentials`. Null = unset (non-macOS, no
+// keychain entry, or shell hasn't pushed yet). The detection probe
+// reads this between the credentials-file check and the BYOK check —
+// see `authProbe.ts`.
+let claudeCodeKeychainContent: string | null = null
+function readClaudeCodeKeychain(): string | null {
+  return claudeCodeKeychainContent
+}
+
 /**
  * Probe the host for the SDK's subscription credentials file. When
  * `CLAUDE_CONFIG_DIR` is set we honour it (matching the SDK); otherwise
@@ -82,6 +93,7 @@ function currentAuthMode(): AuthMode {
     homedir,
     readEnv: readEnvWithOverride,
     readCredentialsFile,
+    readClaudeCodeKeychain,
   }).mode
 }
 
@@ -246,6 +258,13 @@ export const handlers: Handlers = {
     keychain.deleteApiKey()
     return { ok: true } as const
   },
+  // Rust pushes the macOS Keychain item content here at startup. Null
+  // content means "no entry present" (or non-macOS); we cache it as-is
+  // and the probe shape-checks it on read.
+  'auth.injectClaudeCodeCredentials': ({ content }) => {
+    claudeCodeKeychainContent = content
+    return { ok: true } as const
+  },
   // Defensive renderer-callable handlers. In the production wiring the
   // renderer's auth.* calls go through Tauri commands, NOT through this
   // sidecar — but the contract is one source of truth and the registry
@@ -268,6 +287,7 @@ export const handlers: Handlers = {
       homedir,
       readEnv: readEnvWithOverride,
       readCredentialsFile,
+      readClaudeCodeKeychain,
     })
   },
   // Test-only: lets `auth-detect.spec.ts` flip the forced auth mode

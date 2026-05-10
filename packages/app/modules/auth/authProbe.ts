@@ -5,31 +5,40 @@
  * Code SDK use right now?" Three modes:
  *
  *   - `subscription` — the user is signed in with Claude Code (Pro/Max
- *     OAuth). The Claude Agent SDK transparently picks up its
- *     `~/.claude/.credentials.json` (or whatever `CLAUDE_CONFIG_DIR`
- *     points at) when no `ANTHROPIC_API_KEY` env var is set, so cedarpad
- *     does NOT need to inject anything. We also classify a pre-set
- *     `ANTHROPIC_API_KEY` env var as `subscription` — the SDK already
- *     has working auth without our help.
- *   - `api-key`      — no subscription file, but the user previously
+ *     OAuth) or has `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`
+ *     pre-set in the environment. The Claude Agent SDK transparently
+ *     picks any of these up; cedarpad does NOT need to inject anything.
+ *   - `api-key`      — no subscription path, but the user previously
  *     stored a BYOK key in our own keychain. The runner still injects
  *     this via `env.ANTHROPIC_API_KEY` when invoking the SDK.
  *   - `none`         — neither path is configured. The renderer must show
  *     the AuthPrompt to let the user sign in or paste a key.
  *
  * The probe accepts injected seams (file checker, keychain, env reader,
- * homedir) so unit tests can drive every branch without touching the
- * real filesystem or keychain. `CEDARPAD_E2E_AUTH_MODE` lets the e2e
- * harness force a deterministic mode regardless of host state.
+ * homedir, Claude Code keychain reader) so unit tests can drive every
+ * branch without touching the real filesystem or OS keychain.
+ * `CEDARPAD_E2E_AUTH_MODE` lets the e2e harness force a deterministic
+ * mode regardless of host state.
  *
- * Source-of-truth for the SDK's credential file path: at the time of
- * writing (claude-agent-sdk@0.2.138, May 2026) the SDK reads
- * `${CLAUDE_CONFIG_DIR ?? <homedir>/.claude}/.credentials.json`. On
- * macOS it additionally falls back to the keychain item
- * `Claude Code-credentials` if neither the env var nor the file is
- * present, but we don't probe that explicitly — if the file isn't there
- * the user can still get the SDK to run via `claude /login` (which
- * writes the file) or via BYOK.
+ * Subscription detection precedence (must match the SDK's internal
+ * order):
+ *   1. `ANTHROPIC_API_KEY` env var
+ *   2. `CLAUDE_CODE_OAUTH_TOKEN` env var
+ *   3. `${CLAUDE_CONFIG_DIR ?? <homedir>/.claude}/.credentials.json`
+ *      containing `claudeAiOauth.accessToken`
+ *   4. macOS Keychain item `Claude Code-credentials` (account =
+ *      `$USER`) containing `claudeAiOauth.accessToken`. On modern
+ *      macOS, `claude /login` writes *only* to this keychain item —
+ *      no credentials file is created — so without this step the
+ *      probe falls through to `none` even when the user is signed in.
+ *      The Rust shell owns the keychain read (same binary as the BYOK
+ *      store, so one ACL grant covers both items) and pushes the raw
+ *      JSON into the sidecar; the seam below just consults that cache.
+ *
+ * Source-of-truth for SDK behaviour: claude-agent-sdk@0.2.138 (May
+ * 2026) reads, in order, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
+ * `${CLAUDE_CONFIG_DIR ?? ~/.claude}/.credentials.json`, then on macOS
+ * the keychain item `Claude Code-credentials`.
  */
 import type { KeychainStore } from './keychainStore.ts'
 
@@ -47,6 +56,12 @@ export interface AuthDetectDeps {
   readCredentialsFile: (path: string) => string | null
   readEnv: (name: string) => string | undefined
   homedir: () => string
+  /**
+   * Returns the raw contents of the macOS Keychain item
+   * `Claude Code-credentials`, or null when absent / not on macOS /
+   * not yet pushed in by the Rust shell.
+   */
+  readClaudeCodeKeychain: () => string | null
 }
 
 const E2E_OVERRIDE_VALUES: Record<string, AuthMode> = {
@@ -86,19 +101,34 @@ export function detectAuth(deps: AuthDetectDeps): AuthDetectResult {
     return { mode: E2E_OVERRIDE_VALUES[forced]!, detail: 'forced via CEDARPAD_E2E_AUTH_MODE' }
   }
 
-  // The SDK uses `ANTHROPIC_API_KEY` directly when set, bypassing both
-  // the credentials file and the keychain. cedarpad has nothing to inject
-  // on top, so we treat this as a working-auth state and skip the
-  // prompt.
+  // The SDK uses `ANTHROPIC_API_KEY` directly when set, bypassing every
+  // other source. cedarpad has nothing to inject on top, so we treat
+  // this as a working-auth state and skip the prompt.
   const envKey = deps.readEnv('ANTHROPIC_API_KEY')
   if (envKey && envKey.trim().length > 0) {
     return { mode: 'subscription', detail: 'ANTHROPIC_API_KEY in environment' }
+  }
+
+  // Same story for `CLAUDE_CODE_OAUTH_TOKEN`: the SDK honours it
+  // directly. We don't read it for any other purpose; it's a pure
+  // pass-through.
+  const envOauth = deps.readEnv('CLAUDE_CODE_OAUTH_TOKEN')
+  if (envOauth && envOauth.trim().length > 0) {
+    return { mode: 'subscription', detail: 'CLAUDE_CODE_OAUTH_TOKEN in environment' }
   }
 
   const path = credentialsPath(deps)
   const content = deps.readCredentialsFile(path)
   if (content && looksLikeOauthCredentials(content)) {
     return { mode: 'subscription', detail: `credentials file at ${path}` }
+  }
+
+  // macOS Keychain fallback. On modern macOS `claude /login` writes
+  // only here, so a missing credentials file does not mean the user is
+  // signed out.
+  const keychainContent = deps.readClaudeCodeKeychain()
+  if (keychainContent && looksLikeOauthCredentials(keychainContent)) {
+    return { mode: 'subscription', detail: 'Claude Code-credentials keychain item' }
   }
 
   if (deps.keychain.hasApiKey()) {
