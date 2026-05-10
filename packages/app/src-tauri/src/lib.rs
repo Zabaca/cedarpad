@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
 use serde_json::Value;
-use tauri::{Manager, State};
+use tauri::Manager;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, Mutex};
