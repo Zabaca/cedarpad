@@ -29,6 +29,49 @@ body {
   align-items: flex-start;
   gap: 6px;
   padding: 2px 0;
+  position: relative;
+}
+
+.tree-node.completed .content {
+  text-decoration: line-through;
+  color: #9aa1a8;
+}
+
+.tree-node.completed .bullet {
+  color: #c5c9cd;
+}
+
+.tree-node.dragging {
+  opacity: 0.4;
+}
+
+/* Drop indicators — a 2px line above/below the row, or a tinted background
+ * for "inside" (nest as first child). Pure CSS so there's no extra DOM. */
+.tree-node.drop-before::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 2px;
+  background: #3b82f6;
+  pointer-events: none;
+}
+
+.tree-node.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: #3b82f6;
+  pointer-events: none;
+}
+
+.tree-node.drop-inside {
+  background: #e0eaff;
+  border-radius: 3px;
 }
 
 .tree-node .bullet {
@@ -179,4 +222,25 @@ body {
 .breadcrumbs .crumb-sep {
   color: #aaa;
   user-select: none;
+}
+
+.toolbar-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.toggle-hide-completed {
+  font-size: 12px;
+  padding: 4px 10px;
+  border: 1px solid #d0d4d9;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.toggle-hide-completed[aria-pressed='true'] {
+  background: #eef2ff;
+  border-color: #93a4ff;
 }

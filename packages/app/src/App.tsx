@@ -6,6 +6,10 @@ import { WorkspaceSwitcher } from './components/WorkspaceSwitcher'
 import { SearchPalette } from './components/SearchPalette'
 import type { WorkspaceSummary } from './contract'
 
+// Workspace UI state. Persisted in localStorage so a relaunch restores the
+// last hide-completed preference; per-workspace key so two repos don't share.
+const HIDE_COMPLETED_KEY = (workspaceId: string) => `cedarpad.hideCompleted.${workspaceId}`
+
 export function App() {
   const [active, setActive] = useState<WorkspaceSummary | null>(null)
   const [showSwitcher, setShowSwitcher] = useState(false)
@@ -13,6 +17,7 @@ export function App() {
   const [navigateRequest, setNavigateRequest] = useState<{ id: string; nonce: number } | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
   const [booted, setBooted] = useState(false)
+  const [hideCompleted, setHideCompleted] = useState(false)
 
   // Persist + apply a zoom-pointer change for the current workspace. The
   // sidecar is the source of truth for activeNodeId; we update the local
@@ -51,8 +56,35 @@ export function App() {
     })()
   }, [])
 
-  // Cmd+P → toggle switcher, Cmd+K → toggle search palette.
-  // Only in Tauri to avoid clobbering native browser bindings during dev.
+  // Restore per-workspace hide-completed preference whenever the active
+  // workspace changes.
+  useEffect(() => {
+    if (!active) return
+    try {
+      const raw = window.localStorage.getItem(HIDE_COMPLETED_KEY(active.id))
+      setHideCompleted(raw === '1')
+    } catch {
+      setHideCompleted(false)
+    }
+  }, [active])
+
+  const toggleHideCompleted = useCallback(() => {
+    setHideCompleted((cur) => {
+      const next = !cur
+      if (active) {
+        try {
+          window.localStorage.setItem(HIDE_COMPLETED_KEY(active.id), next ? '1' : '0')
+        } catch {
+          // Best-effort persistence; in-memory state still applies.
+        }
+      }
+      return next
+    })
+  }, [active])
+
+  // Cmd+P → toggle switcher, Cmd+K → toggle search palette, Cmd+Shift+H
+  // → toggle hide-completed. Only in Tauri to avoid clobbering native
+  // browser bindings during dev.
   useEffect(() => {
     if (!isTauri()) return
     const onKey = (e: KeyboardEvent) => {
@@ -64,10 +96,14 @@ export function App() {
         e.preventDefault()
         setShowSearch((s) => !s)
       }
+      if (e.key.toLowerCase() === 'h' && e.shiftKey && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        toggleHideCompleted()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [toggleHideCompleted])
 
   const handlePicked = useCallback(async (repoPath: string) => {
     try {
@@ -110,10 +146,22 @@ export function App() {
               <div className="name">{active.displayName}</div>
               <div className="hint">{active.repoPath}</div>
             </div>
-            <div className="hint">Cmd+P · switch · Cmd+K · search · Cmd+. zoom in · Cmd+, zoom out</div>
+            <div className="toolbar-right">
+              <button
+                type="button"
+                className="toggle-hide-completed"
+                onClick={toggleHideCompleted}
+                aria-pressed={hideCompleted}
+                data-testid="toggle-hide-completed"
+              >
+                {hideCompleted ? 'Show completed' : 'Hide completed'}
+              </button>
+              <div className="hint">Cmd+P · switch · Cmd+K · search · Cmd+Shift+H · hide done · Cmd+Enter · complete · Cmd+. zoom in · Cmd+, zoom out</div>
+            </div>
           </div>
           <Tree
             workspaceId={active.id}
+            hideCompleted={hideCompleted}
             activeNodeId={active.activeNodeId}
             workspaceName={active.displayName}
             onZoomTo={(nodeId) => void persistActiveNode(active.id, nodeId)}
