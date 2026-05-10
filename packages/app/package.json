@@ -12,7 +12,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "build:debug:bin": "bun run build:vite && bunx --bun tauri build --debug --no-bundle",
-    "test:e2e:webview": "bun run build:debug:bin && wdio run e2e/webview/wdio.conf.ts"
+    "test:e2e:webview": "bun run build:debug:bin && node node_modules/@wdio/cli/bin/wdio.js run e2e/webview/wdio.conf.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",

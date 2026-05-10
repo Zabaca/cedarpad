@@ -63,6 +63,11 @@ WebView tier prereqs (one-time per machine):
 cargo install tauri-webdriver --locked
 ```
 
+The webdriverio CLI requires Node 20+ (execa@9 imports `node:events`'s
+`addAbortListener`, added in Node 20). Bun's bundled Node compat is 18,
+so `bun run test:e2e:webview` invokes `node` (not `bun`) for the wdio
+step — make sure your shell's `node` resolves to 20.x or newer.
+
 The plugin (`tauri-plugin-webdriver`) is wired into the cedarpad shell
 behind `cfg(debug_assertions)` only — release builds don't expose the
 WebDriver server. macOS doesn't ship a native WebDriver for embedded
