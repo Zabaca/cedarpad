@@ -1,10 +1,12 @@
+mod auth;
+
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
 use serde_json::Value;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, Mutex};
@@ -48,6 +50,22 @@ async fn invoke_sidecar(method: &str, params: Value) -> Result<Value, String> {
     }
 }
 
+/// Fire-and-forget push into the sidecar (no response awaited). Used for
+/// the `auth.injectApiKey` / `auth.clearApiKey` server-internal channel —
+/// the sidecar acks but we don't need to block on it.
+async fn push_sidecar(method: &str, params: Value) -> Result<(), String> {
+    let sidecar = SIDECAR.get().ok_or("sidecar not started")?.clone();
+    let id = format!("push-{}", next_id());
+    let req = serde_json::json!({ "id": id, "method": method, "params": params });
+    let line = serde_json::to_string(&req).map_err(|e| e.to_string())? + "\n";
+    let mut stdin = sidecar.stdin.lock().await;
+    stdin
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    stdin.flush().await.map_err(|e| e.to_string())
+}
+
 async fn start_sidecar(app: &tauri::AppHandle) -> Result<(), String> {
     let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
     // In dev we run from `bun src-sidecar/src/server.ts`; in release we ship the
@@ -85,7 +103,15 @@ async fn start_sidecar(app: &tauri::AppHandle) -> Result<(), String> {
     SIDECAR.set(sidecar.clone()).map_err(|_| "sidecar already started")?;
 
     // Read NDJSON responses on stdout, route by id.
+    //
+    // Three frame kinds:
+    //   - `ok` / `err`  → resolve the pending oneshot for this id.
+    //   - `stream`      → forward to the renderer as a Tauri event on
+    //                     channel `rpc:stream:<id>`. The renderer wires
+    //                     a one-shot listener per streaming `invoke('rpc',
+    //                     ...)` call.
     let sidecar2 = sidecar.clone();
+    let app_handle_for_stream: tauri::AppHandle = app.clone();
     tokio::spawn(async move {
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
@@ -99,9 +125,18 @@ async fn start_sidecar(app: &tauri::AppHandle) -> Result<(), String> {
                         continue;
                     }
                     if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
-                        if let Some(id) = parsed.get("id").and_then(|v| v.as_str()) {
+                        let kind = parsed.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                        let id_opt = parsed.get("id").and_then(|v| v.as_str()).map(String::from);
+                        if kind == "stream" {
+                            if let Some(id) = id_opt {
+                                let event_payload =
+                                    parsed.get("event").cloned().unwrap_or(Value::Null);
+                                let _ = app_handle_for_stream
+                                    .emit(&format!("rpc:stream:{id}"), event_payload);
+                            }
+                        } else if let Some(id) = id_opt {
                             let mut p = sidecar2.pending.lock().await;
-                            if let Some(tx) = p.remove(id) {
+                            if let Some(tx) = p.remove(&id) {
                                 let _ = tx.send(parsed);
                             }
                         }
@@ -115,12 +150,49 @@ async fn start_sidecar(app: &tauri::AppHandle) -> Result<(), String> {
     tokio::spawn(async move {
         let _ = child.wait().await;
     });
+
+    // If a key is already configured, push it into the freshly spawned
+    // sidecar so the SDK runner has it on the first sendPrompt. Errors
+    // here are non-fatal — the renderer's first-launch flow will let the
+    // user enter a key.
+    match auth::get_api_key() {
+        Ok(Some(key)) => {
+            let _ = push_sidecar("auth.injectApiKey", serde_json::json!({ "key": key })).await;
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("[cedarpad] keychain read failed at boot: {e}");
+        }
+    }
     Ok(())
 }
 
 #[tauri::command]
 async fn rpc(method: String, params: Value) -> Result<Value, String> {
     invoke_sidecar(&method, params).await
+}
+
+/// BYOK: persist the user's Anthropic API key in the OS keychain and push
+/// it into the running sidecar so the SDK runner can use it. The renderer
+/// passes the key in plaintext (it just typed it) — but never reads it
+/// back via this or any other command.
+#[tauri::command]
+async fn auth_set_api_key(key: String) -> Result<(), String> {
+    auth::set_api_key(&key)?;
+    push_sidecar("auth.injectApiKey", serde_json::json!({ "key": key })).await?;
+    Ok(())
+}
+
+#[tauri::command]
+fn auth_has_api_key() -> Result<bool, String> {
+    auth::has_api_key()
+}
+
+#[tauri::command]
+async fn auth_delete_api_key() -> Result<(), String> {
+    auth::delete_api_key()?;
+    let _ = push_sidecar("auth.clearApiKey", serde_json::json!({})).await;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -146,7 +218,12 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![rpc])
+        .invoke_handler(tauri::generate_handler![
+            rpc,
+            auth_set_api_key,
+            auth_has_api_key,
+            auth_delete_api_key
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
