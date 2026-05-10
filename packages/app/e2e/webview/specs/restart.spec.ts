@@ -17,17 +17,6 @@
  */
 import { browser, $, $$ } from '@wdio/globals'
 
-async function focusedContent(): Promise<HTMLElement | null> {
-  return browser.execute(() => document.activeElement as HTMLElement | null)
-}
-
-async function visibleContents(): Promise<string[]> {
-  return browser.execute(() => {
-    const nodes = Array.from(document.querySelectorAll('.tree-node .content')) as HTMLElement[]
-    return nodes.map((n) => (n.textContent ?? '').trim())
-  })
-}
-
 interface VisibleRow {
   content: string
   depth: number
