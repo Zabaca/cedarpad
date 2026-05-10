@@ -95,6 +95,50 @@ pub fn has_api_key() -> Result<bool, String> {
     Ok(get_api_key()?.is_some())
 }
 
+/// Read the macOS Keychain item `Claude Code-credentials` (account =
+/// `$USER`). Returns the raw stored string (the SDK writes JSON of the
+/// shape `{ "claudeAiOauth": { "accessToken": "...", ... } }`) or
+/// `None` when no entry exists. Errors other than `NoEntry` are logged
+/// and squashed to `None` — the probe stays cheap and side-effect-free.
+///
+/// On non-macOS targets this is a no-op that returns `None`. We
+/// deliberately don't expose the SDK's keychain reader on Linux /
+/// Windows: those platforms don't have a Claude-Code-managed keychain
+/// entry, and probing for one would mostly produce noise.
+///
+/// Reading is done from this Rust shell rather than the bun sidecar so
+/// the macOS ACL prompt ("cedarpad wants to access Claude Code in your
+/// keychain — Allow / Always Allow / Deny") shows under cedarpad's
+/// signed identity, the same one the BYOK keychain item is stored
+/// under. One ACL grant covers reads of both items.
+#[cfg(target_os = "macos")]
+pub fn read_claude_code_credentials() -> Option<String> {
+    let username = match std::env::var("USER") {
+        Ok(u) if !u.is_empty() => u,
+        _ => return None,
+    };
+    let entry = match keyring::Entry::new("Claude Code-credentials", &username) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("[cedarpad] Claude Code keychain entry construction failed: {e}");
+            return None;
+        }
+    };
+    match entry.get_password() {
+        Ok(s) => Some(s),
+        Err(keyring::Error::NoEntry) => None,
+        Err(e) => {
+            eprintln!("[cedarpad] Claude Code keychain read failed: {e}");
+            None
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn read_claude_code_credentials() -> Option<String> {
+    None
+}
+
 /// Remove the API key from the keychain. No-op when no key is present.
 pub fn delete_api_key() -> Result<(), String> {
     if use_memory_backend() {

@@ -4,17 +4,19 @@
  * The probe answers a single question on launch: "what auth path can the
  * Claude Code SDK use right now?" Three modes:
  *
- *   - `subscription` — a Claude Code OAuth credentials file is present at
- *     `${CLAUDE_CONFIG_DIR ?? ~/.claude}/.credentials.json`. The SDK will
- *     pick it up transparently when no `ANTHROPIC_API_KEY` env var is set.
+ *   - `subscription` — any of: `ANTHROPIC_API_KEY`,
+ *     `CLAUDE_CODE_OAUTH_TOKEN`,
+ *     `${CLAUDE_CONFIG_DIR ?? ~/.claude}/.credentials.json`, or the
+ *     macOS Keychain item `Claude Code-credentials` is present. The SDK
+ *     picks any of these up transparently.
  *   - `api-key`      — the user has previously stored a BYOK key in our
- *     own keychain (no subscription file present).
- *   - `none`         — neither path is configured; the renderer must show
- *     the AuthPrompt.
+ *     own keychain (no subscription source present).
+ *   - `none`         — none of the above; the renderer must show the
+ *     AuthPrompt.
  *
- * The probe accepts injected seams (file checker, keychain, env reader)
- * so tests can drive every branch without touching the real filesystem
- * or keychain.
+ * The probe accepts injected seams (file checker, keychain, env reader,
+ * macOS keychain content) so tests can drive every branch without
+ * touching the real filesystem or keychain.
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createKeychainStore, type KeychainStore } from './keychainStore.ts'
@@ -29,10 +31,14 @@ beforeEach(() => {
 /**
  * Build a deps shim with the given subscription-file presence + content.
  * The default env reader returns no overrides; tests pass their own when
- * exercising `CEDARPAD_E2E_AUTH_MODE` or `CLAUDE_CONFIG_DIR`.
+ * exercising `CEDARPAD_E2E_AUTH_MODE` or `CLAUDE_CONFIG_DIR`. The
+ * `claudeCodeKeychain` field stands in for the macOS Keychain item that
+ * the Rust shell pushes into the sidecar at startup; default is `null`
+ * (no entry / non-macOS).
  */
 function deps(opts: {
   credentialsFile?: { exists: boolean; content?: string }
+  claudeCodeKeychain?: string | null
   env?: Record<string, string | undefined>
   homedir?: string
 }): AuthDetectDeps {
@@ -46,6 +52,7 @@ function deps(opts: {
       if (!f || !f.exists) return null
       return f.content ?? '{"claudeAiOauth":{"accessToken":"tok","refreshToken":"r","expiresAt":9999999999999}}'
     },
+    readClaudeCodeKeychain: () => opts.claudeCodeKeychain ?? null,
   }
 }
 
@@ -68,6 +75,7 @@ describe('authProbe.detectAuth', () => {
         askedPath = path
         return '{"claudeAiOauth":{"accessToken":"tok"}}'
       },
+      readClaudeCodeKeychain: () => null,
     })
     expect(result.mode).toBe('subscription')
     expect(askedPath).toBe('/custom/claude/dir/.credentials.json')
@@ -83,6 +91,7 @@ describe('authProbe.detectAuth', () => {
         askedPath = path
         return null
       },
+      readClaudeCodeKeychain: () => null,
     })
     expect(askedPath).toBe('/home/test/.claude/.credentials.json')
   })
@@ -186,5 +195,107 @@ describe('authProbe.detectAuth', () => {
       }),
     )
     expect(result.mode).toBe('subscription')
+  })
+
+  it('returns "subscription" when CLAUDE_CODE_OAUTH_TOKEN is set in the environment', () => {
+    // The SDK reads CLAUDE_CODE_OAUTH_TOKEN as a peer to the credentials
+    // file / keychain — cedarpad needs to recognise it the same way so
+    // we don't show the AuthPrompt to a user with working auth.
+    const result = detectAuth(
+      deps({
+        credentialsFile: { exists: false },
+        env: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-token' },
+      }),
+    )
+    expect(result.mode).toBe('subscription')
+    expect(result.detail).toMatch(/CLAUDE_CODE_OAUTH_TOKEN/)
+  })
+
+  it('returns "subscription" when only the macOS Claude Code-credentials keychain item is present', () => {
+    // The bug this commit fixes: on modern macOS `claude /login` writes
+    // only to the keychain, never to ~/.claude/.credentials.json. The
+    // probe must accept the keychain content as proof of subscription
+    // auth.
+    const result = detectAuth(
+      deps({
+        credentialsFile: { exists: false },
+        claudeCodeKeychain:
+          '{"claudeAiOauth":{"accessToken":"tok","refreshToken":"r","expiresAt":9999999999999}}',
+      }),
+    )
+    expect(result.mode).toBe('subscription')
+    expect(result.detail).toMatch(/keychain/i)
+  })
+
+  it('falls through to BYOK when the keychain content is malformed JSON', () => {
+    // Defensive: a corrupt keychain item should not promote to
+    // subscription. We fall through to the next precedence step (BYOK).
+    keychain.setApiKey('sk-ant-stored')
+    const result = detectAuth(
+      deps({
+        credentialsFile: { exists: false },
+        claudeCodeKeychain: 'not-json{{',
+      }),
+    )
+    expect(result.mode).toBe('api-key')
+  })
+
+  it('falls through to "none" when the keychain content lacks claudeAiOauth', () => {
+    const result = detectAuth(
+      deps({
+        credentialsFile: { exists: false },
+        claudeCodeKeychain: '{"unrelated":true}',
+      }),
+    )
+    expect(result.mode).toBe('none')
+  })
+
+  it('precedence: ANTHROPIC_API_KEY beats CLAUDE_CODE_OAUTH_TOKEN beats credentials file beats keychain item beats BYOK', () => {
+    // All four subscription sources are present plus a BYOK key. The
+    // probe must pick the highest-precedence one and surface its
+    // diagnostic detail. We verify each level by stripping the source
+    // above it.
+    keychain.setApiKey('sk-ant-stored')
+
+    const baseOpts = {
+      credentialsFile: {
+        exists: true,
+        content: '{"claudeAiOauth":{"accessToken":"file-tok"}}',
+      },
+      claudeCodeKeychain: '{"claudeAiOauth":{"accessToken":"kc-tok"}}',
+    }
+
+    // 1. ANTHROPIC_API_KEY wins
+    let result = detectAuth(
+      deps({
+        ...baseOpts,
+        env: { ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_OAUTH_TOKEN: 'o' },
+      }),
+    )
+    expect(result.mode).toBe('subscription')
+    expect(result.detail).toMatch(/ANTHROPIC_API_KEY/)
+
+    // 2. CLAUDE_CODE_OAUTH_TOKEN wins over file + keychain
+    result = detectAuth(
+      deps({ ...baseOpts, env: { CLAUDE_CODE_OAUTH_TOKEN: 'o' } }),
+    )
+    expect(result.mode).toBe('subscription')
+    expect(result.detail).toMatch(/CLAUDE_CODE_OAUTH_TOKEN/)
+
+    // 3. credentials file wins over keychain
+    result = detectAuth(deps(baseOpts))
+    expect(result.mode).toBe('subscription')
+    expect(result.detail).toMatch(/credentials file/)
+
+    // 4. keychain wins over BYOK
+    result = detectAuth(
+      deps({ credentialsFile: { exists: false }, claudeCodeKeychain: baseOpts.claudeCodeKeychain }),
+    )
+    expect(result.mode).toBe('subscription')
+    expect(result.detail).toMatch(/keychain/i)
+
+    // 5. BYOK is last
+    result = detectAuth(deps({ credentialsFile: { exists: false } }))
+    expect(result.mode).toBe('api-key')
   })
 })
