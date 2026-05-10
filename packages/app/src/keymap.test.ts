@@ -70,4 +70,29 @@ describe('keymap', () => {
     const out = interpret({ key: '.', shiftKey: false }, { ...base, isContentEmpty: false })
     expect(out).toEqual({ kind: 'noop' })
   })
+
+  it('Cmd+Enter toggles completion (uncompleted → completed)', () => {
+    const out = interpret(
+      { key: 'Enter', shiftKey: false, metaKey: true },
+      { ...base, isContentEmpty: false },
+    )
+    expect(out).toEqual({ kind: 'toggle-complete', nodeId: 'cur', next: true })
+  })
+
+  it('Ctrl+Enter toggles completion (Linux/Windows)', () => {
+    const out = interpret(
+      { key: 'Enter', shiftKey: false, ctrlKey: true },
+      { ...base, isContentEmpty: false },
+    )
+    expect(out).toEqual({ kind: 'toggle-complete', nodeId: 'cur', next: true })
+  })
+
+  it('Cmd+Enter on already-complete node toggles back to incomplete', () => {
+    const completed: Node = { ...n('cur', 'p1'), completed: true }
+    const out = interpret(
+      { key: 'Enter', shiftKey: false, metaKey: true },
+      { ...base, node: completed, isContentEmpty: false },
+    )
+    expect(out).toEqual({ kind: 'toggle-complete', nodeId: 'cur', next: false })
+  })
 })

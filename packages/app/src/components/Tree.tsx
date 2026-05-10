@@ -10,6 +10,7 @@ interface Visible {
 
 interface Props {
   workspaceId: string
+  hideCompleted: boolean
   /** When non-null, only descendants of this Node are rendered (Workflowy zoom). */
   activeNodeId: string | null
   /** Workspace display name — first crumb in the breadcrumb chain. */
@@ -23,10 +24,40 @@ interface Props {
   navigateRequest?: { id: string; nonce: number } | null
 }
 
-export function Tree({ workspaceId, activeNodeId, workspaceName, onZoomTo, navigateRequest }: Props) {
+/**
+ * Drop target for a drag operation. We only support sibling-position drops:
+ * the dragged node lands as a sibling of `targetId` (or first child of
+ * `parentId` when `targetId` is null), under the indicated parent.
+ *
+ * Special case: dropping over a node with `position: 'inside'` nests the
+ * dragged node as the FIRST child of that target. This gives a single-DOM
+ * coverage of "drop into" without needing a separate visual zone.
+ */
+type DropPos =
+  | { kind: 'before'; targetId: string; parentId: string | null }
+  | { kind: 'after'; targetId: string; parentId: string | null }
+  | { kind: 'inside'; targetId: string }
+
+export function Tree({
+  workspaceId,
+  hideCompleted,
+  activeNodeId,
+  workspaceName,
+  onZoomTo,
+  navigateRequest,
+}: Props) {
   const [byParent, setByParent] = useState<Map<string | null, Node[]>>(new Map())
   const [focusId, setFocusId] = useState<string | null>(null)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropPos, setDropPos] = useState<DropPos | null>(null)
   const refs = useRef(new Map<string, HTMLDivElement>())
+  // Mirror dragId / dropPos in refs so synthetic drag sequences (where
+  // dragstart, dragover and drop dispatch back-to-back in the same
+  // tick — see the WebView e2e harness) can read current values
+  // without waiting for React's state batches to flush. State drives
+  // rendering; refs drive the imperative branch logic.
+  const dragIdRef = useRef<string | null>(null)
+  const dropPosRef = useRef<DropPos | null>(null)
 
   const load = useCallback(async () => {
     // Load all nodes by walking from roots. Slice 1: simple, no virtualization.
@@ -95,6 +126,10 @@ export function Tree({ workspaceId, activeNodeId, workspaceName, onZoomTo, navig
     function walk(parentId: string | null, depth: number) {
       const children = byParent.get(parentId) ?? []
       for (const c of children) {
+        // When hiding completed, skip the entire subtree rooted at a
+        // completed node — Workflowy parity (a completed parent hides its
+        // children too).
+        if (hideCompleted && c.completed) continue
         out.push({ node: c, depth })
         walk(c.id, depth + 1)
       }
@@ -103,7 +138,7 @@ export function Tree({ workspaceId, activeNodeId, workspaceName, onZoomTo, navig
     // whole workspace tree (parentId === null roots).
     walk(activeNodeId, 0)
     return out
-  }, [byParent, activeNodeId])
+  }, [byParent, activeNodeId, hideCompleted])
 
   const lookup = useMemo(() => {
     const map = new Map<string, Node>()
@@ -218,8 +253,162 @@ export function Tree({ workspaceId, activeNodeId, workspaceName, onZoomTo, navig
         if (prev) setFocusId(prev.node.id)
         return
       }
+      if (intent.kind === 'toggle-complete') {
+        await call('outline.update', {
+          workspaceId,
+          id: intent.nodeId,
+          completed: intent.next,
+        })
+        await load()
+        // Keep focus on the same node so further toggles work.
+        setFocusId(intent.nodeId)
+        return
+      }
     },
     [workspaceId, byParent, lookup, load, visible, activeNodeId, onZoomTo],
+  )
+
+  // ---------- Drag-and-drop ----------
+
+  /**
+   * Test whether `candidateAncestorId` is an ancestor of (or equal to)
+   * `descendantId`. Used to reject drops that would create a cycle.
+   */
+  const isAncestor = useCallback(
+    (candidateAncestorId: string, descendantId: string): boolean => {
+      let cur: string | null = descendantId
+      while (cur !== null) {
+        if (cur === candidateAncestorId) return true
+        const node = lookup.get(cur)
+        if (!node) return false
+        cur = node.parentId
+      }
+      return false
+    },
+    [lookup],
+  )
+
+  const handleDragStart = useCallback(
+    (e: React.DragEvent<HTMLDivElement>, n: Node) => {
+      // Use the node id as the dataTransfer payload so external drops are no-ops.
+      e.dataTransfer.setData('application/x-cedarpad-node', n.id)
+      e.dataTransfer.effectAllowed = 'move'
+      dragIdRef.current = n.id
+      setDragId(n.id)
+    },
+    [],
+  )
+
+  const handleDragEnd = useCallback(() => {
+    dragIdRef.current = null
+    dropPosRef.current = null
+    setDragId(null)
+    setDropPos(null)
+  }, [])
+
+  /**
+   * Compute drop position from the pointer's Y within the target row:
+   *   - top third → before
+   *   - middle third → inside (nest as first child)
+   *   - bottom third → after
+   */
+  const handleDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>, n: Node) => {
+      const draggedId = dragIdRef.current
+      if (!draggedId || draggedId === n.id) return
+      // Reject drops onto a descendant of the dragged node — would create a cycle.
+      if (isAncestor(draggedId, n.id)) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      const rect = e.currentTarget.getBoundingClientRect()
+      const y = e.clientY - rect.top
+      const h = rect.height
+      let pos: DropPos
+      if (y < h / 3) {
+        pos = { kind: 'before', targetId: n.id, parentId: n.parentId }
+      } else if (y > (2 * h) / 3) {
+        pos = { kind: 'after', targetId: n.id, parentId: n.parentId }
+      } else {
+        pos = { kind: 'inside', targetId: n.id }
+      }
+      dropPosRef.current = pos
+      setDropPos((cur) => {
+        if (
+          cur &&
+          cur.kind === pos.kind &&
+          (cur as { targetId?: string }).targetId === (pos as { targetId?: string }).targetId
+        ) {
+          return cur
+        }
+        return pos
+      })
+    },
+    [isAncestor],
+  )
+
+  const handleDragLeave = useCallback(
+    (e: React.DragEvent<HTMLDivElement>, n: Node) => {
+      // Only clear when leaving the row entirely (not when crossing into a child).
+      const related = e.relatedTarget as HTMLElement | null
+      if (related && e.currentTarget.contains(related)) return
+      if (
+        dropPosRef.current &&
+        (dropPosRef.current as { targetId?: string }).targetId === n.id
+      ) {
+        dropPosRef.current = null
+      }
+      setDropPos((cur) => {
+        if (!cur) return null
+        if ((cur as { targetId?: string }).targetId === n.id) return null
+        return cur
+      })
+    },
+    [],
+  )
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent<HTMLDivElement>, n: Node) => {
+      e.preventDefault()
+      const draggedId =
+        e.dataTransfer.getData('application/x-cedarpad-node') || dragIdRef.current
+      const pos = dropPosRef.current ?? dropPos
+      dragIdRef.current = null
+      dropPosRef.current = null
+      setDragId(null)
+      setDropPos(null)
+      if (!draggedId || !pos || draggedId === n.id) return
+      if (isAncestor(draggedId, n.id)) return
+
+      let newParentId: string | null
+      let prevSiblingId: string | null
+      if (pos.kind === 'before') {
+        newParentId = pos.parentId
+        // Find the sibling immediately before targetId in pos.parentId.
+        // Skip the dragged node itself if it's currently a sibling here, so
+        // when reordering within the same parent we don't compute its
+        // current slot as the prevSibling.
+        const siblings = byParent.get(pos.parentId) ?? []
+        const filtered = siblings.filter((s) => s.id !== draggedId)
+        const targetIdx = filtered.findIndex((s) => s.id === pos.targetId)
+        prevSiblingId = targetIdx > 0 ? filtered[targetIdx - 1]!.id : null
+      } else if (pos.kind === 'after') {
+        newParentId = pos.parentId
+        prevSiblingId = pos.targetId
+      } else {
+        // inside → nest as first child
+        newParentId = pos.targetId
+        prevSiblingId = null
+      }
+
+      await call('outline.move', {
+        workspaceId,
+        id: draggedId,
+        newParentId,
+        prevSiblingId,
+      })
+      await load()
+    },
+    [dropPos, byParent, isAncestor, workspaceId, load],
   )
 
   return (
@@ -253,24 +442,43 @@ export function Tree({ workspaceId, activeNodeId, workspaceName, onZoomTo, navig
         })}
       </nav>
       <div className="tree">
-      {visible.map(({ node, depth }) => (
-        <div key={node.id} className="tree-node" style={{ paddingLeft: depth * 18 }}>
-          <span className="bullet">·</span>
-          <div
-            ref={(el) => {
-              if (el) refs.current.set(node.id, el)
-              else refs.current.delete(node.id)
-            }}
-            className="content"
-            contentEditable
-            suppressContentEditableWarning
-            onInput={(e) => handleInput(node.id, e.currentTarget.textContent ?? '')}
-            onKeyDown={(e) => void handleKeyDown(e, node)}
-          >
-            {node.content}
-          </div>
-        </div>
-      ))}
+        {visible.map(({ node, depth }) => {
+          const isDropTarget = dropPos && (dropPos as { targetId?: string }).targetId === node.id
+          const dropClass = isDropTarget ? `drop-${dropPos!.kind}` : ''
+          const completedClass = node.completed ? 'completed' : ''
+          const draggingClass = dragId === node.id ? 'dragging' : ''
+          return (
+            <div
+              key={node.id}
+              className={`tree-node ${completedClass} ${dropClass} ${draggingClass}`.trim()}
+              style={{ paddingLeft: depth * 18 }}
+              draggable
+              onDragStart={(e) => handleDragStart(e, node)}
+              onDragEnd={handleDragEnd}
+              onDragOver={(e) => handleDragOver(e, node)}
+              onDragLeave={(e) => handleDragLeave(e, node)}
+              onDrop={(e) => void handleDrop(e, node)}
+              data-node-id={node.id}
+            >
+              <span className="bullet" aria-hidden>
+                ·
+              </span>
+              <div
+                ref={(el) => {
+                  if (el) refs.current.set(node.id, el)
+                  else refs.current.delete(node.id)
+                }}
+                className="content"
+                contentEditable
+                suppressContentEditableWarning
+                onInput={(e) => handleInput(node.id, e.currentTarget.textContent ?? '')}
+                onKeyDown={(e) => void handleKeyDown(e, node)}
+              >
+                {node.content}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

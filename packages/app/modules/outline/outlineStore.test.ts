@@ -148,4 +148,49 @@ describe('outlineStore', () => {
     const updated = await store.updateNode({ id: node.id, metadata: { color: 'blue' } })
     expect(updated.metadata).toEqual({ color: 'blue' })
   })
+
+  it('updateNode toggles completed and persists across reads', async () => {
+    const node = await store.createNode({ parentId: null, content: 'task' })
+    expect(node.completed).toBe(false)
+    const done = await store.updateNode({ id: node.id, completed: true })
+    expect(done.completed).toBe(true)
+    const refetch = await store.getNode(node.id)
+    expect(refetch?.completed).toBe(true)
+    const undone = await store.updateNode({ id: node.id, completed: false })
+    expect(undone.completed).toBe(false)
+    const refetch2 = await store.getNode(node.id)
+    expect(refetch2?.completed).toBe(false)
+  })
+
+  it('moveNode across parents preserves descendants and reorders correctly', async () => {
+    // Build:
+    //   A
+    //     A.1
+    //       A.1.1
+    //   B
+    //     B.1
+    const a = await store.createNode({ parentId: null, content: 'A' })
+    const a1 = await store.createNode({ parentId: a.id, content: 'A.1' })
+    const a11 = await store.createNode({ parentId: a1.id, content: 'A.1.1' })
+    const b = await store.createNode({ parentId: null, prevSiblingId: a.id, content: 'B' })
+    const b1 = await store.createNode({ parentId: b.id, content: 'B.1' })
+
+    // Move A.1 (with its descendant A.1.1) under B, after B.1.
+    const moved = await store.moveNode({ id: a1.id, newParentId: b.id, prevSiblingId: b1.id })
+    expect(moved.parentId).toBe(b.id)
+
+    // A now has no children.
+    const aChildren = await store.getChildren(a.id)
+    expect(aChildren.map((n) => n.id)).toEqual([])
+
+    // B now has [B.1, A.1] in that order.
+    const bChildren = await store.getChildren(b.id)
+    expect(bChildren.map((n) => n.id)).toEqual([b1.id, a1.id])
+
+    // A.1.1 is still a child of A.1 (descendants travel with the moved node).
+    const a1Children = await store.getChildren(a1.id)
+    expect(a1Children.map((n) => n.id)).toEqual([a11.id])
+    const a11Fetched = await store.getNode(a11.id)
+    expect(a11Fetched?.parentId).toBe(a1.id)
+  })
 })
