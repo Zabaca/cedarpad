@@ -54,3 +54,26 @@ Start a fresh Thread under the same Thread Root, no conversation history. "New c
 ## Flagged ambiguities
 
 - "Branch" and "Thread" overlap in casual speech. **Resolution**: a Thread is the subtree (a noun); to Branch is to create a new Thread (a verb). Branching produces a new Thread.
+
+## Slice 1 module map (v1, in-tree)
+
+Three processes:
+
+1. **Tauri shell** (`src-tauri/`, Rust) — OS window, file picker, sidecar spawn. One `rpc` invoke command; no domain logic.
+2. **Bun sidecar** (`src-sidecar/`, TS) — owns all libSQL DBs. Single NDJSON loop over stdio. Validates payloads against `src/contract.ts`.
+3. **Renderer** (`src/`, React) — imports the same `contract.ts`, validates IPC at the boundary.
+
+Deep modules (pure TS, TDD'd):
+
+- `modules/outline/ordering.ts` — fractional-indexing wrapper. `keyBetween(prev, next)`.
+- `modules/outline/outlineStore.ts` — CRUD on a libSQL handle: `createNode`, `getNode`, `getChildren`, `updateNode`, `deleteNode`, `moveNode`, `searchNodes`.
+- `modules/outline/migrations.ts` — idempotent schema bootstrap.
+- `modules/workspace/workspaceManager.ts` — `open`/`switch`/`recent`/`active`. Per-repo DB.
+- `modules/db/{libsqlClient,txn}.ts` — thin wrappers.
+
+`src/contract.ts` is the **single source of truth** for FE/BE IPC. All cross-process payloads (including JSON-encoded columns like `nodes.metadata`) are described by zod schemas there and validated at every boundary. No hand-maintained interface mirrors.
+
+## DB location (slice 1 resolution of ADR-0005's deferred decision)
+
+- **Workspace DB**: `<repo>/.cedarpad/db.sqlite`. In-tree so it can become commitable for shared team threads later. On first `workspace.open`, `.cedarpad/` is appended to the repo's `.gitignore`.
+- **Recents DB**: `~/.cedarpad/global.db`. Single table `recent_workspaces(id, repo_path, display_name, db_path, last_opened_at)`.
