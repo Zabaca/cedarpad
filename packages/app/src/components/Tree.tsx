@@ -334,10 +334,18 @@ export function Tree({
         if (result.reason === 'done') {
           // Auto-create a fresh empty prompt sibling under the Thread Root
           // so the user can keep typing without manually adding rows.
+          // Without `prevSiblingId`, createNode prepends to the start —
+          // here we want it appended after the most recent Turn.
           try {
+            const siblings = await call('outline.getChildren', {
+              workspaceId,
+              parentId: threadRootId,
+            })
+            const lastSibling = siblings[siblings.length - 1]
             const created = await call('outline.create', {
               workspaceId,
               parentId: threadRootId,
+              prevSiblingId: lastSibling?.id ?? null,
               content: '',
             })
             await load()
