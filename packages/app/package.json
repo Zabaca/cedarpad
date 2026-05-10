@@ -10,7 +10,9 @@
     "dev:vite": "vite",
     "build:vite": "vite build",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "build:debug:bin": "bun run build:vite && bunx --bun tauri build --debug --no-bundle",
+    "test:e2e:webview": "bun run build:debug:bin && wdio run e2e/webview/wdio.conf.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",
@@ -18,18 +20,24 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/cli": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-shell": "^2.0.0",
+    "@types/node": "^25.6.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.0",
+    "@wdio/cli": "^9.27.1",
+    "@wdio/globals": "^9.27.1",
+    "@wdio/local-runner": "^9.27.1",
+    "@wdio/mocha-framework": "^9.27.1",
+    "@wdio/spec-reporter": "^9.27.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.6.0",
     "vite": "^6.0.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "webdriverio": "^9.27.1"
   }
 }

@@ -6,6 +6,8 @@ export default defineConfig({
     environment: 'node',
     pool: 'forks',
     isolate: true,
-    include: ['modules/**/*.test.ts', 'src-sidecar/**/*.test.ts', 'src/**/*.test.ts', 'e2e/**/*.spec.ts'],
+    include: ['modules/**/*.test.ts', 'src-sidecar/**/*.test.ts', 'src/**/*.test.ts', 'e2e/tests/**/*.spec.ts'],
+    // e2e/webview/** runs under WebDriver (`bun run test:e2e:webview`), not vitest.
+    exclude: ['e2e/webview/**'],
   },
 })
