@@ -984,6 +984,7 @@ export function Tree({
                 className="content"
                 contentEditable={editable}
                 suppressContentEditableWarning
+                onFocus={editable ? () => setFocusId(node.id) : undefined}
                 onInput={
                   editable
                     ? (e) => handleInput(node.id, e.currentTarget.textContent ?? '')
