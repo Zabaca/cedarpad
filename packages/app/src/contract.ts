@@ -16,17 +16,78 @@
 // namespace form mirrors zod's own index.js (`import * as z`).
 import * as z from 'zod'
 
+// ---------- Block / Thread shapes (slice 2) ----------
+
+/**
+ * The structured pieces of a Claude turn. Each Block Node carries one of
+ * these as the canonical encoding of its payload via `nodes.metadata`.
+ *
+ * Slice 2 introduces fixture turns only; the Claude SDK (slice 3) feeds
+ * real `tool_use` / `tool_result` blocks through the same shape.
+ */
+export const BlockKindSchema = z.enum(['text', 'tool_use', 'tool_result'])
+export type BlockKind = z.infer<typeof BlockKindSchema>
+
+export const TextBlockPayloadSchema = z.object({
+  kind: z.literal('text'),
+  text: z.string(),
+})
+export const ToolUseBlockPayloadSchema = z.object({
+  kind: z.literal('tool_use'),
+  toolName: z.string(),
+  toolUseId: z.string().optional(),
+  input: z.unknown(),
+})
+export const ToolResultBlockPayloadSchema = z.object({
+  kind: z.literal('tool_result'),
+  toolUseId: z.string().optional(),
+  output: z.unknown(),
+  isError: z.boolean().optional(),
+})
+export const BlockPayloadSchema = z.discriminatedUnion('kind', [
+  TextBlockPayloadSchema,
+  ToolUseBlockPayloadSchema,
+  ToolResultBlockPayloadSchema,
+])
+export type BlockPayload = z.infer<typeof BlockPayloadSchema>
+
+/** Marker stored in metadata of a Turn Node. */
+export const TurnMetadataSchema = z.object({
+  role: z.literal('turn'),
+  threadRootId: z.string(),
+})
+export type TurnMetadata = z.infer<typeof TurnMetadataSchema>
+
+/** Marker stored in metadata of a Block Node — wraps its payload. */
+export const BlockMetadataSchema = z.object({
+  role: z.literal('block'),
+  threadRootId: z.string(),
+  payload: BlockPayloadSchema,
+})
+export type BlockMetadata = z.infer<typeof BlockMetadataSchema>
+
+/** Marker stored in metadata of a Content Node that has been promoted to a Thread Root. */
+export const ThreadRootMetadataSchema = z.object({
+  isThreadRoot: z.literal(true),
+})
+export type ThreadRootMetadata = z.infer<typeof ThreadRootMetadataSchema>
+
 // ---------- JSON column schemas ----------
 
 /**
- * Open-ended for slice 1; closed once Turn/Block kinds land in slice 3+.
+ * Open-ended union: Content Nodes carry arbitrary metadata (incl. the
+ * thread-root marker), Turn / Block Nodes carry the typed shapes above.
+ *
+ * We use `passthrough` + an optional discriminator rather than a strict
+ * discriminated union so legacy rows (`metadata: {}`) keep parsing.
+ * `threadEngine` parses metadata against the strict shapes when it cares.
  */
 export const NodeMetadataSchema = z.object({}).passthrough()
 export type NodeMetadata = z.infer<typeof NodeMetadataSchema>
 
 // ---------- Domain shapes ----------
 
-export const NodeKindSchema = z.enum(['content'])
+export const NodeKindSchema = z.enum(['content', 'turn', 'block'])
 export type NodeKind = z.infer<typeof NodeKindSchema>
 
 export const NodeSchema = z.object({
@@ -94,6 +155,34 @@ export const OutlineSearchInputSchema = z.object({
   query: z.string(),
 })
 export type OutlineSearchInput = z.infer<typeof OutlineSearchInputSchema>
+
+// ---------- Thread RPC (slice 2) ----------
+
+export const ThreadStartInputSchema = z.object({
+  workspaceId: z.string(),
+  rootNodeId: z.string(),
+})
+export type ThreadStartInput = z.infer<typeof ThreadStartInputSchema>
+
+export const ThreadAppendPromptInputSchema = z.object({
+  workspaceId: z.string(),
+  threadRootId: z.string(),
+  content: z.string(),
+})
+export type ThreadAppendPromptInput = z.infer<typeof ThreadAppendPromptInputSchema>
+
+export const ThreadAppendTurnInputSchema = z.object({
+  workspaceId: z.string(),
+  threadRootId: z.string(),
+  blocks: z.array(BlockPayloadSchema),
+})
+export type ThreadAppendTurnInput = z.infer<typeof ThreadAppendTurnInputSchema>
+
+export const ThreadAppendTurnOutputSchema = z.object({
+  turn: NodeSchema,
+  blocks: z.array(NodeSchema),
+})
+export type ThreadAppendTurnOutput = z.infer<typeof ThreadAppendTurnOutputSchema>
 
 // ---------- Workspace RPC ----------
 
@@ -185,6 +274,18 @@ export const Methods = {
   'outline.search': {
     input: OutlineSearchInputSchema,
     output: z.array(NodeSchema),
+  },
+  'thread.start': {
+    input: ThreadStartInputSchema,
+    output: NodeSchema,
+  },
+  'thread.appendPrompt': {
+    input: ThreadAppendPromptInputSchema,
+    output: NodeSchema,
+  },
+  'thread.appendTurn': {
+    input: ThreadAppendTurnInputSchema,
+    output: ThreadAppendTurnOutputSchema,
   },
 } as const satisfies Record<string, { input: z.ZodTypeAny; output: z.ZodTypeAny }>
 
