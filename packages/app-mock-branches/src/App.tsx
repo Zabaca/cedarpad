@@ -368,7 +368,11 @@ function Main({
   onSelectThread: (id: string) => void;
 }) {
   // The Thread Root we feature side-by-side. (In a real app this is the focused subtree.)
-  const root = useMemo(() => findThreadRoot(outline), []);
+  const root = useMemo(() => {
+    const r = findThreadRoot(outline);
+    if (!r) throw new Error('no thread root in fixtures');
+    return r;
+  }, []);
 
   return (
     <main className="flex-1 min-w-0 flex flex-col">
@@ -847,7 +851,7 @@ function HelpRow({ k, label }: { k: string; label: string }) {
 
 // ---------- helpers ----------
 
-function findThreadRoot(nodes: OutlineNode[]): ThreadRoot {
+function findThreadRoot(nodes: OutlineNode[]): ThreadRoot | null {
   for (const n of nodes) {
     if (n.kind === 'thread-root') return n;
     if (n.kind === 'content') {
@@ -855,5 +859,5 @@ function findThreadRoot(nodes: OutlineNode[]): ThreadRoot {
       if (r) return r;
     }
   }
-  throw new Error('no thread root in fixtures');
+  return null;
 }
