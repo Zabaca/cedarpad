@@ -193,4 +193,24 @@ describe('outlineStore', () => {
     const a11Fetched = await store.getNode(a11.id)
     expect(a11Fetched?.parentId).toBe(a1.id)
   })
+
+  it('CRUDs all three kinds (content, turn, block) without CHECK violations', async () => {
+    const c = await store.createNode({ parentId: null, kind: 'content', content: 'c' })
+    const t = await store.createNode({ parentId: c.id, kind: 'turn', content: '' })
+    const b = await store.createNode({ parentId: t.id, kind: 'block', content: 'hello' })
+
+    expect((await store.getNode(c.id))?.kind).toBe('content')
+    expect((await store.getNode(t.id))?.kind).toBe('turn')
+    expect((await store.getNode(b.id))?.kind).toBe('block')
+
+    // getChildren preserves kinds
+    const tChildren = await store.getChildren(t.id)
+    expect(tChildren).toHaveLength(1)
+    expect(tChildren[0]!.kind).toBe('block')
+
+    // delete cascades across kinds
+    await store.deleteNode(c.id)
+    expect(await store.getNode(t.id)).toBeNull()
+    expect(await store.getNode(b.id)).toBeNull()
+  })
 })
