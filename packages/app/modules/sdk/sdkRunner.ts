@@ -356,6 +356,7 @@ export function createSdkRunner({ sdk, threadEngine, keychain }: CreateSdkRunner
           // Don't emit a turn-complete on cancel — the consumer asked us to
           // stop. The cancellation is observable via the Turn's metadata.
         } else {
+          await threadEngine.markTurnDone(turnId)
           yield { kind: 'turn-complete', turnId }
         }
       }

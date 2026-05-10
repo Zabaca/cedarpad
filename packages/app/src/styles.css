@@ -125,6 +125,40 @@ body {
   content: 'turn';
 }
 
+/* Slice 4: lifecycle states for a Turn Node. */
+.tree-node.visual-turn.turn-state-streaming .content::before {
+  content: 'turn · streaming';
+  color: #2155cd;
+}
+.tree-node.visual-turn.turn-state-streaming .bullet {
+  color: #2155cd;
+  animation: cedarpad-pulse 1.2s ease-in-out infinite;
+}
+.tree-node.visual-turn.turn-state-cancelled .content::before {
+  content: 'turn · cancelled';
+  color: #b06e00;
+}
+.tree-node.visual-turn.turn-state-cancelled {
+  opacity: 0.7;
+}
+.tree-node.visual-turn.turn-state-interrupted .content::before {
+  content: 'turn · interrupted (app crashed)';
+  color: #b00020;
+}
+.tree-node.visual-turn.turn-state-interrupted {
+  background: #fff4f4;
+  border-left: 3px solid #f5b3b3;
+  border-radius: 3px;
+}
+.tree-node.visual-turn.turn-state-done .content::before {
+  content: 'turn';
+}
+
+@keyframes cedarpad-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 /* Block Nodes — three sub-styles, one per BlockKind. */
 .tree-node.visual-block-text .content {
   color: #222;
@@ -298,6 +332,43 @@ body {
 .toggle-hide-completed[aria-pressed='true'] {
   background: #eef2ff;
   border-color: #93a4ff;
+}
+
+/* Slice 4: running indicator while a Claude turn is streaming. */
+.thread-running {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  margin: 4px 0 8px;
+  background: #eef4ff;
+  border-left: 3px solid #2155cd;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #2155cd;
+}
+.thread-running .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2155cd;
+  animation: cedarpad-pulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.thread-running .label {
+  font-weight: 600;
+}
+.thread-running-preview {
+  width: 100%;
+  font-weight: 400;
+  color: #1a1a1a;
+  background: #fff;
+  border: 1px solid #cbd5f5;
+  border-radius: 3px;
+  padding: 4px 8px;
+  white-space: pre-wrap;
+  font-size: 13px;
 }
 
 /* ApiKeyPrompt (slice 3) */

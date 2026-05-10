@@ -368,8 +368,10 @@ describe('sdkRunner.sendPrompt', () => {
     expect(turns).toHaveLength(1)
     const turnNode = turns[0]!
     expect(turnNode.kind).toBe('turn')
-    // Turn metadata reflects cancellation.
-    const turnMeta = turnNode.metadata as { role?: string; cancelled?: boolean }
+    // Turn metadata reflects cancellation via the slice 4 lifecycle state.
+    const turnMeta = turnNode.metadata as { role?: string; state?: string; cancelled?: boolean }
+    expect(turnMeta.state).toBe('cancelled')
+    // Legacy boolean is still set so slice 3 readers don't break.
     expect(turnMeta.cancelled).toBe(true)
 
     // Only one block was written.
@@ -419,6 +421,32 @@ describe('sdkRunner.sendPrompt', () => {
     const blocksAfter = await store.getChildren(turnsAfter[0]!.id)
     expect(blocksAfter).toHaveLength(1)
     expect(blocksAfter[0]!.id).toBe(blocksBefore[0]!.id)
+  })
+
+  it('marks Turn state=done after natural completion (slice 4 lifecycle)', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+
+    const recorded: RecordedCall[] = []
+    const sdk = fakeSdk({
+      recorded,
+      script: [
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } },
+        { type: 'result', subtype: 'success' },
+      ],
+    })
+    const runner = createSdkRunner({ sdk, threadEngine: engine, keychain })
+    for await (const _ev of runner.sendPrompt({
+      threadId: root.id,
+      prompt: 'hi',
+      repoPath: '/r',
+    })) {
+      void _ev
+    }
+
+    const turns = await store.getChildren(root.id)
+    const turnMeta = turns[0]!.metadata as { state?: string }
+    expect(turnMeta.state).toBe('done')
   })
 
   it('emits an error event if no API key is configured', async () => {

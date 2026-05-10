@@ -51,10 +51,36 @@ export const BlockPayloadSchema = z.discriminatedUnion('kind', [
 ])
 export type BlockPayload = z.infer<typeof BlockPayloadSchema>
 
+/**
+ * Lifecycle of a Turn Node (slice 4):
+ *   - `streaming`   — beginTurn fired; SDK runner is producing blocks. If
+ *                     the app is killed in this state, crash recovery on
+ *                     next launch transitions it to `interrupted`.
+ *   - `done`        — turn-complete fired naturally.
+ *   - `cancelled`   — user fired sdk.cancel; intentional stop.
+ *   - `interrupted` — runner was no longer alive when next launch saw a
+ *                     `streaming` Turn. Visually distinct from `cancelled`
+ *                     so the user knows the partial output is not a real
+ *                     Claude response.
+ */
+export const TurnStateSchema = z.enum(['streaming', 'done', 'cancelled', 'interrupted'])
+export type TurnState = z.infer<typeof TurnStateSchema>
+
 /** Marker stored in metadata of a Turn Node. */
 export const TurnMetadataSchema = z.object({
   role: z.literal('turn'),
   threadRootId: z.string(),
+  /**
+   * Lifecycle state. Optional for back-compat with slice 2 fixture turns
+   * that pre-date this field; missing is treated as `done` by the
+   * renderer (slice 2 fixture turns were always one-shot).
+   */
+  state: TurnStateSchema.optional(),
+  /**
+   * Legacy slice 3 marker — kept for back-compat with already-persisted
+   * turns. New code reads `state === 'cancelled'` instead.
+   */
+  cancelled: z.boolean().optional(),
 })
 export type TurnMetadata = z.infer<typeof TurnMetadataSchema>
 
@@ -183,6 +209,23 @@ export const ThreadAppendTurnOutputSchema = z.object({
   blocks: z.array(NodeSchema),
 })
 export type ThreadAppendTurnOutput = z.infer<typeof ThreadAppendTurnOutputSchema>
+
+/**
+ * Crash recovery (slice 4). On launch the renderer asks the sidecar to scan
+ * for any Turn Nodes left in `state: 'streaming'` (no live runner is
+ * driving them — necessarily so, since the sidecar process is fresh) and
+ * stamp them `state: 'interrupted'`. Returns the ids that were transitioned
+ * so the UI can surface them.
+ */
+export const ThreadScanInterruptedInputSchema = z.object({
+  workspaceId: z.string(),
+})
+export type ThreadScanInterruptedInput = z.infer<typeof ThreadScanInterruptedInputSchema>
+
+export const ThreadScanInterruptedOutputSchema = z.object({
+  interruptedTurnIds: z.array(z.string()),
+})
+export type ThreadScanInterruptedOutput = z.infer<typeof ThreadScanInterruptedOutputSchema>
 
 // ---------- Auth RPC (slice 3) ----------
 
@@ -373,6 +416,10 @@ export const Methods = {
   'thread.appendTurn': {
     input: ThreadAppendTurnInputSchema,
     output: ThreadAppendTurnOutputSchema,
+  },
+  'thread.scanInterrupted': {
+    input: ThreadScanInterruptedInputSchema,
+    output: ThreadScanInterruptedOutputSchema,
   },
   // ---- Auth (slice 3) ----
   // Sidecar handlers are typically no-ops or delegate to its keychainStore;

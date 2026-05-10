@@ -35,16 +35,23 @@ export interface ThreadEngine {
   appendTurn(threadRootId: string, blocks: BlockPayload[]): Promise<{ turn: Node; blocks: Node[] }>
 
   /**
-   * Streaming variant of {@link appendTurn} (slice 3, used by the SDK
-   * runner). Creates the Turn Node up front; the caller streams Block
-   * payloads in via {@link appendBlock} as they arrive from Claude. When
-   * the stream finishes naturally call no terminal verb; when it is
-   * interrupted call {@link markTurnCancelled} to stamp the Turn.
+   * Streaming variant of {@link appendTurn} (slice 3+, used by the SDK
+   * runner). Creates the Turn Node up front and stamps `state: 'streaming'`
+   * so crash recovery (slice 4) can find it on next launch if the process
+   * dies mid-turn. The caller streams Block payloads in via {@link appendBlock}
+   * as they arrive from Claude; on natural completion call
+   * {@link markTurnDone}; on user-driven cancellation call
+   * {@link markTurnCancelled}; on app-crash recovery, the scan calls
+   * {@link markTurnInterrupted}.
    */
   beginTurn(threadRootId: string): Promise<Node>
   appendBlock(turnId: string, payload: BlockPayload): Promise<Node>
-  /** Stamp the Turn Node's metadata with `cancelled: true`. */
+  /** Stamp the Turn Node's metadata with `state: 'done'`. */
+  markTurnDone(turnId: string): Promise<Node>
+  /** Stamp the Turn Node's metadata with `state: 'cancelled'`. */
   markTurnCancelled(turnId: string): Promise<Node>
+  /** Stamp the Turn Node's metadata with `state: 'interrupted'`. */
+  markTurnInterrupted(turnId: string): Promise<Node>
 }
 
 export function createThreadEngine(store: OutlineStore): ThreadEngine {
@@ -111,7 +118,7 @@ export function createThreadEngine(store: OutlineStore): ThreadEngine {
         prevSiblingId,
         kind: 'turn',
         content: '',
-        metadata: { role: 'turn', threadRootId },
+        metadata: { role: 'turn', threadRootId, state: 'streaming' },
       })
     },
 
@@ -133,12 +140,32 @@ export function createThreadEngine(store: OutlineStore): ThreadEngine {
       })
     },
 
+    async markTurnDone(turnId) {
+      const turn = await store.getNode(turnId)
+      if (!turn) throw new Error(`markTurnDone: turn ${turnId} not found`)
+      return store.updateNode({
+        id: turnId,
+        metadata: { ...turn.metadata, state: 'done' },
+      })
+    },
+
     async markTurnCancelled(turnId) {
       const turn = await store.getNode(turnId)
       if (!turn) throw new Error(`markTurnCancelled: turn ${turnId} not found`)
       return store.updateNode({
         id: turnId,
-        metadata: { ...turn.metadata, cancelled: true },
+        // Keep `cancelled: true` for back-compat with code that may look at
+        // the legacy boolean; the canonical signal is `state: 'cancelled'`.
+        metadata: { ...turn.metadata, state: 'cancelled', cancelled: true },
+      })
+    },
+
+    async markTurnInterrupted(turnId) {
+      const turn = await store.getNode(turnId)
+      if (!turn) throw new Error(`markTurnInterrupted: turn ${turnId} not found`)
+      return store.updateNode({
+        id: turnId,
+        metadata: { ...turn.metadata, state: 'interrupted' },
       })
     },
   }

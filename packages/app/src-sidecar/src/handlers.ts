@@ -17,6 +17,7 @@ import { createThreadEngine, type ThreadEngine } from '../../modules/thread/thre
 import type { DbClient } from '../../modules/db/libsqlClient.ts'
 import { createKeychainStore, type KeychainStore } from '../../modules/auth/keychainStore.ts'
 import { createSdkRunner, type SdkRunner } from '../../modules/sdk/sdkRunner.ts'
+import { scanInterruptedTurns } from '../../modules/thread/crashRecovery.ts'
 import { chooseSdkClient } from './sdkClient.ts'
 
 export type Handler<M extends MethodName> = (input: MethodInput<M>) => Promise<MethodOutput<M>> | MethodOutput<M>
@@ -109,9 +110,17 @@ export const handlers: Handlers = {
     return getWm().setActiveNode(id, activeNodeId)
   },
 
-  'outline.create': async ({ workspaceId, parentId, prevSiblingId, content, metadata }) => {
+  'outline.create': async ({ workspaceId, parentId, prevSiblingId, content, kind, metadata }) => {
     const store = await getOutline(workspaceId)
-    return nodeOut(await store.createNode({ parentId, prevSiblingId: prevSiblingId ?? null, content, metadata }))
+    return nodeOut(
+      await store.createNode({
+        parentId,
+        prevSiblingId: prevSiblingId ?? null,
+        content,
+        kind,
+        metadata,
+      }),
+    )
   },
   'outline.get': async ({ workspaceId, id }) => {
     const store = await getOutline(workspaceId)
@@ -150,6 +159,14 @@ export const handlers: Handlers = {
     const engine = await getThread(workspaceId)
     const result = await engine.appendTurn(threadRootId, blocks)
     return { turn: nodeOut(result.turn), blocks: result.blocks.map(nodeOut) }
+  },
+  'thread.scanInterrupted': async ({ workspaceId }) => {
+    // Walk the workspace's outline for any Turn Nodes left in
+    // `state: 'streaming'` — necessarily orphaned because the sidecar
+    // process is fresh and no runner is driving them. Stamp them
+    // `state: 'interrupted'` so the renderer can show them as crashed.
+    const store = await getOutline(workspaceId)
+    return scanInterruptedTurns(store)
   },
 
   // ---- Auth (slice 3) ----
