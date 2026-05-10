@@ -103,6 +103,8 @@ export const WorkspaceSummarySchema = z.object({
   displayName: z.string(),
   dbPath: z.string(),
   lastOpenedAt: z.number(),
+  /** Persisted Workflowy-style zoom pointer: id of the visible-root Node, or null = workspace root. */
+  activeNodeId: z.string().nullable(),
 })
 export type WorkspaceSummary = z.infer<typeof WorkspaceSummarySchema>
 
@@ -118,6 +120,12 @@ export type WorkspaceSwitchInput = z.infer<typeof WorkspaceSwitchInputSchema>
 
 export const WorkspaceRecentInputSchema = z.object({})
 export type WorkspaceRecentInput = z.infer<typeof WorkspaceRecentInputSchema>
+
+export const WorkspaceSetActiveNodeInputSchema = z.object({
+  id: z.string(),
+  activeNodeId: z.string().nullable(),
+})
+export type WorkspaceSetActiveNodeInput = z.infer<typeof WorkspaceSetActiveNodeInputSchema>
 
 // ---------- Method registry ----------
 
@@ -145,6 +153,10 @@ export const Methods = {
   'workspace.active': {
     input: z.object({}),
     output: WorkspaceSummarySchema.nullable(),
+  },
+  'workspace.setActiveNode': {
+    input: WorkspaceSetActiveNodeInputSchema,
+    output: WorkspaceSummarySchema,
   },
   'outline.create': {
     input: OutlineCreateInputSchema,
