@@ -152,6 +152,17 @@ export function Tree({
    * default-collapsed. Transient render-only state; not persisted.
    */
   const [expandedBlockIds, setExpandedBlockIds] = useState<Set<string>>(new Set())
+  // Standard outline collapse for content/branches/block-bearing nodes.
+  // Default expanded; opt-in collapse, transient client-side.
+  const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set())
+  const toggleCollapsed = useCallback((id: string) => {
+    setCollapsedNodeIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
   const toggleExpanded = useCallback((id: string) => {
     setExpandedBlockIds((prev) => {
       const next = new Set(prev)
@@ -247,6 +258,11 @@ export function Tree({
           // v1.1: Branches containers render default-collapsed. Skip
           // descending unless the user explicitly expanded them.
           if (item.node.kind === 'branches' && !expandedBranchesIds.has(item.node.id)) continue
+          // Standard outline collapse: skip children when user collapsed
+          // this node. Branches containers are handled by their own state
+          // above; blocks aren't typical container kinds but the same rule
+          // is harmless for them.
+          if (collapsedNodeIds.has(item.node.id)) continue
           walk(item.node.id, depth + 1)
         } else {
           // Pair: when expanded, render the two underlying Block rows
@@ -270,7 +286,7 @@ export function Tree({
     }
     walk(activeNodeId, 0)
     return out
-  }, [byParent, activeNodeId, hideCompleted, expandedBlockIds, expandedBranchesIds])
+  }, [byParent, activeNodeId, hideCompleted, expandedBlockIds, expandedBranchesIds, collapsedNodeIds])
 
   const lookup = useMemo(() => {
     const map = new Map<string, Node>()
@@ -973,9 +989,30 @@ export function Tree({
               onDragLeave={(e) => handleDragLeave(e, node)}
               onDrop={(e) => void handleDrop(e, node)}
             >
-              <span className="bullet" aria-hidden>
-                {bulletForVisual(visual)}
-              </span>
+              {(() => {
+                const kids = byParent.get(node.id) ?? []
+                if (node.kind !== 'content' || kids.length === 0) {
+                  return (
+                    <span className="bullet" aria-hidden>
+                      {bulletForVisual(visual)}
+                    </span>
+                  )
+                }
+                const collapsed = collapsedNodeIds.has(node.id)
+                return (
+                  <button
+                    type="button"
+                    className="collapse-toggle"
+                    aria-label={collapsed ? 'Expand' : 'Collapse'}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleCollapsed(node.id)
+                    }}
+                  >
+                    {collapsed ? '▸' : '▾'}
+                  </button>
+                )
+              })()}
               <div
                 ref={(el) => {
                   if (el) refs.current.set(node.id, el)

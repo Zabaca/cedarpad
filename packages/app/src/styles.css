@@ -24,6 +24,24 @@ body {
   gap: 2px;
 }
 
+.collapse-toggle {
+  width: 16px;
+  min-width: 16px;
+  height: 20px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 20px;
+  text-align: center;
+}
+.collapse-toggle:hover {
+  color: #111;
+}
+
 .node-hint {
   flex-basis: 100%;
   margin-left: 24px;
