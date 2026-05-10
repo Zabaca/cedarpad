@@ -55,4 +55,19 @@ describe('keymap', () => {
     const out = interpret({ key: 'Backspace', shiftKey: false }, { ...base, isContentEmpty: false })
     expect(out).toEqual({ kind: 'noop' })
   })
+
+  it('Cmd+. zooms into the focused node', () => {
+    const out = interpret({ key: '.', shiftKey: false, metaKey: true }, { ...base, isContentEmpty: false })
+    expect(out).toEqual({ kind: 'zoom-in', nodeId: 'cur' })
+  })
+
+  it('Cmd+, zooms out one level', () => {
+    const out = interpret({ key: ',', shiftKey: false, metaKey: true }, { ...base, isContentEmpty: false })
+    expect(out).toEqual({ kind: 'zoom-out' })
+  })
+
+  it('plain "." is a no-op (regular typing must not zoom)', () => {
+    const out = interpret({ key: '.', shiftKey: false }, { ...base, isContentEmpty: false })
+    expect(out).toEqual({ kind: 'noop' })
+  })
 })

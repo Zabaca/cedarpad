@@ -138,3 +138,45 @@ body {
   font-size: 11px;
   color: #888;
 }
+
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  padding: 4px 0 12px;
+  font-size: 12px;
+  color: #555;
+}
+
+.breadcrumbs .crumb {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font: inherit;
+  color: #2563eb;
+  cursor: pointer;
+  border-radius: 3px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breadcrumbs .crumb:hover:not(:disabled) {
+  background: #f1f5fb;
+}
+
+.breadcrumbs .crumb:disabled {
+  color: #222;
+  cursor: default;
+}
+
+.breadcrumbs .crumb-current {
+  font-weight: 600;
+}
+
+.breadcrumbs .crumb-sep {
+  color: #aaa;
+  user-select: none;
+}

@@ -94,4 +94,25 @@ describe('workspaceManager', () => {
     const recent = await wm.recent()
     expect(recent.filter((w) => w.repoPath === repo).length).toBe(1)
   })
+
+  it('setActiveNode persists the zoom pointer and a fresh manager retrieves it', async () => {
+    const repo = await makeRepo('zoom')
+    const ws = await wm.open(repo)
+    expect(ws.activeNodeId).toBeNull()
+    const updated = await wm.setActiveNode(ws.id, 'node-xyz')
+    expect(updated.activeNodeId).toBe('node-xyz')
+
+    // A brand-new manager pointed at the same recents DB sees the persisted zoom.
+    const wm2 = createWorkspaceManager({ recentsDbUrl: `file:${join(tmp, 'global.db')}`, recentLimit: 10 })
+    const reopened = await wm2.open(repo)
+    expect(reopened.activeNodeId).toBe('node-xyz')
+  })
+
+  it('setActiveNode(null) clears the zoom pointer', async () => {
+    const repo = await makeRepo('clear-zoom')
+    const ws = await wm.open(repo)
+    await wm.setActiveNode(ws.id, 'node-abc')
+    const cleared = await wm.setActiveNode(ws.id, null)
+    expect(cleared.activeNodeId).toBeNull()
+  })
 })

@@ -13,6 +13,8 @@ export type Intent =
   | { kind: 'nest'; nodeId: string; newParentId: string; prevSiblingId: string | null }
   | { kind: 'outdent'; nodeId: string; newParentId: string | null; prevSiblingId: string }
   | { kind: 'delete-empty'; nodeId: string }
+  | { kind: 'zoom-in'; nodeId: string }
+  | { kind: 'zoom-out' }
 
 export interface Visible {
   node: Node
@@ -26,6 +28,16 @@ export function interpret(
   ev: { key: string; shiftKey: boolean; metaKey?: boolean; ctrlKey?: boolean },
   ctx: Visible & { isContentEmpty: boolean },
 ): Intent {
+  // Workflowy-style zoom: Cmd/Ctrl + . zooms into focused node, Cmd/Ctrl + ,
+  // zooms out one level. Both must be the modifier-combo (no plain `.`/`,`
+  // because those are valid text input).
+  const mod = ev.metaKey || ev.ctrlKey
+  if (mod && ev.key === '.') {
+    return { kind: 'zoom-in', nodeId: ctx.node.id }
+  }
+  if (mod && ev.key === ',') {
+    return { kind: 'zoom-out' }
+  }
   if (ev.key === 'Enter' && !ev.shiftKey) {
     return { kind: 'create-sibling', afterId: ctx.node.id, parentId: ctx.node.parentId }
   }

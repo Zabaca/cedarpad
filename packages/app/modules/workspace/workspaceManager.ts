@@ -11,6 +11,7 @@ import {
   trimRecent,
   findById,
   findByRepoPath,
+  setActiveNodeId,
   type RecentRow,
 } from './recentsStore.ts'
 import type { WorkspaceSummary } from '../../src/contract.ts'
@@ -20,6 +21,8 @@ export interface WorkspaceManager {
   switch(id: string): Promise<WorkspaceSummary>
   recent(): Promise<WorkspaceSummary[]>
   active(): Promise<WorkspaceSummary | null>
+  /** Persist the zoomed-in Node id for a workspace. `null` clears the zoom. */
+  setActiveNode(id: string, activeNodeId: string | null): Promise<WorkspaceSummary>
   /** Returns the libSQL outline DB client for a workspace, opening on demand. */
   outlineDb(id: string): Promise<DbClient>
 }
@@ -62,6 +65,7 @@ function rowToSummary(row: RecentRow): WorkspaceSummary {
     displayName: row.displayName,
     dbPath: row.dbPath,
     lastOpenedAt: row.lastOpenedAt,
+    activeNodeId: row.activeNodeId,
   }
 }
 
@@ -98,6 +102,8 @@ export function createWorkspaceManager(opts: WorkspaceManagerOpts): WorkspaceMan
         displayName: basename(repoPath),
         dbPath,
         lastOpenedAt: ts,
+        // Preserve any persisted zoom across re-opens; new repos default to root.
+        activeNodeId: existing?.activeNodeId ?? null,
       }
       await upsertRecent(recents, row)
       await trimRecent(recents, limit)
@@ -130,6 +136,15 @@ export function createWorkspaceManager(opts: WorkspaceManagerOpts): WorkspaceMan
       const db = await getRecentsDb()
       const row = await findById(db, activeId)
       return row ? rowToSummary(row) : null
+    },
+
+    async setActiveNode(id, activeNodeId) {
+      const db = await getRecentsDb()
+      const found = await findById(db, id)
+      if (!found) throw new Error(`unknown workspace id: ${id}`)
+      await setActiveNodeId(db, id, activeNodeId)
+      const updated = await findById(db, id)
+      return rowToSummary(updated!)
     },
 
     async outlineDb(id) {

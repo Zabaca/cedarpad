@@ -63,6 +63,9 @@ export const handlers: Handlers = {
   'workspace.active': async () => {
     return getWm().active()
   },
+  'workspace.setActiveNode': async ({ id, activeNodeId }) => {
+    return getWm().setActiveNode(id, activeNodeId)
+  },
 
   'outline.create': async ({ workspaceId, parentId, prevSiblingId, content, metadata }) => {
     const store = await getOutline(workspaceId)
