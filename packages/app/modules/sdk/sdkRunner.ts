@@ -28,6 +28,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ThreadEngine } from '../thread/threadEngine.ts'
 import type { KeychainStore } from '../auth/keychainStore.ts'
+import type { AuthMode } from '../auth/authProbe.ts'
 import type { BlockPayload } from '../outline/types.ts'
 
 /**
@@ -147,9 +148,17 @@ export interface CreateSdkRunnerOptions {
   sdk: SdkClient
   threadEngine: ThreadEngine
   keychain: KeychainStore
+  /**
+   * Returns the current auth mode. Called fresh on every `sendPrompt` so
+   * the runner can react to auth changes (e.g. user just entered a BYOK
+   * key after launching with no auth) without being recreated. If
+   * omitted, the runner falls back to the slice-3 behaviour: require a
+   * key in the keychain.
+   */
+  getAuthMode?: () => AuthMode
 }
 
-export function createSdkRunner({ sdk, threadEngine, keychain }: CreateSdkRunnerOptions): SdkRunner {
+export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: CreateSdkRunnerOptions): SdkRunner {
   const active = new Map<string, ActiveRun>()
 
   return {
@@ -159,14 +168,36 @@ export function createSdkRunner({ sdk, threadEngine, keychain }: CreateSdkRunner
       // because we need access to the runner state in `cancel()`; build
       // the generator inline.
       async function* run(): AsyncGenerator<RunnerEvent, void, unknown> {
-        const apiKey = keychain.getApiKey()
-        if (!apiKey) {
+        const mode: AuthMode = getAuthMode
+          ? getAuthMode()
+          : (keychain.hasApiKey() ? 'api-key' : 'none')
+
+        if (mode === 'none') {
           yield {
             kind: 'error',
-            code: 'NO_API_KEY',
-            message: 'No Anthropic API key configured. Use auth.setApiKey first.',
+            code: 'NO_AUTH',
+            message:
+              'No Claude auth available. Sign in with `claude /login` or set an API key.',
           }
           return
+        }
+
+        // Only inject the BYOK key when we're actually in api-key mode.
+        // In subscription mode the SDK reads its own credentials file
+        // (or honours an existing `ANTHROPIC_API_KEY` env var) — adding
+        // ours on top would be wrong for users who have a working
+        // OAuth login but no BYOK key in our keychain.
+        let apiKey: string | null = null
+        if (mode === 'api-key') {
+          apiKey = keychain.getApiKey()
+          if (!apiKey) {
+            yield {
+              kind: 'error',
+              code: 'NO_API_KEY',
+              message: 'No Anthropic API key configured. Use auth.setApiKey first.',
+            }
+            return
+          }
         }
 
         // Open the Turn Node up front so streaming events have a parent.
@@ -176,6 +207,12 @@ export function createSdkRunner({ sdk, threadEngine, keychain }: CreateSdkRunner
         const abortController = new AbortController()
         let handle: SdkQueryHandle
         try {
+          // In subscription mode we hand `process.env` through unchanged
+          // (no `ANTHROPIC_API_KEY` injection) so the SDK falls through
+          // to its credentials file / keychain auth path.
+          const env: Record<string, string | undefined> = { ...process.env }
+          if (apiKey) env.ANTHROPIC_API_KEY = apiKey
+
           handle = sdk.query({
             prompt,
             options: {
@@ -189,10 +226,7 @@ export function createSdkRunner({ sdk, threadEngine, keychain }: CreateSdkRunner
               tools: [...ALLOWED_TOOLS],
               allowedTools: [...ALLOWED_TOOLS],
               permissionMode: 'default',
-              env: {
-                ...process.env,
-                ANTHROPIC_API_KEY: apiKey,
-              },
+              env,
             },
           })
         } catch (err) {

@@ -1,11 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
-import { call, isTauri, authHasApiKey } from './ipc'
+import { call, isTauri } from './ipc'
 import { Tree } from './components/Tree'
 import { WorkspacePicker } from './components/WorkspacePicker'
 import { WorkspaceSwitcher } from './components/WorkspaceSwitcher'
 import { SearchPalette } from './components/SearchPalette'
-import { ApiKeyPrompt } from './components/ApiKeyPrompt'
-import type { WorkspaceSummary } from './contract'
+import { AuthPrompt } from './components/AuthPrompt'
+import type { WorkspaceSummary, AuthMode } from './contract'
 
 // Workspace UI state. Persisted in localStorage so a relaunch restores the
 // last hide-completed preference; per-workspace key so two repos don't share.
@@ -19,9 +19,11 @@ export function App() {
   const [bootError, setBootError] = useState<string | null>(null)
   const [booted, setBooted] = useState(false)
   const [hideCompleted, setHideCompleted] = useState(false)
-  // BYOK: when null, we haven't probed the keychain yet; false = no key
-  // configured (show ApiKeyPrompt); true = key present (proceed).
-  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null)
+  // Auth: null = haven't probed yet. Otherwise the authoritative mode
+  // returned by the sidecar's `auth.detect`. The AuthPrompt only renders
+  // when mode === 'none'; subscription and api-key both flow straight to
+  // the workspace surface.
+  const [authMode, setAuthMode] = useState<AuthMode | null>(null)
 
   // Persist + apply a zoom-pointer change for the current workspace. The
   // sidecar is the source of truth for activeNodeId; we update the local
@@ -38,21 +40,22 @@ export function App() {
     [],
   )
 
-  // On launch: probe keychain first, then restore last active workspace.
-  // The app refuses to surface workspace UI until a key is configured —
-  // per slice 3 acceptance criterion ("App refuses to start a Thread
-  // without a key configured").
+  // On launch: probe auth first, then restore last active workspace.
+  // The app refuses to surface workspace UI until auth is available
+  // (slice 3 acceptance criterion: "App refuses to start a Thread
+  // without a key configured" — generalised post-merge to "without
+  // working auth", where subscription login satisfies the gate too).
   useEffect(() => {
     if (!isTauri()) {
-      setHasApiKey(true) // browser dev mode skips the key flow
+      setAuthMode('subscription') // browser dev mode skips the auth flow
       setBooted(true)
       return
     }
     void (async () => {
       try {
-        const present = await authHasApiKey()
-        setHasApiKey(present)
-        if (present) {
+        const probe = await call('auth.detect', {})
+        setAuthMode(probe.mode)
+        if (probe.mode !== 'none') {
           const recents = await call('workspace.recent', {})
           if (recents.length > 0) {
             const target = recents[0]!
@@ -78,10 +81,13 @@ export function App() {
     })()
   }, [])
 
-  // Re-probe + load workspace after the user enters a key.
+  // Re-probe + load workspace after the user enters a key via the BYOK
+  // fallback. We re-detect rather than assume `'api-key'` so a user who
+  // ran `claude /login` between launch and now is correctly classified.
   const handleKeySaved = useCallback(async () => {
-    setHasApiKey(true)
     try {
+      const probe = await call('auth.detect', {})
+      setAuthMode(probe.mode)
       const recents = await call('workspace.recent', {})
       if (recents.length > 0) {
         const target = recents[0]!
@@ -177,8 +183,8 @@ export function App() {
     )
   }
 
-  if (hasApiKey === false) {
-    return <ApiKeyPrompt onSaved={() => void handleKeySaved()} />
+  if (authMode === 'none') {
+    return <AuthPrompt onSaved={() => void handleKeySaved()} />
   }
 
   return (

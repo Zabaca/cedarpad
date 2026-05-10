@@ -449,7 +449,7 @@ describe('sdkRunner.sendPrompt', () => {
     expect(turnMeta.state).toBe('done')
   })
 
-  it('emits an error event if no API key is configured', async () => {
+  it('emits NO_AUTH when neither subscription nor a stored key is available', async () => {
     const root = await store.createNode({ parentId: null, content: 'idea' })
     await engine.startThread(root.id)
 
@@ -461,6 +461,8 @@ describe('sdkRunner.sendPrompt', () => {
         throw new Error('should not have been called')
       },
     }
+    // No `getAuthMode` → runner falls back to keychain-only check; empty
+    // keychain ⇒ mode is 'none'.
     const runner = createSdkRunner({ sdk, threadEngine: engine, keychain: emptyKeychain })
 
     const events: RunnerEvent[] = []
@@ -472,8 +474,83 @@ describe('sdkRunner.sendPrompt', () => {
       events.push(ev)
     }
     expect(events).toEqual([
-      { kind: 'error', code: 'NO_API_KEY', message: expect.any(String) },
+      { kind: 'error', code: 'NO_AUTH', message: expect.any(String) },
     ])
     expect(sdkSpy).not.toHaveBeenCalled()
+  })
+
+  it('subscription mode: invokes SDK without injecting ANTHROPIC_API_KEY', async () => {
+    // Post-merge auth fix: when the user has a Claude Code OAuth login
+    // (subscription), the SDK reads its own credentials file. cedarpad
+    // must NOT set ANTHROPIC_API_KEY in that case — doing so would
+    // override the subscription auth with whatever placeholder/empty
+    // value our keychain holds.
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+
+    const emptyKeychain = createKeychainStore()
+    const recorded: RecordedCall[] = []
+    const sdk = fakeSdk({
+      recorded,
+      script: [
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } },
+        { type: 'result', subtype: 'success' },
+      ],
+    })
+    const runner = createSdkRunner({
+      sdk,
+      threadEngine: engine,
+      keychain: emptyKeychain,
+      getAuthMode: () => 'subscription',
+    })
+
+    const events: RunnerEvent[] = []
+    for await (const ev of runner.sendPrompt({
+      threadId: root.id,
+      prompt: 'hi',
+      repoPath: '/some/repo',
+    })) {
+      events.push(ev)
+    }
+
+    // SDK was invoked successfully.
+    expect(recorded).toHaveLength(1)
+    // Critical: no ANTHROPIC_API_KEY was set on the SDK env. The
+    // recorder reads `options.env.ANTHROPIC_API_KEY`; in subscription
+    // mode the runner doesn't set it, so this is undefined.
+    expect(recorded[0]!.apiKey).toBeUndefined()
+    // Block was still emitted normally.
+    const completes = events.filter((e) => e.kind === 'block-complete')
+    expect(completes).toHaveLength(1)
+  })
+
+  it('api-key mode: still injects ANTHROPIC_API_KEY from the keychain', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+
+    const recorded: RecordedCall[] = []
+    const sdk = fakeSdk({
+      recorded,
+      script: [
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } },
+        { type: 'result', subtype: 'success' },
+      ],
+    })
+    const runner = createSdkRunner({
+      sdk,
+      threadEngine: engine,
+      keychain,
+      getAuthMode: () => 'api-key',
+    })
+
+    for await (const _ev of runner.sendPrompt({
+      threadId: root.id,
+      prompt: 'hi',
+      repoPath: '/r',
+    })) {
+      void _ev
+    }
+
+    expect(recorded[0]!.apiKey).toBe('sk-ant-test')
   })
 })

@@ -301,6 +301,26 @@ export const AuthHasApiKeyOutputSchema = z.object({
 })
 export type AuthHasApiKeyOutput = z.infer<typeof AuthHasApiKeyOutputSchema>
 
+/**
+ * Authoritative auth-state probe (post-slice-3 fix). Three modes:
+ *  - `subscription` — Claude Code OAuth login is active (or ANTHROPIC_API_KEY
+ *    is already set in the environment). The renderer skips the AuthPrompt
+ *    and the SDK runner does NOT inject a key — the SDK reads the user's
+ *    credentials file directly.
+ *  - `api-key`      — no subscription, but a BYOK key is stored in our
+ *    keychain. Renderer skips the AuthPrompt; runner injects the key.
+ *  - `none`         — neither path is configured. Renderer shows the
+ *    AuthPrompt with subscription-first messaging and BYOK as fallback.
+ */
+export const AuthModeSchema = z.enum(['subscription', 'api-key', 'none'])
+export type AuthMode = z.infer<typeof AuthModeSchema>
+
+export const AuthDetectOutputSchema = z.object({
+  mode: AuthModeSchema,
+  detail: z.string().optional(),
+})
+export type AuthDetectOutput = z.infer<typeof AuthDetectOutputSchema>
+
 // ---------- SDK runner RPC (slice 3) ----------
 
 /**
@@ -501,6 +521,17 @@ export const Methods = {
   },
   'auth.deleteApiKey': {
     input: z.object({}),
+    output: z.object({ ok: z.literal(true) }),
+  },
+  'auth.detect': {
+    input: z.object({}),
+    output: AuthDetectOutputSchema,
+  },
+  // Test-only seam for the WebView e2e harness — flips the forced auth
+  // mode mid-session. Only effective when `CEDARPAD_E2E_AUTH_MODE` was
+  // set at launch; production calls reject. Pass `mode: null` to clear.
+  'auth.setE2EOverride': {
+    input: z.object({ mode: AuthModeSchema.nullable() }),
     output: z.object({ ok: z.literal(true) }),
   },
   // ---- SDK runner (slice 3) ----
