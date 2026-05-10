@@ -7,11 +7,12 @@ import {
   SessionBearerMetadataSchema,
 } from '../contract'
 import { interpret } from '../keymap'
+import { BlockRow, ToolPair } from './Block'
+import { groupBlocksForRender } from './blockGrouping'
 
-interface Visible {
-  node: Node
-  depth: number
-}
+type VisibleRow =
+  | { kind: 'node'; node: Node; depth: number; pairLeadId?: string }
+  | { kind: 'pair'; toolUse: Node; toolResult: Node; depth: number }
 
 interface Props {
   workspaceId: string
@@ -128,6 +129,21 @@ export function Tree({
    */
   const [streamingPromptIds, setStreamingPromptIds] = useState<Set<string>>(new Set())
   const [inFlightText, setInFlightText] = useState<Map<string, string>>(new Map())
+  /**
+   * Per-block expansion state for tool blocks (v1.1 slice 3). Keyed by the
+   * "lead" node id — for a ToolPair this is the tool_use Node id; for a
+   * standalone tool_use / tool_result it is the node's own id. Absence ⇒
+   * default-collapsed. Transient render-only state; not persisted.
+   */
+  const [expandedBlockIds, setExpandedBlockIds] = useState<Set<string>>(new Set())
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedBlockIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
   const refs = useRef(new Map<string, HTMLDivElement>())
   const dragIdRef = useRef<string | null>(null)
   const dropPosRef = useRef<DropPos | null>(null)
@@ -187,19 +203,39 @@ export function Tree({
     el.scrollIntoView({ block: 'center', behavior: 'auto' })
   }, [navigateRequest])
 
-  const visible: Visible[] = useMemo(() => {
-    const out: Visible[] = []
+  const visible: VisibleRow[] = useMemo(() => {
+    const out: VisibleRow[] = []
     function walk(parentId: string | null, depth: number) {
       const children = byParent.get(parentId) ?? []
-      for (const c of children) {
-        if (hideCompleted && c.completed) continue
-        out.push({ node: c, depth })
-        walk(c.id, depth + 1)
+      const filtered = hideCompleted ? children.filter((c) => !c.completed) : children
+      const grouped = groupBlocksForRender(filtered)
+      for (const item of grouped) {
+        if (item.kind === 'single') {
+          out.push({ kind: 'node', node: item.node, depth })
+          walk(item.node.id, depth + 1)
+        } else {
+          // Pair: when expanded, render the two underlying Block rows
+          // individually (and walk their children). When collapsed, render
+          // a single combined ToolPair row. The pair is keyed by the
+          // tool_use node id.
+          if (expandedBlockIds.has(item.toolUse.id)) {
+            // When the pair is expanded both halves toggle the pair's
+            // collapse key (the tool_use Node id) so either chevron
+            // re-collapses the pair. Pass `pairLeadId` through so the
+            // dispatch site can route both onToggle calls to the same id.
+            out.push({ kind: 'node', node: item.toolUse, depth, pairLeadId: item.toolUse.id })
+            walk(item.toolUse.id, depth + 1)
+            out.push({ kind: 'node', node: item.toolResult, depth, pairLeadId: item.toolUse.id })
+            walk(item.toolResult.id, depth + 1)
+          } else {
+            out.push({ kind: 'pair', toolUse: item.toolUse, toolResult: item.toolResult, depth })
+          }
+        }
       }
     }
     walk(activeNodeId, 0)
     return out
-  }, [byParent, activeNodeId, hideCompleted])
+  }, [byParent, activeNodeId, hideCompleted, expandedBlockIds])
 
   const lookup = useMemo(() => {
     const map = new Map<string, Node>()
@@ -489,11 +525,13 @@ export function Tree({
       }
       if (intent.kind === 'delete-empty') {
         const flat = visible
-        const myIdx = flat.findIndex((v) => v.node.id === intent.nodeId)
+        const rowNodeId = (r: VisibleRow): string =>
+          r.kind === 'node' ? r.node.id : r.toolUse.id
+        const myIdx = flat.findIndex((v) => rowNodeId(v) === intent.nodeId)
         const prev = myIdx > 0 ? flat[myIdx - 1] : null
         await call('outline.delete', { workspaceId, id: intent.nodeId })
         await load()
-        if (prev) setFocusId(prev.node.id)
+        if (prev) setFocusId(rowNodeId(prev))
         return
       }
       if (intent.kind === 'toggle-complete') {
@@ -743,15 +781,55 @@ export function Tree({
         </div>
       )}
       <div className="tree">
-        {visible.map(({ node, depth }) => {
+        {visible.map((row) => {
+          if (row.kind === 'pair') {
+            const { toolUse, toolResult, depth } = row
+            return (
+              <ToolPair
+                key={`pair-${toolUse.id}`}
+                toolUse={toolUse}
+                toolResult={toolResult}
+                depth={depth}
+                onToggle={() => toggleExpanded(toolUse.id)}
+              />
+            )
+          }
+          const { node, depth, pairLeadId } = row
           const { visual, blockMeta, promptMeta, isSessionBearer } = classifyNode(node)
-          const editable = node.kind === 'content'
-          const displayContent =
-            node.kind === 'block' && blockMeta ? renderBlockContent(blockMeta) : node.content
           const isDropTarget = dropPos && (dropPos as { targetId?: string }).targetId === node.id
           const dropClass = isDropTarget ? `drop-${dropPos!.kind}` : ''
-          const completedClass = node.completed ? 'completed' : ''
           const draggingClass = dragId === node.id ? 'dragging' : ''
+          if (node.kind === 'block' && blockMeta) {
+            const toggleKey = pairLeadId ?? node.id
+            // When this block is part of an expanded pair the pair-key is
+            // present in expandedBlockIds → both halves render in their
+            // expanded shape. Otherwise the lone block follows its own
+            // expansion state.
+            const expanded = expandedBlockIds.has(toggleKey)
+            return (
+              <BlockRow
+                key={node.id}
+                node={node}
+                depth={depth}
+                collapsed={!expanded}
+                onToggle={() => toggleExpanded(toggleKey)}
+                draggable
+                attachRef={(el) => {
+                  if (el) refs.current.set(node.id, el)
+                  else refs.current.delete(node.id)
+                }}
+                dropClass={dropClass}
+                draggingClass={draggingClass}
+                onDragStart={(e) => handleDragStart(e, node)}
+                onDragEnd={handleDragEnd}
+                onDragOver={(e) => handleDragOver(e, node)}
+                onDragLeave={(e) => handleDragLeave(e, node)}
+                onDrop={(e) => void handleDrop(e, node)}
+              />
+            )
+          }
+          const editable = node.kind === 'content'
+          const completedClass = node.completed ? 'completed' : ''
           const promptState = promptMeta?.state
           const promptStateClass = promptState ? `prompt-state-${promptState}` : ''
           const sessionBearerClass = isSessionBearer ? 'session-bearer' : ''
@@ -792,7 +870,7 @@ export function Tree({
                 }
                 onKeyDown={editable ? (e) => void handleKeyDown(e, node) : undefined}
               >
-                {displayContent}
+                {node.content}
               </div>
             </div>
           )
@@ -802,19 +880,3 @@ export function Tree({
   )
 }
 
-/**
- * Render a Block Node's content based on its payload kind. Minimal —
- * UX iteration is a later slice. The point is that the three payload
- * kinds are visually distinct so a user can tell them apart.
- */
-function renderBlockContent(meta: BlockMetadata): string {
-  const p = meta.payload
-  if (p.kind === 'text') return p.text
-  if (p.kind === 'tool_use') {
-    const inputJson = JSON.stringify(p.input)
-    return `${p.toolName}(${inputJson})`
-  }
-  // tool_result
-  const out = typeof p.output === 'string' ? p.output : JSON.stringify(p.output)
-  return p.isError ? `error: ${out}` : out
-}
