@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply font-sans antialiased text-slate-800 bg-slate-50;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+  .dark body {
+    @apply text-slate-100 bg-slate-950;
+  }
+}
+
+@layer utilities {
+  /* Subtle thread column scrollbar */
+  .thin-scroll::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .thin-scroll::-webkit-scrollbar-thumb {
+    @apply bg-slate-300 rounded;
+  }
+  .dark .thin-scroll::-webkit-scrollbar-thumb {
+    @apply bg-slate-700;
+  }
+  .thin-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
