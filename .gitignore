@@ -1,0 +1,8 @@
+node_modules
+.turbo
+dist
+.vercel
+.env
+.env.*
+*.dec.yaml
+.DS_Store
