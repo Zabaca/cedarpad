@@ -7,11 +7,14 @@
     "test": "bun run --bun vitest run",
     "test:watch": "bun run --bun vitest",
     "build:sidecar": "bun build src-sidecar/src/server.ts --outfile dist-sidecar/server.js --target=bun",
+    "build:sidecar:release": "bash scripts/build-sidecar-release.sh",
     "dev:vite": "vite",
     "build:vite": "vite build",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "build:debug:bin": "bun run build:vite && bunx --bun tauri build --debug --no-bundle",
+    "build:macos": "./scripts/build-macos.sh",
+    "icon:gen": "python3 scripts/gen-icon.py && bunx --bun tauri icon src-tauri/icons/icon-source.png",
     "test:e2e:webview": "bun run build:debug:bin && node node_modules/@wdio/cli/bin/wdio.js run e2e/webview/wdio.conf.ts"
   },
   "dependencies": {
