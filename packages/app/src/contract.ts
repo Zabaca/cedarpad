@@ -227,6 +227,24 @@ export const ThreadScanInterruptedOutputSchema = z.object({
 })
 export type ThreadScanInterruptedOutput = z.infer<typeof ThreadScanInterruptedOutputSchema>
 
+/**
+ * Branch verb (slice 5). From any Block Node, fork the conversation
+ * into a sibling Thread under the same Thread Root with full prior
+ * history through the source Block. Returns the new Thread Root id and
+ * the empty prompt slot id (the renderer focuses the latter).
+ */
+export const ThreadBranchInputSchema = z.object({
+  workspaceId: z.string(),
+  blockId: z.string(),
+})
+export type ThreadBranchInput = z.infer<typeof ThreadBranchInputSchema>
+
+export const ThreadBranchOutputSchema = z.object({
+  newThreadId: z.string(),
+  promptNodeId: z.string(),
+})
+export type ThreadBranchOutput = z.infer<typeof ThreadBranchOutputSchema>
+
 // ---------- Auth RPC (slice 3) ----------
 
 /**
@@ -420,6 +438,10 @@ export const Methods = {
   'thread.scanInterrupted': {
     input: ThreadScanInterruptedInputSchema,
     output: ThreadScanInterruptedOutputSchema,
+  },
+  'thread.branch': {
+    input: ThreadBranchInputSchema,
+    output: ThreadBranchOutputSchema,
   },
   // ---- Auth (slice 3) ----
   // Sidecar handlers are typically no-ops or delegate to its keychainStore;

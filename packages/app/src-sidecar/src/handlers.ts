@@ -168,6 +168,10 @@ export const handlers: Handlers = {
     const store = await getOutline(workspaceId)
     return scanInterruptedTurns(store)
   },
+  'thread.branch': async ({ workspaceId, blockId }) => {
+    const engine = await getThread(workspaceId)
+    return engine.branch(blockId)
+  },
 
   // ---- Auth (slice 3) ----
   // The renderer-facing auth methods (auth.setApiKey/hasApiKey/deleteApiKey)
