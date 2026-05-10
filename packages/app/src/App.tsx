@@ -14,6 +14,21 @@ export function App() {
   const [bootError, setBootError] = useState<string | null>(null)
   const [booted, setBooted] = useState(false)
 
+  // Persist + apply a zoom-pointer change for the current workspace. The
+  // sidecar is the source of truth for activeNodeId; we update the local
+  // summary optimistically with the response so the Tree re-renders.
+  const persistActiveNode = useCallback(
+    async (workspaceId: string, activeNodeId: string | null) => {
+      try {
+        const ws = await call('workspace.setActiveNode', { id: workspaceId, activeNodeId })
+        setActive(ws)
+      } catch (e) {
+        setBootError(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [],
+  )
+
   // On launch, restore last active workspace from sidecar.
   useEffect(() => {
     if (!isTauri()) {
@@ -95,9 +110,15 @@ export function App() {
               <div className="name">{active.displayName}</div>
               <div className="hint">{active.repoPath}</div>
             </div>
-            <div className="hint">Cmd+P · switch workspace · Cmd+K · search</div>
+            <div className="hint">Cmd+P · switch · Cmd+K · search · Cmd+. zoom in · Cmd+, zoom out</div>
           </div>
-          <Tree workspaceId={active.id} navigateRequest={navigateRequest} />
+          <Tree
+            workspaceId={active.id}
+            activeNodeId={active.activeNodeId}
+            workspaceName={active.displayName}
+            onZoomTo={(nodeId) => void persistActiveNode(active.id, nodeId)}
+            navigateRequest={navigateRequest}
+          />
         </>
       )}
       {showSwitcher && (
