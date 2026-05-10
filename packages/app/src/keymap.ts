@@ -15,6 +15,7 @@ export type Intent =
   | { kind: 'delete-empty'; nodeId: string }
   | { kind: 'zoom-in'; nodeId: string }
   | { kind: 'zoom-out' }
+  | { kind: 'toggle-complete'; nodeId: string; next: boolean }
 
 export interface Visible {
   node: Node
@@ -37,6 +38,12 @@ export function interpret(
   }
   if (mod && ev.key === ',') {
     return { kind: 'zoom-out' }
+  }
+  // Cmd/Ctrl+Enter toggles `completed` on the focused Content Node.
+  // Workflowy uses Cmd+Enter for the same operation. Checked before the
+  // plain Enter case so the modifier wins.
+  if (ev.key === 'Enter' && mod) {
+    return { kind: 'toggle-complete', nodeId: ctx.node.id, next: !ctx.node.completed }
   }
   if (ev.key === 'Enter' && !ev.shiftKey) {
     return { kind: 'create-sibling', afterId: ctx.node.id, parentId: ctx.node.parentId }
