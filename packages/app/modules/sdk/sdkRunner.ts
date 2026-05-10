@@ -101,12 +101,38 @@ export interface SdkQueryHandle extends AsyncIterable<unknown> {
 }
 
 /**
+ * Options accepted by the `forkSession` adapter — thin pass-through of
+ * the Claude Agent SDK's `ForkSessionOptions`. We only consume
+ * `upToMessageId` (the inclusive cut point) directly; the rest are
+ * surfaced for future use without forcing a re-export here.
+ */
+export interface SdkForkSessionOptions {
+  /** Inclusive cut point. Omit to fork the entire session. */
+  upToMessageId?: string
+  /** Project directory for the SDK's session-store lookup. */
+  dir?: string
+  /** Title override for the forked session. */
+  title?: string
+}
+
+export interface SdkForkSessionResult {
+  /** UUID of the new forked session. Resumable via `resume`. */
+  sessionId: string
+}
+
+/**
  * Slim adapter over the Claude Agent SDK. The production binding is
  * `realSdkClient()` (in `src-sidecar/src/sdkClient.ts`); tests pass in a
  * scripted fake.
  */
 export interface SdkClient {
   query(params: SdkQueryParams): SdkQueryHandle
+  /**
+   * Wrap the SDK's `forkSession`. Called eagerly by
+   * `threadEngine.forkAtPrompt` so a freshly-created Branch always
+   * carries a real, resumable session id.
+   */
+  forkSession(sessionId: string, options?: SdkForkSessionOptions): Promise<SdkForkSessionResult>
 }
 
 export type RunnerEvent =

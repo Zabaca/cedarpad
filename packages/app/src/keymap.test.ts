@@ -163,4 +163,61 @@ describe('keymap', () => {
     )
     expect(out).toEqual({ kind: 'zoom-in', nodeId: 'cur' })
   })
+
+  // ---- v1.1: Cmd+Shift+B is the single branch verb ----
+
+  it('Cmd+Shift+B on a Content Node fires branch-prompt with the source id', () => {
+    const out = interpret(
+      { key: 'b', shiftKey: true, metaKey: true },
+      { ...base, isContentEmpty: false },
+    )
+    expect(out).toEqual({ kind: 'branch-prompt', sourceNodeId: 'cur' })
+  })
+
+  it('Cmd+Shift+B accepts upper-case B (WebKit reports the shifted form)', () => {
+    const out = interpret(
+      { key: 'B', shiftKey: true, metaKey: true },
+      { ...base, isContentEmpty: false },
+    )
+    expect(out).toEqual({ kind: 'branch-prompt', sourceNodeId: 'cur' })
+  })
+
+  it('Ctrl+Shift+B (Linux/Windows) also fires branch-prompt', () => {
+    const out = interpret(
+      { key: 'b', shiftKey: true, ctrlKey: true },
+      { ...base, isContentEmpty: false },
+    )
+    expect(out).toEqual({ kind: 'branch-prompt', sourceNodeId: 'cur' })
+  })
+
+  it('plain Cmd+B (no Shift) is a no-op (we reserve Shift+B for the branch verb)', () => {
+    const out = interpret(
+      { key: 'b', shiftKey: false, metaKey: true },
+      { ...base, isContentEmpty: false },
+    )
+    expect(out).toEqual({ kind: 'noop' })
+  })
+
+  it('Cmd+Shift+B on a Block Node is a no-op (block-level branching is removed)', () => {
+    const blockNode: Node = {
+      id: 'blk',
+      parentId: 'p1',
+      position: 'a0',
+      kind: 'block',
+      content: '',
+      metadata: {},
+      completed: false,
+      createdAt: 0,
+      updatedAt: 0,
+    }
+    const ctx = {
+      node: blockNode,
+      parent: n('p1'),
+      prevSibling: null,
+      prevSiblingLastChildId: null,
+      isContentEmpty: false,
+    }
+    const out = interpret({ key: 'b', shiftKey: true, metaKey: true }, ctx)
+    expect(out).toEqual({ kind: 'noop' })
+  })
 })

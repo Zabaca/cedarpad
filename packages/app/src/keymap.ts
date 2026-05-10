@@ -19,6 +19,11 @@ import type { Node } from './contract'
  *                        Cmd+Shift+T is gone (v1.0 removal per ADR-0006).
  *   - Cmd/Ctrl+Shift+. → cancel the in-flight Claude turn for the
  *                        Prompt's session-bearer.
+ *   - Cmd/Ctrl+Shift+B → branch verb (ADR-0006). Fires the sole
+ *                        `branch-prompt` intent when focus is on a
+ *                        Content Node. v1's block-level branching is
+ *                        dropped; Block rows are not contentEditable so
+ *                        the keydown handler never reaches them.
  *
  * Cmd+Enter "Or" semantics (decided by the renderer based on tree
  * position; the keymap returns one intent kind):
@@ -43,6 +48,7 @@ export type Intent =
   | { kind: 'toggle-complete'; nodeId: string; next: boolean }
   | { kind: 'send-prompt'; nodeId: string; prompt: string }
   | { kind: 'cancel-prompt'; promptNodeId: string }
+  | { kind: 'branch-prompt'; sourceNodeId: string }
 
 export interface Visible {
   node: Node
@@ -81,6 +87,14 @@ export function interpret(
   }
   if (mod && ev.key === ',') {
     return { kind: 'zoom-out' }
+  }
+  // Cmd/Ctrl+Shift+B — branch verb (ADR-0006). The single fork gesture
+  // for v1.1. Only Content Nodes are valid sources; Block rows aren't
+  // contentEditable so this handler never runs against them in practice,
+  // but we gate explicitly for safety.
+  if (mod && ev.shiftKey && (ev.key === 'b' || ev.key === 'B')) {
+    if (ctx.node.kind !== 'content') return { kind: 'noop' }
+    return { kind: 'branch-prompt', sourceNodeId: ctx.node.id }
   }
   // Cmd/Ctrl+Enter on a Content Node sends it as a Prompt. v1.1 makes
   // this the sole conversation-starting verb — there's no separate

@@ -1,45 +1,37 @@
 /**
- * Production binding between the sidecar and the Claude Agent SDK.
- *
- * The sidecar imports `query` from `@anthropic-ai/claude-agent-sdk` and
- * adapts it to the narrow `SdkClient` shape the runner consumes. We wrap
- * the SDK rather than typing against it directly so unit tests can swap
- * in scripted fakes (see `modules/sdk/sdkRunner.test.ts`).
+ * Sidecar binding to the SDK adapter. The real wrapper lives in
+ * `modules/sdk/sdkClient.ts` so it's importable from non-sidecar code
+ * (e.g. tests). This file's job is the E2E fake + the `chooseSdkClient`
+ * gate.
  *
  * E2E mode: when `CEDARPAD_E2E_FAKE_SDK=1`, we substitute a deterministic
  * fake that emits a known turn (one text, one tool_use, one tool_result,
  * one text) regardless of the prompt. This lets the WebView e2e drive
  * the full sdk.sendPrompt → block streaming → tree render path without
  * needing a real Claude API key or making network calls.
+ *
+ * The fake `forkSession` returns a deterministic, prefix-stable session id
+ * (`fork-of-<sourceSessionId>` or `forked-<n>` if the source is empty) so
+ * branch specs can assert "the new Branch carries a different session id
+ * from the source bearer" without coupling to runtime UUIDs.
  */
-import { query as realQuery } from '@anthropic-ai/claude-agent-sdk'
-import type { SdkClient, SdkQueryHandle, SdkQueryParams } from '../../modules/sdk/sdkRunner.ts'
-
-export function createRealSdkClient(): SdkClient {
-  return {
-    query(params: SdkQueryParams): SdkQueryHandle {
-      // The SDK accepts the same param shape we expose. Cast the prompt-
-      // string (the runtime requires either string or AsyncIterable; both
-      // are valid). The Query returned by the SDK already implements the
-      // AsyncIterable + interrupt() contract.
-      const handle = realQuery({
-        prompt: params.prompt as string,
-        // Cast away — our reduced Options shape is a strict subset of the
-        // SDK's, but TS cannot prove it without re-importing 6KB of
-        // ambient types.
-        options: params.options as Parameters<typeof realQuery>[0]['options'],
-      })
-      return handle as unknown as SdkQueryHandle
-    },
-  }
-}
+import { createRealSdkClient } from '../../modules/sdk/sdkClient.ts'
+import type {
+  SdkClient,
+  SdkQueryHandle,
+  SdkQueryParams,
+  SdkForkSessionOptions,
+  SdkForkSessionResult,
+} from '../../modules/sdk/sdkRunner.ts'
 
 /**
  * Deterministic fake for the WebView e2e. Emits a fixed message sequence
  * matching one Claude turn against a Read tool. Ignores the prompt
- * content.
+ * content. `forkSession` returns a predictable session id derived from
+ * the source so branch specs stay deterministic.
  */
 export function createE2EFakeSdkClient(): SdkClient {
+  let forkCounter = 0
   return {
     query(_params: SdkQueryParams): SdkQueryHandle {
       const script: unknown[] = [
@@ -90,6 +82,14 @@ export function createE2EFakeSdkClient(): SdkClient {
         },
       }
     },
+    async forkSession(
+      sessionId: string,
+      _options?: SdkForkSessionOptions,
+    ): Promise<SdkForkSessionResult> {
+      forkCounter += 1
+      const sid = sessionId.length > 0 ? `fork-of-${sessionId}-${forkCounter}` : `forked-${forkCounter}`
+      return { sessionId: sid }
+    },
   }
 }
 
@@ -99,3 +99,6 @@ export function chooseSdkClient(): SdkClient {
   }
   return createRealSdkClient()
 }
+
+// Re-export for callers that imported from the sidecar module name.
+export { createRealSdkClient }

@@ -225,6 +225,18 @@ export const handlers: Handlers = {
     return scanInterruptedPrompts(store)
   },
 
+  'thread.branch': async ({ workspaceId, sourceNodeId }) => {
+    // Cmd+Shift+B. The thread engine's `forkAtPrompt` owns the decision
+    // tree (source-kind dispatch, container reuse, eager fork). The
+    // sidecar passes the workspace's repo path so the SDK's session
+    // store can locate the source session file.
+    const engine = await getThread(workspaceId)
+    const ws = await getWm().active()
+    const repoPath =
+      ws?.id === workspaceId ? ws.repoPath : (await getWm().switch(workspaceId)).repoPath
+    return engine.forkAtPrompt({ sourceNodeId, repoPath, sdk: sdkClient })
+  },
+
   // ---- Auth (slice 3) ----
   // The renderer-facing auth methods (auth.setApiKey/hasApiKey/deleteApiKey)
   // are owned by the Rust shell and the OS keychain — they don't reach the

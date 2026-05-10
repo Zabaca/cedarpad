@@ -231,6 +231,34 @@ body {
   color: #b06e00;
 }
 
+/* v1.1 Branches container (kind='branches'). Default-collapsed header
+   with chevron + child count; ADR-0006. */
+.tree-node.visual-branches.branches-header {
+  display: flex;
+  align-items: center;
+}
+.branches-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px dashed #b0b7c3;
+  border-radius: 4px;
+  padding: 2px 8px;
+  color: #5b6473;
+  font-size: 12px;
+  cursor: pointer;
+}
+.branches-toggle:hover {
+  background: #f0f3f8;
+  color: #1a1a1a;
+}
+.branches-chevron {
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+}
+
 .workspace-picker {
   display: flex;
   flex-direction: column;

@@ -9,6 +9,7 @@ import {
 import { interpret } from '../keymap'
 import { BlockRow, ToolPair } from './Block'
 import { groupBlocksForRender } from './blockGrouping'
+import { BranchesHeader } from './Branches'
 
 type VisibleRow =
   | { kind: 'node'; node: Node; depth: number; pairLeadId?: string }
@@ -59,6 +60,7 @@ type Visual =
   | 'block-text'
   | 'block-tool-use'
   | 'block-tool-result'
+  | 'branches'
 
 interface Classification {
   visual: Visual
@@ -68,6 +70,9 @@ interface Classification {
 }
 
 function classifyNode(n: Node): Classification {
+  if (n.kind === 'branches') {
+    return { visual: 'branches', isSessionBearer: false }
+  }
   if (n.kind === 'block') {
     const parsed = BlockMetadataSchema.safeParse(n.metadata)
     if (parsed.success) {
@@ -144,6 +149,15 @@ export function Tree({
       return next
     })
   }, [])
+  /**
+   * v1.1 Branches containers (`kind: 'branches'`) render default-
+   * collapsed (ADR-0006). The set tracks which containers the user has
+   * expanded — anything not in the set is collapsed. We track EXPANDED
+   * (rather than collapsed) so newly-created containers automatically
+   * fall into the collapsed default without needing an explicit
+   * tracker on every load.
+   */
+  const [expandedBranchesIds, setExpandedBranchesIds] = useState<Set<string>>(new Set())
   const refs = useRef(new Map<string, HTMLDivElement>())
   const dragIdRef = useRef<string | null>(null)
   const dropPosRef = useRef<DropPos | null>(null)
@@ -212,6 +226,9 @@ export function Tree({
       for (const item of grouped) {
         if (item.kind === 'single') {
           out.push({ kind: 'node', node: item.node, depth })
+          // v1.1: Branches containers render default-collapsed. Skip
+          // descending unless the user explicitly expanded them.
+          if (item.node.kind === 'branches' && !expandedBranchesIds.has(item.node.id)) continue
           walk(item.node.id, depth + 1)
         } else {
           // Pair: when expanded, render the two underlying Block rows
@@ -235,7 +252,7 @@ export function Tree({
     }
     walk(activeNodeId, 0)
     return out
-  }, [byParent, activeNodeId, hideCompleted, expandedBlockIds])
+  }, [byParent, activeNodeId, hideCompleted, expandedBlockIds, expandedBranchesIds])
 
   const lookup = useMemo(() => {
     const map = new Map<string, Node>()
@@ -352,6 +369,41 @@ export function Tree({
     } catch {
       /* non-fatal */
     }
+  }, [])
+
+  /**
+   * Cmd+Shift+B handler — fires `thread.branch` against the focused
+   * Content Node. The sidecar's `forkAtPrompt` does the eager SDK fork
+   * and materializes the Branches container + new Branch. We auto-
+   * expand the resulting container so the new Branch is visible and
+   * focus the new Prompt slot for typing.
+   */
+  const handleBranch = useCallback(
+    async (sourceNodeId: string) => {
+      try {
+        const out = await call('thread.branch', { workspaceId, sourceNodeId })
+        await load()
+        setExpandedBranchesIds((prev) => {
+          if (prev.has(out.branchesContainerId)) return prev
+          const next = new Set(prev)
+          next.add(out.branchesContainerId)
+          return next
+        })
+        setFocusId(out.promptNodeId)
+      } catch {
+        /* non-fatal */
+      }
+    },
+    [workspaceId, load],
+  )
+
+  const toggleBranches = useCallback((containerId: string) => {
+    setExpandedBranchesIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(containerId)) next.delete(containerId)
+      else next.add(containerId)
+      return next
+    })
   }, [])
 
   /**
@@ -552,6 +604,10 @@ export function Tree({
         void cancelPrompt(intent.promptNodeId)
         return
       }
+      if (intent.kind === 'branch-prompt') {
+        void handleBranch(intent.sourceNodeId)
+        return
+      }
     },
     [
       workspaceId,
@@ -563,6 +619,7 @@ export function Tree({
       onZoomTo,
       handleSendPrompt,
       cancelPrompt,
+      handleBranch,
       findStreamingPromptId,
     ],
   )
@@ -731,6 +788,36 @@ export function Tree({
         await load()
         return out
       },
+      /**
+       * v1.1 branch verb e2e hook. Fires the same `thread.branch` IPC
+       * the keymap dispatches against, auto-expands the resulting
+       * Branches container so the spec can read the new Branch
+       * structurally without simulating a click on the chevron, and
+       * returns the engine's ids.
+       */
+      branch: async (sourceNodeId: string) => {
+        const out = await call('thread.branch', { workspaceId, sourceNodeId })
+        setExpandedBranchesIds((prev) => {
+          if (prev.has(out.branchesContainerId)) return prev
+          const next = new Set(prev)
+          next.add(out.branchesContainerId)
+          return next
+        })
+        await load()
+        return out
+      },
+      /**
+       * Toggle expansion of a Branches container — used by e2e specs to
+       * exercise the default-collapsed render path.
+       */
+      toggleBranches: (containerId: string) => {
+        setExpandedBranchesIds((prev) => {
+          const next = new Set(prev)
+          if (next.has(containerId)) next.delete(containerId)
+          else next.add(containerId)
+          return next
+        })
+      },
       reload: load,
     }
     ;(window as unknown as { cedarpadE2E?: typeof hook }).cedarpadE2E = hook
@@ -795,6 +882,22 @@ export function Tree({
             )
           }
           const { node, depth, pairLeadId } = row
+          // v1.1: Branches containers render via their own header
+          // component with chevron + child count. They have no editable
+          // text content of their own — the toggle is the entire row.
+          if (node.kind === 'branches') {
+            const childCount = (byParent.get(node.id) ?? []).length
+            return (
+              <BranchesHeader
+                key={node.id}
+                container={node}
+                childCount={childCount}
+                expanded={expandedBranchesIds.has(node.id)}
+                onToggle={toggleBranches}
+                depth={depth}
+              />
+            )
+          }
           const { visual, blockMeta, promptMeta, isSessionBearer } = classifyNode(node)
           const isDropTarget = dropPos && (dropPos as { targetId?: string }).targetId === node.id
           const dropClass = isDropTarget ? `drop-${dropPos!.kind}` : ''

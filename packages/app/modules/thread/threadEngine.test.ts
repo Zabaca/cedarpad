@@ -37,10 +37,15 @@ import {
 } from './threadEngine.ts'
 import {
   BlockMetadataSchema,
+  BranchMetadataSchema,
   PromptMetadataSchema,
   SessionBearerMetadataSchema,
   type RunnerEvent,
 } from '../../src/contract.ts'
+import type {
+  SdkClient,
+  SdkForkSessionOptions,
+} from '../sdk/sdkRunner.ts'
 
 let store: OutlineStore
 let engine: ThreadEngine
@@ -405,5 +410,333 @@ describe('threadEngine session-bearer helpers', () => {
     await engine.setPromptSdkMessageUuid(p.id, 'msg-2')
     const after = await store.getNode(p.id)
     expect(PromptMetadataSchema.parse(after!.metadata).sdkMessageUuid).toBe('msg-2')
+  })
+})
+
+// ----- forkAtPrompt (Cmd+Shift+B) -----
+
+interface ForkCall {
+  sessionId: string
+  options?: SdkForkSessionOptions
+}
+
+function fakeSdk(opts: { forkedSessionId?: string } = {}): {
+  client: SdkClient
+  forkCalls: ForkCall[]
+} {
+  const forkCalls: ForkCall[] = []
+  return {
+    forkCalls,
+    client: {
+      query() {
+        throw new Error('query not exercised in forkAtPrompt tests')
+      },
+      async forkSession(sessionId, options) {
+        forkCalls.push({ sessionId, options })
+        return { sessionId: opts.forkedSessionId ?? `fork-of-${sessionId}` }
+      },
+    },
+  }
+}
+
+describe('threadEngine.forkAtPrompt — Cmd+Shift+B', () => {
+  it('source = Prompt, no existing Branches container: materializes one and a Branch with fork metadata', async () => {
+    // bearer (sdkSessionId: 'sess-a') → prompt (sdkMessageUuid: 'msg-1')
+    const bearer = await store.createNode({
+      parentId: null,
+      content: 'topic',
+      metadata: { sdkSessionId: 'sess-a' },
+    })
+    const prompt = await store.createNode({
+      parentId: bearer.id,
+      content: 'hello',
+      metadata: { state: 'done', sdkMessageUuid: 'msg-1' },
+    })
+    const { client, forkCalls } = fakeSdk({ forkedSessionId: 'sess-fork-1' })
+
+    const out = await engine.forkAtPrompt({
+      sourceNodeId: prompt.id,
+      sdk: client,
+      repoPath: '/repo',
+    })
+
+    // Eager fork called with the right session + message uuid.
+    expect(forkCalls).toHaveLength(1)
+    expect(forkCalls[0]!.sessionId).toBe('sess-a')
+    expect(forkCalls[0]!.options?.upToMessageId).toBe('msg-1')
+
+    // Branches container is the immediate next sibling of the Prompt.
+    const bearerChildren = await store.getChildren(bearer.id)
+    const promptIdx = bearerChildren.findIndex((n) => n.id === prompt.id)
+    expect(promptIdx).toBeGreaterThanOrEqual(0)
+    const next = bearerChildren[promptIdx + 1]
+    expect(next).toBeDefined()
+    expect(next!.kind).toBe('branches')
+    expect(next!.id).toBe(out.branchesContainerId)
+
+    // Branch is a Content Node under the Branches container.
+    const containerChildren = await store.getChildren(next!.id)
+    expect(containerChildren).toHaveLength(1)
+    const branchNode = containerChildren[0]!
+    expect(branchNode.id).toBe(out.branchNodeId)
+    expect(branchNode.kind).toBe('content')
+
+    const meta = BranchMetadataSchema.parse(branchNode.metadata)
+    expect(meta.sdkSessionId).toBe('sess-fork-1')
+    expect(meta.branchedFromMessageUuid).toBe('msg-1')
+    expect(meta.branchedFromNodeId).toBe(prompt.id)
+
+    // Empty Prompt child of the Branch was created and is the focus.
+    const branchChildren = await store.getChildren(branchNode.id)
+    expect(branchChildren).toHaveLength(1)
+    expect(branchChildren[0]!.id).toBe(out.promptNodeId)
+    expect(branchChildren[0]!.kind).toBe('content')
+    expect(branchChildren[0]!.content).toBe('')
+  })
+
+  it('source = Prompt, EXISTING adjacent Branches container: adds a Branch alongside, no second container', async () => {
+    const bearer = await store.createNode({
+      parentId: null,
+      content: 'topic',
+      metadata: { sdkSessionId: 'sess-a' },
+    })
+    const prompt = await store.createNode({
+      parentId: bearer.id,
+      content: 'hello',
+      metadata: { state: 'done', sdkMessageUuid: 'msg-1' },
+    })
+    // Pre-existing Branches container as immediate next sibling.
+    const container = await store.createNode({
+      parentId: bearer.id,
+      prevSiblingId: prompt.id,
+      kind: 'branches',
+      content: '',
+    })
+    // Pre-existing Branch inside the container.
+    const existingBranch = await store.createNode({
+      parentId: container.id,
+      kind: 'content',
+      content: 'Branch 1',
+      metadata: {
+        sdkSessionId: 'prev-fork',
+        branchedFromMessageUuid: 'msg-1',
+        branchedFromNodeId: prompt.id,
+      },
+    })
+
+    const { client, forkCalls } = fakeSdk({ forkedSessionId: 'sess-fork-2' })
+    const out = await engine.forkAtPrompt({
+      sourceNodeId: prompt.id,
+      sdk: client,
+      repoPath: '/r',
+    })
+
+    // No new container — reused the existing one.
+    expect(out.branchesContainerId).toBe(container.id)
+    const bearerChildren = await store.getChildren(bearer.id)
+    const containers = bearerChildren.filter((n) => n.kind === 'branches')
+    expect(containers).toHaveLength(1)
+
+    // Two Branches now under the container, in order.
+    const containerChildren = await store.getChildren(container.id)
+    expect(containerChildren.map((c) => c.id)).toEqual([existingBranch.id, out.branchNodeId])
+
+    expect(forkCalls).toHaveLength(1)
+    expect(forkCalls[0]!.sessionId).toBe('sess-a')
+  })
+
+  it('source = session-bearer root (no fork point): fresh Branch with branchedFromMessageUuid: null', async () => {
+    const bearer = await store.createNode({
+      parentId: null,
+      content: 'topic',
+      metadata: { sdkSessionId: 'sess-a' },
+    })
+
+    const { client, forkCalls } = fakeSdk({ forkedSessionId: 'sess-fresh' })
+    const out = await engine.forkAtPrompt({
+      sourceNodeId: bearer.id,
+      sdk: client,
+      repoPath: '/r',
+    })
+
+    // SDK fork still called — eager — but with no upToMessageId.
+    expect(forkCalls).toHaveLength(1)
+    expect(forkCalls[0]!.sessionId).toBe('sess-a')
+    expect(forkCalls[0]!.options?.upToMessageId).toBeUndefined()
+
+    // Branches container is a sibling of the bearer (at root level).
+    const rootChildren = await store.getChildren(null)
+    const idx = rootChildren.findIndex((n) => n.id === bearer.id)
+    const next = rootChildren[idx + 1]
+    expect(next).toBeDefined()
+    expect(next!.kind).toBe('branches')
+
+    const branchChildren = await store.getChildren(next!.id)
+    expect(branchChildren).toHaveLength(1)
+    const branch = branchChildren[0]!
+    const meta = BranchMetadataSchema.parse(branch.metadata)
+    expect(meta.sdkSessionId).toBe('sess-fresh')
+    expect(meta.branchedFromMessageUuid).toBeNull()
+    expect(meta.branchedFromNodeId).toBe(bearer.id)
+  })
+
+  it('source = Prompt inside a Branch: forks the BRANCH session id, materializes a Branches container at that depth', async () => {
+    // Root bearer → Prompt (msg-root) → Branches → Branch(sess-fork-A) →
+    //   Prompt (msg-inner) — branch from the inner Prompt.
+    const root = await store.createNode({
+      parentId: null,
+      content: 'root',
+      metadata: { sdkSessionId: 'sess-root' },
+    })
+    const rootPrompt = await store.createNode({
+      parentId: root.id,
+      content: 'p1',
+      metadata: { state: 'done', sdkMessageUuid: 'msg-root' },
+    })
+    const branchesContainer = await store.createNode({
+      parentId: root.id,
+      prevSiblingId: rootPrompt.id,
+      kind: 'branches',
+      content: '',
+    })
+    const innerBranch = await store.createNode({
+      parentId: branchesContainer.id,
+      kind: 'content',
+      content: 'Branch 1',
+      metadata: {
+        sdkSessionId: 'sess-fork-A',
+        branchedFromMessageUuid: 'msg-root',
+        branchedFromNodeId: rootPrompt.id,
+      },
+    })
+    const innerPrompt = await store.createNode({
+      parentId: innerBranch.id,
+      content: 'inner',
+      metadata: { state: 'done', sdkMessageUuid: 'msg-inner' },
+    })
+
+    const { client, forkCalls } = fakeSdk({ forkedSessionId: 'sess-fork-B' })
+    const out = await engine.forkAtPrompt({
+      sourceNodeId: innerPrompt.id,
+      sdk: client,
+      repoPath: '/r',
+    })
+
+    // Fork base is the BRANCH's session id, not root's.
+    expect(forkCalls).toHaveLength(1)
+    expect(forkCalls[0]!.sessionId).toBe('sess-fork-A')
+    expect(forkCalls[0]!.options?.upToMessageId).toBe('msg-inner')
+
+    // Branches container materialized as immediate next sibling of innerPrompt.
+    const branchChildren = await store.getChildren(innerBranch.id)
+    const idx = branchChildren.findIndex((n) => n.id === innerPrompt.id)
+    const next = branchChildren[idx + 1]
+    expect(next).toBeDefined()
+    expect(next!.kind).toBe('branches')
+    expect(next!.id).toBe(out.branchesContainerId)
+
+    const nestedBranch = (await store.getChildren(next!.id))[0]!
+    const meta = BranchMetadataSchema.parse(nestedBranch.metadata)
+    expect(meta.sdkSessionId).toBe('sess-fork-B')
+    expect(meta.branchedFromMessageUuid).toBe('msg-inner')
+    expect(meta.branchedFromNodeId).toBe(innerPrompt.id)
+  })
+
+  it('returns { branchNodeId, promptNodeId, branchesContainerId } so the renderer can focus the empty Prompt', async () => {
+    const bearer = await store.createNode({
+      parentId: null,
+      content: 'topic',
+      metadata: { sdkSessionId: 'sess-a' },
+    })
+    const prompt = await store.createNode({
+      parentId: bearer.id,
+      content: 'p',
+      metadata: { state: 'done', sdkMessageUuid: 'msg-1' },
+    })
+    const { client } = fakeSdk({ forkedSessionId: 'sess-fork' })
+    const out = await engine.forkAtPrompt({
+      sourceNodeId: prompt.id,
+      sdk: client,
+      repoPath: '/r',
+    })
+
+    expect(typeof out.branchNodeId).toBe('string')
+    expect(typeof out.promptNodeId).toBe('string')
+    expect(typeof out.branchesContainerId).toBe('string')
+    const promptNode = await store.getNode(out.promptNodeId)
+    expect(promptNode!.parentId).toBe(out.branchNodeId)
+    expect(promptNode!.content).toBe('')
+  })
+
+  it('throws on a Block-kind source (only Content / branches sources allowed)', async () => {
+    const root = await store.createNode({
+      parentId: null,
+      content: 'r',
+      metadata: { sdkSessionId: 'sess-a' },
+    })
+    const prompt = await store.createNode({
+      parentId: root.id,
+      content: 'p',
+      metadata: { state: 'done', sdkMessageUuid: 'm' },
+    })
+    const block = await store.createNode({
+      parentId: prompt.id,
+      kind: 'block',
+      content: '',
+      metadata: { role: 'block', payload: { kind: 'text', text: 'hi' } },
+    })
+    const { client } = fakeSdk()
+    await expect(
+      engine.forkAtPrompt({ sourceNodeId: block.id, sdk: client, repoPath: '/r' }),
+    ).rejects.toThrow(/Block|content/i)
+  })
+
+  it('throws when the source has no bearer ancestor with a real sessionId (no fork base)', async () => {
+    // bearer was stamped but never captured an sdkSessionId (still null).
+    const bearer = await store.createNode({
+      parentId: null,
+      content: 'topic',
+      metadata: { sdkSessionId: null },
+    })
+    const prompt = await store.createNode({
+      parentId: bearer.id,
+      content: 'p',
+      metadata: { state: 'streaming' },
+    })
+    const { client } = fakeSdk()
+    await expect(
+      engine.forkAtPrompt({ sourceNodeId: prompt.id, sdk: client, repoPath: '/r' }),
+    ).rejects.toThrow(/session/i)
+  })
+
+  it('auto-names the Branch with a sequential placeholder (Branch 1, Branch 2, ...)', async () => {
+    const bearer = await store.createNode({
+      parentId: null,
+      content: 'topic',
+      metadata: { sdkSessionId: 'sess-a' },
+    })
+    const prompt = await store.createNode({
+      parentId: bearer.id,
+      content: 'p',
+      metadata: { state: 'done', sdkMessageUuid: 'm1' },
+    })
+    const { client } = fakeSdk({ forkedSessionId: 'sess-fork-x' })
+    const first = await engine.forkAtPrompt({
+      sourceNodeId: prompt.id,
+      sdk: client,
+      repoPath: '/r',
+    })
+    const firstBranch = await store.getNode(first.branchNodeId)
+    expect(firstBranch!.content).toBe('Branch 1')
+
+    // Re-fork — the second Branch lands in the SAME container.
+    const second = await engine.forkAtPrompt({
+      sourceNodeId: prompt.id,
+      sdk: client,
+      repoPath: '/r',
+    })
+    expect(second.branchesContainerId).toBe(first.branchesContainerId)
+    const secondBranch = await store.getNode(second.branchNodeId)
+    expect(secondBranch!.content).toBe('Branch 2')
   })
 })
