@@ -77,6 +77,17 @@ Assume AI is doing the coding. Humans are not coding. Reframe complexity, diffic
 
 Implication: plan estimates name the number of human-decision gates and clarifying questions, not wall-clock time. Issues marked `ready-for-agent` are by definition zero-gate.
 
+### 6. Worktree-Safe by Default
+
+Assume every change runs in a parallel git worktree alongside other copies of itself. No singletons that would collide:
+
+- **Ports**: read from env (`PORT`, `E2E_PORT`), never hardcode.
+- **Databases**: name includes the worktree (`${PROJECT}-${WORKTREE}`), never share a fixed dev DB.
+- **Tests**: no shared fixtures across processes, no fixed `/tmp` paths.
+- **Caches and locks**: scope to the worktree, not the user.
+
+If a feature can't run alongside a copy of itself in another worktree, it's not worktree-safe — fix it before merging. Background: ADR-0003.
+
 ## Agent skills
 
 ### Issue tracker
