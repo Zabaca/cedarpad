@@ -120,4 +120,84 @@ describe('keymap', () => {
     )
     expect(out).toEqual({ kind: 'noop' })
   })
+
+  // ---- Slice 4: send-prompt + cancel-turn ----
+
+  it('Cmd+Enter on a prompt slot (Content Node under a Thread Root) sends the prompt', () => {
+    const out = interpret(
+      { key: 'Enter', shiftKey: false, metaKey: true },
+      {
+        ...base,
+        isContentEmpty: false,
+        contentText: 'what is in README?',
+        threadRootId: 'tr1',
+      },
+    )
+    expect(out).toEqual({
+      kind: 'send-prompt',
+      nodeId: 'cur',
+      threadRootId: 'tr1',
+      prompt: 'what is in README?',
+    })
+  })
+
+  it('Cmd+Enter on a prompt slot with empty text is a no-op', () => {
+    const out = interpret(
+      { key: 'Enter', shiftKey: false, metaKey: true },
+      {
+        ...base,
+        isContentEmpty: true,
+        contentText: '   ',
+        threadRootId: 'tr1',
+      },
+    )
+    expect(out).toEqual({ kind: 'noop' })
+  })
+
+  it('Cmd+Enter without a threadRootId still toggles completion (default)', () => {
+    const out = interpret(
+      { key: 'Enter', shiftKey: false, metaKey: true },
+      { ...base, isContentEmpty: false, contentText: 'plain content' },
+    )
+    expect(out).toEqual({ kind: 'toggle-complete', nodeId: 'cur', next: true })
+  })
+
+  it('Cmd+Shift+. cancels the active streaming turn', () => {
+    const out = interpret(
+      { key: '.', shiftKey: true, metaKey: true },
+      {
+        ...base,
+        isContentEmpty: false,
+        threadRootId: 'tr1',
+        activeThreadHasStreamingTurn: true,
+      },
+    )
+    expect(out).toEqual({ kind: 'cancel-turn', threadRootId: 'tr1' })
+  })
+
+  it('Cmd+Shift+. with no streaming turn is a no-op', () => {
+    const out = interpret(
+      { key: '.', shiftKey: true, metaKey: true },
+      {
+        ...base,
+        isContentEmpty: false,
+        threadRootId: 'tr1',
+        activeThreadHasStreamingTurn: false,
+      },
+    )
+    expect(out).toEqual({ kind: 'noop' })
+  })
+
+  it('Cmd+. (no shift) still zooms in even when a thread is active', () => {
+    const out = interpret(
+      { key: '.', shiftKey: false, metaKey: true },
+      {
+        ...base,
+        isContentEmpty: false,
+        threadRootId: 'tr1',
+        activeThreadHasStreamingTurn: true,
+      },
+    )
+    expect(out).toEqual({ kind: 'zoom-in', nodeId: 'cur' })
+  })
 })

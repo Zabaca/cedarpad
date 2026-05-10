@@ -121,3 +121,44 @@ describe('threadEngine.appendTurn', () => {
     })
   })
 })
+
+describe('threadEngine streaming verbs (slice 4 lifecycle)', () => {
+  it('beginTurn stamps state=streaming on the new Turn', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+    const turn = await engine.beginTurn(root.id)
+    const meta = TurnMetadataSchema.parse(turn.metadata)
+    expect(meta.state).toBe('streaming')
+    expect(meta.role).toBe('turn')
+    expect(meta.threadRootId).toBe(root.id)
+  })
+
+  it('markTurnDone transitions streaming → done', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+    const turn = await engine.beginTurn(root.id)
+    const updated = await engine.markTurnDone(turn.id)
+    const meta = TurnMetadataSchema.parse(updated.metadata)
+    expect(meta.state).toBe('done')
+  })
+
+  it('markTurnCancelled transitions streaming → cancelled (and keeps legacy flag)', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+    const turn = await engine.beginTurn(root.id)
+    const updated = await engine.markTurnCancelled(turn.id)
+    const meta = TurnMetadataSchema.parse(updated.metadata)
+    expect(meta.state).toBe('cancelled')
+    // Back-compat with slice 3 readers that look at the boolean.
+    expect(meta.cancelled).toBe(true)
+  })
+
+  it('markTurnInterrupted transitions streaming → interrupted', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+    const turn = await engine.beginTurn(root.id)
+    const updated = await engine.markTurnInterrupted(turn.id)
+    const meta = TurnMetadataSchema.parse(updated.metadata)
+    expect(meta.state).toBe('interrupted')
+  })
+})

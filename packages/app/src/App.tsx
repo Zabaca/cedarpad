@@ -58,6 +58,16 @@ export function App() {
             const target = recents[0]!
             const ws = await call('workspace.switch', { id: target.id })
             setActive(ws)
+            // Slice 4: any Turn left in `state: 'streaming'` from a prior
+            // run is necessarily orphaned (the sidecar is fresh). Mark
+            // them `interrupted` so the renderer can show them as crashed
+            // rather than silently leaving them looking active.
+            try {
+              await call('thread.scanInterrupted', { workspaceId: ws.id })
+            } catch {
+              // Best-effort — a failure here just means streaming turns
+              // keep their old state until a future scan succeeds.
+            }
           }
         }
       } catch (e) {
@@ -77,6 +87,11 @@ export function App() {
         const target = recents[0]!
         const ws = await call('workspace.switch', { id: target.id })
         setActive(ws)
+        try {
+          await call('thread.scanInterrupted', { workspaceId: ws.id })
+        } catch {
+          /* best-effort */
+        }
       }
     } catch (e) {
       setBootError(e instanceof Error ? e.message : String(e))
@@ -195,6 +210,7 @@ export function App() {
             hideCompleted={hideCompleted}
             activeNodeId={active.activeNodeId}
             workspaceName={active.displayName}
+            repoPath={active.repoPath}
             onZoomTo={(nodeId) => void persistActiveNode(active.id, nodeId)}
             navigateRequest={navigateRequest}
           />

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { call, streamSendPrompt } from '../ipc'
-import type { BlockMetadata, Node, RunnerEvent } from '../contract'
-import { BlockMetadataSchema } from '../contract'
+import type { BlockMetadata, Node, RunnerEvent, TurnMetadata } from '../contract'
+import { BlockMetadataSchema, TurnMetadataSchema } from '../contract'
 import { interpret } from '../keymap'
 
 interface Visible {
@@ -16,6 +16,8 @@ interface Props {
   activeNodeId: string | null
   /** Workspace display name — first crumb in the breadcrumb chain. */
   workspaceName: string
+  /** Absolute path to the workspace's repo — `cwd` for the Claude SDK. */
+  repoPath: string
   /** Called when the user changes the zoom target. `null` = workspace root. */
   onZoomTo: (nodeId: string | null) => void
   /**
@@ -56,8 +58,13 @@ type Visual =
   | 'block-tool-use'
   | 'block-tool-result'
 
-function classifyNode(n: Node): { visual: Visual; blockMeta?: BlockMetadata } {
-  if (n.kind === 'turn') return { visual: 'turn' }
+function classifyNode(
+  n: Node,
+): { visual: Visual; blockMeta?: BlockMetadata; turnMeta?: TurnMetadata } {
+  if (n.kind === 'turn') {
+    const parsed = TurnMetadataSchema.safeParse(n.metadata)
+    return { visual: 'turn', turnMeta: parsed.success ? parsed.data : undefined }
+  }
   if (n.kind === 'block') {
     const parsed = BlockMetadataSchema.safeParse(n.metadata)
     if (parsed.success) {
@@ -96,6 +103,7 @@ export function Tree({
   hideCompleted,
   activeNodeId,
   workspaceName,
+  repoPath,
   onZoomTo,
   navigateRequest,
 }: Props) {
@@ -103,6 +111,23 @@ export function Tree({
   const [focusId, setFocusId] = useState<string | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropPos, setDropPos] = useState<DropPos | null>(null)
+  /**
+   * Slice 4: streaming run state.
+   *
+   * `streamingThreadRootId` is non-null while a Claude turn is in flight
+   * for that Thread. Drives the running indicator and the cancel-shortcut
+   * context. Cleared once the underlying `streamSendPrompt` promise
+   * resolves (whether via natural completion, cancel, or error).
+   *
+   * `inFlightText` carries the accumulated `text-delta` content for any
+   * currently-streaming text block, keyed by blockId. We render the
+   * running text as an inline preview under the active streaming Turn so
+   * the user sees Claude typing in real time. When `block-complete`
+   * fires for a blockId we drop its entry — at that point a real Block
+   * Node has been persisted and the next tree reload renders it.
+   */
+  const [streamingThreadRootId, setStreamingThreadRootId] = useState<string | null>(null)
+  const [inFlightText, setInFlightText] = useState<Map<string, string>>(new Map())
   const refs = useRef(new Map<string, HTMLDivElement>())
   // Mirror dragId / dropPos in refs so synthetic drag sequences (where
   // dragstart, dragover and drop dispatch back-to-back in the same
@@ -228,6 +253,106 @@ export function Tree({
     [workspaceId],
   )
 
+  /**
+   * True when there's a Turn Node child of `threadRootId` whose metadata
+   * says `state: 'streaming'`. Used as the cancel-shortcut precondition.
+   */
+  const threadHasStreamingTurn = useCallback(
+    (threadRootId: string): boolean => {
+      const children = byParent.get(threadRootId) ?? []
+      for (const c of children) {
+        if (c.kind !== 'turn') continue
+        const meta = TurnMetadataSchema.safeParse(c.metadata)
+        if (meta.success && meta.data.state === 'streaming') return true
+      }
+      return false
+    },
+    [byParent],
+  )
+
+  /**
+   * Run a Claude turn against the named Thread Root + prompt. Streams
+   * RunnerEvents back; reloads the tree as Block Nodes land so the user
+   * sees them appear; auto-creates a fresh empty prompt sibling on
+   * natural completion so the next prompt slot is ready to type into.
+   *
+   * On cancel / error we don't auto-create the next prompt — the user is
+   * presumably going to look at what happened first.
+   */
+  const runPrompt = useCallback(
+    async (threadRootId: string, promptNodeId: string, prompt: string) => {
+      setStreamingThreadRootId(threadRootId)
+      setInFlightText(new Map())
+      // Optimistically rewrite the prompt content (in case the user edited it).
+      try {
+        await call('outline.update', { workspaceId, id: promptNodeId, content: prompt })
+      } catch {
+        /* non-fatal */
+      }
+      try {
+        const result = await streamSendPrompt(
+          { workspaceId, threadRootId, prompt, repoPath },
+          (ev) => {
+            if (ev.kind === 'text-delta') {
+              setInFlightText((prev) => {
+                const next = new Map(prev)
+                next.set(ev.blockId, (next.get(ev.blockId) ?? '') + ev.content)
+                return next
+              })
+            } else if (ev.kind === 'block-complete') {
+              // Persisted Block Node will appear after the next reload.
+              setInFlightText((prev) => {
+                if (!prev.has(ev.blockId)) return prev
+                const next = new Map(prev)
+                next.delete(ev.blockId)
+                return next
+              })
+              void load()
+            } else if (ev.kind === 'turn-complete') {
+              void load()
+            }
+            // 'error' falls through; resolution is via `result.reason`.
+          },
+        )
+        await load()
+        if (result.reason === 'done') {
+          // Auto-create a fresh empty prompt sibling under the Thread Root
+          // so the user can keep typing without manually adding rows.
+          try {
+            const created = await call('outline.create', {
+              workspaceId,
+              parentId: threadRootId,
+              content: '',
+            })
+            await load()
+            setFocusId(created.id)
+          } catch {
+            /* non-fatal */
+          }
+        }
+      } catch {
+        // Underlying Tauri/sidecar error — leave streaming state cleared
+        // below; the tree may still reflect partial Blocks.
+      } finally {
+        setStreamingThreadRootId(null)
+        setInFlightText(new Map())
+        await load()
+      }
+    },
+    [workspaceId, repoPath, load],
+  )
+
+  const cancelTurn = useCallback(
+    async (threadRootId: string) => {
+      try {
+        await call('sdk.cancel', { threadRootId })
+      } catch {
+        /* non-fatal */
+      }
+    },
+    [],
+  )
+
   const handleKeyDown = useCallback(
     async (e: React.KeyboardEvent<HTMLDivElement>, n: Node) => {
       const parent = n.parentId ? lookup.get(n.parentId) ?? null : null
@@ -240,11 +365,35 @@ export function Tree({
         : null
 
       const el = e.currentTarget
-      const isContentEmpty = (el.textContent ?? '').trim().length === 0
+      const contentText = el.textContent ?? ''
+      const isContentEmpty = contentText.trim().length === 0
+
+      // Slice 4: a Content Node is a "prompt slot" when its parent is a
+      // Thread Root. The keymap routes Cmd+Enter to send-prompt for prompt
+      // slots and Cmd+Shift+. to cancel-turn when a Turn is streaming
+      // under the same Thread Root.
+      const promptThreadRootId =
+        n.kind === 'content' &&
+        parent &&
+        parent.metadata &&
+        (parent.metadata as { isThreadRoot?: unknown }).isThreadRoot === true
+          ? parent.id
+          : null
+      const activeThreadHasStreamingTurn =
+        promptThreadRootId !== null && threadHasStreamingTurn(promptThreadRootId)
 
       const intent = interpret(
         { key: e.key, shiftKey: e.shiftKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey },
-        { node: n, parent, prevSibling, prevSiblingLastChildId, isContentEmpty },
+        {
+          node: n,
+          parent,
+          prevSibling,
+          prevSiblingLastChildId,
+          isContentEmpty,
+          contentText,
+          threadRootId: promptThreadRootId,
+          activeThreadHasStreamingTurn,
+        },
       )
 
       if (intent.kind === 'noop') return
@@ -323,8 +472,19 @@ export function Tree({
         setFocusId(intent.nodeId)
         return
       }
+      if (intent.kind === 'send-prompt') {
+        // Fire-and-forget — runPrompt manages its own streaming state and
+        // tree reloads. We don't await here so the keydown handler stays
+        // responsive (cancel must remain dispatchable while streaming).
+        void runPrompt(intent.threadRootId, intent.nodeId, intent.prompt)
+        return
+      }
+      if (intent.kind === 'cancel-turn') {
+        void cancelTurn(intent.threadRootId)
+        return
+      }
     },
-    [workspaceId, byParent, lookup, load, visible, activeNodeId, onZoomTo],
+    [workspaceId, byParent, lookup, load, visible, activeNodeId, onZoomTo, threadHasStreamingTurn, runPrompt, cancelTurn],
   )
 
   // ---------- Drag-and-drop ----------
@@ -502,6 +662,47 @@ export function Tree({
         await load()
         return { events, result }
       },
+      sendPromptFireAndForget: (
+        threadRootId: string,
+        prompt: string,
+        repoPath: string,
+      ) => {
+        // Kick off a stream but don't await it — the spec drives the next
+        // step (cancel) while it's still in flight.
+        void streamSendPrompt(
+          { workspaceId, threadRootId, prompt, repoPath },
+          () => {
+            void load()
+          },
+        ).then(() => load())
+      },
+      cancel: async (threadRootId: string) => {
+        await call('sdk.cancel', { threadRootId })
+        await load()
+      },
+      /**
+       * Slice 4 crash-recovery test hook. Creates a Turn Node directly via
+       * outline.create with `metadata.state = 'streaming'`, simulating
+       * what we'd see on disk after a crash mid-turn — without needing to
+       * actually kill the sidecar. The scan logic is the real subject of
+       * the test, and it doesn't care HOW the streaming Turn got there.
+       */
+      createOrphanStreamingTurn: async (threadRootId: string) => {
+        const turn = await call('outline.create', {
+          workspaceId,
+          parentId: threadRootId,
+          content: '',
+          kind: 'turn',
+          metadata: { role: 'turn', threadRootId, state: 'streaming' },
+        })
+        await load()
+        return turn.id
+      },
+      scanInterrupted: async () => {
+        const out = await call('thread.scanInterrupted', { workspaceId })
+        await load()
+        return out
+      },
       reload: load,
     }
     ;(window as unknown as { cedarpadE2E?: typeof hook }).cedarpadE2E = hook
@@ -540,9 +741,20 @@ export function Tree({
           )
         })}
       </nav>
+      {streamingThreadRootId !== null && (
+        <div className="thread-running" data-testid="thread-running" role="status">
+          <span className="dot" aria-hidden="true" />
+          <span className="label">Claude is working — Cmd+Shift+. to cancel</span>
+          {Array.from(inFlightText.entries()).map(([blockId, text]) => (
+            <div key={blockId} className="thread-running-preview" data-testid="inflight-block">
+              {text}
+            </div>
+          ))}
+        </div>
+      )}
       <div className="tree">
         {visible.map(({ node, depth }) => {
-          const { visual, blockMeta } = classifyNode(node)
+          const { visual, blockMeta, turnMeta } = classifyNode(node)
           const editable = node.kind === 'content'
           const displayContent =
             node.kind === 'block' && blockMeta ? renderBlockContent(blockMeta) : node.content
@@ -550,15 +762,18 @@ export function Tree({
           const dropClass = isDropTarget ? `drop-${dropPos!.kind}` : ''
           const completedClass = node.completed ? 'completed' : ''
           const draggingClass = dragId === node.id ? 'dragging' : ''
+          const turnState = turnMeta?.state
+          const turnStateClass = turnState ? `turn-state-${turnState}` : ''
           return (
             <div
               key={node.id}
-              className={`tree-node visual-${visual} ${completedClass} ${dropClass} ${draggingClass}`
+              className={`tree-node visual-${visual} ${completedClass} ${dropClass} ${draggingClass} ${turnStateClass}`
                 .replace(/\s+/g, ' ')
                 .trim()}
               data-visual={visual}
               data-kind={node.kind}
               data-node-id={node.id}
+              data-turn-state={turnState ?? undefined}
               style={{ paddingLeft: depth * 18 }}
               draggable
               onDragStart={(e) => handleDragStart(e, node)}

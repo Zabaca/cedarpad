@@ -14,7 +14,12 @@ import type { Node } from './contract'
  *   - Backspace (empty)→ delete this node
  *   - Cmd/Ctrl + .     → zoom into the focused node (slice 7)
  *   - Cmd/Ctrl + ,     → zoom out one level (slice 7)
- *   - Cmd/Ctrl+Enter   → toggle `completed` on the focused Content Node (slice 9)
+ *   - Cmd/Ctrl+Enter   → on a Content Node inside a Thread (child of a
+ *                        Thread Root): send the prompt to Claude.
+ *                      → otherwise: toggle `completed` on the focused
+ *                        Content Node (slice 9).
+ *   - Cmd/Ctrl+Shift+. → cancel the in-flight Claude turn for the active
+ *                        Thread (slice 4). Distinct from Cmd+. (zoom-in).
  *   - Cmd/Ctrl+Shift+T → start a Thread on this Content Node (slice 2)
  *
  * Visual treatments paired with the kinds (slice 2):
@@ -35,6 +40,8 @@ export type Intent =
   | { kind: 'zoom-out' }
   | { kind: 'toggle-complete'; nodeId: string; next: boolean }
   | { kind: 'start-thread'; nodeId: string }
+  | { kind: 'send-prompt'; nodeId: string; threadRootId: string; prompt: string }
+  | { kind: 'cancel-turn'; threadRootId: string }
 
 export interface Visible {
   node: Node
@@ -46,22 +53,58 @@ export interface Visible {
 
 export function interpret(
   ev: { key: string; shiftKey: boolean; metaKey?: boolean; ctrlKey?: boolean },
-  ctx: Visible & { isContentEmpty: boolean },
+  ctx: Visible & {
+    isContentEmpty: boolean
+    /** Current text content of the focused cell (for send-prompt). */
+    contentText?: string
+    /**
+     * Id of the Thread Root the focused Content Node belongs to, if any.
+     * Set when the focused Node's parent (or further ancestor — but slice 4
+     * only sends from direct children) is a Thread Root. When set,
+     * Cmd+Enter sends the prompt instead of toggling complete.
+     */
+    threadRootId?: string | null
+    /**
+     * True when there's a streaming Turn under the active Thread Root —
+     * Cmd+Shift+. routes to cancel-turn rather than no-op.
+     */
+    activeThreadHasStreamingTurn?: boolean
+  },
 ): Intent {
   // Workflowy-style zoom: Cmd/Ctrl + . zooms into focused node, Cmd/Ctrl + ,
   // zooms out one level. Both must be the modifier-combo (no plain `.`/`,`
   // because those are valid text input).
   const mod = ev.metaKey || ev.ctrlKey
+  // Cancel-turn: Cmd/Ctrl + Shift + . — checked BEFORE plain Cmd+. so the
+  // shift-variant wins.
+  if (mod && ev.shiftKey && ev.key === '.') {
+    if (ctx.threadRootId && ctx.activeThreadHasStreamingTurn) {
+      return { kind: 'cancel-turn', threadRootId: ctx.threadRootId }
+    }
+    return { kind: 'noop' }
+  }
   if (mod && ev.key === '.') {
     return { kind: 'zoom-in', nodeId: ctx.node.id }
   }
   if (mod && ev.key === ',') {
     return { kind: 'zoom-out' }
   }
-  // Cmd/Ctrl+Enter toggles `completed` on the focused Content Node.
-  // Workflowy uses Cmd+Enter for the same operation. Checked before the
-  // plain Enter case so the modifier wins.
+  // Cmd/Ctrl+Enter on a prompt slot (Content Node child of a Thread Root)
+  // sends the prompt to Claude. Otherwise it toggles completion. The
+  // disambiguator is `threadRootId` — only set by the renderer for prompt
+  // slots, which makes "complete this prompt" semantically nonsensical
+  // anyway.
   if (ev.key === 'Enter' && mod) {
+    if (ctx.threadRootId && ctx.node.kind === 'content') {
+      const prompt = (ctx.contentText ?? '').trim()
+      if (prompt.length === 0) return { kind: 'noop' }
+      return {
+        kind: 'send-prompt',
+        nodeId: ctx.node.id,
+        threadRootId: ctx.threadRootId,
+        prompt,
+      }
+    }
     return { kind: 'toggle-complete', nodeId: ctx.node.id, next: !ctx.node.completed }
   }
   if (ev.key === 'Enter' && !ev.shiftKey) {

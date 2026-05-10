@@ -55,6 +55,43 @@ Start a fresh Thread under the same Thread Root, no conversation history. "New c
 
 - "Branch" and "Thread" overlap in casual speech. **Resolution**: a Thread is the subtree (a noun); to Branch is to create a new Thread (a verb). Branching produces a new Thread.
 
+## Slice 4 additions
+
+- Turn lifecycle: `metadata.state` is one of
+  `streaming | done | cancelled | interrupted`.
+  `beginTurn` stamps `streaming`; `markTurnDone` (called by the runner on
+  natural completion), `markTurnCancelled` (user-driven via `sdk.cancel`),
+  `markTurnInterrupted` (crash-recovery scan) are the terminal verbs.
+  Slice 3's legacy `cancelled: true` boolean is still set for back-compat.
+- `modules/thread/crashRecovery.ts` — `scanInterruptedTurns(store)`
+  walks the workspace tree, finds Turn Nodes with `state: 'streaming'`
+  (necessarily orphaned since the sidecar process is fresh), and stamps
+  them `state: 'interrupted'`. Idempotent. Surfaced as the
+  `thread.scanInterrupted` IPC method, called from App.tsx on workspace
+  activation.
+- Renderer keymap (`src/keymap.ts`):
+    - `Cmd/Ctrl+Enter` on a Content Node child of a Thread Root sends
+      the prompt to Claude (overrides the toggle-complete binding for
+      prompt slots only — other Content Nodes still toggle).
+    - `Cmd/Ctrl+Shift+.` cancels the in-flight Turn for the active
+      Thread. Distinct from `Cmd+.` (zoom-in).
+- Renderer Tree (`src/components/Tree.tsx`):
+    - On send: `streamSendPrompt`; reload tree on each `block-complete`
+      so Block Nodes appear as they land. On natural completion, auto-
+      create a fresh empty Content Node child of the Thread Root so the
+      next prompt slot is ready to type into.
+    - Visible "Claude is working" indicator while a Turn is streaming;
+      pulses + shows the cancel hint.
+    - Per-turn visual treatments via `data-turn-state` and CSS
+      (`turn-state-streaming` pulse, `turn-state-cancelled` dimmed,
+      `turn-state-interrupted` red-tinted with explanatory label).
+- E2E hooks: `cedarpadE2E.sendPromptFireAndForget`, `cedarpadE2E.cancel`,
+  `cedarpadE2E.createOrphanStreamingTurn`, `cedarpadE2E.scanInterrupted`
+  on top of the existing `appendTurn` / `sendPrompt` / `reload` hooks.
+- Bug fix: `outline.create` sidecar handler now forwards `kind` and
+  `metadata` instead of dropping them — slice 4 is the first caller that
+  needs this end-to-end.
+
 ## Slice 3 additions
 
 - `modules/auth/keychainStore.ts` — sidecar-side in-memory cache of the
