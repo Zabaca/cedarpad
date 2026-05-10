@@ -51,6 +51,13 @@ export function Tree({
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropPos, setDropPos] = useState<DropPos | null>(null)
   const refs = useRef(new Map<string, HTMLDivElement>())
+  // Mirror dragId / dropPos in refs so synthetic drag sequences (where
+  // dragstart, dragover and drop dispatch back-to-back in the same
+  // tick — see the WebView e2e harness) can read current values
+  // without waiting for React's state batches to flush. State drives
+  // rendering; refs drive the imperative branch logic.
+  const dragIdRef = useRef<string | null>(null)
+  const dropPosRef = useRef<DropPos | null>(null)
 
   const load = useCallback(async () => {
     // Load all nodes by walking from roots. Slice 1: simple, no virtualization.
@@ -286,12 +293,15 @@ export function Tree({
       // Use the node id as the dataTransfer payload so external drops are no-ops.
       e.dataTransfer.setData('application/x-cedarpad-node', n.id)
       e.dataTransfer.effectAllowed = 'move'
+      dragIdRef.current = n.id
       setDragId(n.id)
     },
     [],
   )
 
   const handleDragEnd = useCallback(() => {
+    dragIdRef.current = null
+    dropPosRef.current = null
     setDragId(null)
     setDropPos(null)
   }, [])
@@ -304,9 +314,10 @@ export function Tree({
    */
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLDivElement>, n: Node) => {
-      if (!dragId || dragId === n.id) return
+      const draggedId = dragIdRef.current
+      if (!draggedId || draggedId === n.id) return
       // Reject drops onto a descendant of the dragged node — would create a cycle.
-      if (isAncestor(dragId, n.id)) return
+      if (isAncestor(draggedId, n.id)) return
       e.preventDefault()
       e.dataTransfer.dropEffect = 'move'
       const rect = e.currentTarget.getBoundingClientRect()
@@ -320,6 +331,7 @@ export function Tree({
       } else {
         pos = { kind: 'inside', targetId: n.id }
       }
+      dropPosRef.current = pos
       setDropPos((cur) => {
         if (
           cur &&
@@ -331,7 +343,7 @@ export function Tree({
         return pos
       })
     },
-    [dragId, isAncestor],
+    [isAncestor],
   )
 
   const handleDragLeave = useCallback(
@@ -339,6 +351,12 @@ export function Tree({
       // Only clear when leaving the row entirely (not when crossing into a child).
       const related = e.relatedTarget as HTMLElement | null
       if (related && e.currentTarget.contains(related)) return
+      if (
+        dropPosRef.current &&
+        (dropPosRef.current as { targetId?: string }).targetId === n.id
+      ) {
+        dropPosRef.current = null
+      }
       setDropPos((cur) => {
         if (!cur) return null
         if ((cur as { targetId?: string }).targetId === n.id) return null
@@ -351,8 +369,11 @@ export function Tree({
   const handleDrop = useCallback(
     async (e: React.DragEvent<HTMLDivElement>, n: Node) => {
       e.preventDefault()
-      const draggedId = e.dataTransfer.getData('application/x-cedarpad-node') || dragId
-      const pos = dropPos
+      const draggedId =
+        e.dataTransfer.getData('application/x-cedarpad-node') || dragIdRef.current
+      const pos = dropPosRef.current ?? dropPos
+      dragIdRef.current = null
+      dropPosRef.current = null
       setDragId(null)
       setDropPos(null)
       if (!draggedId || !pos || draggedId === n.id) return
@@ -387,7 +408,7 @@ export function Tree({
       })
       await load()
     },
-    [dragId, dropPos, byParent, isAncestor, workspaceId, load],
+    [dropPos, byParent, isAncestor, workspaceId, load],
   )
 
   return (

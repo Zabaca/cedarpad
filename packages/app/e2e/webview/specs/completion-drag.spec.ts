@@ -5,17 +5,26 @@
  * completed Nodes, drag-reorder works within and across parents, and all
  * three states persist across relaunch.
  *
- * WebKit's WebDriver caveats (documented at length in restart.spec.ts):
- *   - Printable keys don't trigger native text insertion against
- *     contentEditable, so we drive the React `onInput` path with an
- *     injected `InputEvent`.
- *   - Non-printable keys (Enter, Tab) DO route through keydown handlers,
- *     so we use the W3C Actions API for those.
+ * Seed strategy: this spec calls the Tauri RPC bridge
+ * (`window.__TAURI_INTERNALS__.invoke('rpc', ...)`) directly to build the
+ * outline, instead of typing through real keystrokes. The
+ * keyboard-driven path is already covered by `restart.spec.ts`; here we
+ * want a deterministic seed so the assertions for completion + drag are
+ * about THOSE features, not about whether the W3C key actions API is
+ * cooperating with WKWebView on this run.
+ *
+ * WebKit/WebDriver caveats relevant to this spec:
+ *   - Cmd+Enter (toggle complete) dispatches a synthetic KeyboardEvent
+ *     because Mac WebKit's WebDriver doesn't reliably propagate
+ *     modifier state on chorded W3C Actions key sequences. The
+ *     KeyboardEvent bubbles into React's delegated keydown listener
+ *     and hits the keymap interpreter exactly as a real keypress would.
  *   - Native HTML5 drag-and-drop is not reliably synthesised by
  *     WebDriver. We dispatch real `DragEvent`s with a `DataTransfer`
- *     directly to the React handlers — same code path the browser would
- *     hit on a real drop. The renderer's onDragStart/onDragOver/onDrop
- *     handlers run, the IPC fires, and persistence happens identically.
+ *     directly to the React handlers — same code path the browser
+ *     would hit on a real drop. The renderer's
+ *     onDragStart/onDragOver/onDrop run, the IPC fires, and persistence
+ *     happens identically.
  */
 import { browser, $, $$ } from '@wdio/globals'
 
@@ -23,7 +32,6 @@ interface VisibleRow {
   content: string
   depth: number
   completed: boolean
-  hidden: boolean
 }
 
 async function visibleRows(): Promise<VisibleRow[]> {
@@ -34,11 +42,7 @@ async function visibleRows(): Promise<VisibleRow[]> {
       const depth = Math.round(padding / 18)
       const content = (n.querySelector('.content')?.textContent ?? '').trim()
       const completed = n.classList.contains('completed')
-      // The Tree never renders hidden rows in the DOM when hideCompleted is on
-      // — instead it skips them at the visible-list level. So `hidden` here
-      // is always false; included for forward compat.
-      const hidden = n.style.display === 'none'
-      return { content, depth, completed, hidden }
+      return { content, depth, completed }
     })
   })
 }
@@ -64,9 +68,75 @@ async function waitForBoot(): Promise<void> {
   }
 }
 
-async function focusFirstNode(): Promise<void> {
-  const first = await $('.tree-node .content')
-  await first.click()
+interface SeededIds {
+  workspaceId: string
+  a: string
+  a1: string
+  b: string
+}
+
+/**
+ * Seed via the Tauri IPC bridge. The auto-created empty root node from
+ * Tree.tsx is removed so we have a clean shape: A, A.1 (child of A), B.
+ * Returns ids so subsequent assertions can target nodes by id, not by
+ * fragile DOM-text lookup.
+ */
+async function seedOutlineViaIpc(): Promise<SeededIds> {
+  return browser.executeAsync(async (done: (ids: SeededIds) => void) => {
+    const internals = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__
+    if (!internals?.invoke) {
+      done({ workspaceId: '', a: '', a1: '', b: '' })
+      return
+    }
+    const invoke = internals.invoke.bind(internals)
+    const rpc = async <T,>(method: string, params: unknown): Promise<T> => {
+      return (await invoke('rpc', { method, params })) as T
+    }
+    const active = (await rpc<{ id: string } | null>('workspace.active', {}))!
+    const workspaceId = active.id
+
+    // Wipe any existing nodes so the spec is hermetic across re-runs.
+    const roots = await rpc<{ id: string }[]>('outline.getChildren', {
+      workspaceId,
+      parentId: null,
+    })
+    for (const r of roots) {
+      await rpc('outline.delete', { workspaceId, id: r.id })
+    }
+
+    const a = (await rpc<{ id: string }>('outline.create', {
+      workspaceId,
+      parentId: null,
+      content: 'A',
+    })).id
+    const a1 = (await rpc<{ id: string }>('outline.create', {
+      workspaceId,
+      parentId: a,
+      content: 'A.1',
+    })).id
+    const b = (await rpc<{ id: string }>('outline.create', {
+      workspaceId,
+      parentId: null,
+      prevSiblingId: a,
+      content: 'B',
+    })).id
+    done({ workspaceId, a, a1, b })
+  })
+}
+
+async function reloadTree(): Promise<void> {
+  // Tree.tsx loads on mount + on workspaceId change. The simplest way to
+  // force a re-render after IPC mutations is a full page reload — Tauri
+  // restores the workspace from recents on next mount. We use
+  // `location.reload()` directly because `browser.url(sameUrl)` is a
+  // no-op on WebKit when the document is already at that URL.
+  await browser.execute(() => {
+    window.location.reload()
+  })
+  // Give the page a moment to start tearing down before we wait for the
+  // new mount.
+  await browser.pause(300)
+  await waitForBoot()
 }
 
 async function focusNodeByContent(text: string): Promise<void> {
@@ -75,42 +145,10 @@ async function focusNodeByContent(text: string): Promise<void> {
     const found = cells.find((c) => (c.textContent ?? '').trim() === needle)
     if (!found) throw new Error(`no .content cell with text "${needle}"`)
     found.focus()
-    const range = document.createRange()
-    range.selectNodeContents(found)
-    range.collapse(false)
-    const sel = window.getSelection()
-    sel?.removeAllRanges()
-    sel?.addRange(range)
   }, text)
+  await browser.pause(50)
 }
 
-async function typeChar(ch: string): Promise<void> {
-  await browser.execute((c: string) => {
-    const el = document.activeElement as HTMLElement | null
-    if (!el || !el.isContentEditable) throw new Error('no contentEditable focused')
-    el.textContent = (el.textContent ?? '') + c
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: c, inputType: 'insertText' }))
-  }, ch)
-  await browser.pause(180)
-}
-
-const SPECIAL_KEY = {
-  Enter: '',
-  Tab: '',
-} as const
-
-async function typeKey(name: keyof typeof SPECIAL_KEY): Promise<void> {
-  const code = SPECIAL_KEY[name]
-  await browser.action('key').down(code).up(code).perform()
-  await browser.pause(180)
-}
-
-/**
- * Toggle completion via Cmd+Enter dispatched synthetically. We can't rely
- * on the W3C Actions chord because Mac WebKit's WebDriver doesn't always
- * report metaKey on synthesised Enter events; dispatching the
- * KeyboardEvent directly hits the same React keydown handler path.
- */
 async function pressCmdEnter(): Promise<void> {
   await browser.execute(() => {
     const el = document.activeElement as HTMLElement | null
@@ -125,31 +163,15 @@ async function pressCmdEnter(): Promise<void> {
       }),
     )
   })
-  await browser.pause(220)
-}
-
-async function pressShiftTab(): Promise<void> {
-  await browser.execute(() => {
-    const el = document.activeElement as HTMLElement | null
-    if (!el) throw new Error('nothing focused')
-    el.dispatchEvent(
-      new KeyboardEvent('keydown', {
-        key: 'Tab',
-        code: 'Tab',
-        shiftKey: true,
-        bubbles: true,
-        cancelable: true,
-      }),
-    )
-  })
-  await browser.pause(220)
+  // Cmd+Enter → outline.update IPC → load() reload → re-render.
+  await browser.pause(400)
 }
 
 /**
- * Synthesise a drag from one node row to another. We dispatch the same
+ * Synthesise a drag from one row to another. We dispatch the same
  * sequence the browser would: dragstart on source → dragover on target
- * (with clientY positioned to land in the desired third) → drop on target.
- * The Tree's React handlers consume these directly.
+ * (with clientY positioned to land in the desired third) → drop on
+ * target. The Tree's React handlers consume these directly.
  */
 async function dragNode(
   fromText: string,
@@ -209,63 +231,94 @@ async function clickHideCompletedToggle(): Promise<void> {
   await browser.pause(150)
 }
 
+/**
+ * Wipe all nodes from the active workspace via IPC. Restores the
+ * workspace to "empty" state, after which Tree.tsx's auto-seed effect
+ * will create one fresh empty root cell on next mount — exactly the
+ * shape `restart.spec.ts` expects. We run this in `after` so this spec
+ * doesn't pollute the DB for the next spec sharing the same harness.
+ */
+async function wipeWorkspace(): Promise<void> {
+  await browser.executeAsync(async (done: () => void) => {
+    const internals = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__
+    if (!internals?.invoke) {
+      done()
+      return
+    }
+    const invoke = internals.invoke.bind(internals)
+    const active = (await invoke('rpc', { method: 'workspace.active', params: {} })) as { id: string } | null
+    if (!active) {
+      done()
+      return
+    }
+    const roots = (await invoke('rpc', {
+      method: 'outline.getChildren',
+      params: { workspaceId: active.id, parentId: null },
+    })) as { id: string }[]
+    for (const r of roots) {
+      await invoke('rpc', {
+        method: 'outline.delete',
+        params: { workspaceId: active.id, id: r.id },
+      })
+    }
+    // Also clear the per-workspace hide-completed pref so the next spec
+    // starts with the default OFF.
+    try {
+      window.localStorage.removeItem(`cedarpad.hideCompleted.${active.id}`)
+    } catch {
+      // ignore
+    }
+    done()
+  })
+}
+
 describe('webview e2e: completion + drag-reorder', () => {
+  after(async () => {
+    // Re-establish a session because the test reloads it; otherwise
+    // browser.executeAsync would race against a torn-down session.
+    try {
+      await browser.url('tauri://localhost')
+      await waitForBoot()
+      await wipeWorkspace()
+    } catch {
+      // Best-effort cleanup; don't mask test failures with cleanup errors.
+    }
+  })
+
   it('marks complete, hides completed, reorders within parent, moves across parents, persists across relaunch', async () => {
     await browser.url('tauri://localhost')
     await waitForBoot()
-    await focusFirstNode()
 
-    // Build the seed outline:
-    //   A
-    //     A.1
-    //   B
-    //
-    // Keystroke recipe:
-    //   A          → first cell becomes "A"
-    //   Enter      → new sibling at root (empty)
-    //   Tab        → nest under A → A.1 cell
-    //   A.1        → typing into nested cell
-    //   Enter      → sibling of A.1 (empty, depth 1)
-    //   Shift+Tab  → outdent that cell back to root → after A
-    //   B          → root sibling
-    await typeChar('A')
-    await typeKey('Enter')
-    await typeKey('Tab')
-    await typeChar('A')
-    await typeChar('.')
-    await typeChar('1')
-    await typeKey('Enter')
-    // Shift+Tab outdent (synthesised — mirrors how pressCmdEnter is wired).
-    await pressShiftTab()
-    await typeChar('B')
-    await browser.pause(800)
+    // ----- seed via IPC, then reload so React mirrors the seeded shape -----
+    const ids = await seedOutlineViaIpc()
+    if (!ids.workspaceId) throw new Error('no Tauri internals — IPC seed failed')
+    await reloadTree()
 
-    const seeded = (await visibleRows()).filter((r) => r.content !== '')
+    let rows = (await visibleRows()).filter((r) => r.content !== '')
     if (
-      seeded.length !== 3 ||
-      seeded[0]!.content !== 'A' ||
-      seeded[1]!.content !== 'A.1' ||
-      seeded[2]!.content !== 'B'
+      rows.length !== 3 ||
+      rows[0]!.content !== 'A' ||
+      rows[1]!.content !== 'A.1' ||
+      rows[2]!.content !== 'B'
     ) {
-      throw new Error(`seed outline wrong: ${JSON.stringify(seeded)}`)
+      throw new Error(`seed outline wrong: ${JSON.stringify(rows)}`)
     }
 
     // ----- complete A.1 via Cmd+Enter -----
     await focusNodeByContent('A.1')
     await pressCmdEnter()
-    let rows = await visibleRows()
+    rows = await visibleRows()
     const a1Row = rows.find((r) => r.content === 'A.1')
     if (!a1Row || !a1Row.completed) {
       throw new Error(`A.1 should be completed, got ${JSON.stringify(rows)}`)
     }
 
-    // ----- toggle hide-completed -----
+    // ----- toggle hide-completed off→on→off -----
     await clickHideCompletedToggle()
     rows = await visibleRows()
     if (rows.some((r) => r.content === 'A.1')) {
       throw new Error(`A.1 should be hidden when hideCompleted is on: ${JSON.stringify(rows)}`)
     }
-    // Toggle back so we can drag visible rows.
     await clickHideCompletedToggle()
     rows = await visibleRows()
     if (!rows.some((r) => r.content === 'A.1')) {
@@ -275,39 +328,39 @@ describe('webview e2e: completion + drag-reorder', () => {
     // ----- drag B before A (reorder within root) -----
     await dragNode('B', 'A', 'before')
     rows = (await visibleRows()).filter((r) => r.content !== '')
-    // Order should now be B, A, A.1 (A.1 still child of A, still completed).
     if (rows[0]?.content !== 'B' || rows[1]?.content !== 'A' || rows[2]?.content !== 'A.1') {
       throw new Error(`after reorder, expected [B,A,A.1], got ${JSON.stringify(rows)}`)
     }
 
-    // ----- drag A.1 inside B (move across parents, descendants travel) -----
-    // First add a child to A.1 so we can verify descendants travel.
-    await focusNodeByContent('A.1')
-    await typeKey('Enter')
-    await typeKey('Tab')
-    await typeChar('A')
-    await typeChar('.')
-    await typeChar('1')
-    await typeChar('.')
-    await typeChar('1')
-    await browser.pause(400)
+    // ----- add A.1.1 under A.1 via IPC, then drag A.1 inside B -----
+    await browser.executeAsync(async (workspaceId: string, a1Id: string, done: () => void) => {
+      const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__
+      await internals.invoke('rpc', {
+        method: 'outline.create',
+        params: { workspaceId, parentId: a1Id, content: 'A.1.1' },
+      })
+      done()
+    }, ids.workspaceId, ids.a1)
+    await reloadTree()
     rows = (await visibleRows()).filter((r) => r.content !== '')
     if (!rows.some((r) => r.content === 'A.1.1' && r.depth === 2)) {
       throw new Error(`expected A.1.1 nested under A.1, got ${JSON.stringify(rows)}`)
     }
 
-    // Drag A.1 inside B → A.1 (and A.1.1) become children of B.
     await dragNode('A.1', 'B', 'inside')
     rows = (await visibleRows()).filter((r) => r.content !== '')
-    // Expected: B, B's children A.1 → A.1.1, then A.
     const labels = rows.map((r) => `${r.content}@${r.depth}`)
-    const aIdx = labels.indexOf('A@0')
+    if (
+      labels.indexOf('B@0') < 0 ||
+      labels.indexOf('A@0') < 0 ||
+      labels.indexOf('A.1@1') < 0 ||
+      labels.indexOf('A.1.1@2') < 0
+    ) {
+      throw new Error(`after cross-parent move, missing rows: ${JSON.stringify(rows)}`)
+    }
     const bIdx = labels.indexOf('B@0')
     const a1Idx = labels.indexOf('A.1@1')
     const a11Idx = labels.indexOf('A.1.1@2')
-    if (bIdx < 0 || aIdx < 0 || a1Idx < 0 || a11Idx < 0) {
-      throw new Error(`after cross-parent move, missing rows: ${JSON.stringify(rows)}`)
-    }
     if (!(bIdx < a1Idx && a1Idx < a11Idx)) {
       throw new Error(`A.1.1 should follow A.1 under B: ${JSON.stringify(rows)}`)
     }
@@ -319,7 +372,11 @@ describe('webview e2e: completion + drag-reorder', () => {
 
     const after = (await visibleRows()).filter((r) => r.content !== '')
     const afterLabels = after.map((r) => `${r.content}@${r.depth}`)
-    if (afterLabels.indexOf('B@0') < 0 || afterLabels.indexOf('A.1@1') < 0 || afterLabels.indexOf('A.1.1@2') < 0) {
+    if (
+      afterLabels.indexOf('B@0') < 0 ||
+      afterLabels.indexOf('A.1@1') < 0 ||
+      afterLabels.indexOf('A.1.1@2') < 0
+    ) {
       throw new Error(`post-restart shape lost: ${JSON.stringify(after)}`)
     }
     const a1AfterRestart = after.find((r) => r.content === 'A.1')
@@ -327,11 +384,8 @@ describe('webview e2e: completion + drag-reorder', () => {
       throw new Error(`A.1 completion lost across restart: ${JSON.stringify(after)}`)
     }
 
-    // hide-completed preference is persisted per-workspace in localStorage,
-    // which Tauri's WKWebView preserves across launches for the same app
-    // origin. We left it OFF before restart, so verify A.1 is still
-    // visible (covered above). Toggle ON post-restart and verify hide
-    // still works after a fresh boot.
+    // hide-completed preference: toggle ON after restart and verify it
+    // still works against the restored DB.
     await clickHideCompletedToggle()
     const finalRows = await visibleRows()
     if (finalRows.some((r) => r.content === 'A.1')) {
