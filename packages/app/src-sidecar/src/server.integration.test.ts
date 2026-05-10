@@ -100,4 +100,55 @@ describe('sidecar integration', () => {
     })) as Array<{ id: string }>
     expect(roots.map((n) => n.id)).toContain(node.id)
   }, 15000)
+
+  it('drives thread.start + thread.appendPrompt + thread.appendTurn over IPC', async () => {
+    const repo = join(tmp, 'repo')
+    await mkdir(repo, { recursive: true })
+
+    const ws = (await sidecar.send({ id: '1', method: 'workspace.open', params: { repoPath: repo } })) as {
+      id: string
+    }
+
+    const root = (await sidecar.send({
+      id: '2',
+      method: 'outline.create',
+      params: { workspaceId: ws.id, parentId: null, content: 'idea' },
+    })) as { id: string }
+
+    const promoted = (await sidecar.send({
+      id: '3',
+      method: 'thread.start',
+      params: { workspaceId: ws.id, rootNodeId: root.id },
+    })) as { id: string; metadata: Record<string, unknown> }
+    expect(promoted.metadata.isThreadRoot).toBe(true)
+
+    const prompt = (await sidecar.send({
+      id: '4',
+      method: 'thread.appendPrompt',
+      params: { workspaceId: ws.id, threadRootId: root.id, content: 'how does X work?' },
+    })) as { id: string; parentId: string; kind: string; content: string }
+    expect(prompt.parentId).toBe(root.id)
+    expect(prompt.kind).toBe('content')
+    expect(prompt.content).toBe('how does X work?')
+
+    const turn = (await sidecar.send({
+      id: '5',
+      method: 'thread.appendTurn',
+      params: {
+        workspaceId: ws.id,
+        threadRootId: root.id,
+        blocks: [
+          { kind: 'text', text: 'Looking…' },
+          { kind: 'tool_use', toolName: 'Read', toolUseId: 't1', input: { path: 'a.md' } },
+          { kind: 'tool_result', toolUseId: 't1', output: 'ok' },
+        ],
+      },
+    })) as { turn: { id: string; kind: string }; blocks: Array<{ id: string; kind: string; parentId: string }> }
+    expect(turn.turn.kind).toBe('turn')
+    expect(turn.blocks).toHaveLength(3)
+    for (const b of turn.blocks) {
+      expect(b.kind).toBe('block')
+      expect(b.parentId).toBe(turn.turn.id)
+    }
+  }, 15000)
 })

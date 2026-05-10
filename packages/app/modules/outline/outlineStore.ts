@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DbClient } from '../db/libsqlClient.ts'
 import type { Transaction } from '@libsql/client'
-import type { Node, NodeMetadata } from './types.ts'
+import type { Node, NodeKind, NodeMetadata } from './types.ts'
 import { NodeMetadataSchema, NodeSchema } from '../../src/contract.ts'
 import { keyBetween } from './ordering.ts'
 import { withTransaction } from '../db/txn.ts'
@@ -11,6 +11,7 @@ export interface OutlineStore {
     parentId: string | null
     prevSiblingId?: string | null
     content?: string
+    kind?: NodeKind
     metadata?: NodeMetadata
   }): Promise<Node>
   getNode(id: string): Promise<Node | null>
@@ -78,21 +79,21 @@ async function computeInsertPosition(
 
 export function createOutlineStore(db: DbClient): OutlineStore {
   const store: OutlineStore = {
-    async createNode({ parentId, prevSiblingId = null, content = '', metadata = {} }) {
+    async createNode({ parentId, prevSiblingId = null, content = '', kind = 'content', metadata = {} }) {
       const id = randomUUID()
       const ts = now()
       const prevPos = prevSiblingId ? await lookupPosition(db, prevSiblingId) : null
       const position = await computeInsertPosition(db, parentId, prevPos)
       await db.execute({
         sql: `INSERT INTO nodes (id, parent_id, position, kind, content, metadata, completed, created_at, updated_at)
-              VALUES (?, ?, ?, 'content', ?, ?, 0, ?, ?)`,
-        args: [id, parentId, position, content, JSON.stringify(metadata), ts, ts],
+              VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+        args: [id, parentId, position, kind, content, JSON.stringify(metadata), ts, ts],
       })
       return {
         id,
         parentId,
         position,
-        kind: 'content',
+        kind,
         content,
         metadata,
         completed: false,

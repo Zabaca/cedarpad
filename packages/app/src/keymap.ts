@@ -6,6 +6,24 @@ import type { Node } from './contract'
  *
  * This is split out of the React component so it's unit-testable without
  * jsdom mounting the tree.
+ *
+ * Bindings:
+ *   - Enter            → create sibling
+ *   - Tab              → nest under prevSibling
+ *   - Shift+Tab        → outdent to grandparent
+ *   - Backspace (empty)→ delete this node
+ *   - Cmd/Ctrl + .     → zoom into the focused node (slice 7)
+ *   - Cmd/Ctrl + ,     → zoom out one level (slice 7)
+ *   - Cmd/Ctrl+Enter   → toggle `completed` on the focused Content Node (slice 9)
+ *   - Cmd/Ctrl+Shift+T → start a Thread on this Content Node (slice 2)
+ *
+ * Visual treatments paired with the kinds (slice 2):
+ *   - Content Node: default bullet
+ *   - Thread Root: Content Node whose metadata has `isThreadRoot: true`,
+ *     rendered with a different bullet (>) and accent border.
+ *   - Turn Node: rendered as a labelled "Claude turn" row.
+ *   - Block Node: three sub-styles via metadata.payload.kind —
+ *     text → prose, tool_use → inline tool call card, tool_result → output.
  */
 export type Intent =
   | { kind: 'noop' }
@@ -16,6 +34,7 @@ export type Intent =
   | { kind: 'zoom-in'; nodeId: string }
   | { kind: 'zoom-out' }
   | { kind: 'toggle-complete'; nodeId: string; next: boolean }
+  | { kind: 'start-thread'; nodeId: string }
 
 export interface Visible {
   node: Node
@@ -68,6 +87,11 @@ export function interpret(
   }
   if (ev.key === 'Backspace' && ctx.isContentEmpty) {
     return { kind: 'delete-empty', nodeId: ctx.node.id }
+  }
+  // Cmd/Ctrl + Shift + T → start a Thread on a Content Node.
+  if ((ev.key === 't' || ev.key === 'T') && ev.shiftKey && (ev.metaKey || ev.ctrlKey)) {
+    if (ctx.node.kind !== 'content') return { kind: 'noop' }
+    return { kind: 'start-thread', nodeId: ctx.node.id }
   }
   return { kind: 'noop' }
 }

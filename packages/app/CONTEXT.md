@@ -55,6 +55,27 @@ Start a fresh Thread under the same Thread Root, no conversation history. "New c
 
 - "Branch" and "Thread" overlap in casual speech. **Resolution**: a Thread is the subtree (a noun); to Branch is to create a new Thread (a verb). Branching produces a new Thread.
 
+## Slice 2 additions
+
+- `modules/thread/threadEngine.ts` — composes the OutlineStore. Three verbs:
+  `startThread(rootNodeId)` (Content Node → Thread Root via metadata),
+  `appendPrompt(threadRootId, content)` (Content Node child of Root),
+  `appendTurn(threadRootId, blocks)` (Turn Node child + Block Node grandchildren).
+  Sidecar exposes the three as `thread.start` / `thread.appendPrompt` / `thread.appendTurn`.
+- Schema v2 widens `nodes.kind` to `content | turn | block`. Migration is
+  versioned via `PRAGMA user_version`: fresh DBs land at v2; legacy v1 DBs
+  rebuild the `nodes` table inside a transaction (SQLite has no
+  ALTER CHECK), preserving rows + FTS index. Idempotent.
+- Renderer: `Cmd/Ctrl+Shift+T` over a focused Content Node fires `thread.start`.
+  Tree.tsx classifies each Node into a `Visual` and renders five distinct
+  styles (content / thread-root / turn / block-text / block-tool-use /
+  block-tool-result). Block payloads parse through `BlockMetadataSchema` at
+  the rendering boundary — no untyped JSON access.
+- Test hook: `window.cedarpadE2E.appendTurn` is exposed by the renderer so
+  the WebView e2e (`e2e/webview/specs/thread-root.spec.ts`) can drive a
+  fixture turn through the same `thread.appendTurn` IPC the SDK runner will
+  use in slice 3.
+
 ## Slice 1 module map (v1, in-tree)
 
 Three processes:

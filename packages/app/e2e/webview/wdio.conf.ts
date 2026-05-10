@@ -76,6 +76,13 @@ export const config: WebdriverIO.Config = {
     // Wait for port to be reachable.
     await waitForPort('localhost', 4444, 10000)
   },
+  // Between specs: tauri-webdriver tears down the cedarpad binary at session
+  // end, but on macOS the kernel can hold the port / WebDriver bridge for a
+  // short window. Pause briefly so the next session's binary launch finds a
+  // clean slate.
+  afterSession: async () => {
+    await new Promise((r) => setTimeout(r, 500))
+  },
   onComplete: async () => {
     if (driverProc) {
       driverProc.kill()

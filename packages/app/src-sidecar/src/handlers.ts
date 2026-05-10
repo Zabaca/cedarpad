@@ -13,6 +13,7 @@ import { mkdirSync } from 'node:fs'
 import type { MethodName, MethodInput, MethodOutput, Node } from '../../src/contract.ts'
 import { createWorkspaceManager, type WorkspaceManager } from '../../modules/workspace/workspaceManager.ts'
 import { createOutlineStore, type OutlineStore } from '../../modules/outline/outlineStore.ts'
+import { createThreadEngine, type ThreadEngine } from '../../modules/thread/threadEngine.ts'
 import type { DbClient } from '../../modules/db/libsqlClient.ts'
 
 export type Handler<M extends MethodName> = (input: MethodInput<M>) => Promise<MethodOutput<M>> | MethodOutput<M>
@@ -27,6 +28,7 @@ const recentsDbUrl = `file:${join(globalDir, 'global.db')}`
 
 let wm: WorkspaceManager | null = null
 const outlineStores = new Map<string, OutlineStore>()
+const threadEngines = new Map<string, ThreadEngine>()
 
 function getWm(): WorkspaceManager {
   if (!wm) wm = createWorkspaceManager({ recentsDbUrl, recentLimit: 10 })
@@ -40,6 +42,15 @@ async function getOutline(workspaceId: string): Promise<OutlineStore> {
   const store = createOutlineStore(db)
   outlineStores.set(workspaceId, store)
   return store
+}
+
+async function getThread(workspaceId: string): Promise<ThreadEngine> {
+  const cached = threadEngines.get(workspaceId)
+  if (cached) return cached
+  const store = await getOutline(workspaceId)
+  const engine = createThreadEngine(store)
+  threadEngines.set(workspaceId, engine)
+  return engine
 }
 
 function nodeOut(node: Node): Node {
@@ -94,5 +105,19 @@ export const handlers: Handlers = {
   'outline.search': async ({ workspaceId, query }) => {
     const store = await getOutline(workspaceId)
     return store.searchNodes(query)
+  },
+
+  'thread.start': async ({ workspaceId, rootNodeId }) => {
+    const engine = await getThread(workspaceId)
+    return nodeOut(await engine.startThread(rootNodeId))
+  },
+  'thread.appendPrompt': async ({ workspaceId, threadRootId, content }) => {
+    const engine = await getThread(workspaceId)
+    return nodeOut(await engine.appendPrompt(threadRootId, content))
+  },
+  'thread.appendTurn': async ({ workspaceId, threadRootId, blocks }) => {
+    const engine = await getThread(workspaceId)
+    const result = await engine.appendTurn(threadRootId, blocks)
+    return { turn: nodeOut(result.turn), blocks: result.blocks.map(nodeOut) }
   },
 }
