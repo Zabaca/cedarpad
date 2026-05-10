@@ -537,6 +537,30 @@ export function Tree({
 
   const handleKeyDown = useCallback(
     async (e: React.KeyboardEvent<HTMLDivElement>, n: Node) => {
+      // Vertical navigation through the visible rows. Handled at the
+      // renderer because it depends on the rendered row order (which
+      // accounts for collapse, hide-completed, etc.) — not a structural
+      // outline operation.
+      if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+        const idxInVisible = visible.findIndex(
+          (r) => (r.kind === 'node' ? r.node.id : r.toolUse.id) === n.id,
+        )
+        if (idxInVisible === -1) return
+        const dir = e.key === 'ArrowDown' ? 1 : -1
+        for (let i = idxInVisible + dir; i >= 0 && i < visible.length; i += dir) {
+          const r = visible[i]!
+          const targetId = r.kind === 'node' ? r.node.id : r.toolUse.id
+          const targetEl = refs.current.get(targetId)
+          if (targetEl) {
+            e.preventDefault()
+            targetEl.focus()
+            setFocusId(targetId)
+            return
+          }
+        }
+        return
+      }
+
       const parent = n.parentId ? lookup.get(n.parentId) ?? null : null
       const siblings = byParent.get(n.parentId) ?? []
       const idx = siblings.findIndex((s) => s.id === n.id)
