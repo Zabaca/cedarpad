@@ -11,7 +11,10 @@
  * JSON columns in libSQL (e.g. `nodes.metadata`) are described by zod schemas
  * here so encode/decode at the storage boundary stays type-safe.
  */
-import { z } from 'zod'
+// Use namespace import — zod 3.25's named `z` export is unreliable under
+// vitest+bun's transformer (TypeError: undefined is not an object). The
+// namespace form mirrors zod's own index.js (`import * as z`).
+import * as z from 'zod'
 
 // ---------- JSON column schemas ----------
 
