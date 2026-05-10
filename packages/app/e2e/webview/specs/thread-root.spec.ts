@@ -8,13 +8,17 @@
  * `window.cedarpadE2E.appendTurn`, which forwards to thread.appendTurn IPC
  * through the same handler the SDK runner will use in slice 3.
  *
+ * Hygiene: this spec creates a *dedicated* Content Node via IPC (not by
+ * typing into whatever node the previous spec left lying around) and
+ * deletes it at the end of the test, so it does not pollute state for
+ * the zoom / search specs that may run after it. The wdio harness
+ * shares one seeded recents DB across specs.
+ *
  * macOS WebKit's WebDriver caveats from restart.spec.ts apply here too:
  * native text insertion against contentEditable is unreliable, and
- * synthesised modifier+letter chords are flaky. We use:
- *   - typeChar (JS-injected InputEvent) for printable characters,
- *   - the W3C Actions API (`Enter` / `Tab`) for plain non-printables, and
- *   - a JS-dispatched KeyboardEvent for the Cmd+Shift+T chord, which is
- *     what React's `onKeyDown` listens to anyway.
+ * synthesised modifier+letter chords are flaky. We use a JS-dispatched
+ * KeyboardEvent for the Cmd+Shift+T chord, which is what React's
+ * `onKeyDown` listens to anyway, and IPC for setup/teardown.
  */
 import { browser, $, $$ } from '@wdio/globals'
 
@@ -52,19 +56,76 @@ async function waitForBoot(): Promise<void> {
   )
 }
 
-async function focusFirstNode(): Promise<void> {
-  const first = await $('.tree-node .content')
-  await first.click()
+/**
+ * Create a fresh top-level Content Node via the renderer's IPC and return
+ * its id. Reloads the Tree's view so the new row appears in the DOM, and
+ * focuses its content cell so the Cmd+Shift+T keymap fires against it.
+ */
+async function createIsolatedContentNode(content: string): Promise<string> {
+  const id = await browser.executeAsync<string, [string]>((c, done) => {
+    const tauri = (
+      window as { __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> } }
+    ).__TAURI_INTERNALS__
+    const hook = (
+      window as unknown as { cedarpadE2E?: { reload: () => Promise<void> } }
+    ).cedarpadE2E
+    if (!tauri?.invoke || !hook) {
+      done('' as unknown as string)
+      return
+    }
+    tauri
+      .invoke('rpc', { method: 'workspace.recent', params: {} })
+      .then((r) => {
+        const list = r as Array<{ id: string }>
+        if (list.length === 0) throw new Error('no recent workspaces')
+        return tauri.invoke!('rpc', {
+          method: 'outline.create',
+          params: { workspaceId: list[0]!.id, parentId: null, content: c },
+        })
+      })
+      .then((node) => hook.reload().then(() => done((node as { id: string }).id as unknown as string)))
+      .catch(() => done('' as unknown as string))
+  }, content)
+  return id
 }
 
-async function typeChar(ch: string): Promise<void> {
-  await browser.execute((c: string) => {
-    const el = document.activeElement as HTMLElement | null
-    if (!el || !el.isContentEditable) throw new Error('no contentEditable focused')
-    el.textContent = (el.textContent ?? '') + c
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: c, inputType: 'insertText' }))
-  }, ch)
-  await browser.pause(180)
+async function deleteNode(id: string): Promise<void> {
+  await browser.executeAsync<void, [string]>((nodeId, done) => {
+    const tauri = (
+      window as { __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: unknown) => Promise<unknown> } }
+    ).__TAURI_INTERNALS__
+    const hook = (
+      window as unknown as { cedarpadE2E?: { reload: () => Promise<void> } }
+    ).cedarpadE2E
+    if (!tauri?.invoke || !hook) {
+      done()
+      return
+    }
+    tauri
+      .invoke('rpc', { method: 'workspace.recent', params: {} })
+      .then((r) => {
+        const list = r as Array<{ id: string }>
+        if (list.length === 0) throw new Error('no recent workspaces')
+        return tauri.invoke!('rpc', {
+          method: 'outline.delete',
+          params: { workspaceId: list[0]!.id, id: nodeId },
+        })
+      })
+      .then(() => hook.reload().then(() => done()))
+      .catch(() => done())
+  }, id)
+}
+
+async function focusNodeById(id: string): Promise<void> {
+  // Click the .content cell whose .tree-node ancestor has data-node-id=id.
+  await browser.execute((nodeId: string) => {
+    const row = document.querySelector(`.tree-node[data-node-id="${nodeId}"]`) as HTMLElement | null
+    const cell = row?.querySelector('.content') as HTMLElement | null
+    if (!cell) throw new Error(`no .content cell for node ${nodeId}`)
+    cell.focus()
+    cell.click()
+  }, id)
+  await browser.pause(80)
 }
 
 async function pressCmdShiftT(): Promise<void> {
@@ -120,68 +181,78 @@ describe('webview e2e (slice 2): Thread Root + fixture turn', () => {
   it('promotes a Content Node to a Thread Root, then renders a fixture turn', async () => {
     await browser.url('tauri://localhost')
     await waitForBoot()
-    await focusFirstNode()
 
-    // Type some text into the auto-seeded root Content Node.
-    await typeChar('I')
-    await typeChar('d')
-    await typeChar('e')
-    await typeChar('a')
-    await browser.pause(200)
+    // Reset zoom — a previous spec may have left the workspace zoomed into
+    // a node that no longer has the ones we're about to look up.
+    await browser.execute(() => {
+      const root = document.querySelector('.breadcrumbs .crumb-root') as HTMLElement | null
+      if (root && !(root as HTMLButtonElement).disabled) root.click()
+    })
+    await browser.pause(300)
 
-    // Promote with Cmd+Shift+T → Thread Root.
-    await pressCmdShiftT()
+    // Create an isolated Content Node specifically for this spec — the
+    // workspace already contains rows from earlier specs (restart, search)
+    // and we'd rather not entangle with them.
+    const nodeId = await createIsolatedContentNode('cedarpad slice2 thread spec')
+    if (!nodeId) throw new Error('could not create isolated content node via IPC')
 
-    let snapshot = await rows()
-    const threadRootRow = snapshot.find((r) => r.visual === 'thread-root')
-    if (!threadRootRow) {
-      throw new Error(`expected a thread-root visual; got ${JSON.stringify(snapshot)}`)
-    }
-    // Content tolerance: wdio runs specs serially against the same seeded
-    // recents DB, so the previous restart spec may have left rows behind.
-    // We only require that our typed text landed *somewhere* on the
-    // promoted node — exact equality would be flaky.
-    if (!threadRootRow.content.includes('Idea')) {
-      throw new Error(`thread-root content missing 'Idea': ${JSON.stringify(threadRootRow)}`)
-    }
+    try {
+      // Promote with Cmd+Shift+T while the node is focused.
+      await focusNodeById(nodeId)
+      await pressCmdShiftT()
 
-    // Inject a fixture Turn under the Thread Root. Read its id off the
-    // rendered DOM (data-node-id is set by Tree.tsx).
-    if (!threadRootRow.nodeId) {
-      throw new Error('thread-root row missing data-node-id')
-    }
-    await injectFixtureTurn(threadRootRow.nodeId)
-
-    snapshot = await rows()
-
-    const visuals = snapshot.map((r) => r.visual)
-    if (!visuals.includes('thread-root')) {
-      throw new Error(`thread-root missing post-turn: ${JSON.stringify(snapshot)}`)
-    }
-    if (!visuals.includes('turn')) {
-      throw new Error(`turn visual missing: ${JSON.stringify(snapshot)}`)
-    }
-    if (!visuals.includes('block-text')) {
-      throw new Error(`block-text visual missing: ${JSON.stringify(snapshot)}`)
-    }
-    if (!visuals.includes('block-tool-use')) {
-      throw new Error(`block-tool-use visual missing: ${JSON.stringify(snapshot)}`)
-    }
-    if (!visuals.includes('block-tool-result')) {
-      throw new Error(`block-tool-result visual missing: ${JSON.stringify(snapshot)}`)
-    }
-
-    // Block kinds must all be 'block' (i.e. the schema-level kind), and
-    // each must be a child (depth > thread root depth).
-    const trDepth = snapshot.find((r) => r.visual === 'thread-root')!.depth
-    const blocks = snapshot.filter((r) => r.kind === 'block')
-    if (blocks.length !== 3) {
-      throw new Error(`expected 3 block rows; got ${blocks.length}: ${JSON.stringify(blocks)}`)
-    }
-    for (const b of blocks) {
-      if (b.depth <= trDepth) {
-        throw new Error(`block at unexpected depth: ${JSON.stringify(b)}`)
+      let snapshot = await rows()
+      const threadRootRow = snapshot.find((r) => r.nodeId === nodeId && r.visual === 'thread-root')
+      if (!threadRootRow) {
+        throw new Error(
+          `expected a thread-root visual on node ${nodeId}; got ${JSON.stringify(snapshot)}`,
+        )
       }
+
+      // Inject a fixture Turn under the Thread Root.
+      await injectFixtureTurn(nodeId)
+      snapshot = await rows()
+
+      // The Turn + 3 Block children belong specifically to our Thread Root.
+      // Filter the snapshot to rows below this Thread Root's depth that
+      // appear after it in the visible-flat order — that's its subtree.
+      const idx = snapshot.findIndex((r) => r.nodeId === nodeId)
+      if (idx < 0) throw new Error('thread-root row vanished after appendTurn')
+      const trDepth = snapshot[idx]!.depth
+      const subtree: VisualRow[] = []
+      for (let i = idx + 1; i < snapshot.length; i++) {
+        if (snapshot[i]!.depth <= trDepth) break
+        subtree.push(snapshot[i]!)
+      }
+
+      const visuals = subtree.map((r) => r.visual)
+      if (!visuals.includes('turn')) {
+        throw new Error(`turn visual missing in subtree: ${JSON.stringify(subtree)}`)
+      }
+      if (!visuals.includes('block-text')) {
+        throw new Error(`block-text visual missing: ${JSON.stringify(subtree)}`)
+      }
+      if (!visuals.includes('block-tool-use')) {
+        throw new Error(`block-tool-use visual missing: ${JSON.stringify(subtree)}`)
+      }
+      if (!visuals.includes('block-tool-result')) {
+        throw new Error(`block-tool-result visual missing: ${JSON.stringify(subtree)}`)
+      }
+
+      const blocks = subtree.filter((r) => r.kind === 'block')
+      if (blocks.length !== 3) {
+        throw new Error(`expected 3 block rows; got ${blocks.length}: ${JSON.stringify(blocks)}`)
+      }
+      for (const b of blocks) {
+        if (b.depth <= trDepth) {
+          throw new Error(`block at unexpected depth: ${JSON.stringify(b)}`)
+        }
+      }
+    } finally {
+      // Clean up: deleting the Thread Root cascades to the Turn + Blocks
+      // (FK ON DELETE CASCADE on nodes.parent_id), so subsequent specs
+      // see no leftover state from this one.
+      await deleteNode(nodeId)
     }
   })
 })
