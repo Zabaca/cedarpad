@@ -24,10 +24,13 @@ fn next_id() -> String {
 }
 
 async fn invoke_sidecar(method: &str, params: Value) -> Result<Value, String> {
+    invoke_sidecar_with_id(&next_id(), method, params).await
+}
+
+async fn invoke_sidecar_with_id(id: &str, method: &str, params: Value) -> Result<Value, String> {
     let sidecar = SIDECAR.get().ok_or("sidecar not started")?.clone();
-    let id = next_id();
     let (tx, rx) = oneshot::channel();
-    sidecar.pending.lock().await.insert(id.clone(), tx);
+    sidecar.pending.lock().await.insert(id.to_string(), tx);
 
     let req = serde_json::json!({ "id": id, "method": method, "params": params });
     let line = serde_json::to_string(&req).map_err(|e| e.to_string())? + "\n";
@@ -172,6 +175,15 @@ async fn rpc(method: String, params: Value) -> Result<Value, String> {
     invoke_sidecar(&method, params).await
 }
 
+/// Streaming variant of `rpc`. The renderer supplies `stream_id`; stream
+/// frames from the sidecar are forwarded as Tauri events on
+/// `rpc:stream:<stream_id>` so the renderer can listen for them. The
+/// terminal `ok` / `err` resolves the returned promise as usual.
+#[tauri::command]
+async fn rpc_stream(method: String, params: Value, stream_id: String) -> Result<Value, String> {
+    invoke_sidecar_with_id(&stream_id, &method, params).await
+}
+
 /// BYOK: persist the user's Anthropic API key in the OS keychain and push
 /// it into the running sidecar so the SDK runner can use it. The renderer
 /// passes the key in plaintext (it just typed it) — but never reads it
@@ -220,6 +232,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             rpc,
+            rpc_stream,
             auth_set_api_key,
             auth_has_api_key,
             auth_delete_api_key

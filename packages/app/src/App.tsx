@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react'
-import { call, isTauri } from './ipc'
+import { call, isTauri, authHasApiKey } from './ipc'
 import { Tree } from './components/Tree'
 import { WorkspacePicker } from './components/WorkspacePicker'
 import { WorkspaceSwitcher } from './components/WorkspaceSwitcher'
 import { SearchPalette } from './components/SearchPalette'
+import { ApiKeyPrompt } from './components/ApiKeyPrompt'
 import type { WorkspaceSummary } from './contract'
 
 // Workspace UI state. Persisted in localStorage so a relaunch restores the
@@ -18,6 +19,9 @@ export function App() {
   const [bootError, setBootError] = useState<string | null>(null)
   const [booted, setBooted] = useState(false)
   const [hideCompleted, setHideCompleted] = useState(false)
+  // BYOK: when null, we haven't probed the keychain yet; false = no key
+  // configured (show ApiKeyPrompt); true = key present (proceed).
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null)
 
   // Persist + apply a zoom-pointer change for the current workspace. The
   // sidecar is the source of truth for activeNodeId; we update the local
@@ -34,19 +38,27 @@ export function App() {
     [],
   )
 
-  // On launch, restore last active workspace from sidecar.
+  // On launch: probe keychain first, then restore last active workspace.
+  // The app refuses to surface workspace UI until a key is configured —
+  // per slice 3 acceptance criterion ("App refuses to start a Thread
+  // without a key configured").
   useEffect(() => {
     if (!isTauri()) {
+      setHasApiKey(true) // browser dev mode skips the key flow
       setBooted(true)
       return
     }
     void (async () => {
       try {
-        const recents = await call('workspace.recent', {})
-        if (recents.length > 0) {
-          const target = recents[0]!
-          const ws = await call('workspace.switch', { id: target.id })
-          setActive(ws)
+        const present = await authHasApiKey()
+        setHasApiKey(present)
+        if (present) {
+          const recents = await call('workspace.recent', {})
+          if (recents.length > 0) {
+            const target = recents[0]!
+            const ws = await call('workspace.switch', { id: target.id })
+            setActive(ws)
+          }
         }
       } catch (e) {
         setBootError(e instanceof Error ? e.message : String(e))
@@ -54,6 +66,21 @@ export function App() {
         setBooted(true)
       }
     })()
+  }, [])
+
+  // Re-probe + load workspace after the user enters a key.
+  const handleKeySaved = useCallback(async () => {
+    setHasApiKey(true)
+    try {
+      const recents = await call('workspace.recent', {})
+      if (recents.length > 0) {
+        const target = recents[0]!
+        const ws = await call('workspace.switch', { id: target.id })
+        setActive(ws)
+      }
+    } catch (e) {
+      setBootError(e instanceof Error ? e.message : String(e))
+    }
   }, [])
 
   // Restore per-workspace hide-completed preference whenever the active
@@ -133,6 +160,10 @@ export function App() {
         <pre>{bootError}</pre>
       </div>
     )
+  }
+
+  if (hasApiKey === false) {
+    return <ApiKeyPrompt onSaved={() => void handleKeySaved()} />
   }
 
   return (

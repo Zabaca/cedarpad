@@ -23,6 +23,13 @@ const ACCOUNT: &str = "anthropic-api-key";
 static MEMORY_STORE: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Sentinel flag in the memory store: once the user explicitly deletes
+/// the key, we stop re-seeding from `CEDARPAD_E2E_DEFAULT_KEY`. Without
+/// this the auth e2e spec (which deletes + reloads to verify the prompt
+/// shows up) would see the default re-populate and never see the
+/// prompt.
+const DELETED_FLAG: &str = "__cedarpad_e2e_deleted__";
+
 fn use_memory_backend() -> bool {
     std::env::var("CEDARPAD_KEYCHAIN_MEMORY").map(|v| v == "1").unwrap_or(false)
 }
@@ -31,12 +38,36 @@ fn memory_key() -> String {
     format!("{SERVICE}:{ACCOUNT}")
 }
 
+/// E2E convenience: when memory-backed and no key is set, auto-populate
+/// from `CEDARPAD_E2E_DEFAULT_KEY` so the existing specs that don't
+/// exercise the auth flow don't have to type a key first. The auth
+/// e2e spec explicitly clears the key and re-runs the flow — once the
+/// `DELETED_FLAG` is set we stop re-seeding for the rest of the
+/// process lifetime.
+fn ensure_default_key(map: &mut HashMap<String, String>) {
+    if !use_memory_backend() {
+        return;
+    }
+    if map.contains_key(&memory_key()) {
+        return;
+    }
+    if map.contains_key(DELETED_FLAG) {
+        return;
+    }
+    if let Ok(default_key) = std::env::var("CEDARPAD_E2E_DEFAULT_KEY") {
+        if !default_key.is_empty() {
+            map.insert(memory_key(), default_key);
+        }
+    }
+}
+
 /// Persist an API key in the OS keychain (or in-memory backend when
 /// `CEDARPAD_KEYCHAIN_MEMORY=1`).
 pub fn set_api_key(key: &str) -> Result<(), String> {
     if use_memory_backend() {
         let mut m = MEMORY_STORE.lock().map_err(|e| e.to_string())?;
         m.insert(memory_key(), key.to_string());
+        m.remove(DELETED_FLAG);
         return Ok(());
     }
     let entry = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|e| e.to_string())?;
@@ -47,7 +78,8 @@ pub fn set_api_key(key: &str) -> Result<(), String> {
 /// Returns `Ok(None)` when no key has been set.
 pub fn get_api_key() -> Result<Option<String>, String> {
     if use_memory_backend() {
-        let m = MEMORY_STORE.lock().map_err(|e| e.to_string())?;
+        let mut m = MEMORY_STORE.lock().map_err(|e| e.to_string())?;
+        ensure_default_key(&mut m);
         return Ok(m.get(&memory_key()).cloned());
     }
     let entry = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|e| e.to_string())?;
@@ -68,6 +100,8 @@ pub fn delete_api_key() -> Result<(), String> {
     if use_memory_backend() {
         let mut m = MEMORY_STORE.lock().map_err(|e| e.to_string())?;
         m.remove(&memory_key());
+        // Suppress the default-key re-seed for the rest of this process.
+        m.insert(DELETED_FLAG.to_string(), String::new());
         return Ok(());
     }
     let entry = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|e| e.to_string())?;
