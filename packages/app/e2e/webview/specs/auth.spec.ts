@@ -41,7 +41,7 @@ async function deleteApiKeyAndReload(): Promise<void> {
 async function waitForPrompt(): Promise<void> {
   await browser.waitUntil(
     async () => {
-      const el = await $('[data-testid="api-key-prompt"]')
+      const el = await $('[data-testid="auth-prompt"]')
       return el.isExisting()
     },
     { timeout: 10000, timeoutMsg: 'ApiKeyPrompt did not render after key deletion' },
@@ -66,7 +66,7 @@ describe('webview e2e (slice 3): BYOK first-launch flow', () => {
     await browser.waitUntil(
       async () => {
         const tree = await $('.tree-node .content')
-        const prompt = await $('[data-testid="api-key-prompt"]')
+        const prompt = await $('[data-testid="auth-prompt"]')
         return (await tree.isExisting()) || (await prompt.isExisting())
       },
       { timeout: 15000, timeoutMsg: 'App never finished booting' },
@@ -81,6 +81,18 @@ describe('webview e2e (slice 3): BYOK first-launch flow', () => {
     if (await treeWhilePrompt.isExisting()) {
       throw new Error('Tree was visible while the API key prompt was up — refuse-without-key invariant broken')
     }
+
+    // The new AuthPrompt hides the BYOK form behind a "Use an API key
+    // instead" toggle (subscription is the primary path). Click the
+    // toggle so the existing input/submit testids are in the DOM.
+    await browser.execute(() => {
+      const btn = document.querySelector(
+        '[data-testid="auth-show-api-key"]',
+      ) as HTMLButtonElement | null
+      if (!btn) throw new Error('no auth-show-api-key toggle')
+      btn.click()
+    })
+    await browser.pause(80)
 
     // Inject a key directly via the React-controlled input. Mac WebView's
     // text-insertion quirk applies here too: dispatch an `InputEvent` so

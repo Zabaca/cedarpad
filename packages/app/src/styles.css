@@ -392,36 +392,55 @@ body {
   font-size: 13px;
 }
 
-/* ApiKeyPrompt (slice 3) */
-.api-key-prompt {
-  max-width: 460px;
+/* AuthPrompt (post-slice-3 fix: subscription primary, BYOK fallback) */
+.auth-prompt {
+  max-width: 520px;
   margin: 80px auto;
   padding: 24px;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
-.api-key-prompt h2 {
-  margin: 0 0 12px;
+.auth-prompt h2 {
+  margin: 0 0 16px;
 }
-.api-key-prompt p {
+.auth-prompt h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.auth-prompt p {
   color: #555;
   font-size: 13px;
   line-height: 1.5;
-  margin: 0 0 18px;
+  margin: 0 0 12px;
 }
-.api-key-prompt label {
+.auth-prompt pre {
+  background: #f3f4f6;
+  border: 1px solid #e1e3e7;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 13px;
+  margin: 0 0 12px;
+}
+.auth-section {
+  padding: 16px 0;
+  border-top: 1px solid #e1e3e7;
+}
+.auth-section:first-of-type {
+  border-top: none;
+}
+.auth-prompt label {
   display: flex;
   flex-direction: column;
   gap: 6px;
   font-size: 12px;
   font-weight: 600;
 }
-.api-key-prompt input {
+.auth-prompt input {
   font-size: 14px;
   padding: 8px 10px;
   border: 1px solid #d0d4d9;
   border-radius: 4px;
 }
-.api-key-prompt button {
+.auth-prompt button {
   margin-top: 14px;
   padding: 8px 16px;
   font-size: 13px;
@@ -431,11 +450,16 @@ body {
   border-radius: 4px;
   cursor: pointer;
 }
-.api-key-prompt button:disabled {
+.auth-prompt button.auth-toggle-api-key {
+  margin-top: 0;
+  background: transparent;
+  color: #5b6cff;
+}
+.auth-prompt button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
-.api-key-prompt .error {
+.auth-prompt .error {
   margin-top: 10px;
   color: #b00020;
   font-size: 12px;

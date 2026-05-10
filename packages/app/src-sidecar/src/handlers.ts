@@ -9,13 +9,14 @@
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import type { MethodName, MethodInput, MethodOutput, Node, RunnerEvent } from '../../src/contract.ts'
 import { createWorkspaceManager, type WorkspaceManager } from '../../modules/workspace/workspaceManager.ts'
 import { createOutlineStore, type OutlineStore } from '../../modules/outline/outlineStore.ts'
 import { createThreadEngine, type ThreadEngine } from '../../modules/thread/threadEngine.ts'
 import type { DbClient } from '../../modules/db/libsqlClient.ts'
 import { createKeychainStore, type KeychainStore } from '../../modules/auth/keychainStore.ts'
+import { detectAuth, type AuthMode } from '../../modules/auth/authProbe.ts'
 import { createSdkRunner, type SdkRunner } from '../../modules/sdk/sdkRunner.ts'
 import { scanInterruptedTurns } from '../../modules/thread/crashRecovery.ts'
 import { chooseSdkClient } from './sdkClient.ts'
@@ -38,6 +39,52 @@ const threadEngines = new Map<string, ThreadEngine>()
 // it via auth.injectApiKey. The OS keychain itself lives in the Rust shell.
 const keychain: KeychainStore = createKeychainStore()
 
+/**
+ * Probe the host for the SDK's subscription credentials file. When
+ * `CLAUDE_CONFIG_DIR` is set we honour it (matching the SDK); otherwise
+ * we fall back to `~/.claude/.credentials.json`. Read failures (missing
+ * file, permission denied, etc.) are squashed to `null` so detection
+ * stays cheap and side-effect-free.
+ */
+function readCredentialsFile(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Test-only override for the auth-mode detection. Lets the WebView e2e
+ * spec exercise all three branches without needing to relaunch the
+ * binary (each spec session shares one binary). Honoured only when the
+ * `CEDARPAD_E2E_AUTH_MODE` env var was set at launch — that's the gate
+ * for the e2e harness; production builds never see the env var so the
+ * override channel is dead code there.
+ *
+ * The override seeds itself from the env var on first probe so a launch
+ * with `CEDARPAD_E2E_AUTH_MODE=subscription` still works without the
+ * spec having to call `auth.setE2EOverride`.
+ */
+let e2eAuthOverride: AuthMode | null = null
+
+function readEnvWithOverride(name: string): string | undefined {
+  if (name === 'CEDARPAD_E2E_AUTH_MODE') {
+    if (e2eAuthOverride) return e2eAuthOverride
+    return process.env.CEDARPAD_E2E_AUTH_MODE
+  }
+  return process.env[name]
+}
+
+function currentAuthMode(): AuthMode {
+  return detectAuth({
+    keychain,
+    homedir,
+    readEnv: readEnvWithOverride,
+    readCredentialsFile,
+  }).mode
+}
+
 // SDK runners — one per workspace, since each runner closes over the
 // workspace's Thread engine (which writes Block Nodes to that workspace's
 // libSQL DB). The SdkClient itself is shared.
@@ -48,7 +95,12 @@ async function getRunner(workspaceId: string): Promise<SdkRunner> {
   const cached = sdkRunners.get(workspaceId)
   if (cached) return cached
   const engine = await getThread(workspaceId)
-  const runner = createSdkRunner({ sdk: sdkClient, threadEngine: engine, keychain })
+  const runner = createSdkRunner({
+    sdk: sdkClient,
+    threadEngine: engine,
+    keychain,
+    getAuthMode: currentAuthMode,
+  })
   sdkRunners.set(workspaceId, runner)
   return runner
 }
@@ -206,6 +258,34 @@ export const handlers: Handlers = {
   },
   'auth.deleteApiKey': () => {
     keychain.deleteApiKey()
+    return { ok: true } as const
+  },
+  // Authoritative auth-state probe. The renderer calls this on launch
+  // to decide whether to show the AuthPrompt at all.
+  'auth.detect': () => {
+    return detectAuth({
+      keychain,
+      homedir,
+      readEnv: readEnvWithOverride,
+      readCredentialsFile,
+    })
+  },
+  // Test-only: lets `auth-detect.spec.ts` flip the forced auth mode
+  // mid-session to exercise all three branches against a single binary
+  // launch. Production renderer builds never call this. Only effective
+  // when the binary was launched with `CEDARPAD_E2E_AUTH_MODE` already
+  // set (i.e. the e2e harness opted in).
+  'auth.setE2EOverride': ({ mode }) => {
+    if (process.env.CEDARPAD_E2E_AUTH_MODE === undefined) {
+      throw new Error(
+        'auth.setE2EOverride is only available when CEDARPAD_E2E_AUTH_MODE was set at launch',
+      )
+    }
+    if (mode === null) {
+      e2eAuthOverride = null
+    } else {
+      e2eAuthOverride = mode
+    }
     return { ok: true } as const
   },
 

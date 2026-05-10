@@ -76,6 +76,20 @@ export const config: WebdriverIO.Config = {
     // clears it via `auth_delete_api_key` to exercise the first-launch
     // flow.
     process.env.CEDARPAD_E2E_DEFAULT_KEY = 'sk-ant-e2e-default'
+    // Subscription-detect isolation: the auth probe checks
+    // `${CLAUDE_CONFIG_DIR ?? ~/.claude}/.credentials.json` for an
+    // OAuth login. On a developer machine with a real Claude Code
+    // login, the host's credentials file would short-circuit the
+    // detection to `'subscription'` and flip the existing API-key
+    // specs into a path they were never designed for. Point the probe
+    // at the e2e tmp dir (which has no credentials file) so detection
+    // returns `'api-key'` whenever the in-memory keychain has a key
+    // and `'none'` when it doesn't.
+    process.env.CLAUDE_CONFIG_DIR = tmpDir
+    // Opt the binary into the test-only `auth.setE2EOverride` channel
+    // so the new auth-detect.spec.ts can flip modes per-test. Empty
+    // string is fine — only the var's PRESENCE gates the channel.
+    process.env.CEDARPAD_E2E_AUTH_MODE = ''
 
     driverProc = spawn('tauri-webdriver', ['--port', '4444'], {
       stdio: ['ignore', 'pipe', 'pipe'],
