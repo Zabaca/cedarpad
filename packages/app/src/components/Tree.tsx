@@ -991,9 +991,11 @@ export function Tree({
           data-testid="add-node"
           onClick={() => {
             void (async () => {
+              const parentId =
+                activeNodeId !== null && !lookup.get(activeNodeId) ? null : activeNodeId
               const created = await call('outline.create', {
                 workspaceId,
-                parentId: activeNodeId,
+                parentId,
                 content: '',
               })
               await load()
