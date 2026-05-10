@@ -40,6 +40,7 @@ import type { BlockPayload } from '../outline/types.ts'
 export type SdkInputMessage =
   | {
       type: 'assistant'
+      uuid?: string
       message: {
         content: Array<
           | { type: 'text'; text: string }
@@ -82,7 +83,7 @@ export type SdkInputMessage =
         | { type: string; [k: string]: unknown }
     }
   | { type: 'result'; subtype: string; is_error?: boolean }
-  | { type: 'system'; subtype: string }
+  | { type: 'system'; subtype: string; session_id?: string }
   | { type: string; [k: string]: unknown }
 
 export interface SdkQueryParams {
@@ -204,6 +205,14 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
         const turn = await threadEngine.beginTurn(threadId)
         const turnId = turn.id
 
+        // Resume the SDK session if we've captured one for this Thread on
+        // a prior turn. Without `resume`, every `sdk.query()` call is a
+        // fresh session and Claude has no recollection of prior prompts
+        // — that's the bug this PR fixes. The SDK exposes `sessionId` on
+        // its `system.init` event the very first time a Thread runs;
+        // we persist it then read it back here on every subsequent turn.
+        const sdkSessionId = await threadEngine.getThreadRootSdkSessionId(threadId)
+
         const abortController = new AbortController()
         let handle: SdkQueryHandle
         try {
@@ -213,21 +222,24 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
           const env: Record<string, string | undefined> = { ...process.env }
           if (apiKey) env.ANTHROPIC_API_KEY = apiKey
 
+          const queryOptions: SdkQueryParams['options'] = {
+            abortController,
+            cwd: repoPath,
+            // Restrict to read-only tools at the SDK boundary. `tools`
+            // restricts WHICH built-in tools the model can see;
+            // `allowedTools` auto-approves them so we don't hit a
+            // permission prompt the sidecar can't answer. Anything not
+            // in `tools` is removed from the model's context entirely.
+            tools: [...ALLOWED_TOOLS],
+            allowedTools: [...ALLOWED_TOOLS],
+            permissionMode: 'default',
+            env,
+          }
+          if (sdkSessionId) queryOptions.resume = sdkSessionId
+
           handle = sdk.query({
             prompt,
-            options: {
-              abortController,
-              cwd: repoPath,
-              // Restrict to read-only tools at the SDK boundary. `tools`
-              // restricts WHICH built-in tools the model can see;
-              // `allowedTools` auto-approves them so we don't hit a
-              // permission prompt the sidecar can't answer. Anything not
-              // in `tools` is removed from the model's context entirely.
-              tools: [...ALLOWED_TOOLS],
-              allowedTools: [...ALLOWED_TOOLS],
-              permissionMode: 'default',
-              env,
-            },
+            options: queryOptions,
           })
         } catch (err) {
           yield {
@@ -260,9 +272,26 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
             if (typeof msg !== 'object' || msg === null) continue
 
             switch (msg.type) {
-              case 'system':
-                // ignore — initialization metadata
+              case 'system': {
+                // The SDK emits `subtype: 'init'` once per query with a
+                // `session_id`. On the FIRST turn for this Thread we
+                // persist it onto the Thread Root so subsequent turns
+                // can pass `resume: sessionId` and the SDK replays
+                // history server-side. On resumed turns the SDK still
+                // emits `init` with the same `session_id` we passed in
+                // via `resume` — re-stamping it is a no-op for
+                // correctness, but we skip the DB write when we already
+                // had it cached via `sdkSessionId`.
+                if (
+                  msg.subtype === 'init' &&
+                  !sdkSessionId &&
+                  typeof msg.session_id === 'string' &&
+                  msg.session_id.length > 0
+                ) {
+                  await threadEngine.setThreadRootSdkSessionId(threadId, msg.session_id)
+                }
                 break
+              }
               case 'stream_event': {
                 const ev = msg.event
                 if (!ev || typeof ev !== 'object') break
@@ -290,6 +319,17 @@ export function createSdkRunner({ sdk, threadEngine, keychain, getAuthMode }: Cr
                 break
               }
               case 'assistant': {
+                // Stamp the SDK assistant-message uuid onto this Turn.
+                // Last-write-wins: when an SDK turn includes multiple
+                // assistant messages (e.g. text → tool_use → text after
+                // tool_result), `resumeSessionAt` for "branch from this
+                // Turn" wants the LAST assistant message of the Turn so
+                // the resumed history includes the full Turn. Per
+                // SDKAssistantMessage.uuid in the SDK's sdk.d.ts.
+                const assistantUuid = (msg as { uuid?: unknown }).uuid
+                if (typeof assistantUuid === 'string' && assistantUuid.length > 0) {
+                  await threadEngine.setTurnSdkMessageUuid(turnId, assistantUuid)
+                }
                 const blocks = msg.message?.content ?? []
                 for (const block of blocks) {
                   if (run.cancelled) break

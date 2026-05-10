@@ -53,6 +53,7 @@ afterEach(async () => {
 type FakeSdkMessage =
   | {
       type: 'assistant'
+      uuid?: string
       message: {
         content: Array<
           | { type: 'text'; text: string }
@@ -72,13 +73,14 @@ type FakeSdkMessage =
       }
     }
   | { type: 'result'; subtype: 'success'; is_error?: boolean }
-  | { type: 'system'; subtype: 'init' }
+  | { type: 'system'; subtype: 'init'; session_id?: string }
 
 interface RecordedCall {
   prompt: string
   cwd?: string
   allowedTools?: string[]
   apiKey?: string
+  resume?: string
 }
 
 function fakeSdk(opts: {
@@ -90,10 +92,11 @@ function fakeSdk(opts: {
   return {
     query: ({ prompt, options }) => {
       opts.recorded.push({
-        prompt,
+        prompt: prompt as string,
         cwd: options?.cwd,
         allowedTools: options?.allowedTools,
         apiKey: options?.env?.ANTHROPIC_API_KEY,
+        resume: options?.resume as string | undefined,
       })
       let interrupted = false
       const handle: SdkQueryHandle = {
@@ -552,5 +555,282 @@ describe('sdkRunner.sendPrompt', () => {
     }
 
     expect(recorded[0]!.apiKey).toBe('sk-ant-test')
+  })
+
+  it('first turn captures sessionId from system.init and persists it to the Thread Root', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+
+    const recorded: RecordedCall[] = []
+    const sdk = fakeSdk({
+      recorded,
+      script: [
+        { type: 'system', subtype: 'init', session_id: 'sess-uuid-1' },
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } },
+        { type: 'result', subtype: 'success' },
+      ],
+    })
+    const runner = createSdkRunner({ sdk, threadEngine: engine, keychain })
+
+    for await (const _ev of runner.sendPrompt({
+      threadId: root.id,
+      prompt: 'hi',
+      repoPath: '/r',
+    })) {
+      void _ev
+    }
+
+    // First call must NOT have sent `resume` — there was no prior session.
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0]!.resume).toBeUndefined()
+
+    // Thread Root metadata now carries the sessionId.
+    const rootAfter = await store.getNode(root.id)
+    expect((rootAfter!.metadata as { sdkSessionId?: unknown }).sdkSessionId).toBe('sess-uuid-1')
+  })
+
+  it('second turn reads the persisted sessionId and passes resume to the SDK', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+
+    const recorded: RecordedCall[] = []
+    const sdk = fakeSdk({
+      recorded,
+      script: [
+        { type: 'system', subtype: 'init', session_id: 'sess-uuid-1' },
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'first' }] } },
+        { type: 'result', subtype: 'success' },
+      ],
+    })
+    const runner = createSdkRunner({ sdk, threadEngine: engine, keychain })
+
+    // First turn — runner captures sessionId from system.init.
+    for await (const _ev of runner.sendPrompt({
+      threadId: root.id,
+      prompt: 'first',
+      repoPath: '/r',
+    })) {
+      void _ev
+    }
+    expect(recorded[0]!.resume).toBeUndefined()
+
+    // Drive a second turn with a fresh fake script. The SDK still emits
+    // a system.init on resume; we want to confirm the runner passes
+    // `resume: <prior sessionId>` on this second call.
+    const recorded2: RecordedCall[] = []
+    const sdk2 = fakeSdk({
+      recorded: recorded2,
+      script: [
+        { type: 'system', subtype: 'init', session_id: 'sess-uuid-1' },
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'second' }] } },
+        { type: 'result', subtype: 'success' },
+      ],
+    })
+    const runner2 = createSdkRunner({ sdk: sdk2, threadEngine: engine, keychain })
+    for await (const _ev of runner2.sendPrompt({
+      threadId: root.id,
+      prompt: 'second',
+      repoPath: '/r',
+    })) {
+      void _ev
+    }
+
+    expect(recorded2).toHaveLength(1)
+    expect(recorded2[0]!.resume).toBe('sess-uuid-1')
+
+    // sessionId on the Thread Root is unchanged.
+    const rootAfter = await store.getNode(root.id)
+    expect((rootAfter!.metadata as { sdkSessionId?: unknown }).sdkSessionId).toBe('sess-uuid-1')
+  })
+
+  it('stamps sdkMessageUuid on the Turn Node from the assistant message uuid', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+
+    const recorded: RecordedCall[] = []
+    const sdk = fakeSdk({
+      recorded,
+      script: [
+        { type: 'system', subtype: 'init', session_id: 'sess-1' },
+        {
+          type: 'assistant',
+          uuid: 'msg-uuid-A',
+          message: { content: [{ type: 'text', text: 'hello' }] },
+        },
+        { type: 'result', subtype: 'success' },
+      ],
+    })
+    const runner = createSdkRunner({ sdk, threadEngine: engine, keychain })
+    for await (const _ev of runner.sendPrompt({
+      threadId: root.id,
+      prompt: 'hi',
+      repoPath: '/r',
+    })) {
+      void _ev
+    }
+
+    const turns = await store.getChildren(root.id)
+    expect(turns).toHaveLength(1)
+    const turnMeta = turns[0]!.metadata as { sdkMessageUuid?: unknown }
+    expect(turnMeta.sdkMessageUuid).toBe('msg-uuid-A')
+  })
+
+  it('multiple assistant messages in one Turn: last uuid wins (resumeSessionAt boundary)', async () => {
+    // SDK turns can include multiple assistant messages around tool calls.
+    // For "branch from this Turn" wiring we want the LAST assistant
+    // message of the Turn so resumed history covers the whole Turn.
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+
+    const recorded: RecordedCall[] = []
+    const sdk = fakeSdk({
+      recorded,
+      script: [
+        { type: 'system', subtype: 'init', session_id: 'sess-1' },
+        {
+          type: 'assistant',
+          uuid: 'msg-uuid-A',
+          message: {
+            content: [
+              { type: 'text', text: 'looking…' },
+              { type: 'tool_use', id: 'tu_1', name: 'Read', input: { path: 'README.md' } },
+            ],
+          },
+        },
+        {
+          type: 'user',
+          message: {
+            content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'cedarpad' }],
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: 'msg-uuid-B',
+          message: { content: [{ type: 'text', text: 'done' }] },
+        },
+        { type: 'result', subtype: 'success' },
+      ],
+    })
+    const runner = createSdkRunner({ sdk, threadEngine: engine, keychain })
+    for await (const _ev of runner.sendPrompt({
+      threadId: root.id,
+      prompt: 'hi',
+      repoPath: '/r',
+    })) {
+      void _ev
+    }
+
+    const turns = await store.getChildren(root.id)
+    const turnMeta = turns[0]!.metadata as { sdkMessageUuid?: unknown }
+    expect(turnMeta.sdkMessageUuid).toBe('msg-uuid-B')
+  })
+
+  it('cancelled turn still persists sessionId (sticks once captured)', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+
+    const recorded: RecordedCall[] = []
+    // Yield slowly so the cancel races ahead of the second message —
+    // but the system.init lands first, so its session_id should be
+    // persisted before cancel fires.
+    const sdk = fakeSdk({
+      recorded,
+      yieldDelayMs: 30,
+      script: [
+        { type: 'system', subtype: 'init', session_id: 'sess-survives' },
+        {
+          type: 'assistant',
+          uuid: 'msg-1',
+          message: { content: [{ type: 'text', text: 'first block' }] },
+        },
+        {
+          type: 'assistant',
+          uuid: 'msg-2',
+          message: { content: [{ type: 'text', text: 'never seen' }] },
+        },
+        { type: 'result', subtype: 'success' },
+      ],
+    })
+    const runner = createSdkRunner({ sdk, threadEngine: engine, keychain })
+
+    const stream = runner.sendPrompt({
+      threadId: root.id,
+      prompt: 'hi',
+      repoPath: '/r',
+    })
+    for await (const ev of stream) {
+      if (ev.kind === 'block-complete') {
+        await runner.cancel(root.id)
+      }
+    }
+
+    // sessionId was captured before cancel landed and survives.
+    const rootAfter = await store.getNode(root.id)
+    expect((rootAfter!.metadata as { sdkSessionId?: unknown }).sdkSessionId).toBe('sess-survives')
+
+    // Turn was marked cancelled per existing behaviour.
+    const turns = await store.getChildren(root.id)
+    const turnMeta = turns[0]!.metadata as { state?: string }
+    expect(turnMeta.state).toBe('cancelled')
+  })
+
+  it('errored turn does not unset a previously-captured sessionId', async () => {
+    const root = await store.createNode({ parentId: null, content: 'idea' })
+    await engine.startThread(root.id)
+
+    // First turn: captures session id.
+    const recorded1: RecordedCall[] = []
+    const sdk1 = fakeSdk({
+      recorded: recorded1,
+      script: [
+        { type: 'system', subtype: 'init', session_id: 'sess-keep' },
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } },
+        { type: 'result', subtype: 'success' },
+      ],
+    })
+    const runner1 = createSdkRunner({ sdk: sdk1, threadEngine: engine, keychain })
+    for await (const _ev of runner1.sendPrompt({
+      threadId: root.id,
+      prompt: 'first',
+      repoPath: '/r',
+    })) {
+      void _ev
+    }
+
+    // Second turn: SDK throws mid-stream. Runner emits an SDK_RUNTIME
+    // error but the prior sessionId must still be on the Thread Root.
+    const sdkErr: SdkClient = {
+      query: () => ({
+        async interrupt() {
+          /* no-op */
+        },
+        [Symbol.asyncIterator]() {
+          return {
+            async next(): Promise<IteratorResult<unknown>> {
+              throw new Error('boom')
+            },
+            async return() {
+              return { done: true, value: undefined as never }
+            },
+          }
+        },
+      }),
+    }
+    const runner2 = createSdkRunner({ sdk: sdkErr, threadEngine: engine, keychain })
+    const events: RunnerEvent[] = []
+    for await (const ev of runner2.sendPrompt({
+      threadId: root.id,
+      prompt: 'second',
+      repoPath: '/r',
+    })) {
+      events.push(ev)
+    }
+    // Sanity: the runner surfaced the error (it doesn't matter which
+    // exact code; the contract is that sessionId persistence is
+    // independent of run success).
+    expect(events.some((e) => e.kind === 'error')).toBe(true)
+
+    const rootAfter = await store.getNode(root.id)
+    expect((rootAfter!.metadata as { sdkSessionId?: unknown }).sdkSessionId).toBe('sess-keep')
   })
 })

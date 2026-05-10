@@ -81,6 +81,14 @@ export const TurnMetadataSchema = z.object({
    * turns. New code reads `state === 'cancelled'` instead.
    */
   cancelled: z.boolean().optional(),
+  /**
+   * Claude Agent SDK assistant-message uuid for this Turn. Captured from
+   * the SDK's `assistant` messages so a future "branch from this Turn" PR
+   * can pass `resumeSessionAt: sdkMessageUuid` to fork at the exact
+   * boundary. Null when not yet captured (e.g. cancelled before any
+   * assistant message landed) or when the Turn predates this field.
+   */
+  sdkMessageUuid: z.string().nullable().optional(),
 })
 export type TurnMetadata = z.infer<typeof TurnMetadataSchema>
 
@@ -95,6 +103,14 @@ export type BlockMetadata = z.infer<typeof BlockMetadataSchema>
 /** Marker stored in metadata of a Content Node that has been promoted to a Thread Root. */
 export const ThreadRootMetadataSchema = z.object({
   isThreadRoot: z.literal(true),
+  /**
+   * Claude Agent SDK session id for this Thread (captured from the SDK's
+   * `system.init` event on the first turn). Persisted so subsequent
+   * `sdk.query()` calls can pass `resume: sdkSessionId` and the SDK
+   * replays prior conversation history server-side. Null/absent until
+   * the first turn lands; once set, sticks for the life of the Thread.
+   */
+  sdkSessionId: z.string().nullable().optional(),
 })
 export type ThreadRootMetadata = z.infer<typeof ThreadRootMetadataSchema>
 
