@@ -2,6 +2,8 @@
 
 The cedarpad application: a Workflowy-style outliner where any outline node can become the root of a Claude conversation, with the conversation living as descendant nodes in the same tree. Branching, retrying, and forking conversations are first-class operations on the tree.
 
+**v1 shape:** Tauri desktop app. UI (WebView) + Claude Code SDK runner + libSQL store all bundled in one binary. Fully offline-first; no Vercel deployment in v1 (`production` env stays empty until v2 cloud sync). libSQL chosen specifically so v2 can enable Turso embedded replicas for cloud sync without a data-model rewrite.
+
 ## Language
 
 **Node**:
