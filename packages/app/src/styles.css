@@ -299,3 +299,52 @@ body {
   background: #eef2ff;
   border-color: #93a4ff;
 }
+
+/* ApiKeyPrompt (slice 3) */
+.api-key-prompt {
+  max-width: 460px;
+  margin: 80px auto;
+  padding: 24px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.api-key-prompt h2 {
+  margin: 0 0 12px;
+}
+.api-key-prompt p {
+  color: #555;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 18px;
+}
+.api-key-prompt label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.api-key-prompt input {
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid #d0d4d9;
+  border-radius: 4px;
+}
+.api-key-prompt button {
+  margin-top: 14px;
+  padding: 8px 16px;
+  font-size: 13px;
+  border: 1px solid #5b6cff;
+  background: #5b6cff;
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.api-key-prompt button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.api-key-prompt .error {
+  margin-top: 10px;
+  color: #b00020;
+  font-size: 12px;
+}

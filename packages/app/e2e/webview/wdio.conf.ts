@@ -62,6 +62,20 @@ export const config: WebdriverIO.Config = {
     const seeded = await seedRecentRepo({ baseTmp: tmpDir })
     process.env.CEDARPAD_E2E_REPO = seeded.repoPath
     process.env.CEDARPAD_GLOBAL_DIR = seeded.globalDir
+    // Slice 3 e2e isolation:
+    //  - CEDARPAD_KEYCHAIN_MEMORY=1 swaps the OS keychain for an
+    //    in-process HashMap so tests never touch the developer's real
+    //    keychain.
+    //  - CEDARPAD_E2E_FAKE_SDK=1 swaps the Claude Agent SDK for a
+    //    deterministic fake (no network, no API key required).
+    process.env.CEDARPAD_KEYCHAIN_MEMORY = '1'
+    process.env.CEDARPAD_E2E_FAKE_SDK = '1'
+    // Default key auto-populates the in-memory keychain so the existing
+    // five specs (which were green before slice 3) don't have to type a
+    // key on every fresh binary launch. The auth.spec.ts spec explicitly
+    // clears it via `auth_delete_api_key` to exercise the first-launch
+    // flow.
+    process.env.CEDARPAD_E2E_DEFAULT_KEY = 'sk-ant-e2e-default'
 
     driverProc = spawn('tauri-webdriver', ['--port', '4444'], {
       stdio: ['ignore', 'pipe', 'pipe'],

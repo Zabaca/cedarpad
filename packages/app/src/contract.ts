@@ -184,6 +184,93 @@ export const ThreadAppendTurnOutputSchema = z.object({
 })
 export type ThreadAppendTurnOutput = z.infer<typeof ThreadAppendTurnOutputSchema>
 
+// ---------- Auth RPC (slice 3) ----------
+
+/**
+ * Auth methods are unusual: their **persistence** lives in the Rust shell,
+ * not the sidecar. The renderer calls these via `auth.*` IPC for parity
+ * with every other contract method, and the sidecar's auth handlers act on
+ * its in-process key cache (`keychainStore`). The OS keychain itself is
+ * read/written by Rust via the `keyring` crate; Rust pushes the key into
+ * the sidecar at startup (and on `setApiKey`) using an internal inject
+ * message. The renderer NEVER reads the key back — `getApiKey` is not in
+ * this contract by design (see `keychainStore.ts` header).
+ */
+export const AuthSetApiKeyInputSchema = z.object({
+  key: z.string().min(1),
+})
+export type AuthSetApiKeyInput = z.infer<typeof AuthSetApiKeyInputSchema>
+
+export const AuthHasApiKeyOutputSchema = z.object({
+  hasKey: z.boolean(),
+})
+export type AuthHasApiKeyOutput = z.infer<typeof AuthHasApiKeyOutputSchema>
+
+// ---------- SDK runner RPC (slice 3) ----------
+
+/**
+ * SDK runner events as they flow back from the sidecar. The runner translates
+ * Claude Code SDK message types into these — text deltas accumulate into a
+ * single Block Node's content; tool_use / tool_result land as discrete Block
+ * Nodes when complete; turn-complete fires once at the end.
+ *
+ * `block-complete` carries the full `BlockPayload` so the renderer (or the
+ * sidecar's appendTurn fan-out) can persist the Block. `text-delta` is for
+ * incremental UI rendering of an in-flight text block; the sidecar still
+ * appends a single Block Node when the block completes.
+ */
+export const RunnerEventSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('text-delta'),
+    blockId: z.string(),
+    content: z.string(),
+  }),
+  z.object({
+    kind: z.literal('block-complete'),
+    blockId: z.string(),
+    /** The persisted Node id (when written through the Thread engine). */
+    nodeId: z.string().optional(),
+    payload: BlockPayloadSchema,
+  }),
+  z.object({
+    kind: z.literal('turn-complete'),
+    turnId: z.string(),
+  }),
+  z.object({
+    kind: z.literal('error'),
+    code: z.string(),
+    message: z.string(),
+  }),
+])
+export type RunnerEvent = z.infer<typeof RunnerEventSchema>
+
+export const SdkSendPromptInputSchema = z.object({
+  workspaceId: z.string(),
+  threadRootId: z.string(),
+  prompt: z.string(),
+  /** Absolute path to the repo Claude is allowed to read. */
+  repoPath: z.string(),
+})
+export type SdkSendPromptInput = z.infer<typeof SdkSendPromptInputSchema>
+
+export const SdkCancelInputSchema = z.object({
+  threadRootId: z.string(),
+})
+export type SdkCancelInput = z.infer<typeof SdkCancelInputSchema>
+
+export const SdkRecycleInputSchema = z.object({
+  threadRootId: z.string(),
+})
+export type SdkRecycleInput = z.infer<typeof SdkRecycleInputSchema>
+
+export const SdkSendPromptResultSchema = z.object({
+  /** ID of the Turn Node that was written. */
+  turnId: z.string(),
+  /** Reason the run ended. `done` = SDK reported success; otherwise SDK error code. */
+  reason: z.enum(['done', 'cancelled', 'error']),
+})
+export type SdkSendPromptResult = z.infer<typeof SdkSendPromptResultSchema>
+
 // ---------- Workspace RPC ----------
 
 export const WorkspaceSummarySchema = z.object({
@@ -287,6 +374,53 @@ export const Methods = {
     input: ThreadAppendTurnInputSchema,
     output: ThreadAppendTurnOutputSchema,
   },
+  // ---- Auth (slice 3) ----
+  // Sidecar handlers are typically no-ops or delegate to its keychainStore;
+  // the renderer-facing wire path goes via Tauri commands (`auth_set_api_key`,
+  // `auth_has_api_key`, `auth_delete_api_key`) which own the OS keychain.
+  // Listed here so the contract is the single source of truth for renderer
+  // payload shapes — see `ipc.ts`.
+  'auth.setApiKey': {
+    input: AuthSetApiKeyInputSchema,
+    output: z.object({ ok: z.literal(true) }),
+  },
+  'auth.hasApiKey': {
+    input: z.object({}),
+    output: AuthHasApiKeyOutputSchema,
+  },
+  'auth.deleteApiKey': {
+    input: z.object({}),
+    output: z.object({ ok: z.literal(true) }),
+  },
+  // ---- SDK runner (slice 3) ----
+  // `sdk.sendPrompt` is the streaming case. Its `output` schema describes the
+  // FINAL result envelope (sent in the wire `ok` response); the streaming
+  // events flow as discriminated `RunnerEventSchema` messages over a
+  // separate stream-frame envelope. See `RpcResponseSchema` below.
+  'sdk.sendPrompt': {
+    input: SdkSendPromptInputSchema,
+    output: SdkSendPromptResultSchema,
+  },
+  'sdk.cancel': {
+    input: SdkCancelInputSchema,
+    output: z.object({ ok: z.boolean() }),
+  },
+  'sdk.recycle': {
+    input: SdkRecycleInputSchema,
+    output: z.object({ ok: z.literal(true) }),
+  },
+  // Internal: Rust → sidecar push of the API key (one-way, no response). Not
+  // callable from the renderer (Tauri's `rpc` invoke only round-trips through
+  // the renderer-facing wire), so listing here documents the shape without
+  // surfacing it to renderer code paths.
+  'auth.injectApiKey': {
+    input: z.object({ key: z.string() }),
+    output: z.object({ ok: z.literal(true) }),
+  },
+  'auth.clearApiKey': {
+    input: z.object({}),
+    output: z.object({ ok: z.literal(true) }),
+  },
 } as const satisfies Record<string, { input: z.ZodTypeAny; output: z.ZodTypeAny }>
 
 export type MethodName = keyof typeof Methods
@@ -309,5 +443,31 @@ export const RpcResponseSchema = z.discriminatedUnion('kind', [
     id: z.string(),
     error: z.object({ code: z.string(), message: z.string() }),
   }),
+  /**
+   * Streaming wire frame (slice 3). For methods like `sdk.sendPrompt` the
+   * sidecar emits zero or more `stream` frames followed by exactly one
+   * terminal `ok` or `err` frame, all keyed to the same request `id`. The
+   * Rust shell forwards stream frames to the renderer as Tauri events
+   * (channel `rpc:stream:<id>`); the terminal ok/err is the resolution of
+   * the original `invoke('rpc', ...)` promise.
+   */
+  z.object({ kind: z.literal('stream'), id: z.string(), event: RunnerEventSchema }),
 ])
 export type RpcResponse = z.infer<typeof RpcResponseSchema>
+
+/**
+ * Sidecar → Rust shell out-of-band requests. Used by `sdk.sendPrompt` only
+ * in the rare path where the sidecar needs to ask the shell for the API
+ * key on demand (normally the shell pushes the key proactively via
+ * `auth.injectApiKey`).
+ *
+ * Slice 3 doesn't currently exercise this — kept as a documented seam so
+ * the wire envelope stays open for future sidecar-initiated calls.
+ */
+export const SidecarRequestSchema = z.object({
+  kind: z.literal('sidecar-request'),
+  id: z.string(),
+  method: z.string(),
+  params: z.unknown(),
+})
+export type SidecarRequest = z.infer<typeof SidecarRequestSchema>

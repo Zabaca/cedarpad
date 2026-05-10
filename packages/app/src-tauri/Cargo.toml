@@ -21,6 +21,13 @@ tauri-plugin-dialog = "2"
 # but only `init`'d behind `cfg(debug_assertions)` in lib.rs. Release builds
 # still link it; that's fine, it's dormant unless plugged in.
 tauri-plugin-webdriver = "0.2"
+# OS keychain access for the BYOK Anthropic API key (slice 3). The keyring
+# crate is a thin cross-platform layer over the OS credential stores
+# (macOS Keychain, Linux Secret Service / kwallet, Windows Credential
+# Manager). Picked over tauri-plugin-stronghold (deprecated for v3) and
+# the various third-party Tauri keyring plugins (low maintenance, no
+# value-add over calling keyring directly).
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

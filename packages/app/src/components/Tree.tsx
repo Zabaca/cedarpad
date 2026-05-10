@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { call } from '../ipc'
-import type { BlockMetadata, Node } from '../contract'
+import { call, streamSendPrompt } from '../ipc'
+import type { BlockMetadata, Node, RunnerEvent } from '../contract'
 import { BlockMetadataSchema } from '../contract'
 import { interpret } from '../keymap'
 
@@ -470,10 +470,14 @@ export function Tree({
     [dropPos, byParent, isAncestor, workspaceId, load],
   )
 
-  // Test-only hook: lets the WebView e2e drive a fixture turn without a real
-  // Claude SDK. Exposed in dev / debug builds; harmless otherwise (the e2e
-  // calls it explicitly). Lives on `window.cedarpadE2E` to keep it off the
-  // public surface area.
+  // Test-only hook: lets the WebView e2e drive fixture turns without a
+  // real Claude SDK. Exposed in dev / debug builds; harmless otherwise
+  // (the e2e calls it explicitly). Lives on `window.cedarpadE2E` to keep
+  // it off the public surface area.
+  //
+  // Slice 3 adds `sendPrompt` for the SDK runner end-to-end test —
+  // streams events into a callback while the underlying IPC is in
+  // flight, then reloads the tree once the turn completes.
   useEffect(() => {
     const hook = {
       appendTurn: async (
@@ -482,6 +486,21 @@ export function Tree({
       ) => {
         await call('thread.appendTurn', { workspaceId, threadRootId, blocks })
         await load()
+      },
+      sendPrompt: async (
+        threadRootId: string,
+        prompt: string,
+        repoPath: string,
+      ) => {
+        const events: RunnerEvent[] = []
+        const result = await streamSendPrompt(
+          { workspaceId, threadRootId, prompt, repoPath },
+          (ev) => {
+            events.push(ev)
+          },
+        )
+        await load()
+        return { events, result }
       },
       reload: load,
     }

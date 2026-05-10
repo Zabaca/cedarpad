@@ -55,6 +55,32 @@ Start a fresh Thread under the same Thread Root, no conversation history. "New c
 
 - "Branch" and "Thread" overlap in casual speech. **Resolution**: a Thread is the subtree (a noun); to Branch is to create a new Thread (a verb). Branching produces a new Thread.
 
+## Slice 3 additions
+
+- `modules/auth/keychainStore.ts` — sidecar-side in-memory cache of the
+  API key. The OS keychain itself is owned by the Tauri Rust shell via
+  the `keyring` crate. Renderer flow:
+    1. `authSetApiKey(key)` (Tauri command, not RPC) → Rust writes
+       keychain → Rust pushes `auth.injectApiKey` over sidecar stdin.
+    2. `authHasApiKey()` → Rust → bool. The renderer never reads the
+       key back.
+- `modules/sdk/sdkRunner.ts` — wraps `@anthropic-ai/claude-agent-sdk`'s
+  `query()` and translates SDK messages into Block Nodes via the Thread
+  engine. Read-only allowlist (`Read`, `Grep`, `Glob`) enforced at the
+  SDK boundary via `tools` + `allowedTools`. Process recycling and
+  cancellation are first-class verbs from day one.
+- `threadEngine` grows three streaming verbs: `beginTurn`,
+  `appendBlock`, `markTurnCancelled`. The slice 2 `appendTurn`
+  (one-shot) stays for fixture turns + the e2e harness.
+- Wire envelope grows `{kind:'stream', id, event}` between the sidecar
+  and the renderer. Tauri shell forwards stream frames as
+  `rpc:stream:<id>` Tauri events; the renderer hooks them up via
+  `streamSendPrompt`.
+- E2E mode: `CEDARPAD_KEYCHAIN_MEMORY=1` (in-memory keychain),
+  `CEDARPAD_E2E_FAKE_SDK=1` (deterministic SDK fake),
+  `CEDARPAD_E2E_DEFAULT_KEY` (auto-populates the in-memory keychain
+  for non-auth specs). All three are set by the wdio harness.
+
 ## Slice 2 additions
 
 - `modules/thread/threadEngine.ts` — composes the OutlineStore. Three verbs:
