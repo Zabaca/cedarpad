@@ -8,6 +8,7 @@
     "test:watch": "bun run --bun vitest",
     "build:sidecar": "bun build src-sidecar/src/server.ts --outfile dist-sidecar/server.js --target=bun",
     "dev:vite": "vite",
+    "build:vite": "vite build",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },

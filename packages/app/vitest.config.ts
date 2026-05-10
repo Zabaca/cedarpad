@@ -6,6 +6,6 @@ export default defineConfig({
     environment: 'node',
     pool: 'forks',
     isolate: true,
-    include: ['modules/**/*.test.ts', 'src-sidecar/**/*.test.ts'],
+    include: ['modules/**/*.test.ts', 'src-sidecar/**/*.test.ts', 'src/**/*.test.ts'],
   },
 })

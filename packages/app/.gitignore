@@ -1,0 +1,7 @@
+dist/
+dist-sidecar/
+src-tauri/target/
+src-tauri/gen/
+.cedarpad/
+playwright-report/
+test-results/
