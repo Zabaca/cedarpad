@@ -1,0 +1,34 @@
+{
+  "name": "@cedarpad/app",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun run --bun vitest run",
+    "test:watch": "bun run --bun vitest",
+    "build:sidecar": "bun build src-sidecar/src/server.ts --outfile dist-sidecar/server.js --target=bun",
+    "dev:vite": "vite",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "fractional-indexing": "^3.2.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0",
+    "vitest": "^2.1.0"
+  }
+}
