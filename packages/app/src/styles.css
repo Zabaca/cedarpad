@@ -24,6 +24,22 @@ body {
   gap: 2px;
 }
 
+.add-node {
+  margin: 8px 0 0 24px;
+  padding: 4px 10px;
+  border: 1px dashed var(--border, #d1d5db);
+  background: transparent;
+  color: var(--muted, #6b7280);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85em;
+  align-self: flex-start;
+}
+.add-node:hover {
+  color: var(--fg, #111);
+  border-color: var(--fg, #111);
+}
+
 .tree-node {
   display: flex;
   align-items: flex-start;

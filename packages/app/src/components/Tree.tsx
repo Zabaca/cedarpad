@@ -985,6 +985,24 @@ export function Tree({
             </div>
           )
         })}
+        <button
+          type="button"
+          className="add-node"
+          data-testid="add-node"
+          onClick={() => {
+            void (async () => {
+              const created = await call('outline.create', {
+                workspaceId,
+                parentId: activeNodeId,
+                content: '',
+              })
+              await load()
+              setFocusId(created.id)
+            })()
+          }}
+        >
+          + Add node
+        </button>
       </div>
     </div>
   )
