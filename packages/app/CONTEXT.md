@@ -4,56 +4,68 @@ The cedarpad application: a Workflowy-style outliner where any outline node can 
 
 **v1 shape:** Tauri desktop app. UI (WebView) + Claude Code SDK runner + libSQL store all bundled in one binary. Fully offline-first; no Vercel deployment in v1 (`production` env stays empty until v2 cloud sync). libSQL chosen specifically so v2 can enable Turso embedded replicas for cloud sync without a data-model rewrite.
 
-## Language
+## Language (v1.1)
+
+ADR-0006 reshapes the v1 conversation model. Below is the canonical vocabulary; slice 2/4/5/6 sections later in this file describe the v1 implementation that v1.1 supersedes.
 
 **Node**:
 The single primitive — a position in the tree with text content, addressable, branchable, zoomable. Every other concept is a kind of Node or a relationship between Nodes.
 _Avoid_: bullet, item, line, entry
 
 **Content Node**:
-A human-authored outline Node — Workflowy-style text, no conversation attached. The default kind of Node.
+A human-authored outline Node — Workflowy-style text. The default kind of Node. Becomes a session-bearer or a Prompt by metadata or position; otherwise is a plain outline node.
 _Avoid_: bullet, note
 
-**Thread Root**:
-A Content Node from which a conversation has been started. Its descendants form a conversation subtree.
-_Avoid_: parent, anchor, conversation start
-
-**Turn Node**:
-One Claude turn rendered as a Node. Its children are the structured blocks of that turn (text, tool call, tool result). Lives only inside a Thread Root's subtree.
-_Avoid_: message, response, reply
-
-**Block Node**:
-A child of a Turn Node — one structured piece of Claude's output (a paragraph, a code block, a tool call, a tool result). The unit of fine-grained addressing.
-_Avoid_: chunk, segment, part
-
-**Thread**:
-The subtree rooted at a Thread Root. Synonym for "conversation" — but Thread is the canonical term because the same Thread Root may have multiple sibling threads via branching.
-_Avoid_: chat, conversation, session
-
-## Branch verbs
-
-Three operations create new subtrees from a Node inside a Thread. They differ only in what prior context is sent to Claude on the next turn:
+**Session-bearer Content Node** (or just "session-bearer"):
+A Content Node carrying `metadata.sdkSessionId` — the SDK conversation session it represents. Created two ways: by Cmd+Enter on a Content Node whose parent is not yet a session-bearer (its parent gets stamped), or by Cmd+Shift+B on a Prompt selection (creates a forked session-bearer inside a Branches container). One concept replaces v1's Thread Root.
+_Avoid_: thread root, conversation root, topic node
 
 **Branch**:
-Fork the conversation at this point with full history *including* this Node. "What if Claude had continued differently from here?" The unique-to-cedarpad capability — cheap because the tree makes forking natural.
+A forked session-bearer. Same data shape as a top-level session-bearer, plus `metadata.branchedFromMessageUuid` and `metadata.branchedFromNodeId` recording where the fork occurred. Identity is positional: the Content Node's parent is a `branches` container.
+_Avoid_: thread, conversation variant
 
-**Retry from here**:
-Fork with full history *up to but excluding* this Node. Re-do this turn with a different prompt or seed. Equivalent to "regenerate" / "edit and resend" in linear chat tools.
+**Branches container** (or just "Branches"):
+A `kind: 'branches'` Node that holds Branch siblings. Materializes the moment the user first triggers Cmd+Shift+B inside a subtree; renders default-collapsed; positioned as the immediate next sibling of the source node. Fractal — a Branch's Prompt can itself sprout another Branches container when the user branches inside it.
+_Avoid_: forks node, alternatives node
 
-**New thread sibling**:
-Start a fresh Thread under the same Thread Root, no conversation history. "New conversation, same topic seed."
+**Prompt**:
+A Content Node sent to Claude. Lives somewhere under a session-bearer ancestor; the act of sending (Cmd+Enter) marks it as a Prompt. Parents the Block children Claude returns. Carries `metadata.state: 'streaming' | 'done' | 'cancelled' | 'interrupted'` once sent (absence of state = unsent draft) and `metadata.sdkMessageUuid` (the assistant message it produced — the fork target if a future Branch is created from it).
+_Avoid_: message, query, question
+
+**Block Node**:
+A child of a Prompt — one structured piece of Claude's output. Subtype via metadata: `text` / `tool_use` / `tool_result`. The unit of fine-grained content. Adjacent matching `tool_use` + `tool_result` pairs render as one collapsible visual unit; tool blocks default-collapsed.
+_Avoid_: chunk, segment, part
+
+## Branch verb
+
+One operation creates a forked conversation:
+
+**Branch (Cmd+Shift+B)**:
+Eager-fork the SDK session inclusive of the selected Prompt's `sdkMessageUuid`. A Branches container materializes as the immediate next sibling of the source (if not already present); a new Branch is added inside it; the Branch is focused with an empty Prompt child ready to type.
+
+What v1's three verbs map to under this single primitive:
+- **v1 Branch** (inclusive of selected Block): select the Prompt the Block lives in, Cmd+Shift+B. Same effect.
+- **v1 Retry from here** (exclusive of a Prompt): select the *previous* Prompt, Cmd+Shift+B. The new Branch starts after that previous Prompt, so the user's first prompt under the Branch replaces what the original Prompt had been.
+- **v1 New thread sibling** (no history): select the session-bearer or a top-level node, Cmd+Shift+B. The fork-point is "no messages yet," so the Branch is a fresh-history sibling.
+
+The selected source determines the fork depth; the verb is the same.
 
 ## Relationships
 
-- A **Node** has zero or more child **Nodes** (Workflowy-style infinite nesting)
-- A **Content Node** becomes a **Thread Root** when a conversation is started on it; it remains a Content Node otherwise
-- A **Thread Root** has one or more **Threads** as direct children — multiple Threads exist when branching has occurred
-- A **Thread** consists of alternating human prompts (Content Nodes) and **Turn Nodes**
-- A **Turn Node** has **Block Nodes** as children, mirroring Claude's structured response
+- A **Node** has zero or more child **Nodes** (Workflowy-style infinite nesting).
+- A **Content Node** becomes a **session-bearer** by carrying `sdkSessionId`. The same Content Node carries the conversation-topic text and the session pointer.
+- A **Prompt** is a Content Node whose ancestor walk reaches a session-bearer; it parents **Block Nodes** as Claude streams its response.
+- A **Branches container** is materialized on first branch in a subtree and holds **Branch** session-bearers as children. It is positioned as immediate next sibling of the source node.
+- A **Branch** is structurally a Content Node with session+fork metadata; identity comes from its parent being a Branches container.
+- The tree shape is decoupled from the SDK session graph. Each Prompt resumes its nearest session-bearer ancestor's `sdkSessionId`. Rearranging tree nodes (outdent, drag) does not change which session a Prompt resumes — fork relationships are immutable at the SDK layer.
 
 ## Flagged ambiguities
 
-- "Branch" and "Thread" overlap in casual speech. **Resolution**: a Thread is the subtree (a noun); to Branch is to create a new Thread (a verb). Branching produces a new Thread.
+(none currently — v1's "Branch" vs "Thread" ambiguity dissolved with the verb collapse and Thread Root removal)
+
+## v1.x slice notes (historical)
+
+Sections below describe the v1 implementation as it landed, slice by slice. ADR-0006 + the Language section above supersede the conversation-tree shape established in slices 2, 4, 5, and 6 (Turn Node, Thread Root, three branch verbs, sibling-Threads-under-Thread-Root). Read the slice notes for context on what was built and why; treat the v1.1 sections at the top of this file as the current model.
 
 ## Slice 5 additions
 
