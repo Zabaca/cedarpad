@@ -24,6 +24,16 @@ body {
   gap: 2px;
 }
 
+.node-hint {
+  flex-basis: 100%;
+  margin-left: 24px;
+  padding: 2px 0 4px;
+  font-size: 11px;
+  color: #9ca3af;
+  font-style: italic;
+  user-select: none;
+}
+
 .add-node {
   margin: 8px 0 0 24px;
   padding: 4px 10px;

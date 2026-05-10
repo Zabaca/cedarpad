@@ -97,6 +97,17 @@ function classifyNode(n: Node): Classification {
   return { visual: 'content', isSessionBearer: false }
 }
 
+function hintForNode(n: Node): string {
+  if (n.kind === 'branches') return 'Cmd+. zoom in · click chevron to fold/unfold'
+  if (n.kind === 'block') return 'Cmd+. zoom in'
+  // content
+  const meta = n.metadata as PromptMetadata
+  if (meta?.role === 'prompt') {
+    return 'Cmd+Shift+B branch · Cmd+. zoom in · Shift+Tab outdent'
+  }
+  return 'Cmd+Enter send · Enter new sibling · Tab indent · Shift+Tab outdent · Cmd+. zoom in · Cmd+Shift+B branch'
+}
+
 function bulletForVisual(v: Visual): string {
   switch (v) {
     case 'session-bearer':
@@ -982,6 +993,9 @@ export function Tree({
               >
                 {node.content}
               </div>
+              {focusId === node.id ? (
+                <div className="node-hint">{hintForNode(node)}</div>
+              ) : null}
             </div>
           )
         })}
