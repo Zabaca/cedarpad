@@ -33,6 +33,18 @@ export interface ThreadEngine {
    * its kind + structured payload via metadata.
    */
   appendTurn(threadRootId: string, blocks: BlockPayload[]): Promise<{ turn: Node; blocks: Node[] }>
+
+  /**
+   * Streaming variant of {@link appendTurn} (slice 3, used by the SDK
+   * runner). Creates the Turn Node up front; the caller streams Block
+   * payloads in via {@link appendBlock} as they arrive from Claude. When
+   * the stream finishes naturally call no terminal verb; when it is
+   * interrupted call {@link markTurnCancelled} to stamp the Turn.
+   */
+  beginTurn(threadRootId: string): Promise<Node>
+  appendBlock(turnId: string, payload: BlockPayload): Promise<Node>
+  /** Stamp the Turn Node's metadata with `cancelled: true`. */
+  markTurnCancelled(turnId: string): Promise<Node>
 }
 
 export function createThreadEngine(store: OutlineStore): ThreadEngine {
@@ -89,6 +101,45 @@ export function createThreadEngine(store: OutlineStore): ThreadEngine {
         lastBlockId = block.id
       }
       return { turn, blocks: created }
+    },
+
+    async beginTurn(threadRootId) {
+      const existing = await store.getChildren(threadRootId)
+      const prevSiblingId = existing.length > 0 ? existing[existing.length - 1]!.id : null
+      return store.createNode({
+        parentId: threadRootId,
+        prevSiblingId,
+        kind: 'turn',
+        content: '',
+        metadata: { role: 'turn', threadRootId },
+      })
+    },
+
+    async appendBlock(turnId, payload) {
+      const turn = await store.getNode(turnId)
+      if (!turn) throw new Error(`appendBlock: turn ${turnId} not found`)
+      if (turn.kind !== 'turn') throw new Error(`appendBlock: ${turnId} is a ${turn.kind} Node, expected turn`)
+      const turnMeta = turn.metadata as { threadRootId?: string }
+      const threadRootId = turnMeta.threadRootId ?? ''
+      const existing = await store.getChildren(turnId)
+      const prevSiblingId = existing.length > 0 ? existing[existing.length - 1]!.id : null
+      const text = payload.kind === 'text' ? payload.text : ''
+      return store.createNode({
+        parentId: turnId,
+        prevSiblingId,
+        kind: 'block',
+        content: text,
+        metadata: { role: 'block', threadRootId, payload },
+      })
+    },
+
+    async markTurnCancelled(turnId) {
+      const turn = await store.getNode(turnId)
+      if (!turn) throw new Error(`markTurnCancelled: turn ${turnId} not found`)
+      return store.updateNode({
+        id: turnId,
+        metadata: { ...turn.metadata, cancelled: true },
+      })
     },
   }
 }
