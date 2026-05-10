@@ -4,8 +4,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    pool: 'threads',
+    pool: 'forks',
     isolate: true,
-    include: ['modules/**/*.test.ts'],
+    include: ['modules/**/*.test.ts', 'src-sidecar/**/*.test.ts'],
   },
 })
