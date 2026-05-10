@@ -373,3 +373,198 @@ describe('threadEngine.branch', () => {
     await expect(engine.branch('does-not-exist')).rejects.toThrow(/not found/i)
   })
 })
+
+// -----------------------------------------------------------------------
+// Slice 6: retry verb
+//
+// `retry(sourceBlockId)` produces a new sibling Thread under the same
+// Thread Root with full prior history *up to but excluding* the source
+// Block — equivalent to "regenerate / edit-and-resend" but as a fork
+// rather than overwriting the live conversation. Internally a thin
+// wrapper over `branchInternal({ mode: 'retry' })`; tests focus on the
+// observable history-slicing difference vs `branch`.
+// -----------------------------------------------------------------------
+
+describe('threadEngine.retry', () => {
+  it('produces an empty history when retrying the first Block of the first Turn', async () => {
+    const seed = await seedThread(store, engine)
+    // First block of turn 1 → history "up to but excluding" = [prompt1]
+    // (there are no prior turns and the source turn contributes 0
+    // blocks). The cloned Turn must NOT appear because its sliced
+    // block list is empty — equivalent to "regenerate from before
+    // the first turn ever ran".
+    const result = await engine.retry(seed.turn1BlockIds[0]!)
+
+    const newThread = await store.getNode(result.newThreadId)
+    expect(newThread!.parentId).toBe(seed.rootId)
+    expect(newThread!.metadata).toMatchObject({
+      isThreadRoot: true,
+      branchedFromBlockId: seed.turn1BlockIds[0]!,
+    })
+
+    const newThreadChildren = await store.getChildren(result.newThreadId)
+    // Expect: [cloned prompt1, empty prompt slot] — NO cloned turn.
+    expect(newThreadChildren).toHaveLength(2)
+    expect(newThreadChildren[0]!.kind).toBe('content')
+    expect(newThreadChildren[0]!.content).toBe('hello')
+    expect(newThreadChildren[1]!.id).toBe(result.promptNodeId)
+    expect(newThreadChildren[1]!.kind).toBe('content')
+    expect(newThreadChildren[1]!.content).toBe('')
+  })
+
+  it('clones full prior turns and a partial source turn when retrying from a middle Block', async () => {
+    const seed = await seedThread(store, engine)
+    // Middle block of turn 1 (the tool_use). History "up to but
+    // excluding" = [prompt1, turn1 with only block 0 (text)].
+    const result = await engine.retry(seed.turn1BlockIds[1]!)
+
+    const newThreadChildren = await store.getChildren(result.newThreadId)
+    // [prompt1, turn1-clone (1 block), empty prompt]
+    expect(newThreadChildren).toHaveLength(3)
+    expect(newThreadChildren[0]!.content).toBe('hello')
+    expect(newThreadChildren[1]!.kind).toBe('turn')
+    expect(newThreadChildren[2]!.id).toBe(result.promptNodeId)
+
+    const clonedBlocks = await store.getChildren(newThreadChildren[1]!.id)
+    expect(clonedBlocks).toHaveLength(1)
+    const meta = BlockMetadataSchema.parse(clonedBlocks[0]!.metadata)
+    expect(meta.payload).toMatchObject({ kind: 'text' })
+  })
+
+  it('clones history from a tool_use Block (excluding the tool_use itself)', async () => {
+    const seed = await seedThread(store, engine)
+    const sourceBlockId = seed.turn1BlockIds[1]! // tool_use
+    const result = await engine.retry(sourceBlockId)
+
+    const newThreadChildren = await store.getChildren(result.newThreadId)
+    expect(newThreadChildren).toHaveLength(3)
+    const clonedBlocks = await store.getChildren(newThreadChildren[1]!.id)
+    // Only the preceding text block; tool_use and tool_result are excluded.
+    expect(clonedBlocks).toHaveLength(1)
+    const m0 = BlockMetadataSchema.parse(clonedBlocks[0]!.metadata)
+    expect(m0.payload).toMatchObject({ kind: 'text' })
+  })
+
+  it('clones history from a tool_result Block (excluding the tool_result itself)', async () => {
+    const seed = await seedThread(store, engine)
+    const sourceBlockId = seed.turn1BlockIds[2]! // tool_result
+    const result = await engine.retry(sourceBlockId)
+
+    const newThreadChildren = await store.getChildren(result.newThreadId)
+    // [prompt1, turn1-clone (text + tool_use), empty prompt]
+    expect(newThreadChildren).toHaveLength(3)
+    const clonedBlocks = await store.getChildren(newThreadChildren[1]!.id)
+    expect(clonedBlocks).toHaveLength(2)
+    const m0 = BlockMetadataSchema.parse(clonedBlocks[0]!.metadata)
+    expect(m0.payload).toMatchObject({ kind: 'text' })
+    const m1 = BlockMetadataSchema.parse(clonedBlocks[1]!.metadata)
+    expect(m1.payload).toMatchObject({ kind: 'tool_use' })
+  })
+
+  it('coexists with a prior branch sibling under the same Thread Root', async () => {
+    const seed = await seedThread(store, engine)
+    const b1 = await engine.branch(seed.turn1BlockIds[0]!)
+    const r1 = await engine.retry(seed.turn2BlockIds[1]!)
+
+    const t1 = await store.getNode(b1.newThreadId)
+    const t2 = await store.getNode(r1.newThreadId)
+    expect(t1!.parentId).toBe(seed.rootId)
+    expect(t2!.parentId).toBe(seed.rootId)
+    expect(t1!.id).not.toBe(t2!.id)
+
+    // Both stamp branchedFromBlockId so the UI can show fork badges.
+    expect((t2!.metadata as { branchedFromBlockId?: string }).branchedFromBlockId).toBe(
+      seed.turn2BlockIds[1]!,
+    )
+
+    const rootChildren = await store.getChildren(seed.rootId)
+    const ids = rootChildren.map((c) => c.id)
+    expect(ids).toContain(b1.newThreadId)
+    expect(ids).toContain(r1.newThreadId)
+    expect(ids.indexOf(b1.newThreadId)).toBeLessThan(ids.indexOf(r1.newThreadId))
+  })
+
+  it('rejects retrying from a non-Block Node', async () => {
+    const seed = await seedThread(store, engine)
+    await expect(engine.retry(seed.turn1Id)).rejects.toThrow(/block/i)
+  })
+
+  it('rejects retrying from an unknown id', async () => {
+    await expect(engine.retry('does-not-exist')).rejects.toThrow(/not found/i)
+  })
+})
+
+// -----------------------------------------------------------------------
+// Slice 6: newSibling verb
+//
+// `newSibling(threadRootId)` opens a fresh Thread under the same Thread
+// Root with no conversation history at all — only the topical seed
+// (the Thread Root itself). Argument is the Thread Root, not a Block,
+// because there's no source point inside the conversation.
+// -----------------------------------------------------------------------
+
+describe('threadEngine.newSibling', () => {
+  it('creates an empty Thread under a Thread Root that has one existing Thread', async () => {
+    const seed = await seedThread(store, engine)
+    const result = await engine.newSibling(seed.rootId)
+
+    const newThread = await store.getNode(result.newThreadId)
+    expect(newThread).not.toBeNull()
+    expect(newThread!.kind).toBe('content')
+    expect(newThread!.parentId).toBe(seed.rootId)
+    expect(newThread!.metadata).toMatchObject({ isThreadRoot: true })
+    // No source Block — the marker is absent for newSibling siblings.
+    expect((newThread!.metadata as { branchedFromBlockId?: string }).branchedFromBlockId).toBeUndefined()
+
+    // The new sibling has only the empty prompt slot — no cloned history.
+    const newThreadChildren = await store.getChildren(result.newThreadId)
+    expect(newThreadChildren).toHaveLength(1)
+    expect(newThreadChildren[0]!.id).toBe(result.promptNodeId)
+    expect(newThreadChildren[0]!.kind).toBe('content')
+    expect(newThreadChildren[0]!.content).toBe('')
+  })
+
+  it('appends as the last child of the original Thread Root, preserving prior siblings', async () => {
+    const seed = await seedThread(store, engine)
+    // Pre-existing branch sibling.
+    const b1 = await engine.branch(seed.turn1BlockIds[0]!)
+    const ns = await engine.newSibling(seed.rootId)
+
+    const rootChildren = await store.getChildren(seed.rootId)
+    const ids = rootChildren.map((c) => c.id)
+    expect(ids).toContain(b1.newThreadId)
+    expect(ids).toContain(ns.newThreadId)
+    expect(ids[ids.length - 1]).toBe(ns.newThreadId)
+  })
+
+  it('creates the first sibling Thread on a Thread Root with no Threads yet', async () => {
+    // A fresh Thread Root with only its `isThreadRoot: true` marker —
+    // no prompts, no turns. newSibling should still produce a new
+    // sibling carrying just an empty prompt slot.
+    const root = await store.createNode({ parentId: null, content: 'topic' })
+    await engine.startThread(root.id)
+    const result = await engine.newSibling(root.id)
+
+    const newThread = await store.getNode(result.newThreadId)
+    expect(newThread!.parentId).toBe(root.id)
+    expect(newThread!.metadata).toMatchObject({ isThreadRoot: true })
+    const children = await store.getChildren(result.newThreadId)
+    expect(children).toHaveLength(1)
+    expect(children[0]!.id).toBe(result.promptNodeId)
+    expect(children[0]!.content).toBe('')
+  })
+
+  it('rejects newSibling on a non-Thread-Root Content Node', async () => {
+    const plain = await store.createNode({ parentId: null, content: 'just an outline node' })
+    await expect(engine.newSibling(plain.id)).rejects.toThrow(/thread root/i)
+  })
+
+  it('rejects newSibling on a Turn Node', async () => {
+    const turn = await store.createNode({ parentId: null, kind: 'turn', content: '' })
+    await expect(engine.newSibling(turn.id)).rejects.toThrow(/thread root/i)
+  })
+
+  it('rejects newSibling on an unknown id', async () => {
+    await expect(engine.newSibling('does-not-exist')).rejects.toThrow(/not found/i)
+  })
+})

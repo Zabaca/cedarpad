@@ -72,6 +72,21 @@ export interface ThreadEngine {
    * latter).
    */
   branch(sourceBlockId: string): Promise<{ newThreadId: string; promptNodeId: string }>
+
+  /**
+   * Retry from a Block Node. Like {@link branch}, but the cloned history
+   * goes up to but EXCLUDES the source Block — equivalent to "regenerate
+   * / edit-and-resend" in linear chat tools, expressed as a tree fork
+   * that preserves the original Thread.
+   */
+  retry(sourceBlockId: string): Promise<{ newThreadId: string; promptNodeId: string }>
+
+  /**
+   * Open a fresh Thread under the same Thread Root with no conversation
+   * history at all. The argument is the Thread Root, not a Block —
+   * there's no source point inside the conversation.
+   */
+  newSibling(threadRootId: string): Promise<{ newThreadId: string; promptNodeId: string }>
 }
 
 /**
@@ -204,71 +219,105 @@ export function createThreadEngine(store: OutlineStore): ThreadEngine {
     async branch(sourceBlockId) {
       return branchInternal(store, { sourceBlockId, mode: 'branch' })
     },
+
+    async retry(sourceBlockId) {
+      return branchInternal(store, { sourceBlockId, mode: 'retry' })
+    },
+
+    async newSibling(threadRootId) {
+      return branchInternal(store, { threadRootId, mode: 'new-sibling' })
+    },
   }
 }
 
 /**
- * Unified branch operation. Slice 5 only wires `mode: 'branch'` (the
- * killer verb); the other two modes are scaffolded so slice 6 can wrap
- * them without re-plumbing history slicing.
+ * Unified branch operation. All three branch verbs (Branch / Retry /
+ * NewSibling) reduce to one history-slicing op:
+ *
+ *   - `branch` | `retry`  — input is a source Block; the original Thread
+ *      Root is its Turn's parent. History slice ends at the source Turn,
+ *      with the source Turn itself contributing blocks up to (and for
+ *      `branch` only, including) the source Block.
+ *   - `new-sibling`       — input is the Thread Root directly. History
+ *      slice is empty: we just stamp a fresh Thread Root sibling and
+ *      hang an empty prompt slot off it.
  *
  * Steps:
- *   1. Resolve the source Block → its Turn parent → the original Thread
- *      Root (the Turn's parent).
- *   2. Walk the original Thread Root's children in order; collect
- *      "history items" = each Content prompt + each Turn (with the
- *      blocks we'd keep) up to the source Turn. The source Turn's
- *      blocks are sliced per `mode` (see comments below).
- *   3. Create a new Content Node under the same parent as the original
- *      Thread Root, stamped `isThreadRoot: true` +
- *      `branchedFromBlockId`.
- *   4. Replay the history under the new Thread Root via the existing
- *      verbs (`appendPrompt` for prompt clones, raw `createNode` for
- *      Turn + Block clones — using `state: 'done'` so the renderer
- *      doesn't think the cloned turn is mid-stream).
+ *   1. Resolve the original Thread Root + (when applicable) the source
+ *      Block / Turn.
+ *   2. Slice history per `mode`.
+ *   3. Create a new Content Node under the same Thread Root, stamped
+ *      `isThreadRoot: true` (and for the block-driven modes,
+ *      `branchedFromBlockId`).
+ *   4. Replay the sliced history under the new Thread Root.
  *   5. Append an empty prompt Content Node and return its id.
  */
+type BranchInternalArgs =
+  | { mode: 'branch' | 'retry'; sourceBlockId: string }
+  | { mode: 'new-sibling'; threadRootId: string }
+
 async function branchInternal(
   store: OutlineStore,
-  args: { sourceBlockId: string; mode: BranchMode },
+  args: BranchInternalArgs,
 ): Promise<{ newThreadId: string; promptNodeId: string }> {
-  const { sourceBlockId, mode } = args
-
-  const sourceBlock = await store.getNode(sourceBlockId)
-  if (!sourceBlock) throw new Error(`branch: block ${sourceBlockId} not found`)
-  if (sourceBlock.kind !== 'block') {
-    throw new Error(`branch: ${sourceBlockId} is a ${sourceBlock.kind} Node, expected block`)
-  }
-  if (!sourceBlock.parentId) throw new Error(`branch: block ${sourceBlockId} has no Turn parent`)
-
-  const sourceTurn = await store.getNode(sourceBlock.parentId)
-  if (!sourceTurn || sourceTurn.kind !== 'turn') {
-    throw new Error(`branch: block ${sourceBlockId} is not under a Turn Node`)
-  }
-  if (!sourceTurn.parentId) {
-    throw new Error(`branch: turn ${sourceTurn.id} has no Thread Root parent`)
-  }
-
-  const originalRoot = await store.getNode(sourceTurn.parentId)
-  if (!originalRoot) throw new Error(`branch: thread root ${sourceTurn.parentId} not found`)
-
-  // Walk the original Thread Root's children in order. We only keep
-  // siblings that appear at-or-before the source Turn. For the source
-  // Turn itself, we slice its Block children per `mode`.
-  const rootChildren = await store.getChildren(originalRoot.id)
-  const sourceTurnIdx = rootChildren.findIndex((c) => c.id === sourceTurn.id)
-  if (sourceTurnIdx < 0) {
-    throw new Error(`branch: source turn ${sourceTurn.id} not found under root ${originalRoot.id}`)
-  }
-
-  // Slice the source Turn's Block children based on the mode.
+  // Resolve the original Thread Root. For block-driven modes we walk
+  // sourceBlock → Turn → Thread Root; for new-sibling we take the id
+  // directly and validate it's actually a Thread Root.
+  let originalRoot: Node
+  let sourceTurn: Node | null = null
+  let sourceTurnIdx = -1
   let sourceTurnBlocks: Node[] = []
-  if (mode !== 'new-sibling') {
+  let branchedFromBlockId: string | undefined
+
+  if (args.mode === 'new-sibling') {
+    const root = await store.getNode(args.threadRootId)
+    if (!root) throw new Error(`branch: thread root ${args.threadRootId} not found`)
+    if (root.kind !== 'content' || (root.metadata as { isThreadRoot?: unknown }).isThreadRoot !== true) {
+      throw new Error(
+        `branch: ${args.threadRootId} is not a Thread Root (kind=${root.kind}); newSibling requires a Thread Root`,
+      )
+    }
+    originalRoot = root
+  } else {
+    const sourceBlockId = args.sourceBlockId
+    const sourceBlock = await store.getNode(sourceBlockId)
+    if (!sourceBlock) throw new Error(`branch: block ${sourceBlockId} not found`)
+    if (sourceBlock.kind !== 'block') {
+      throw new Error(`branch: ${sourceBlockId} is a ${sourceBlock.kind} Node, expected block`)
+    }
+    if (!sourceBlock.parentId) throw new Error(`branch: block ${sourceBlockId} has no Turn parent`)
+
+    const turn = await store.getNode(sourceBlock.parentId)
+    if (!turn || turn.kind !== 'turn') {
+      throw new Error(`branch: block ${sourceBlockId} is not under a Turn Node`)
+    }
+    if (!turn.parentId) {
+      throw new Error(`branch: turn ${turn.id} has no Thread Root parent`)
+    }
+    sourceTurn = turn
+
+    const root = await store.getNode(turn.parentId)
+    if (!root) throw new Error(`branch: thread root ${turn.parentId} not found`)
+    originalRoot = root
+    branchedFromBlockId = sourceBlockId
+  }
+
+  // Walk the original Thread Root's children in order. For block-driven
+  // modes we keep siblings appearing at-or-before the source Turn and
+  // slice the source Turn's blocks per mode. For new-sibling there's no
+  // history to keep at all.
+  const rootChildren = await store.getChildren(originalRoot.id)
+  if (sourceTurn) {
+    sourceTurnIdx = rootChildren.findIndex((c) => c.id === sourceTurn!.id)
+    if (sourceTurnIdx < 0) {
+      throw new Error(`branch: source turn ${sourceTurn.id} not found under root ${originalRoot.id}`)
+    }
     const allSourceBlocks = await store.getChildren(sourceTurn.id)
+    const sourceBlockId = (args as { sourceBlockId: string }).sourceBlockId
     const blockIdx = allSourceBlocks.findIndex((b) => b.id === sourceBlockId)
     if (blockIdx < 0) throw new Error(`branch: source block not found under its turn`)
     sourceTurnBlocks =
-      mode === 'branch'
+      args.mode === 'branch'
         ? allSourceBlocks.slice(0, blockIdx + 1) // include source Block
         : allSourceBlocks.slice(0, blockIdx) // 'retry' — exclude source Block
   }
@@ -276,64 +325,61 @@ async function branchInternal(
   // Create the new sibling Thread as a CHILD of the original Thread Root,
   // alongside the existing prompts/turns. Per CONTEXT.md "A Thread Root
   // has one or more Threads as direct children — multiple Threads exist
-  // when branching has occurred", and per the slice spec "fresh Thread
-  // (its own subtree) under the same Thread Root, sibling to the
-  // existing Thread(s)". The new Thread is itself a Content Node marked
-  // `isThreadRoot: true` so send-prompt against its own children
-  // routes correctly through the existing prompt-slot logic. We place
-  // it as the LAST child so it lands at the visible bottom of the
-  // current Thread — older siblings stay above their fork.
-  const existingRootChildren = rootChildren
+  // when branching has occurred". The new Thread is itself a Content
+  // Node marked `isThreadRoot: true` so send-prompt against its own
+  // children routes correctly through the existing prompt-slot logic.
+  // It lands as the LAST child so the fork appears below the existing
+  // conversation visually.
   const lastSiblingId =
-    existingRootChildren.length > 0 ? existingRootChildren[existingRootChildren.length - 1]!.id : null
+    rootChildren.length > 0 ? rootChildren[rootChildren.length - 1]!.id : null
+  const newRootMetadata: Record<string, unknown> = { isThreadRoot: true }
+  if (branchedFromBlockId) newRootMetadata.branchedFromBlockId = branchedFromBlockId
   const newRoot = await store.createNode({
     parentId: originalRoot.id,
     prevSiblingId: lastSiblingId,
     kind: 'content',
     content: '',
-    metadata: {
-      isThreadRoot: true,
-      branchedFromBlockId: sourceBlockId,
-    },
+    metadata: newRootMetadata,
   })
 
-  // Replay history under the new Thread Root. We process every child of
-  // the original up to (but not including) the source Turn — that's the
-  // "complete" history portion; then we append the source Turn with its
-  // sliced Block children.
+  // Replay history under the new Thread Root.
   let lastChildId: string | null = null
-  for (let i = 0; i < sourceTurnIdx; i++) {
-    const item = rootChildren[i]!
-    lastChildId = await cloneTurnOrPrompt(store, newRoot.id, item, lastChildId)
-  }
-
-  // Replay the source Turn (only when mode keeps any of its blocks; for
-  // 'retry' we still create the prompt-and-empty-turn shape only if the
-  // mode dictates — which 'branch' always does for at least one block).
-  if (mode === 'branch' || (mode === 'retry' && sourceTurnBlocks.length > 0)) {
-    const clonedTurn = await store.createNode({
-      parentId: newRoot.id,
-      prevSiblingId: lastChildId,
-      kind: 'turn',
-      content: '',
-      metadata: { role: 'turn', threadRootId: newRoot.id, state: 'done' },
-    })
-    let prevBlockId: string | null = null
-    for (const sb of sourceTurnBlocks) {
-      // Pull the payload through the contract schema so the clone's
-      // metadata matches what a fresh appendBlock would write — no
-      // accidental drift between cloned and live turns.
-      const meta = BlockMetadataSchema.parse(sb.metadata)
-      const cloned = await store.createNode({
-        parentId: clonedTurn.id,
-        prevSiblingId: prevBlockId,
-        kind: 'block',
-        content: sb.content,
-        metadata: { role: 'block', threadRootId: newRoot.id, payload: meta.payload },
-      })
-      prevBlockId = cloned.id
+  if (sourceTurn) {
+    for (let i = 0; i < sourceTurnIdx; i++) {
+      const item = rootChildren[i]!
+      lastChildId = await cloneTurnOrPrompt(store, newRoot.id, item, lastChildId)
     }
-    lastChildId = clonedTurn.id
+
+    // Replay the source Turn — but only when its sliced block list is
+    // non-empty. `branch` always keeps at least the source block;
+    // `retry` from the first block of the first turn keeps zero blocks
+    // (the new branch is "regenerate from before this turn ever ran"),
+    // so we must NOT emit an empty Turn shell.
+    if (args.mode === 'branch' || (args.mode === 'retry' && sourceTurnBlocks.length > 0)) {
+      const clonedTurn = await store.createNode({
+        parentId: newRoot.id,
+        prevSiblingId: lastChildId,
+        kind: 'turn',
+        content: '',
+        metadata: { role: 'turn', threadRootId: newRoot.id, state: 'done' },
+      })
+      let prevBlockId: string | null = null
+      for (const sb of sourceTurnBlocks) {
+        // Pull the payload through the contract schema so the clone's
+        // metadata matches what a fresh appendBlock would write — no
+        // accidental drift between cloned and live turns.
+        const meta = BlockMetadataSchema.parse(sb.metadata)
+        const cloned = await store.createNode({
+          parentId: clonedTurn.id,
+          prevSiblingId: prevBlockId,
+          kind: 'block',
+          content: sb.content,
+          metadata: { role: 'block', threadRootId: newRoot.id, payload: meta.payload },
+        })
+        prevBlockId = cloned.id
+      }
+      lastChildId = clonedTurn.id
+    }
   }
 
   // Empty prompt slot at the end — same shape as the slice 4 auto-seed.

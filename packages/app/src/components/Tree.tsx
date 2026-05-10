@@ -130,11 +130,20 @@ export function Tree({
   const [inFlightText, setInFlightText] = useState<Map<string, string>>(new Map())
   /**
    * Slice 5: which Block Node the user has selected as the source for a
-   * branch operation. Block rows aren't contentEditable, so they don't
-   * carry React's onKeyDown wiring; we track selection separately and a
-   * window-level Cmd+Shift+B handler reads this state.
+   * branch / retry operation. Block rows aren't contentEditable, so they
+   * don't carry React's onKeyDown wiring; we track selection separately
+   * and window-level Cmd+Shift+B / Cmd+Shift+R handlers read this state.
    */
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
+  /**
+   * Slice 6: which Thread Root the user has selected as the target for
+   * a newSibling operation. Mirrors Block selection. Thread Root rows
+   * ARE contentEditable (Content Nodes), but we use the same selection
+   * model so the user has an explicit "this is the Thread Root I'm
+   * acting on" cue and the Cmd+Shift+N dispatch is unambiguous when
+   * focus is somewhere else.
+   */
+  const [selectedThreadRootId, setSelectedThreadRootId] = useState<string | null>(null)
   const refs = useRef(new Map<string, HTMLDivElement>())
   // Mirror dragId / dropPos in refs so synthetic drag sequences (where
   // dragstart, dragover and drop dispatch back-to-back in the same
@@ -408,23 +417,117 @@ export function Tree({
     [workspaceId, load, activeNodeId, lookup, onZoomTo],
   )
 
-  // Window-level Cmd/Ctrl+Shift+B → branch from the selected Block.
-  // Block rows aren't contentEditable so they don't carry per-row
-  // onKeyDown; we attach at the document level and dispatch on the
-  // tracked `selectedBlockId`. Down-arrow / up-arrow over sibling
-  // Threads is handled here too — across sibling Thread Roots only.
+  /**
+   * Slice 6: retry from a Block Node. Same internal plumbing as branch
+   * but the cloned history excludes the source Block.
+   *
+   * Cross-feature with zoom is identical to branch — same parent
+   * ancestry walk, same fallback to clear zoom when the new Thread
+   * would be outside the current zoom subtree.
+   */
+  const retryFromBlock = useCallback(
+    async (blockId: string) => {
+      try {
+        const out = await call('thread.retry', { workspaceId, blockId })
+        if (activeNodeId !== null) {
+          const block = lookup.get(blockId)
+          let cursor: string | null = block?.parentId ?? null
+          let inZoom = false
+          const seen = new Set<string>()
+          while (cursor !== null) {
+            if (cursor === activeNodeId) {
+              inZoom = true
+              break
+            }
+            if (seen.has(cursor)) break
+            seen.add(cursor)
+            const n = lookup.get(cursor)
+            cursor = n?.parentId ?? null
+          }
+          if (!inZoom) onZoomTo(null)
+        }
+        await load()
+        setSelectedBlockId(null)
+        setFocusId(out.promptNodeId)
+      } catch {
+        /* non-fatal */
+      }
+    },
+    [workspaceId, load, activeNodeId, lookup, onZoomTo],
+  )
+
+  /**
+   * Slice 6: new sibling Thread under the named Thread Root. Empty —
+   * no history is cloned. Mirrors the branch flow's zoom handling:
+   * if we're zoomed somewhere that doesn't include the original Thread
+   * Root in its ancestry, clear the zoom.
+   */
+  const newSiblingFromThreadRoot = useCallback(
+    async (threadRootId: string) => {
+      try {
+        const out = await call('thread.newSibling', { workspaceId, threadRootId })
+        if (activeNodeId !== null) {
+          const root = lookup.get(threadRootId)
+          let cursor: string | null = root?.id ?? null
+          let inZoom = false
+          const seen = new Set<string>()
+          while (cursor !== null) {
+            if (cursor === activeNodeId) {
+              inZoom = true
+              break
+            }
+            if (seen.has(cursor)) break
+            seen.add(cursor)
+            const n = lookup.get(cursor)
+            cursor = n?.parentId ?? null
+          }
+          if (!inZoom) onZoomTo(null)
+        }
+        await load()
+        setSelectedThreadRootId(null)
+        setFocusId(out.promptNodeId)
+      } catch {
+        /* non-fatal */
+      }
+    },
+    [workspaceId, load, activeNodeId, lookup, onZoomTo],
+  )
+
+  // Window-level branch-verb shortcuts.
+  //   Cmd/Ctrl+Shift+B → branch from selected Block (slice 5)
+  //   Cmd/Ctrl+Shift+R → retry  from selected Block (slice 6)
+  //   Cmd/Ctrl+Shift+N → newSibling under selected Thread Root (slice 6)
+  // Block + Thread-Root rows aren't always the focused contentEditable,
+  // so we attach at the document level and dispatch on the tracked
+  // selection ids.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
-      if (mod && e.shiftKey && e.key.toLowerCase() === 'b') {
+      if (!mod || !e.shiftKey) return
+      const k = e.key.toLowerCase()
+      if (k === 'b') {
         if (!selectedBlockId) return
         e.preventDefault()
         void branchFromBlock(selectedBlockId)
+      } else if (k === 'r') {
+        if (!selectedBlockId) return
+        e.preventDefault()
+        void retryFromBlock(selectedBlockId)
+      } else if (k === 'n') {
+        if (!selectedThreadRootId) return
+        e.preventDefault()
+        void newSiblingFromThreadRoot(selectedThreadRootId)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedBlockId, branchFromBlock])
+  }, [
+    selectedBlockId,
+    selectedThreadRootId,
+    branchFromBlock,
+    retryFromBlock,
+    newSiblingFromThreadRoot,
+  ])
 
   const handleKeyDown = useCallback(
     async (e: React.KeyboardEvent<HTMLDivElement>, n: Node) => {
@@ -794,6 +897,31 @@ export function Tree({
         await load()
         return out
       },
+      /**
+       * Slice 6: drive retry / newSibling flows from an e2e spec.
+       *   - `selectThreadRoot(id)` mirrors clicking a Thread Root row.
+       *   - `retry(blockId)` fires `thread.retry`.
+       *   - `newSibling(threadRootId)` fires `thread.newSibling`.
+       *
+       * Same rationale as slice 5's `branch`: modifier+letter chords
+       * are unreliable in WebKit's WebDriver against contentEditable
+       * cells, so we drive the IPC directly while the unit-tested
+       * keymap doc + window-keydown wiring covers the user-visible
+       * keystroke path.
+       */
+      selectThreadRoot: (threadRootId: string | null) => {
+        setSelectedThreadRootId(threadRootId)
+      },
+      retry: async (blockId: string) => {
+        const out = await call('thread.retry', { workspaceId, blockId })
+        await load()
+        return out
+      },
+      newSibling: async (threadRootId: string) => {
+        const out = await call('thread.newSibling', { workspaceId, threadRootId })
+        await load()
+        return out
+      },
       reload: load,
     }
     ;(window as unknown as { cedarpadE2E?: typeof hook }).cedarpadE2E = hook
@@ -863,10 +991,13 @@ export function Tree({
           const branchClass = isBranchedThread ? 'branched-thread' : ''
           const selectedBlockClass =
             node.kind === 'block' && selectedBlockId === node.id ? 'block-selected' : ''
+          const isThreadRoot = visual === 'thread-root'
+          const selectedThreadRootClass =
+            isThreadRoot && selectedThreadRootId === node.id ? 'thread-root-selected' : ''
           return (
             <div
               key={node.id}
-              className={`tree-node visual-${visual} ${completedClass} ${dropClass} ${draggingClass} ${turnStateClass} ${branchClass} ${selectedBlockClass}`
+              className={`tree-node visual-${visual} ${completedClass} ${dropClass} ${draggingClass} ${turnStateClass} ${branchClass} ${selectedBlockClass} ${selectedThreadRootClass}`
                 .replace(/\s+/g, ' ')
                 .trim()}
               data-visual={visual}
@@ -876,6 +1007,9 @@ export function Tree({
               data-branched-from={typeof branchedFrom === 'string' ? branchedFrom : undefined}
               data-block-selected={
                 node.kind === 'block' && selectedBlockId === node.id ? 'true' : undefined
+              }
+              data-thread-root-selected={
+                isThreadRoot && selectedThreadRootId === node.id ? 'true' : undefined
               }
               style={{ paddingLeft: depth * 18 }}
               draggable
@@ -890,7 +1024,24 @@ export function Tree({
                   : undefined
               }
             >
-              <span className="bullet" aria-hidden>
+              <span
+                className="bullet"
+                aria-hidden
+                // For Thread Roots, clicking the bullet toggles the
+                // newSibling-selection. Stop propagation so the row
+                // click doesn't intercept caret placement, and don't
+                // override block-row clicks (handled at the row level
+                // above).
+                onClick={
+                  isThreadRoot
+                    ? (e) => {
+                        e.stopPropagation()
+                        setSelectedThreadRootId((cur) => (cur === node.id ? null : node.id))
+                      }
+                    : undefined
+                }
+                style={isThreadRoot ? { cursor: 'pointer' } : undefined}
+              >
                 {bulletForVisual(visual)}
               </span>
               <div
