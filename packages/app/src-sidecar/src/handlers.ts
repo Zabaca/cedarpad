@@ -172,6 +172,14 @@ export const handlers: Handlers = {
     const engine = await getThread(workspaceId)
     return engine.branch(blockId)
   },
+  'thread.retry': async ({ workspaceId, blockId }) => {
+    const engine = await getThread(workspaceId)
+    return engine.retry(blockId)
+  },
+  'thread.newSibling': async ({ workspaceId, threadRootId }) => {
+    const engine = await getThread(workspaceId)
+    return engine.newSibling(threadRootId)
+  },
 
   // ---- Auth (slice 3) ----
   // The renderer-facing auth methods (auth.setApiKey/hasApiKey/deleteApiKey)

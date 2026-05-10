@@ -245,6 +245,40 @@ export const ThreadBranchOutputSchema = z.object({
 })
 export type ThreadBranchOutput = z.infer<typeof ThreadBranchOutputSchema>
 
+/**
+ * Retry verb (slice 6). Same shape as branch, distinct method so the
+ * sidecar dispatches to `engine.retry` (mode = 'retry'). The cloned
+ * history goes up to but EXCLUDES the source Block.
+ */
+export const ThreadRetryInputSchema = z.object({
+  workspaceId: z.string(),
+  blockId: z.string(),
+})
+export type ThreadRetryInput = z.infer<typeof ThreadRetryInputSchema>
+
+export const ThreadRetryOutputSchema = z.object({
+  newThreadId: z.string(),
+  promptNodeId: z.string(),
+})
+export type ThreadRetryOutput = z.infer<typeof ThreadRetryOutputSchema>
+
+/**
+ * NewSibling verb (slice 6). Argument is the Thread Root id, not a
+ * Block — the new sibling Thread carries no conversation history at
+ * all.
+ */
+export const ThreadNewSiblingInputSchema = z.object({
+  workspaceId: z.string(),
+  threadRootId: z.string(),
+})
+export type ThreadNewSiblingInput = z.infer<typeof ThreadNewSiblingInputSchema>
+
+export const ThreadNewSiblingOutputSchema = z.object({
+  newThreadId: z.string(),
+  promptNodeId: z.string(),
+})
+export type ThreadNewSiblingOutput = z.infer<typeof ThreadNewSiblingOutputSchema>
+
 // ---------- Auth RPC (slice 3) ----------
 
 /**
@@ -442,6 +476,14 @@ export const Methods = {
   'thread.branch': {
     input: ThreadBranchInputSchema,
     output: ThreadBranchOutputSchema,
+  },
+  'thread.retry': {
+    input: ThreadRetryInputSchema,
+    output: ThreadRetryOutputSchema,
+  },
+  'thread.newSibling': {
+    input: ThreadNewSiblingInputSchema,
+    output: ThreadNewSiblingOutputSchema,
   },
   // ---- Auth (slice 3) ----
   // Sidecar handlers are typically no-ops or delegate to its keychainStore;

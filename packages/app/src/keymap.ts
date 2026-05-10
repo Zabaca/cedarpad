@@ -21,10 +21,30 @@ import type { Node } from './contract'
  *   - Cmd/Ctrl+Shift+. → cancel the in-flight Claude turn for the active
  *                        Thread (slice 4). Distinct from Cmd+. (zoom-in).
  *   - Cmd/Ctrl+Shift+T → start a Thread on this Content Node (slice 2)
- *   - Cmd/Ctrl+Shift+B → branch from a Block Node — fork into a sibling
- *                        Thread carrying full history through this Block
- *                        (slice 5). The renderer translates the intent
- *                        into a `thread.branch` call.
+ *
+ * Branch verbs (slice 5 + 6) — the three ways to fork a Thread. All
+ * three reduce to one internal op (`branchInternal`); they differ only
+ * in how much prior context is carried into the new sibling Thread.
+ * Discoverable via the toolbar hint in `App.tsx`.
+ *
+ *   - Cmd/Ctrl+Shift+B → BRANCH from a selected Block Node (slice 5).
+ *                        Sibling Thread with full history *including*
+ *                        the source Block. "What if Claude had
+ *                        continued differently from here?"
+ *                        Dispatched by a window-level keydown handler
+ *                        in Tree.tsx; not surfaced as an Intent because
+ *                        Block rows aren't contentEditable.
+ *   - Cmd/Ctrl+Shift+R → RETRY from a selected Block Node (slice 6).
+ *                        Sibling Thread with full history *up to but
+ *                        excluding* the source Block. "Regenerate /
+ *                        edit-and-resend" expressed as a fork.
+ *                        Same window-level dispatch as Cmd+Shift+B.
+ *   - Cmd/Ctrl+Shift+N → NEW SIBLING when a Thread Root is selected
+ *                        (slice 6). Empty Thread under the same Thread
+ *                        Root, no history at all. "New conversation,
+ *                        same topic seed." Dispatched at window level;
+ *                        the Thread Root selection mirrors the Block
+ *                        selection model from slice 5.
  *
  * Visual treatments paired with the kinds (slice 2):
  *   - Content Node: default bullet
