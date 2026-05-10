@@ -179,8 +179,15 @@ export function Tree({
   }, [load])
 
   // Ensure at least one node exists under the current zoom root so the user
-  // has something to type into.
+  // has something to type into. Also recover from a stale `activeNodeId`
+  // pointing to a node that no longer exists (e.g. after a v1.1 DB wipe) —
+  // load()'s BFS won't reach it, so byParent has no entry for it and the
+  // seed below would silently skip.
   useEffect(() => {
+    if (activeNodeId !== null && byParent.size > 0 && byParent.get(activeNodeId) === undefined) {
+      onZoomTo(null)
+      return
+    }
     void (async () => {
       const children = byParent.get(activeNodeId)
       if (children && children.length === 0) {
@@ -193,7 +200,7 @@ export function Tree({
         setFocusId(created.id)
       }
     })()
-  }, [byParent, workspaceId, load, activeNodeId])
+  }, [byParent, workspaceId, load, activeNodeId, onZoomTo])
 
   useEffect(() => {
     if (!focusId) return
