@@ -88,6 +88,16 @@ Assume every change runs in a parallel git worktree alongside other copies of it
 
 If a feature can't run alongside a copy of itself in another worktree, it's not worktree-safe — fix it before merging. Background: ADR-0003.
 
+### 7. Single Contract for FE/BE
+
+All cross-process boundaries (renderer ↔ Tauri ↔ sidecar, sidecar ↔ external services, persisted JSON) share a single zod-defined contract. One file (or one scoped contract module) holds every method's input and output schemas. Both sides import from it; both sides parse at the boundary.
+
+- Type safety end-to-end via `z.infer<typeof Schema>` — no hand-maintained `interface` mirrors that drift.
+- JSON fields stored in libSQL (or any text-as-JSON column) are typed by zod schemas in the same contract module. Encode at write, parse-and-validate at read. Never let raw JSON cross a module boundary.
+- A schema change is a contract change is a deliberate code-review event. No silent drift between sender and receiver.
+
+Why: IPC payloads, future sync messages, and persisted JSON are all "data crosses a trust boundary" moments — the same moments that drive most subtle bugs. One source of truth means renames, additions, and removals are mechanical refactors, not archaeology.
+
 ## Agent skills
 
 ### Issue tracker
