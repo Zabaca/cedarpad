@@ -549,12 +549,15 @@ export function Tree({
         const dir = e.key === 'ArrowDown' ? 1 : -1
         for (let i = idxInVisible + dir; i >= 0 && i < visible.length; i += dir) {
           const r = visible[i]!
-          const targetId = r.kind === 'node' ? r.node.id : r.toolUse.id
-          const targetEl = refs.current.get(targetId)
+          // Only content nodes are contenteditable / focusable. Block rows
+          // and pair rows render through BlockRow/ToolPair as static divs,
+          // so .focus() on them no-ops; skip past them.
+          if (r.kind !== 'node' || r.node.kind !== 'content') continue
+          const targetEl = refs.current.get(r.node.id)
           if (targetEl) {
             e.preventDefault()
             targetEl.focus()
-            setFocusId(targetId)
+            setFocusId(r.node.id)
             return
           }
         }
