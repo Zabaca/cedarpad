@@ -358,10 +358,15 @@ export function Tree({
               void load()
             } else if (ev.kind === 'prompt-complete') {
               void load()
+            } else if (ev.kind === 'error') {
+              console.error('[runPrompt] runner error event', ev)
             }
           },
         )
         await load()
+        if (result.reason === 'error') {
+          console.error('[runPrompt] streamSendPrompt finished with reason=error', { promptNodeId, result })
+        }
         if (result.reason === 'done') {
           // Auto-create empty next-prompt-slot as the immediate next
           // sibling of the Prompt (under whatever container it lives in).
@@ -381,8 +386,8 @@ export function Tree({
             /* non-fatal */
           }
         }
-      } catch {
-        /* non-fatal */
+      } catch (err) {
+        console.error('[runPrompt] streamSendPrompt threw', err)
       } finally {
         setStreamingPromptIds((prev) => {
           if (!prev.has(promptNodeId)) return prev
