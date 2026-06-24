@@ -1,0 +1,30 @@
+{
+  "name": "@cedarpad/web-poc",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:db": "turso dev -f ./.turso-local.db -p ${TURSO_DEV_PORT:-8081}",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "hono": "4.12.27",
+    "@libsql/client": "latest"
+  },
+  "devDependencies": {
+    "vite": "8.1.0",
+    "@vitejs/plugin-react": "latest",
+    "@cloudflare/vite-plugin": "1.42.2",
+    "wrangler": "4.104.0",
+    "@cloudflare/workers-types": "latest",
+    "typescript": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
+}

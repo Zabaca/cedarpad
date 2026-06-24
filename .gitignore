@@ -11,3 +11,6 @@ dist
 .claude/scheduled_tasks.lock
 .cedarpad/
 .idea
+.dev.vars
+.wrangler/
+.turso-local.db*
