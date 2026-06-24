@@ -46,3 +46,6 @@ only at deploy time (pushed as Worker secrets by the `cloudflare` zbc module).
 - **Web POC → Infra**: deployed by the `cloudflare` module instance
   (`packages/infra/environments/production/web-poc.ts`), which builds, runs
   `wrangler deploy`, and pushes `TURSO_URL`/`TURSO_KEY` as Worker secrets.
+  A merge to `main` touching `packages/web-poc/**` or `packages/infra/**`
+  auto-deploys via `.github/workflows/production.yml` (`zbc apply production
+  web-poc`); it decrypts `secrets.yaml` with the `SOPS_AGE_KEY` CI key.
