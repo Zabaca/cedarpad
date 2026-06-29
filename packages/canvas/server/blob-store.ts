@@ -1,0 +1,137 @@
+// Blob store for canvas persistence. Two concerns, kept dumb: deterministic key
+// layout, and a swappable `BlobBackend`. The backend is the ONLY thing that
+// knows where bytes live — local disk for dev (no cloud), R2 in the container,
+// an in-memory Map in tests. No policy lives here — the data-loss guard is in
+// `canvas-persistence.ts`. Glossary: workspace = container/fs; canvas = board.
+
+import { join } from 'node:path';
+
+import type { CanvasState } from '../src/shapes.ts';
+import type { ChatMeta } from './chat-meta.ts';
+
+/** workspace-scoped per-canvas board state. */
+export const canvasStateKey = (ws: string, canvas: string): string =>
+  `workspaces/${ws}/canvases/${canvas}/canvas-state.json`;
+
+/** workspace-scoped component library tarball: just src/canvas-components/ (the
+ * agent's authored .tsx files), NOT the whole app subtree. Our own app code stays
+ * image-only so deploys can't be shadowed. New key so the old whole-subtree
+ * overlay.tar (incompatible tar paths) is never read. */
+export const componentsKey = (ws: string): string => `workspaces/${ws}/components.tar`;
+
+/** workspace-scoped custom-handler tarball: just server/custom/ (the agent's
+ * authored backend handlers). Same model as the component library — extension
+ * content, persisted; the core stays image-only. */
+export const customKey = (ws: string): string => `workspaces/${ws}/custom.tar`;
+
+/** workspace-scoped Claude session transcripts (~/.claude/projects), tarred. They
+ * live outside the app subtree, so the overlay never captures them; without this a
+ * recycle loses every session's JSONL and `resume` fails ("No conversation found"). */
+export const sessionsKey = (ws: string): string => `workspaces/${ws}/sessions.tar`;
+
+/** workspace-scoped per-chat durable state (ADR 0004): the `chatId → ChatMeta` map,
+ * one JSON blob for the whole workspace. Replaces browser `localStorage` as the home for
+ * `{ sessionId, model, effort, forkNext }`. */
+export const chatMetaKey = (ws: string): string => `workspaces/${ws}/chat-meta.json`;
+
+/** Minimal blob seam. `get` returns null for an absent key (legitimately empty),
+ * and throws only on a real backend failure — the two are distinct. */
+export interface BlobBackend {
+  get(key: string): Promise<Uint8Array | null>;
+  put(key: string, data: Uint8Array): Promise<void>;
+  exists(key: string): Promise<boolean>;
+}
+
+/** In-memory backend for tests. */
+export const memBackend = (): BlobBackend => {
+  const map = new Map<string, Uint8Array>();
+  return {
+    get: async (key) => map.get(key) ?? null,
+    put: async (key, data) => void map.set(key, data),
+    exists: async (key) => map.has(key),
+  };
+};
+
+/** Local-filesystem backend for dev. Keys (with `/`) map to paths under `root`;
+ * Bun.write creates parent dirs. No network, no cloud. */
+export const fsBackend = (root: string): BlobBackend => ({
+  get: async (key) => {
+    const f = Bun.file(join(root, key));
+    return (await f.exists()) ? new Uint8Array(await f.arrayBuffer()) : null;
+  },
+  put: async (key, data) => void (await Bun.write(join(root, key), data)),
+  exists: (key) => Bun.file(join(root, key)).exists(),
+});
+
+/** Prod backend: R2 via Bun's S3-compatible client. Creds read from env at the
+ * call site (no central config). Untested here — exercised by the deploy. */
+export const s3Backend = (): BlobBackend => {
+  const client = new Bun.S3Client({
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    bucket: process.env.R2_BUCKET,
+    endpoint: process.env.R2_ENDPOINT,
+  });
+  return {
+    get: async (key) => {
+      const f = client.file(key);
+      if (!(await f.exists())) return null;
+      return new Uint8Array(await f.arrayBuffer());
+    },
+    put: async (key, data) => void (await client.file(key).write(data)),
+    exists: (key) => client.file(key).exists(),
+  };
+};
+
+/** Pick a backend from env: `R2_BUCKET` set → R2, else local disk at `fsRoot`. */
+export const selectBackend = (fsRoot: string): BlobBackend =>
+  process.env.R2_BUCKET ? s3Backend() : fsBackend(fsRoot);
+
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+export class BlobStore {
+  constructor(private readonly backend: BlobBackend) {}
+
+  async loadCanvasState(ws: string, canvas: string): Promise<CanvasState | null> {
+    const bytes = await this.backend.get(canvasStateKey(ws, canvas));
+    return bytes === null ? null : (JSON.parse(dec.decode(bytes)) as CanvasState);
+  }
+
+  async saveCanvasState(ws: string, canvas: string, state: CanvasState): Promise<void> {
+    await this.backend.put(canvasStateKey(ws, canvas), enc.encode(JSON.stringify(state)));
+  }
+
+  loadComponents(ws: string): Promise<Uint8Array | null> {
+    return this.backend.get(componentsKey(ws));
+  }
+
+  async saveComponents(ws: string, bytes: Uint8Array): Promise<void> {
+    await this.backend.put(componentsKey(ws), bytes);
+  }
+
+  loadCustom(ws: string): Promise<Uint8Array | null> {
+    return this.backend.get(customKey(ws));
+  }
+
+  async saveCustom(ws: string, bytes: Uint8Array): Promise<void> {
+    await this.backend.put(customKey(ws), bytes);
+  }
+
+  loadSessions(ws: string): Promise<Uint8Array | null> {
+    return this.backend.get(sessionsKey(ws));
+  }
+
+  async saveSessions(ws: string, bytes: Uint8Array): Promise<void> {
+    await this.backend.put(sessionsKey(ws), bytes);
+  }
+
+  async loadChatMeta(ws: string): Promise<Record<string, ChatMeta> | null> {
+    const bytes = await this.backend.get(chatMetaKey(ws));
+    return bytes === null ? null : (JSON.parse(dec.decode(bytes)) as Record<string, ChatMeta>);
+  }
+
+  async saveChatMeta(ws: string, map: Record<string, ChatMeta>): Promise<void> {
+    await this.backend.put(chatMetaKey(ws), enc.encode(JSON.stringify(map)));
+  }
+}
