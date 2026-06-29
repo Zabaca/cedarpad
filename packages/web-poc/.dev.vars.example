@@ -1,0 +1,29 @@
+# Copy to .dev.vars (gitignored) for local `vite` dev. The worker runs in workerd
+# via @cloudflare/vite-plugin and reads these. In prod these are Worker secrets
+# pushed by the zbc cloudflare module (from SOPS), never committed here.
+
+# Local libSQL: point at the `turso dev` daemon (`bun run dev:db`), NOT a file:
+# URL — workerd has no filesystem.
+TURSO_URL="http://127.0.0.1:8081"
+TURSO_KEY=""
+
+# Embeddings: Voyage (active embedding provider, voyage-3.5-lite). Without it the
+# embedder falls back to the deterministic local hash (lexical, not semantic).
+VOYAGE_API_KEY=""
+
+# LLM agent providers — only used if you run the optional agent-jobs consumer
+# (`bun run dev:worker`) for classification/linking/synthesis. Not needed for
+# the inline embed→store→search loop.
+ANTHROPIC_API_KEY=""
+OPENAI_API_KEY=""
+
+# Realtime (optional). Leave blank to disable Ably.
+ABLY_API_KEY=""
+
+# Better Auth (required). Same-origin in the single-worker model.
+BETTER_AUTH_SECRET="dev-secret-change-me-at-least-32-chars"
+BETTER_AUTH_URL="http://localhost:5173"
+
+# Production web origin trusted for Better Auth CSRF/Origin checks. Same-origin
+# in this model, so usually left blank.
+WEB_ORIGIN=""

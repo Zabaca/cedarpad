@@ -8,6 +8,18 @@ export default cloudflareModule.instance({
     accountId: '99a19e584439be0568f33aad0477372b',
     build: { command: 'bun run build', cwd: 'packages/web-poc' },
     // Pushed as Worker runtime secrets via `wrangler secret put` after deploy.
-    workerSecrets: ['TURSO_URL', 'TURSO_KEY'],
+    // All of these must exist in production/secrets.yaml (SOPS-encrypted)
+    // alongside TURSO_URL/TURSO_KEY. VOYAGE_API_KEY powers embeddings (the
+    // active embedding provider); ANTHROPIC/OPENAI are only used if the optional
+    // LLM agent jobs are run.
+    workerSecrets: [
+      'TURSO_URL',
+      'TURSO_KEY',
+      'VOYAGE_API_KEY',
+      'ABLY_API_KEY',
+      'ANTHROPIC_API_KEY',
+      'OPENAI_API_KEY',
+      'BETTER_AUTH_SECRET',
+    ],
   },
 })

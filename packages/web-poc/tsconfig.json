@@ -3,7 +3,15 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types", "vite/client"],
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "composite": false,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
   },
-  "include": ["src", "worker", "vite.config.ts", "worker-configuration.d.ts"]
+  "include": ["src", "worker", "lib", "scripts", "vite.config.ts", "drizzle.config.ts", "worker-configuration.d.ts"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx"]
 }
