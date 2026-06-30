@@ -1,26 +1,30 @@
 // ponytail: idle gate so an open-but-idle tab lets the CF container reach its
-// sleepAfter window instead of being pinned awake forever.
+// sleepAfter window instead of being pinned awake forever by the chat stream's 15s
+// ping.
 //
 // Why closing (not just "stop pinging") is required: an EventSource auto-reconnects
 // the instant its connection drops, so a slept container is immediately re-woken by
 // the reconnect. A deliberate .close() does NOT auto-reconnect, so the container can
-// sleep and STAY asleep until the tab is shown again.
+// sleep and STAY asleep until someone comes back.
 //
-// Trigger is tab visibility: hidden + a short grace + no agent turn in flight -> close
-// both streams (chat + canvas); shown -> reopen. The turn guard keeps a container warm
-// through a turn started just before the tab was backgrounded (a mid-turn sleep would
-// kill the agent).
+// Idle is measured by USER ACTIVITY (pointer/keyboard), not tab visibility — a tab
+// left open and VISIBLE but unattended (e.g. a teammate's open tab on another monitor)
+// generates no activity, so it closes too. After IDLE_MS with no activity, and no agent
+// turn in flight, both SSE streams (chat + canvas) close; any activity (or the tab
+// being shown) reopens them. A hidden tab closes sooner.
 //
-// ceiling: only the hidden-tab case is handled. A tab left VISIBLE but unattended still
-// pins the container — close the tab, or add a DOM-activity timer here if that case
-// starts mattering.
+// Total time to container sleep = IDLE_MS (streams close) + the worker's sleepAfter
+// (the quiet window once traffic stops). Both are knobs.
 
 type Toggle = { open: () => void; close: () => void };
 
 const toggles = new Set<Toggle>();
 let busyCheck: () => boolean = () => false;
-const GRACE_MS = 30_000; // ponytail: avoids thrash on quick tab flicks; container's 5m sleepAfter is the real delay
-let graceTimer: ReturnType<typeof setTimeout> | null = null;
+
+const IDLE_MS = 120_000; // no pointer/keyboard for 2m -> close streams
+const HIDDEN_GRACE_MS = 30_000; // tab hidden -> close sooner
+let timer: ReturnType<typeof setTimeout> | null = null;
+let lastBump = 0;
 let closed = false;
 
 /** Register a stream's open/close. Returns an unregister fn (call on teardown). */
@@ -34,15 +38,15 @@ export function setBusyCheck(fn: () => boolean): void {
   busyCheck = fn;
 }
 
-function arm(): void {
-  if (graceTimer) clearTimeout(graceTimer);
-  graceTimer = setTimeout(closeAll, GRACE_MS);
+function scheduleClose(ms: number): void {
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(doClose, ms);
 }
 
-function closeAll(): void {
-  graceTimer = null;
+function doClose(): void {
+  timer = null;
   if (busyCheck()) {
-    arm(); // a turn is running — keep warm, re-check after another grace
+    scheduleClose(HIDDEN_GRACE_MS); // a turn is running — keep warm, re-check soon
     return;
   }
   if (closed) return;
@@ -50,19 +54,27 @@ function closeAll(): void {
   for (const t of toggles) t.close();
 }
 
-function openAll(): void {
-  if (graceTimer) {
-    clearTimeout(graceTimer);
-    graceTimer = null;
-  }
+function reopen(): void {
   if (!closed) return;
   closed = false;
   for (const t of toggles) t.open();
 }
 
+function activity(): void {
+  if (closed) reopen(); // someone's back — reopen immediately
+  const now = Date.now();
+  if (now - lastBump < 1000) return; // throttle: pointermove fires a lot
+  lastBump = now;
+  if (typeof document === 'undefined' || document.visibilityState !== 'hidden') scheduleClose(IDLE_MS);
+}
+
 if (typeof document !== 'undefined') {
+  for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const) {
+    document.addEventListener(ev, activity, { passive: true });
+  }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') arm();
-    else openAll();
+    if (document.visibilityState === 'hidden') scheduleClose(HIDDEN_GRACE_MS);
+    else activity();
   });
+  scheduleClose(IDLE_MS); // arm on load so a never-touched tab still closes
 }

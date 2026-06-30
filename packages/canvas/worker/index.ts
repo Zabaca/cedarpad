@@ -6,8 +6,9 @@ import { getSandbox, Sandbox as BaseSandbox } from '@cloudflare/sandbox';
 // SSE spike proved streams unbuffered, so the canvas SSE stream works as-is.
 export class Sandbox extends BaseSandbox {
   // Sleep after idle (state survives in R2). The client idle gate (src/idle.ts) closes
-  // both SSE streams when the tab is hidden, so an open-but-idle tab no longer pins the
-  // container — this 5m window is the real sleep delay once the streams go quiet.
+  // both SSE streams after ~2m of no user activity (pointer/keyboard), so an open-but-idle
+  // tab no longer pins the container via the 15s ping — this 5m window is the remaining
+  // sleep delay once the streams go quiet (total idle-to-sleep ~7m).
   sleepAfter = '5m';
 }
 
