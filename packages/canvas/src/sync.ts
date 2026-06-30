@@ -23,6 +23,7 @@ import type { CanvasPage, CanvasShape, CanvasState } from './shapes';
 import { fromTldrawShape } from './tldraw-bridge';
 import { canon } from './tldraw-conventions';
 import { planReconcile, type ArrowBindingPair, type EditorSnapshot, type ReconcileOp } from './sync-plan';
+import { registerStream } from './idle';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // remote -> editor: snapshot the live editor, plan with the pure planner, apply.
@@ -174,24 +175,6 @@ export function wireSync(editor: Editor): () => void {
     for (const p of state.pages) mirroredPages.add(p.id);
   }
 
-  const es = new EventSource(`${API}/canvas/stream`);
-  // A freshly (re)established SSE connection means the bridge may have restarted
-  // and reset its monotonic version counter (it does on every server-code reload).
-  // Drop our high-water mark so the next primed frame is accepted as authoritative;
-  // otherwise we'd ignore every update from the restarted bridge — its versions now
-  // being lower than ours — and silently drift out of sync (a clear, an agent edit,
-  // anything). onopen fires on the initial connect and on each auto-reconnect.
-  es.onopen = () => {
-    lastVersion = -1;
-  };
-  es.onmessage = (e) => {
-    try {
-      reconcile(JSON.parse(e.data) as CanvasState);
-    } catch {
-      /* ignore malformed frame */
-    }
-  };
-
   // The agent's view_canvas tool asks for a PNG; render it via tldraw and post back.
   const onScreenshot = async (e: MessageEvent) => {
     let id: string;
@@ -219,7 +202,37 @@ export function wireSync(editor: Editor): () => void {
       await reply(null);
     }
   };
-  es.addEventListener('screenshot', (e) => void onScreenshot(e as MessageEvent));
+  // Canvas inbound stream, wrapped in open/close so the idle gate (src/idle.ts) can drop
+  // it when the tab is hidden — an always-open EventSource auto-reconnects, which would
+  // re-wake a slept CF container.
+  let es: EventSource | null = null;
+  const openCanvasStream = (): void => {
+    if (es) return;
+    es = new EventSource(`${API}/canvas/stream`);
+    // A freshly (re)established SSE connection means the bridge may have restarted
+    // and reset its monotonic version counter (it does on every server-code reload).
+    // Drop our high-water mark so the next primed frame is accepted as authoritative;
+    // otherwise we'd ignore every update from the restarted bridge — its versions now
+    // being lower than ours — and silently drift out of sync (a clear, an agent edit,
+    // anything). onopen fires on the initial connect and on each auto-reconnect.
+    es.onopen = () => {
+      lastVersion = -1;
+    };
+    es.onmessage = (e) => {
+      try {
+        reconcile(JSON.parse(e.data) as CanvasState);
+      } catch {
+        /* ignore malformed frame */
+      }
+    };
+    es.addEventListener('screenshot', (e) => void onScreenshot(e as MessageEvent));
+  };
+  const closeCanvasStream = (): void => {
+    es?.close();
+    es = null;
+  };
+  openCanvasStream();
+  const unregisterIdle = registerStream({ open: openCanvasStream, close: closeCanvasStream });
 
   // --- editor -> remote (debounced) ---
   const pendingUpsert = new Map<string, CanvasShape>();
@@ -415,7 +428,8 @@ export function wireSync(editor: Editor): () => void {
   );
 
   return () => {
-    es.close();
+    unregisterIdle();
+    closeCanvasStream();
     unlisten();
     if (timer) clearTimeout(timer);
     if (pollTimer) clearTimeout(pollTimer);

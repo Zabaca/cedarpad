@@ -9,6 +9,7 @@
 // the editor for removed chat shapes).
 
 import { type ChatEvent, type ChatFrame, type TaskStatus, type TodoStatus, isChatFrame } from '../shared/chat-wire.ts';
+import { registerStream, setBusyCheck } from './idle.ts';
 
 // `parentId` (set on subagent items) is the spawning Task chip's tool_use id, so the
 // view can indent them under it. Tool items carry their own `toolUseId` so a `task`
@@ -162,6 +163,27 @@ function ensureSharedStream(): void {
   es.onmessage = (e) => routeChatFrame(e.data as string);
   sharedStream = es;
 }
+
+// Idle gate (src/idle.ts): when the tab is hidden the shared stream is deliberately
+// closed so the CF container can sleep; a plain .close() does not auto-reconnect. On
+// reopen, every known session rehydrates from the server (live frames missed while
+// closed are recovered from the JSONL-derived transcript, ADR 0004).
+function closeSharedStream(): void {
+  if (!sharedStream) return;
+  sharedStream.close();
+  sharedStream = null;
+  streamReady = false;
+  for (const id of sessions.keys()) update(id, { subscribed: false });
+}
+function reopenSharedStream(): void {
+  ensureSharedStream();
+  for (const id of sessions.keys()) void rehydrate(id);
+}
+registerStream({ open: reopenSharedStream, close: closeSharedStream });
+setBusyCheck(() => {
+  for (const s of sessions.values()) if (s.busy) return true;
+  return false;
+});
 
 /** Attach a chat to the shared stream (idempotent). Never closed on view unmount.
  *  Pulls the server transcript on attach so a reload / fresh device rehydrates. */

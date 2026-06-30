@@ -5,9 +5,10 @@ import { getSandbox, Sandbox as BaseSandbox } from '@cloudflare/sandbox';
 // serves the app and forwards /api/* to the bridge. Same preview-proxy path the
 // SSE spike proved streams unbuffered, so the canvas SSE stream works as-is.
 export class Sandbox extends BaseSandbox {
-  // Sleep after idle (state survives in R2). 10m: a cold wake is slow, but holding
-  // a warm container longer mostly burns compute on an idle canvas.
-  sleepAfter = '10m';
+  // Sleep after idle (state survives in R2). The client idle gate (src/idle.ts) closes
+  // both SSE streams when the tab is hidden, so an open-but-idle tab no longer pins the
+  // container — this 5m window is the real sleep delay once the streams go quiet.
+  sleepAfter = '5m';
 }
 
 export interface Env {
