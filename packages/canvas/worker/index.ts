@@ -159,7 +159,17 @@ export default {
       // a 5xx here is the SANDBOX PROXY reporting the container isn't ready — NOT
       // an app response — so fall through to the cold start. (Returning the 410
       // directly is what left the site permanently 410 after a recycle.)
-      if (res.status < 400 || res.status === 404) return res;
+      if (res.status < 400) return res;
+      if (res.status === 404) {
+        // A FRESH container that has never exposed the port answers the preview
+        // proxy with 404 + an {"code":"INVALID_TOKEN"} / "port not exposed" body,
+        // not a 410/5xx — indistinguishable from a real vite 404 by status alone.
+        // Peek the body: the sandbox's not-ready 404 falls through to the cold path
+        // (startProcess + exposePort); a genuine vite 404 is returned as-is. Without
+        // this, a never-warmed container deadlocks (never cold-starts). (#preview)
+        const peek = await res.clone().text().catch(() => '');
+        if (!/INVALID_TOKEN|port not exposed/.test(peek)) return res;
+      }
     } catch {
       /* container unreachable — fall through to the cold path */
     }
