@@ -11,14 +11,15 @@ FROM docker.io/cloudflare/sandbox:0.12.1
 
 # Build context is the REPO ROOT (wrangler.jsonc `image_build_context: "../.."`), so
 # we bake the workspace — root manifest + lockfile + the packages the canvas instance
-# needs. `bun install` links @cedarpad/web-poc (mounted into the canvas app and served
-# in the same bridge process) and @cedarpad/infra (a root dependency). packages/app
-# (the separate desktop app) is excluded via the repo-root .dockerignore. The dev
-# stack is vite (not a static build), so node_modules is installed here, not baked.
+# needs. web-poc now lives in-tree at packages/canvas/web-poc (imported by relative
+# path, mounted into the canvas app + served in the same bridge process), so it is
+# copied with packages/canvas — no separate copy. `bun install` also links
+# @cedarpad/infra (a root dependency). packages/app (the separate desktop app) is
+# excluded via the repo-root .dockerignore. The dev stack is vite (not a static
+# build), so node_modules is installed here, not baked.
 WORKDIR /app/agent-canvas
 COPY package.json bun.lock ./
 COPY packages/canvas packages/canvas
-COPY packages/web-poc packages/web-poc
 COPY packages/infra packages/infra
 RUN bun install --frozen-lockfile || bun install
 

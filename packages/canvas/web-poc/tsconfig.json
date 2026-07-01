@@ -1,5 +1,5 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../../tsconfig.json",
   "compilerOptions": {
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
@@ -12,6 +12,6 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src", "worker", "lib", "scripts", "vite.config.ts", "drizzle.config.ts", "worker-configuration.d.ts"],
+  "include": ["src", "worker", "lib", "scripts", "drizzle.config.ts", "worker-configuration.d.ts"],
   "exclude": ["**/*.test.ts", "**/*.test.tsx"]
 }

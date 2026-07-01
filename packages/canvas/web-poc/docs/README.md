@@ -4,6 +4,14 @@ Architecture/reference docs, migrated from the apex monorepo. They describe the
 domain and subsystems; **read them through the migration delta below**, because
 the code was restructured and a few design points changed after the move.
 
+> **Two migrations happened.** (1) apex → web-poc (paths + design deltas, below).
+> (2) web-poc → embedded in `@cedarpad/canvas` (2026-07-01) — the app now also
+> runs in-process inside the canvas bridge and ships as one Cloudflare instance;
+> React is now **19**. These `docs/` describe web-poc's *internals* (embeddings,
+> contract, agent, pipeline), which are unchanged by the embed. For the embed
+> itself see `../CONTEXT.md` → "Embedded in canvas" and `../MIGRATION.md` →
+> "Embedded into canvas".
+
 ## Migration delta (read first)
 
 This package flattened apex's two deploy targets + 5 workspace packages into one

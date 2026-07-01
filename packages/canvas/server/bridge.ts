@@ -8,8 +8,8 @@ import { readFileSync } from 'node:fs';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
-import { buildApp } from '@cedarpad/web-poc/worker';
-import { makeDb } from '@cedarpad/web-poc/db';
+import { buildApp } from '../web-poc/worker/index.ts';
+import { makeDb } from '../web-poc/lib/db/index.ts';
 
 import type { CanvasState } from '../src/shapes.ts';
 import { createStore } from '../src/store.ts';
@@ -36,9 +36,10 @@ const BUILD_REV =
 const PORT = Number(process.env.CANVAS_BRIDGE_PORT ?? 4511);
 
 // --- web-poc mount ---------------------------------------------------------
-// web-poc's Hono app (/v1 + Better Auth /api/auth) runs IN this bun process, so
-// the whole repo deploys as one Cloudflare instance. Its env comes from web-poc's
-// .dev.vars in dev and from real process.env in the container. Better Auth is
+// web-poc lives in-tree at ./web-poc (imported by relative path, not a workspace
+// package). Its Hono app (/v1 + Better Auth /api/auth) runs IN this bun process,
+// so the whole repo deploys as one Cloudflare instance. Its env comes from
+// web-poc/.dev.vars in dev and from real process.env in the container. Better Auth is
 // origin-sensitive, so we point baseURL + trustedOrigins at the canvas serving
 // origin (both apps share one origin once mounted); real env wins in the container.
 const WEBPOC_ORIGIN = process.env.WEBPOC_ORIGIN ?? 'http://localhost:4510';
@@ -46,7 +47,7 @@ const WEBPOC_ORIGIN = process.env.WEBPOC_ORIGIN ?? 'http://localhost:4510';
 function loadWebPocEnv(): Record<string, string> {
   const vars: Record<string, string> = {};
   try {
-    const text = readFileSync(new URL('../../web-poc/.dev.vars', import.meta.url), 'utf8');
+    const text = readFileSync(new URL('../web-poc/.dev.vars', import.meta.url), 'utf8');
     for (const line of text.split('\n')) {
       const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
       if (m?.[1]) vars[m[1]] = (m[2] ?? '').replace(/^["']|["']$/g, '');
@@ -79,7 +80,7 @@ const webPocClient = createClient(
 );
 if (!webPocRemoteTurso) {
   await migrate(drizzle(webPocClient), {
-    migrationsFolder: fileURLToPath(new URL('../../web-poc/lib/db/migrations', import.meta.url)),
+    migrationsFolder: fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url)),
   });
 }
 const webPocApp = buildApp({ db: makeDb(webPocClient) });

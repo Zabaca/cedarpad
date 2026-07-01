@@ -199,3 +199,79 @@ using the LLM agent.
 Migration path: A → B is additive (keep cron, add the kick). A/B → C/D is a
 producer+consumer rewrite but the `drainAgentJobs`/`processNextJob` job logic is
 reusable as the queue/workflow body.
+
+## Embedded into canvas (2026-07-01)
+
+A second, larger integration: web-poc was mounted **into `@cedarpad/canvas`** so
+the repo ships as one Cloudflare instance, while remaining standalone-capable.
+Two commits:
+
+### `e8407be` — embed as a 3rd nav view (in-process)
+
+- **React 18 → 19**: unified across canvas + web-poc (this reverses the
+  `18.3.1` pin recorded above under "New / rewritten config"). Both apps now
+  share one React 19 tree — no iframe.
+- **New embed entry**: `src/embed.tsx` exports `WebPocApp` — everything
+  `main.tsx` does (Mantine + Notifications + React Query providers, global CSS)
+  **except** `createRoot`, so the canvas host renders it into its own tree.
+- **`package.json` `exports`** added so canvas can import the three seams:
+  `./embed` → `src/embed.tsx`, `./worker` → `worker/index.ts` (`buildApp`),
+  `./db` → `lib/db/index.ts` (`makeDb`).
+- **Backend mount**: the canvas bridge (`packages/canvas/server/bridge.ts`) runs
+  `buildApp` in-process for `/v1/*` + `/api/auth/*`, builds **one**
+  `@libsql/client` (node — speaks both local file and remote Turso) and injects
+  it into `buildApp` (bypassing the workerd `@libsql/client/web` path), reads
+  this package's `.dev.vars`, and runs `lib/db/migrations` on boot in dev.
+- **Frontend**: canvas lazy-imports `WebPocApp` behind a 3rd left-rail button
+  (`packages/canvas/src/App.tsx` + `LeftPanel.tsx`); Mantine's fixed AppShell is
+  contained to the frame; canvas Vite proxies `/v1` + `/api` to the bridge.
+
+### `12cdd54` — bake into the canvas container (one instance)
+
+- **Single deploy**: the `agent-canvas` Worker + container now serves both apps.
+  `packages/canvas/wrangler.jsonc` sets the container build context to the repo
+  root so the image can `COPY` the workspace; `Dockerfile` bakes the root
+  manifest + `packages/{canvas,web-poc,infra}` and `bun install` links
+  `@cedarpad/web-poc`; `worker/index.ts` forwards web-poc's env (`TURSO_*`,
+  `VOYAGE_API_KEY`, `BETTER_AUTH_*`, `WEB_ORIGIN`) into the container and writes
+  `.env` into the canvas package (the bridge's cwd).
+- **Secrets**: web-poc's secrets were added to `infra/.../canvas.ts`
+  `workerSecrets` (must exist in `secrets.yaml`).
+- **Status**: `12cdd54` is UNVERIFIED locally (no Docker/deploy in that session).
+
+### Directory merge — nested into canvas, standalone retired (2026-07-01)
+
+The workspace-package indirection (`@cedarpad/web-poc` + its `exports`) was then
+removed, folding this into canvas as a plain in-tree module.
+
+- **Moved**: `packages/web-poc/` → `packages/canvas/web-poc/` (git-tracked rename;
+  `src/`, `worker/`, `lib/`, `scripts/`, `docs/`, migrations, `.dev.vars` all
+  preserved). It is **not** a bun workspace member (workspaces glob is
+  `packages/*`).
+- **Dropped the package**: deleted `web-poc/package.json` (name + `exports`) and
+  `web-poc/node_modules`. Canvas now imports by **relative path** —
+  `../web-poc/src/embed`, `../web-poc/worker/index.ts`, `../web-poc/lib/db/index.ts`
+  — replacing `@cedarpad/web-poc/{embed,worker,db}` in `App.tsx` + `bridge.ts`.
+  The bridge's `.dev.vars` / migrations paths went `../../web-poc/...` →
+  `../web-poc/...`.
+- **Deps folded into canvas** (`packages/canvas/package.json`): all of web-poc's
+  runtime deps (Mantine, React Query, `@xyflow/react`, hono + `@hono/*`,
+  better-auth + `@better-auth/api-key`, `ai` + `@ai-sdk/*`, ably, zustand,
+  openapi-fetch, …) + dev tooling (`drizzle-kit`, `openapi-typescript`, `vitest`).
+  Removed the `@cedarpad/web-poc` workspace dependency.
+- **Tooling** moved to `webpoc:*` scripts on canvas (`webpoc:typecheck`,
+  `webpoc:db:generate`, `webpoc:db:migrate`, `webpoc:seed`, `webpoc:openapi:emit`,
+  `webpoc:gen:api`, `webpoc:test`) — each does `cd web-poc && <tool>`.
+  `web-poc/tsconfig.json` kept (extends `../../../tsconfig.json` now); its dead
+  standalone `vite.config.ts` was deleted and dropped from `include`.
+- **Standalone deploy retired**: deleted `web-poc/wrangler.jsonc`,
+  `infra/environments/production/web-poc.ts`, and `.github/workflows/production.yml`
+  (its only job deployed the now-gone `cedarpad-web-poc` worker). web-poc ships
+  solely inside the `agent-canvas` container; the `COPY packages/web-poc` line was
+  removed from the canvas `Dockerfile` (web-poc is copied with `packages/canvas`).
+  `src/main.tsx` + `index.html` (the old SPA root) and `worker/runtime.ts`
+  (`createDbForWorker`) remain in-tree but are now inert.
+- **Verified** (local): canvas `bun run typecheck` ✅, `bun run build` ✅ (embed +
+  GraphView chunks unchanged), `bun run webpoc:typecheck` ✅, bridge bundles under
+  bun (1214 modules resolve) ✅, `bun run webpoc:db:generate` → "No schema changes"
+  ✅. Not run: the live dev stack + a container deploy.

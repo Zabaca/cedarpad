@@ -34,9 +34,9 @@ export interface Env {
 const SANDBOX_ID = 'canvas';
 const VITE_PORT = 4510;
 const PREVIEW_TOKEN = 'canvasproxy';
-// The image is now the whole workspace at /app/agent-canvas (root context, so
-// @cedarpad/web-poc resolves); the canvas package — and its scripts/bridge/vite —
-// live under packages/canvas.
+// The image is the whole workspace at /app/agent-canvas (root context); the canvas
+// package — and its scripts/bridge/vite, plus the in-tree web-poc at
+// packages/canvas/web-poc — live under packages/canvas.
 const START = 'bash -lc "cd /app/agent-canvas/packages/canvas && exec bun run scripts/container-start.ts"';
 
 const SIGN_IN = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">

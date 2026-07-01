@@ -19,7 +19,7 @@ const customShapeUtils: TLAnyShapeUtilConstructor[] = [ComponentShapeUtil, ChatS
 // lazy chunk that only loads when the 3rd rail button is opened. Its /v1 + /api/auth
 // calls are served by the same bridge process (see server/bridge.ts).
 export type AppView = 'canvas' | 'webpoc';
-const WebPocApp = lazy(() => import('@cedarpad/web-poc/embed').then((m) => ({ default: m.WebPocApp })));
+const WebPocApp = lazy(() => import('../web-poc/src/embed').then((m) => ({ default: m.WebPocApp })));
 
 // Hide ONLY tldraw's built-in page dropdown ("Avatar ⌄"). Our own LeftPanel now
 // owns the page list. The hamburger MainMenu and the undo/redo/delete/duplicate
