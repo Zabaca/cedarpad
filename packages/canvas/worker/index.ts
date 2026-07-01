@@ -153,31 +153,34 @@ export default {
     // getProcess, waitForPort, exposePort) only matters on a cold start, and
     // running it on every request added ~4 round-trips (~1s) to every module
     // fetch and every canvas drag. So skip it here and pay it only on a miss.
+    // Clone up front so the cold-path retry has an UNCONSUMED body: the warm proxy
+    // below does `new Request(request)`, which marks request's body used, so retrying
+    // the same object throws "Cannot reconstruct a Request with a used body" for any
+    // POST/PUT (e.g. a login) that falls through to the cold path. (#preview)
+    const retryReq = request.clone();
     try {
       const res = await proxy(sandbox, request);
-      // vite's real answers are 2xx/3xx and 404. A 410 (container stopped/gone) or
-      // a 5xx here is the SANDBOX PROXY reporting the container isn't ready — NOT
-      // an app response — so fall through to the cold start. (Returning the 410
-      // directly is what left the site permanently 410 after a recycle.)
-      if (res.status < 400) return res;
-      if (res.status === 404) {
-        // A FRESH container that has never exposed the port answers the preview
-        // proxy with 404 + an {"code":"INVALID_TOKEN"} / "port not exposed" body,
-        // not a 410/5xx — indistinguishable from a real vite 404 by status alone.
-        // Peek the body: the sandbox's not-ready 404 falls through to the cold path
-        // (startProcess + exposePort); a genuine vite 404 is returned as-is. Without
-        // this, a never-warmed container deadlocks (never cold-starts). (#preview)
+      // Return REAL app responses as-is — any status vite or the bridge produced,
+      // including 401/403/404/5xx (a failed login is a legit 401, not a cold start).
+      // Only the SANDBOX PROXY's not-ready signals fall through to the cold start:
+      //   - 410: container stopped/gone (returning it left the site stuck 410).
+      //   - 404/5xx whose body is the sandbox {"code":"INVALID_TOKEN"} / "port not
+      //     exposed" error — a never-warmed or recycled container.
+      // Treating every app 4xx/5xx as not-ready re-proxied each one and turned
+      // failed POSTs into used-body 500s. (#preview)
+      if (res.status !== 410) {
+        if (res.status < 400) return res;
         const peek = await res.clone().text().catch(() => '');
         if (!/INVALID_TOKEN|port not exposed/.test(peek)) return res;
       }
     } catch {
       /* container unreachable — fall through to the cold path */
     }
-    // Cold path: bring the stack up, (re)expose the port, retry once.
+    // Cold path: bring the stack up, (re)expose the port, retry once (with the clone).
     try {
       await ensureStack(sandbox, env);
       await sandbox.exposePort(VITE_PORT, { hostname: 'localhost', token: PREVIEW_TOKEN });
-      return await proxy(sandbox, request);
+      return await proxy(sandbox, retryReq);
     } catch (e: unknown) {
       return new Response('canvas error:\n' + String((e as Error)?.stack ?? e), { status: 500 });
     }
