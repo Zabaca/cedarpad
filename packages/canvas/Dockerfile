@@ -18,7 +18,10 @@ FROM docker.io/cloudflare/sandbox:0.12.1
 # excluded via the repo-root .dockerignore. The dev stack is vite (not a static
 # build), so node_modules is installed here, not baked.
 WORKDIR /app/agent-canvas
-COPY package.json bun.lock ./
+# Root tsconfig.json is required at runtime too: web-poc/tsconfig.json extends it
+# (../../../tsconfig.json), and vite/esbuild resolves that per-file when it transforms
+# web-poc/src/*.tsx. Without it the dev server errors "failed to resolve extends".
+COPY package.json bun.lock tsconfig.json ./
 COPY packages/canvas packages/canvas
 COPY packages/infra packages/infra
 RUN bun install --frozen-lockfile || bun install
