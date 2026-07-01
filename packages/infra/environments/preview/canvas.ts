@@ -14,18 +14,13 @@ import { cloudflareModule } from '../../modules/cloudflare'
  *
  * Requires `packages/infra/environments/preview/secrets.yaml` (SOPS-encrypted)
  * holding CLOUDFLARE_API_TOKEN (deploy) + every key in `workerSecrets` below.
- * Preview has its OWN backing state — do NOT reuse production's:
- *   - R2: a separate bucket `agent-canvas-preview` (R2_BUCKET). R2 is reached via
- *     the S3 API (R2_ENDPOINT + R2_ACCESS_KEY_ID/SECRET), not a wrangler binding,
- *     so "own bucket" is purely these secret values — create the bucket first
- *     (`wrangler r2 bucket create agent-canvas-preview`). Sharing prod's bucket
- *     would mean preview and prod edit the SAME persisted canvas.
- *   - Turso: a separate DB (TURSO_URL/TURSO_KEY) for the mounted web-poc
- *     (`turso db create cedarpad-web-poc-preview` → url + `turso db tokens create`).
- *     Run web-poc migrations against it before use (webpoc:db:migrate with the
- *     preview TURSO_URL/TURSO_KEY).
- * As with production, Docker must be running locally at apply time (the worker is
- * container-backed) on a Workers Paid plan with Containers enabled.
+ * Currently REUSES production's values (secrets.yaml is a copy of production's), so
+ * preview shares production's R2 bucket (`agent-canvas`) and Turso DB.
+ * ⚠️  This means preview and production read/write the SAME persisted canvas state
+ * and the SAME web-poc data — a preview edit can mutate what production serves at
+ * poc.cedarpad.com. Give preview its own R2 bucket + Turso DB before using it for
+ * anything real. As with production, Docker must be running locally at apply time
+ * (the worker is container-backed) on a Workers Paid plan with Containers enabled.
  *
  * Deploy: `bunx @zabaca/zbc apply preview canvas` (or add a --env-aware path to
  * scripts/deploy.sh). After the first deploy, set BETTER_AUTH_URL / WEB_ORIGIN in
@@ -41,9 +36,9 @@ export default cloudflareModule.instance({
     accountId: '99a19e584439be0568f33aad0477372b',
     // Selects env.preview in packages/canvas/wrangler.jsonc → agent-canvas-preview.
     wranglerEnv: 'preview',
-    // Same secret NAMES as production (web-poc rides the canvas worker), but
-    // preview-specific VALUES — R2_* points at the agent-canvas-preview bucket and
-    // TURSO_* at the preview DB (see header). All must exist in preview/secrets.yaml.
+    // Same secrets as production (web-poc rides the canvas worker) — currently the
+    // SAME values (preview/secrets.yaml copies production/secrets.yaml), so R2_* and
+    // TURSO_* point at prod's bucket + DB (see the ⚠️ in the header).
     // BETTER_AUTH_URL / WEB_ORIGIN are non-secret vars in env.preview, not here.
     workerSecrets: [
       'CLAUDE_CODE_OAUTH_TOKEN',
