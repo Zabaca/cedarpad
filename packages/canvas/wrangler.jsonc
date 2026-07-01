@@ -48,12 +48,11 @@
       // No custom domain: serve on the account's <name>.<subdomain>.workers.dev.
       "workers_dev": true,
       "observability": { "enabled": true },
-      // Better Auth is origin-sensitive. TODO: set both to the real preview origin
-      // — https://agent-canvas-preview.<your-workers-dev-subdomain>.workers.dev —
-      // after the first deploy reveals the subdomain (or provide it up front).
+      // Better Auth is origin-sensitive — these are the deployed preview origin
+      // (the account's workers.dev subdomain, from the first deploy).
       "vars": {
-        "BETTER_AUTH_URL": "https://agent-canvas-preview.workers.dev",
-        "WEB_ORIGIN": "https://agent-canvas-preview.workers.dev"
+        "BETTER_AUTH_URL": "https://agent-canvas-preview.james-99a.workers.dev",
+        "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev"
       },
       "containers": [
         {
