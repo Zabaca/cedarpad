@@ -12,9 +12,6 @@
   // or the dashboard (replaces the ad-hoc /__diag route). Container stdout is
   // separate (sandbox getProcessLogs / CF container logs).
   "observability": { "enabled": true },
-  // DIAGNOSIS (remove when done): surface @cloudflare/sandbox DO's own activity/alarm
-  // reasoning in `wrangler tail` to find what keeps renewing the sleepAfter deadline.
-  "vars": { "SANDBOX_LOG_LEVEL": "debug" },
   "containers": [
     {
       "class_name": "Sandbox",

@@ -256,19 +256,18 @@ function canvasStream(): Response {
 // every POST (send/shapes) into "pending". One shared stream keeps it flat at 2.
 export const chatClients = new Set<ReadableStreamDefaultController>();
 
-// --- liveness reaping: why the CF container can sleep ---
-// A browser holds SSE streams open; the chat stream's 15s ping AND the sandbox's
-// per-forward inflight counter both keep the container awake. When a tab closes,
-// navigates, or goes idle, the CF sandbox preview-proxy does NOT propagate that
-// disconnect down to us — the streams linger forever and pin the container awake
-// (it never sleeps; proven via bootAt A/B test). Client-side .close() can't fix it
-// because the FIN never reaches the container. So we reap from OUR side: the client
-// POSTs /api/alive while its streams are open; if no beat lands within STALE_MS we
-// close every stream here. Closing from the container settles the proxy forward
-// (propagates UP) and stops the ping, so the container finally idles and sleeps.
-// Covers idle tabs AND closed/crashed tabs (the dominant case). STALE_MS must exceed
-// the client's beat interval with margin. DIAGNOSIS default 25s (restore ~90s).
-const STALE_MS = Number(process.env.CANVAS_STREAM_STALE_MS ?? 25_000);
+// --- idle liveness: why the CF container can sleep ---
+// A browser holds SSE streams open; the sandbox's per-forward inflight hold keeps the
+// container awake for as long as each forward is open. The CF preview-proxy never
+// propagates a client disconnect to the container, and the forward's inflight hold
+// does NOT release when we close/error the stream from here either (proven via bootAt:
+// the hold sticks whether the client is gone or still connected). So the container
+// cannot idle-sleep on its own while any tab has ever opened a stream. Instead the
+// client POSTs /api/alive while its streams are open; when no beat lands within
+// STALE_MS there's no live tab, and the reaper exits the process (see ensureReaper) —
+// which stops the container. STALE_MS must exceed the client's beat interval (BEAT_MS)
+// with margin — 90s tolerates ~2 missed 30s beats (blips). Override via env.
+const STALE_MS = Number(process.env.CANVAS_STREAM_STALE_MS ?? 90_000);
 let lastAlive = Date.now();
 let reaper: ReturnType<typeof setInterval> | null = null;
 function markAlive(): void {

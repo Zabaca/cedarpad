@@ -9,9 +9,10 @@ export class Sandbox extends BaseSandbox {
   // both SSE streams after ~2m of no user activity (pointer/keyboard), so an open-but-idle
   // tab no longer pins the container via the 15s ping — this 5m window is the remaining
   // sleep delay once the streams go quiet (total idle-to-sleep ~7m).
-  // DIAGNOSIS (restore to '5m'): lowered to tighten the sleep-proof loop while
-  // investigating "container won't sleep". See HANDOFF-nosleep.md.
-  sleepAfter = '1m';
+  // Fallback only: the bridge self-exits on idle (server/bridge.ts) since the sandbox
+  // won't idle-sleep while an SSE forward is pinned. sleepAfter still covers the
+  // never-had-a-client case.
+  sleepAfter = '5m';
 }
 
 export interface Env {
@@ -29,13 +30,12 @@ const VITE_PORT = 4510;
 const PREVIEW_TOKEN = 'canvasproxy';
 const START = 'bash -lc "cd /app/agent-canvas && exec bun run scripts/container-start.ts"';
 
-// DIAGNOSIS (restore SLEEP_AFTER to '5m'): sleepAfter also set here, not just on the
-// class field. keepAlive + sleepAfter persist in the DO's storage across deploys; if
-// keepAlive was ever stuck `true`, the container NEVER auto-sleeps and sleepAfter is
-// ignored entirely (per @cloudflare/sandbox). Passing them to getSandbox re-applies
-// the config via configure() on every entry, forcing keepAlive OFF and re-asserting
-// sleepAfter — the fix for "won't sleep even with zero clients".
-const SLEEP_AFTER = '1m';
+// keepAlive + sleepAfter persist in the DO's storage across deploys; if keepAlive is
+// ever stuck `true`, the container NEVER auto-sleeps and sleepAfter is ignored entirely
+// (per @cloudflare/sandbox). Passing them to getSandbox re-applies the config via
+// configure() on every entry, forcing keepAlive OFF and re-asserting sleepAfter — cheap
+// hygiene so a stray keepAlive can't silently pin the container forever.
+const SLEEP_AFTER = '5m';
 const sb = (env: Env) => getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true, keepAlive: false, sleepAfter: SLEEP_AFTER });
 
 const SIGN_IN = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -175,9 +175,5 @@ function proxy(sandbox: ReturnType<typeof getSandbox>, request: Request): Promis
   headers.set('x-sandbox-preview-port', String(VITE_PORT));
   headers.set('x-sandbox-preview-token', PREVIEW_TOKEN);
   headers.set('x-sandbox-preview-sandbox-id', SANDBOX_ID);
-  // Pass the client's abort signal through so a browser disconnect tears the forward
-  // down at the source (the sandbox aborts its container fetch -> settleForward -> the
-  // inflight hold releases -> container can sleep). Belt-and-suspenders with the
-  // bridge-side reaper, which handles the case where the disconnect never propagates.
-  return sandbox.fetch(new Request(request, { headers, signal: request.signal }));
+  return sandbox.fetch(new Request(request, { headers }));
 }
