@@ -286,9 +286,16 @@ function ensureReaper(): void {
     const n = chatClients.size + canvasClients.size;
     for (const c of [...chatClients, ...canvasClients]) {
       try {
-        c.close();
+        // error(), NOT close(): the sandbox forwards our response via
+        // `response.body.pipeTo(writable).finally(settleForward)`. A graceful close
+        // needs pipeTo to flush+close the browser-facing writable, which hangs when
+        // the browser is already gone (its disconnect never reached us) — so the
+        // forward never settles and the container never sleeps. error() aborts the
+        // pipe on the read side immediately (no flush), firing settleForward and
+        // releasing the sandbox's inflight hold. This is the crux of the fix.
+        c.error(new Error('reaped: no client heartbeat'));
       } catch {
-        /* already closed */
+        /* already closed/errored */
       }
     }
     chatClients.clear();

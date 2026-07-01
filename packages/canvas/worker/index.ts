@@ -175,5 +175,9 @@ function proxy(sandbox: ReturnType<typeof getSandbox>, request: Request): Promis
   headers.set('x-sandbox-preview-port', String(VITE_PORT));
   headers.set('x-sandbox-preview-token', PREVIEW_TOKEN);
   headers.set('x-sandbox-preview-sandbox-id', SANDBOX_ID);
-  return sandbox.fetch(new Request(request, { headers }));
+  // Pass the client's abort signal through so a browser disconnect tears the forward
+  // down at the source (the sandbox aborts its container fetch -> settleForward -> the
+  // inflight hold releases -> container can sleep). Belt-and-suspenders with the
+  // bridge-side reaper, which handles the case where the disconnect never propagates.
+  return sandbox.fetch(new Request(request, { headers, signal: request.signal }));
 }
