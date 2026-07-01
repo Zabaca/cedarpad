@@ -277,32 +277,32 @@ function markAlive(): void {
 function ensureReaper(): void {
   if (reaper) return;
   reaper = setInterval(() => {
-    if (chatClients.size === 0 && canvasClients.size === 0) {
-      clearInterval(reaper!);
+    if (Date.now() - lastAlive <= STALE_MS) return; // a live tab beat recently — stay warm
+    // No heartbeat for STALE_MS => no live browser. The sandbox CANNOT sleep while our
+    // SSE forwards are open, and their teardown never reaches the container: the CF
+    // preview-proxy doesn't propagate a client disconnect, and closing/erroring from
+    // our side doesn't settle the forward either (proven — the DO's inflight hold
+    // sticks, so it never idles). The one lever we have is to exit: dev.ts and
+    // container-start exit with us, CF stops the container, and the next request
+    // cold-boots and restores from R2. Flush canvas state first so nothing is lost
+    // (idle already means no in-flight edits, but be safe), with a hard bail so a
+    // stuck write can't keep us alive.
+    if (reaper) {
+      clearInterval(reaper);
       reaper = null;
-      return;
     }
-    if (Date.now() - lastAlive <= STALE_MS) return;
-    const n = chatClients.size + canvasClients.size;
-    for (const c of [...chatClients, ...canvasClients]) {
-      try {
-        // error(), NOT close(): the sandbox forwards our response via
-        // `response.body.pipeTo(writable).finally(settleForward)`. A graceful close
-        // needs pipeTo to flush+close the browser-facing writable, which hangs when
-        // the browser is already gone (its disconnect never reached us) — so the
-        // forward never settles and the container never sleeps. error() aborts the
-        // pipe on the read side immediately (no flush), firing settleForward and
-        // releasing the sandbox's inflight hold. This is the crux of the fix.
-        c.error(new Error('reaped: no client heartbeat'));
-      } catch {
-        /* already closed/errored */
-      }
-    }
-    chatClients.clear();
-    canvasClients.clear();
-    console.log(`[clients] reaped ${n} stale stream(s) (no beat ${STALE_MS}ms) -> chat=0 canvas=0, container can sleep`);
-    clearInterval(reaper!);
-    reaper = null;
+    // Only self-exit inside the CF container (where it maps to container sleep). In
+    // local dev there is nothing to sleep, so never kill the developer's dev server.
+    if (!process.env.IS_SANDBOX) return;
+    console.log(`[idle] no client heartbeat for ${STALE_MS}ms -> flush + exit so the container can sleep`);
+    const bail = setTimeout(() => process.exit(0), 3000);
+    void persist
+      .save(store.getState())
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(bail);
+        process.exit(0);
+      });
   }, 10_000);
 }
 
