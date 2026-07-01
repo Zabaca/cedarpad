@@ -20,12 +20,24 @@ export interface Env {
   R2_SECRET_ACCESS_KEY: string;
   R2_ENDPOINT: string;
   CLAUDE_CODE_OAUTH_TOKEN: string;
+  // web-poc (mounted in the bridge, served in-process): remote Turso + auth +
+  // embeddings. Secrets (TURSO_*, VOYAGE_API_KEY, BETTER_AUTH_SECRET) come from
+  // workerSecrets; the two origins are plain vars in wrangler.jsonc.
+  TURSO_URL?: string;
+  TURSO_KEY?: string;
+  VOYAGE_API_KEY?: string;
+  BETTER_AUTH_SECRET?: string;
+  BETTER_AUTH_URL?: string;
+  WEB_ORIGIN?: string;
 }
 
 const SANDBOX_ID = 'canvas';
 const VITE_PORT = 4510;
 const PREVIEW_TOKEN = 'canvasproxy';
-const START = 'bash -lc "cd /app/agent-canvas && exec bun run scripts/container-start.ts"';
+// The image is now the whole workspace at /app/agent-canvas (root context, so
+// @cedarpad/web-poc resolves); the canvas package — and its scripts/bridge/vite —
+// live under packages/canvas.
+const START = 'bash -lc "cd /app/agent-canvas/packages/canvas && exec bun run scripts/container-start.ts"';
 
 const SIGN_IN = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>agent-canvas</title><body style="font:16px system-ui;display:grid;place-content:center;height:100vh;margin:0;background:#0b0b0c;color:#e7e7ea">
@@ -41,6 +53,14 @@ const containerEnv = (env: Env): Record<string, string> => ({
   R2_ENDPOINT: env.R2_ENDPOINT,
   CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
   CANVAS_WORKSPACE: 'default',
+  // web-poc mounted in the bridge: a real remote TURSO_URL makes it use Turso (not
+  // the dev libSQL file); the origins line Better Auth up with poc.cedarpad.com.
+  TURSO_URL: env.TURSO_URL ?? '',
+  TURSO_KEY: env.TURSO_KEY ?? '',
+  VOYAGE_API_KEY: env.VOYAGE_API_KEY ?? '',
+  BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET ?? '',
+  BETTER_AUTH_URL: env.BETTER_AUTH_URL ?? '',
+  WEB_ORIGIN: env.WEB_ORIGIN ?? '',
 });
 
 // Start (or recover) the dev stack and wait for vite. Mirrors the spike's warm/
@@ -56,7 +76,9 @@ async function writeEnvFile(sandbox: ReturnType<typeof getSandbox>, ev: Record<s
     Object.entries(ev)
       .map(([k, v]) => `${k}=${v ?? ''}`)
       .join('\n') + '\n';
-  await sandbox.writeFile('/app/agent-canvas/.env', body).catch(() => {});
+  // Written into the canvas package (the bridge's cwd) so bun auto-loads it for the
+  // bridge and every child — including web-poc's mounted app (Turso/auth secrets).
+  await sandbox.writeFile('/app/agent-canvas/packages/canvas/.env', body).catch(() => {});
 }
 
 async function ensureStack(sandbox: ReturnType<typeof getSandbox>, env: Env): Promise<void> {

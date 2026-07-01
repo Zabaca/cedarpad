@@ -42,6 +42,13 @@ export default cloudflareModule.instance({
       'R2_ENDPOINT',
       'R2_ACCESS_KEY_ID',
       'R2_SECRET_ACCESS_KEY',
+      // web-poc is mounted into the canvas bridge (one instance), so its secrets ride
+      // this container too. Must exist in production/secrets.yaml. (BETTER_AUTH_URL /
+      // WEB_ORIGIN are non-secret vars in the package's wrangler.jsonc.)
+      'TURSO_URL',
+      'TURSO_KEY',
+      'VOYAGE_API_KEY',
+      'BETTER_AUTH_SECRET',
     ],
     // Single always-warm DO-bound container; the gradual default never drains it,
     // so a redeployed image would silently never take effect. Roll immediately.

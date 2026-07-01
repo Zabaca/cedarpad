@@ -9,13 +9,22 @@ FROM docker.io/cloudflare/sandbox:0.12.1
 # bun (the runtime for the bridge + vite) ships in the base image at
 # /usr/local/bin/bun, so no install step is needed.
 
-# Bake the package + its node_modules (the dev stack is vite, not a static build).
+# Build context is the REPO ROOT (wrangler.jsonc `image_build_context: "../.."`), so
+# we bake the workspace — root manifest + lockfile + the packages the canvas instance
+# needs. `bun install` links @cedarpad/web-poc (mounted into the canvas app and served
+# in the same bridge process) and @cedarpad/infra (a root dependency). packages/app
+# (the separate desktop app) is excluded via the repo-root .dockerignore. The dev
+# stack is vite (not a static build), so node_modules is installed here, not baked.
 WORKDIR /app/agent-canvas
-COPY . /app/agent-canvas
+COPY package.json bun.lock ./
+COPY packages/canvas packages/canvas
+COPY packages/web-poc packages/web-poc
+COPY packages/infra packages/infra
 RUN bun install --frozen-lockfile || bun install
 
-# The agent authors components here; the overlay watcher and vite both read it.
-ENV CANVAS_CWD=/app/agent-canvas
+# The canvas package is the app root at runtime (vite + bridge + the agent's authored
+# components); the overlay watcher and vite read from here.
+ENV CANVAS_CWD=/app/agent-canvas/packages/canvas
 
 # The canvas chat is a full Claude Code agent run with bypassPermissions (which
 # passes --dangerously-skip-permissions). Claude Code refuses that as root unless
