@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agent-canvas",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Custom domain: wrangler provisions the proxied DNS record + TLS cert and binds
+  // poc.cedarpad.com to this worker (the cedarpad.com zone must be in this account).
+  // The exact-match record takes precedence over the zone's *.cedarpad.com wildcard.
+  "routes": [{ "pattern": "poc.cedarpad.com", "custom_domain": true }],
+  // Workers Logs: stream the Worker's console + request logs via `wrangler tail`
+  // or the dashboard (replaces the ad-hoc /__diag route). Container stdout is
+  // separate (sandbox getProcessLogs / CF container logs).
+  "observability": { "enabled": true },
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      // standard-1 is the proven instance type for this account; bump if the
+      // vite + bridge + agent stack OOMs on cold boot.
+      "instance_type": "standard-1",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }]
+}

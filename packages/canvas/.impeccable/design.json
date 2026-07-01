@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-26T00:00:00Z",
+  "title": "Design System: cedarpad",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Cedar Ember",
+        "canonical": "oklch(0.68 0.145 45)",
+        "tonalRamp": [
+          "oklch(0.22 0.06 45)",
+          "oklch(0.32 0.09 45)",
+          "oklch(0.42 0.11 45)",
+          "oklch(0.52 0.13 45)",
+          "oklch(0.60 0.14 45)",
+          "oklch(0.68 0.145 45)",
+          "oklch(0.78 0.13 50)",
+          "oklch(0.90 0.07 60)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Warm Graphite",
+        "canonical": "oklch(0.21 0.012 60)",
+        "tonalRamp": [
+          "oklch(0.16 0.010 60)",
+          "oklch(0.21 0.012 60)",
+          "oklch(0.25 0.013 60)",
+          "oklch(0.29 0.014 60)",
+          "oklch(0.32 0.016 60)",
+          "oklch(0.41 0.018 60)",
+          "oklch(0.55 0.014 60)",
+          "oklch(0.69 0.014 65)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Warm Off-White",
+        "canonical": "oklch(0.93 0.008 75)",
+        "tonalRamp": [
+          "oklch(0.60 0.014 60)",
+          "oklch(0.69 0.014 65)",
+          "oklch(0.80 0.011 70)",
+          "oklch(0.93 0.008 75)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Empty states and first-run only. Rare." },
+      "title": { "displayName": "Title", "purpose": "Chat card title, section heading, dialog title." },
+      "body": { "displayName": "Body", "purpose": "Messages and reading content; cap measure 65-75ch." },
+      "label": { "displayName": "Label (mono)", "purpose": "UPPERCASE nav section labels and smallest metadata." },
+      "mono": { "displayName": "Mono", "purpose": "Tool-call chips, code, machine data." }
+    },
+    "shadows": [
+      {
+        "name": "float",
+        "value": "0 1px 2px oklch(0.10 0.01 60 / 0.5), 0 0 0 1px oklch(0.32 0.016 60)",
+        "purpose": "Chat cards and component frames resting on the board. The hairline ring separates; the shadow is a whisper."
+      },
+      {
+        "name": "lift",
+        "value": "0 8px 24px oklch(0.07 0.01 60 / 0.55)",
+        "purpose": "Popovers, menus, the new-chat control, dialogs. Only while floating above peers."
+      }
+    ],
+    "motion": [
+      { "name": "ease-out-quint", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Default easing for state transitions. No bounce, no elastic." },
+      { "name": "dur-fast", "value": "120ms", "purpose": "Hover, focus, press feedback." },
+      { "name": "dur-base", "value": "180ms", "purpose": "Panel and surface transitions." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single most important action in a context. Cedar Ember fill.",
+      "html": "<button class=\"ds-btn-primary\">New chat</button>",
+      "css": ".ds-btn-primary { background: oklch(0.68 0.145 45); color: oklch(0.18 0.012 60); font: 600 0.875rem ui-sans-serif, system-ui, sans-serif; padding: 8px 14px; border: none; border-radius: 10px; cursor: pointer; transition: background 120ms cubic-bezier(0.22,1,0.36,1), transform 120ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-primary:hover { background: oklch(0.75 0.14 45); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 2px solid oklch(0.68 0.145 45); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Default action. Surface Raised with a 1px line.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost { background: oklch(0.25 0.013 60); color: oklch(0.93 0.008 75); font: 400 0.875rem ui-sans-serif, system-ui, sans-serif; padding: 8px 14px; border: 1px solid oklch(0.32 0.016 60); border-radius: 10px; cursor: pointer; transition: background 120ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-ghost:hover { background: oklch(0.29 0.014 60); } .ds-btn-ghost:focus-visible { outline: 2px solid oklch(0.68 0.145 45); outline-offset: 2px; }"
+    },
+    {
+      "name": "Composer Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Signature input: an inset Canvas-Void field inside a Surface card.",
+      "html": "<input class=\"ds-input\" placeholder=\"Ask the agent, or sketch on the pad\" />",
+      "css": ".ds-input { background: oklch(0.16 0.010 60); color: oklch(0.93 0.008 75); font: 400 0.875rem ui-sans-serif, system-ui, sans-serif; padding: 8px 12px; border: 1px solid oklch(0.32 0.016 60); border-radius: 10px; width: 100%; transition: border-color 120ms cubic-bezier(0.22,1,0.36,1); } .ds-input::placeholder { color: oklch(0.55 0.014 60); } .ds-input:focus { outline: none; border-color: oklch(0.68 0.145 45); box-shadow: inset 0 0 0 1px oklch(0.68 0.145 45); }"
+    },
+    {
+      "name": "Active Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Active rail/panel row: 2px Cedar Ember indicator + Surface Overlay row. The icon stays neutral.",
+      "html": "<div class=\"ds-nav\"><div class=\"ds-nav-row ds-active\"><span class=\"ds-bar\"></span>Overview</div><div class=\"ds-nav-row\">Pipeline</div></div>",
+      "css": ".ds-nav { background: oklch(0.21 0.012 60); border-radius: 10px; padding: 4px; width: 220px; } .ds-nav-row { position: relative; color: oklch(0.69 0.014 65); font: 400 0.875rem ui-sans-serif, system-ui, sans-serif; padding: 8px 10px 8px 14px; border-radius: 8px; cursor: pointer; transition: background 120ms cubic-bezier(0.22,1,0.36,1), color 120ms; } .ds-nav-row:hover { background: oklch(0.25 0.013 60); color: oklch(0.93 0.008 75); } .ds-nav-row.ds-active { background: oklch(0.29 0.014 60); color: oklch(0.93 0.008 75); } .ds-bar { position: absolute; left: 4px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: oklch(0.68 0.145 45); }"
+    },
+    {
+      "name": "Section Label",
+      "kind": "custom",
+      "refersTo": "label",
+      "description": "Mono UPPERCASE section label, the machine's voice for grouping (PAGES, CANVASES).",
+      "html": "<div class=\"ds-label\">Pages</div>",
+      "css": ".ds-label { color: oklch(0.69 0.014 65); font: 500 0.6875rem ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace; letter-spacing: 0.08em; text-transform: uppercase; }"
+    },
+    {
+      "name": "Tool-Call Chip",
+      "kind": "chip",
+      "refersTo": "tool-chip",
+      "description": "Signature component: a small mono chip naming an agent tool, with optional elapsed time. The instrument's heartbeat.",
+      "html": "<span class=\"ds-chip\">read_canvas<span class=\"ds-chip-t\">0.4s</span></span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; gap: 6px; background: oklch(0.25 0.013 60); color: oklch(0.69 0.014 65); font: 400 0.78rem ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace; padding: 3px 7px; border-radius: 6px; } .ds-chip-t { color: oklch(0.55 0.014 60); font-size: 0.6875rem; }"
+    },
+    {
+      "name": "Chat Card",
+      "kind": "card",
+      "refersTo": "chat-card",
+      "description": "A chat session resting on the pad: Surface body, Raised header drag handle, Float elevation.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-head\">Chat 4</div><div class=\"ds-card-body\">The agent's reply streams here.</div></div>",
+      "css": ".ds-card { width: 280px; background: oklch(0.21 0.012 60); border-radius: 14px; overflow: hidden; box-shadow: 0 1px 2px oklch(0.10 0.01 60 / 0.5), 0 0 0 1px oklch(0.32 0.016 60); } .ds-card-head { background: oklch(0.25 0.013 60); color: oklch(0.93 0.008 75); font: 600 1.0625rem ui-sans-serif, system-ui, sans-serif; padding: 10px 14px; cursor: grab; } .ds-card-body { color: oklch(0.93 0.008 75); font: 400 0.875rem/1.55 ui-sans-serif, system-ui, sans-serif; padding: 16px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Lit Drafting Table",
+    "overview": "cedarpad is a cedar drafting table under one warm work-light. The surface is a warm graphite that recedes like wood in shadow; the only thing that catches the light is what is live. Color belongs to the work on the pad, never to the frame around it. The chrome is a precise instrument: flat, quiet, tightly spaced, built from a single warm-neutral material so the pad's real color reads true against it. The name is the palette: cedar is warm, natural, and crafted, and the one accent is a cedar ember.",
+    "keyCharacteristics": [
+      "Warm-graphite tinted-dark surfaces (hue 60, very low chroma), never #000.",
+      "A single cedar-ember accent that means one thing: live / active.",
+      "Tonal depth, not shadow depth. Lighter surface = closer to you.",
+      "Mono for labels and machine output; sans for human content.",
+      "Tight, varied spacing. The pad is the hierarchy; chrome never competes."
+    ],
+    "rules": [
+      { "name": "The Cedar-Means-Live Rule", "body": "Cedar Ember covers <=10% of any view and signals exactly one concept: active or live. Active nav, focus, primary action, agent-streaming. Never decorative.", "section": "colors" },
+      { "name": "The True-Color Rule", "body": "The chrome is near-achromatic on purpose so the pad's own colors read true. Never add a chroma-heavy chrome surface.", "section": "colors" },
+      { "name": "The Who-Is-Talking Rule", "body": "Mono is the machine's voice (labels, tools, code, data); sans is the human's (titles, messages, prose).", "section": "typography" },
+      { "name": "The Flat-At-Rest Rule", "body": "Chrome planes are flat and separated by tone and a 1px line. A shadow is a response to floating above the pad, not a default.", "section": "elevation" },
+      { "name": "The No-Glow Rule", "body": "Cedar Ember never glows. Active state is a solid edge, a fill, or a 2px inner ring, never a blurred halo.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do build the chrome from the warm-graphite neutral ramp (hue 60) and treat Cedar Ember as a <=10% signal that means live.",
+      "Do convey depth by stepping the surface one tone lighter, and reserve shadows for things floating above the pad.",
+      "Do set machine output in mono and human content in sans.",
+      "Do keep a visible 2px Cedar Ember focus ring on every interactive control, and honor prefers-reduced-motion.",
+      "Do vary spacing for rhythm using the 4px-based scale; let the pad be the loudest thing on screen."
+    ],
+    "donts": [
+      "Don't use #000 or #fff; every neutral is tinted toward hue 60 (warm).",
+      "Don't fall back to the cool dark-tool cliche (steel-blue chrome, cyan accent, neon-on-black, glassmorphism, glowing or gradient accents).",
+      "Don't use Cedar Ember to decorate; it is reserved for active/live state only.",
+      "Don't use side-stripe accents wider than 1px, gradient text, the hero-metric template, or identical card grids. The one sanctioned exception is the 2px Cedar Ember active-nav indicator on the selected row/rail item/page; never a decorative edge on a card or callout.",
+      "Don't ship the consumer-rounded, SaaS-cheerful look. This is an instrument.",
+      "Don't preserve the rushed styles.css values; conform them to this spec."
+    ]
+  }
+}

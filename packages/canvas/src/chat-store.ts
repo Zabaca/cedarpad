@@ -1,0 +1,439 @@
+// The chat sessions, lifted out of any React component so they survive a chat
+// card being culled (tldraw unmounts off-screen shapes). Each session owns its
+// SSE subscription, transcript, and Claude resume token here, keyed by chatId
+// (which is the chat shape's id). Views subscribe via useSyncExternalStore.
+//
+// SSE lifecycle is tied to the SHAPE, not the view: openStream() is idempotent
+// and a culled-then-remounted view re-attaches to the still-open stream;
+// closeSession() runs only when the chat shape is actually deleted (App watches
+// the editor for removed chat shapes).
+
+import { type ChatEvent, type ChatFrame, type TaskStatus, type TodoStatus, isChatFrame } from '../shared/chat-wire.ts';
+import { registerStream, setBusyCheck } from './idle.ts';
+
+// `parentId` (set on subagent items) is the spawning Task chip's tool_use id, so the
+// view can indent them under it. Tool items carry their own `toolUseId` so a `task`
+// event can find and decorate the Task chip with its subagent type + live status.
+export type ChatItem =
+  | { id: string; kind: 'msg'; role: 'user' | 'agent'; text: string; images?: string[]; parentId?: string }
+  | { id: string; kind: 'tool'; label: string; parentId?: string; toolUseId?: string; subagentType?: string; status?: TaskStatus; summary?: string };
+
+export interface ChatSnapshot {
+  items: ChatItem[];
+  sdk: string | null; // Claude Agent SDK session id, for resume
+  busy: boolean;
+  status: string;
+  subscribed: boolean; // this chat's SSE stream is open — send is gated on true (client half of the subscribe-before-send contract; the server enforces it with 425)
+  queue: Array<{ message: string; images: PendingImage[] }>;
+  model: string; // which Claude model this chat sends to (SDK alias: sonnet | opus | haiku)
+  effort: string; // reasoning effort for this chat ('default' = omit, let the model decide)
+  contextPct: number | null; // % of the model's context window used on the last turn
+  forkNext: boolean; // one-shot: when true, the next turn forks the parent's SDK session instead of resuming it
+  tasks: Record<string, TaskInfo>; // in-flight background jobs (keyed by task_id); ephemeral, not persisted
+  todos: Record<string, TodoInfo>; // the agent's TaskCreate/TaskUpdate plan (keyed by todo id); ephemeral
+}
+
+// Models offered in the chat card's selector. Aliases the Claude Agent SDK resolves.
+export const MODELS = ['sonnet', 'opus', 'haiku'] as const;
+export const DEFAULT_MODEL = 'sonnet';
+
+// Reasoning effort, sent alongside the model. 'default' omits the param (adaptive). Lower
+// effort = faster, less time staring at "thinking…"; higher = deeper but slower.
+export const EFFORTS = ['default', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export const DEFAULT_EFFORT = 'default';
+
+const TERMINAL: ReadonlySet<TaskStatus> = new Set(['completed', 'failed', 'stopped', 'killed']);
+
+/** A background job shown in the chat card's jobs tray (shell | subagent | monitor | workflow). */
+export interface TaskInfo {
+  id: string;
+  status: TaskStatus;
+  taskType?: string;
+  title?: string;
+  detail?: string;
+  summary?: string;
+}
+
+/** A todo from the agent's TaskCreate/TaskUpdate plan, shown in the plan panel. A
+ *  stored todo is never the `deleted` tombstone (the router applies it then drops the row). */
+export interface TodoInfo {
+  id: string;
+  subject: string;
+  status: Exclude<TodoStatus, 'deleted'>;
+}
+
+export interface PendingImage {
+  media_type: string;
+  data: string;
+  dataUrl: string;
+}
+
+const EMPTY: ChatSnapshot = { items: [], sdk: null, busy: false, status: '', subscribed: false, queue: [], model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, contextPct: null, forkNext: false, tasks: {}, todos: {} };
+
+const sessions = new Map<string, ChatSnapshot>();
+const listeners = new Map<string, Set<() => void>>();
+
+// One shared SSE connection for ALL chats (each frame arrives tagged with its
+// chatId), so a tab holds a single chat connection regardless of how many chat
+// cards are open. One EventSource per chat instead would, with the canvas stream,
+// saturate the browser's ~6-connections-per-host cap and leave every POST
+// (send / shape upserts) stuck pending. See the bridge's chatStream().
+let sharedStream: EventSource | null = null;
+let streamReady = false;
+// In-progress agent bubble id, keyed by chat AND parent (subagent text streams in its
+// own bubble, never merged into the main agent's). `''` parent = the main agent.
+const openBubble = new Map<string, string | null>();
+const bubbleKey = (chatId: string, parentId?: string) => `${chatId}::${parentId ?? ''}`;
+function clearBubbles(chatId: string): void {
+  for (const k of [...openBubble.keys()]) if (k.startsWith(`${chatId}::`)) openBubble.delete(k);
+}
+let idSeq = 0;
+const nextItemId = () => `i${(idSeq += 1)}`;
+
+const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
+const basename = (p: string) => p.split('/').filter(Boolean).pop() ?? p;
+
+// A short, legible label for a completed tool call.
+function toolLabel(e: Extract<ChatEvent, { kind: 'tool' }>): string {
+  const i = (e.input ?? {}) as Record<string, unknown>;
+  const name = e.name;
+  if (name === 'Bash' && typeof i.command === 'string') return `Bash · ${truncate(i.command, 44)}`;
+  if (['Read', 'Write', 'Edit', 'MultiEdit'].includes(name) && typeof i.file_path === 'string') return `${name} · ${basename(i.file_path)}`;
+  if (typeof i.module === 'string') return `${name} · ${i.module}`;
+  const n = Array.isArray(i.shapes) ? i.shapes.length : Array.isArray(i.ids) ? i.ids.length : undefined;
+  return n ? `${name} ×${n}` : name;
+}
+
+function notify(chatId: string) {
+  listeners.get(chatId)?.forEach((l) => l());
+}
+
+// Replace a session immutably (so useSyncExternalStore sees a new reference) and notify.
+// Durable per-chat state now lives server-side in ChatMeta + the SDK session JSONL (ADR
+// 0004); there is no browser persistence here.
+function update(chatId: string, patch: Partial<ChatSnapshot> | ((s: ChatSnapshot) => ChatSnapshot)) {
+  const cur = sessions.get(chatId) ?? EMPTY;
+  const next = typeof patch === 'function' ? patch(cur) : { ...cur, ...patch };
+  sessions.set(chatId, next);
+  notify(chatId);
+}
+
+/** Register a session in memory (idempotent, sync). The transcript + config are pulled
+ *  from the server in rehydrate(), triggered by openStream(); nothing is read here. */
+export function ensureSession(chatId: string): void {
+  if (!sessions.has(chatId)) sessions.set(chatId, EMPTY);
+}
+
+/** Pull the server-authoritative transcript + config for a chat and replace local state.
+ *  The transcript is derived from the SDK session JSONL (ADR 0004), so it is identical on
+ *  any tab/device and survives a recycle. Best-effort: a failed fetch leaves state as-is. */
+async function rehydrate(chatId: string): Promise<void> {
+  try {
+    const res = await fetch(`/api/chat/${chatId}/transcript`);
+    if (!res.ok) return;
+    const { config, events } = (await res.json()) as { config?: { model?: string; effort?: string; forkNext?: boolean }; events?: ChatEvent[] };
+    clearBubbles(chatId);
+    update(chatId, (s) => ({
+      ...s,
+      items: [],
+      ...(config?.model ? { model: config.model } : {}),
+      ...(config?.effort ? { effort: config.effort } : {}),
+      ...(typeof config?.forkNext === 'boolean' ? { forkNext: config.forkNext } : {}),
+    }));
+    for (const ev of events ?? []) applyEvent(chatId, ev);
+  } catch {
+    /* offline / bridge not ready — leave state as-is */
+  }
+}
+
+/** Ensure the single shared chat SSE stream is open; route tagged frames per chat. */
+function ensureSharedStream(): void {
+  if (sharedStream) return;
+  const es = new EventSource('/api/chat/stream');
+  es.onopen = () => {
+    streamReady = true;
+    // Unblock send() on every known session (send is gated on `subscribed`).
+    for (const id of sessions.keys()) update(id, { subscribed: true });
+  };
+  es.onerror = () => {
+    // Drop the gate until EventSource auto-reconnects (onopen re-arms it).
+    streamReady = false;
+    for (const id of sessions.keys()) update(id, { subscribed: false });
+  };
+  es.onmessage = (e) => routeChatFrame(e.data as string);
+  sharedStream = es;
+}
+
+// Idle gate (src/idle.ts): when the tab is hidden the shared stream is deliberately
+// closed so the CF container can sleep; a plain .close() does not auto-reconnect. On
+// reopen, every known session rehydrates from the server (live frames missed while
+// closed are recovered from the JSONL-derived transcript, ADR 0004).
+function closeSharedStream(): void {
+  if (!sharedStream) return;
+  sharedStream.close();
+  sharedStream = null;
+  streamReady = false;
+  for (const id of sessions.keys()) update(id, { subscribed: false });
+}
+function reopenSharedStream(): void {
+  ensureSharedStream();
+  for (const id of sessions.keys()) void rehydrate(id);
+}
+registerStream({ open: reopenSharedStream, close: closeSharedStream });
+setBusyCheck(() => {
+  for (const s of sessions.values()) if (s.busy) return true;
+  return false;
+});
+
+/** Attach a chat to the shared stream (idempotent). Never closed on view unmount.
+ *  Pulls the server transcript on attach so a reload / fresh device rehydrates. */
+export function openStream(chatId: string): void {
+  ensureSession(chatId);
+  ensureSharedStream();
+  void rehydrate(chatId);
+  // If the stream is already live, this freshly-attached session can send right away.
+  if (streamReady) update(chatId, { subscribed: true });
+}
+
+/** Tear a session down for good (the chat shape was deleted). The shared stream
+ *  stays open for the remaining chats (one connection, app-lifetime). The durable
+ *  ChatMeta + JSONL stay server-side; deleting the card just drops the local view. */
+export function closeSession(chatId: string): void {
+  sessions.delete(chatId);
+  listeners.delete(chatId);
+  clearBubbles(chatId);
+}
+
+export function subscribe(chatId: string, cb: () => void): () => void {
+  let set = listeners.get(chatId);
+  if (!set) {
+    set = new Set();
+    listeners.set(chatId, set);
+  }
+  set.add(cb);
+  return () => {
+    listeners.get(chatId)?.delete(cb);
+  };
+}
+
+export function getSnapshot(chatId: string): ChatSnapshot {
+  return sessions.get(chatId) ?? EMPTY;
+}
+
+/** The client half of the subscribe-before-send contract: is this chat's SSE stream
+ *  open? `send()` is gated on this; the server independently rejects an unsubscribed
+ *  send with 425 Too Early, so the two ends agree on the same precondition. */
+export function isSubscribed(chatId: string): boolean {
+  return getSnapshot(chatId).subscribed;
+}
+
+/** Set which model this chat sends to. Optimistic locally, authoritative server-side: the
+ *  POST updates ChatMeta and broadcasts a `config` frame so other tabs converge (ADR 0004). */
+export function setModel(chatId: string, model: string): void {
+  ensureSession(chatId);
+  update(chatId, { model });
+  void postConfig(chatId, { model });
+}
+
+/** Set reasoning effort for this chat (server-owned, same as setModel). */
+export function setEffort(chatId: string, effort: string): void {
+  ensureSession(chatId);
+  update(chatId, { effort });
+  void postConfig(chatId, { effort });
+}
+
+function postConfig(chatId: string, patch: { model?: string; effort?: string; forkNext?: boolean }): Promise<unknown> {
+  return fetch(`/api/chat/${chatId}/config`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }).catch(() => {});
+}
+
+/** Seed `newId` as a fork of `parentId` on the SERVER (its ChatMeta resumes the parent's
+ *  session with a one-shot fork armed), then rehydrate the child — which pulls the parent's
+ *  JSONL transcript until the fork diverges. The parent session is untouched (ADR 0004). */
+export function forkSession(parentId: string, newId: string): void {
+  ensureSession(newId);
+  void fetch(`/api/chat/${newId}/fork`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from: parentId }) })
+    .then(() => rehydrate(newId))
+    .catch(() => {});
+}
+
+/**
+ * Route one raw SSE message to its session: parse JSON, validate it is a
+ * {@link ChatFrame}, drop it when its `chatId` is not a live session this client
+ * holds, then apply the narrowed event. Malformed JSON and non-frame messages are
+ * silently ignored (the shared stream carries comment/ping frames and could carry
+ * foreign noise). Exported so the routing seam is unit-tested without an EventSource.
+ */
+export function routeChatFrame(raw: string): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return; // malformed JSON, ignore
+  }
+  if (!isChatFrame(parsed)) return; // parsed is now narrowed to ChatFrame
+  const { chatId, ...ev } = parsed;
+  if (!sessions.has(chatId)) return; // a frame for a chat this client doesn't hold
+  applyEvent(chatId, ev);
+}
+
+function applyEvent(chatId: string, ev: ChatEvent) {
+  if (ev.kind === 'delta' && ev.text) {
+    const key = bubbleKey(chatId, ev.parentId);
+    if (ev.role === 'user') {
+      // Replay-only: the human's own message (live path adds these locally). A standalone
+      // bubble — reset the open bubble so a following agent delta starts a fresh one.
+      const id = nextItemId();
+      openBubble.set(key, null);
+      update(chatId, (s) => ({ ...s, items: [...s.items, { id, kind: 'msg', role: 'user', text: ev.text }] }));
+      return;
+    }
+    const open = openBubble.get(key) ?? null;
+    if (open) {
+      update(chatId, (s) => ({
+        ...s,
+        status: '',
+        items: s.items.map((it) => (it.id === open && it.kind === 'msg' ? { ...it, text: it.text + ev.text } : it)),
+      }));
+    } else {
+      const id = nextItemId();
+      openBubble.set(key, id);
+      update(chatId, (s) => ({ ...s, status: '', items: [...s.items, { id, kind: 'msg', role: 'agent', text: ev.text, ...(ev.parentId ? { parentId: ev.parentId } : {}) }] }));
+    }
+  } else if (ev.kind === 'config') {
+    // Server-owned config converged across tabs (ADR 0004): a sibling tab changed model/effort/fork.
+    update(chatId, (s) => ({
+      ...s,
+      ...(ev.model ? { model: ev.model } : {}),
+      ...(ev.effort ? { effort: ev.effort } : {}),
+      ...(typeof ev.forkNext === 'boolean' ? { forkNext: ev.forkNext } : {}),
+    }));
+  } else if (ev.kind === 'tool_start') {
+    if (!ev.parentId) update(chatId, { status: `running ${ev.name}` }); // a subagent's tool_start must not hijack the main status line
+  } else if (ev.kind === 'thinking') {
+    // Live proof-of-life while the model reasons silently (main agent only).
+    if (!ev.parentId && ev.thinkingTokens) update(chatId, { status: `thinking · ~${ev.thinkingTokens.toLocaleString()} tokens` });
+  } else if (ev.kind === 'tool_progress') {
+    if (!ev.parentId && ev.name) update(chatId, { status: `running ${ev.name} · ${ev.elapsed}s` });
+  } else if (ev.kind === 'tool') {
+    openBubble.set(bubbleKey(chatId, ev.parentId), null); // next text starts a fresh bubble after the chip
+    const id = nextItemId();
+    update(chatId, (s) => ({ ...s, status: 'working', items: [...s.items, { id, kind: 'tool', label: toolLabel(ev), ...(ev.parentId ? { parentId: ev.parentId } : {}), ...(ev.id ? { toolUseId: ev.id } : {}) }] }));
+  } else if (ev.kind === 'task' && ev.taskId) {
+    const taskId = ev.taskId;
+    const terminal = !!ev.status && TERMINAL.has(ev.status);
+    update(chatId, (s) => {
+      // Jobs tray (keyed by task_id): upsert running jobs, drop once terminal.
+      const tasks = { ...s.tasks };
+      if (terminal) {
+        delete tasks[taskId];
+      } else {
+        const prev: TaskInfo = tasks[taskId] ?? { id: taskId, status: 'running' };
+        tasks[taskId] = {
+          ...prev,
+          ...(ev.status ? { status: ev.status } : {}),
+          ...(ev.taskType ? { taskType: ev.taskType } : {}),
+          ...(ev.title ? { title: ev.title } : {}),
+          ...(ev.detail ? { detail: ev.detail } : {}),
+          ...(ev.summary ? { summary: ev.summary } : {}),
+        };
+      }
+      // Inline: if this job maps to a tool chip (subagents), decorate it in the transcript.
+      const items = ev.toolUseId
+        ? s.items.map((it) =>
+            it.kind === 'tool' && it.toolUseId === ev.toolUseId
+              ? { ...it, ...(ev.status ? { status: ev.status } : {}), ...(ev.taskType === 'subagent' && ev.title ? { subagentType: ev.title } : {}), ...(ev.summary ? { summary: ev.summary } : {}) }
+              : it,
+          )
+        : s.items;
+      return { ...s, tasks, items };
+    });
+  } else if (ev.kind === 'todo' && ev.todoId) {
+    const todoId = ev.todoId;
+    update(chatId, (s) => {
+      const todos = { ...s.todos };
+      if (ev.todoStatus === 'deleted') {
+        delete todos[todoId];
+      } else {
+        const prev: TodoInfo = todos[todoId] ?? { id: todoId, subject: '', status: 'pending' };
+        // ev.todoStatus is narrowed to TodoStatus | undefined here ('deleted' handled above).
+        todos[todoId] = { ...prev, ...(ev.subject ? { subject: ev.subject } : {}), ...(ev.todoStatus ? { status: ev.todoStatus } : {}) };
+      }
+      return { ...s, todos };
+    });
+  } else if (ev.kind === 'done') {
+    clearBubbles(chatId);
+    update(
+      chatId,
+      (s) => ({
+        ...s,
+        busy: false,
+        status: '',
+        sdk: ev.sessionId ?? s.sdk,
+        contextPct: ev.contextPct ?? s.contextPct,
+        items: ev.error ? [...s.items, { id: nextItemId(), kind: 'msg', role: 'agent', text: `⚠ ${ev.error}` }] : s.items,
+      }),
+    );
+    // Drain queue: fire next pending message if one was sent while agent was busy.
+    const next = (sessions.get(chatId) ?? EMPTY).queue[0];
+    if (next) {
+      update(chatId, (s) => ({ ...s, queue: s.queue.slice(1) }));
+      void dispatchSend(chatId, next.message, next.images);
+    }
+  }
+}
+
+/** Fire the HTTP send and update busy state. Message already in transcript. */
+async function dispatchSend(chatId: string, message: string, images: PendingImage[]): Promise<void> {
+  clearBubbles(chatId);
+  update(chatId, (cur) => ({ ...cur, busy: true, status: 'thinking' }));
+  try {
+    // ADR 0004: sessionId / model / effort / fork are server-owned (ChatMeta); the body
+    // carries only the turn's content.
+    const res = await fetch(`/api/chat/${chatId}/send`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message, images: images.map(({ media_type, data }) => ({ media_type, data })) }),
+    });
+    // fetch only rejects on a network failure, so an HTTP error status (425 Too Early =
+    // the SSE stream isn't subscribed yet; or a 5xx) lands here, NOT in catch. Without
+    // this branch the card stays stuck on busy:true forever and the turn is silently
+    // dropped (no `done` ever arrives to clear it). Clear busy and surface why.
+    if (!res.ok) {
+      const why = res.status === 425 ? 'chat connection not ready, resend in a moment' : `send failed (${res.status})`;
+      update(chatId, (cur) => ({ ...cur, busy: false, status: '', items: [...cur.items, { id: nextItemId(), kind: 'msg', role: 'agent', text: `⚠ ${why}` }] }));
+    }
+  } catch {
+    update(chatId, (cur) => ({ ...cur, busy: false, status: '' }));
+  }
+}
+
+/** Interrupt the in-flight turn (Esc / Stop). Drops any queued sends so they don't
+ *  fire after the stop; `busy` clears when the server's `done` echo arrives. */
+export async function interrupt(chatId: string): Promise<void> {
+  const s = sessions.get(chatId);
+  if (!s || !s.busy) return;
+  if (s.queue.length) update(chatId, { queue: [] });
+  try {
+    await fetch(`/api/chat/${chatId}/interrupt`, { method: 'POST' });
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Send a user turn. Queues automatically if a turn is already in progress. */
+export async function send(chatId: string, message: string, images: PendingImage[]): Promise<void> {
+  const s = sessions.get(chatId) ?? EMPTY;
+  if ((!message && images.length === 0) || !s.subscribed) return;
+  // Always add user message to transcript immediately.
+  const uid = nextItemId();
+  update(chatId, (cur) => ({
+    ...cur,
+    items: [...cur.items, { id: uid, kind: 'msg', role: 'user', text: message, images: images.length ? images.map((p) => p.dataUrl) : undefined }],
+  }));
+  if (s.busy) {
+    // Queue for after current turn completes.
+    update(chatId, (cur) => ({ ...cur, queue: [...cur.queue, { message, images }] }));
+    return;
+  }
+  void dispatchSend(chatId, message, images);
+}

@@ -1,0 +1,164 @@
+import { getSandbox, Sandbox as BaseSandbox } from '@cloudflare/sandbox';
+
+// One container = one workspace = one canvas (v1). The Worker is the gate (shared
+// secret cookie) and the proxy into the in-container vite dev server, which
+// serves the app and forwards /api/* to the bridge. Same preview-proxy path the
+// SSE spike proved streams unbuffered, so the canvas SSE stream works as-is.
+export class Sandbox extends BaseSandbox {
+  // Sleep after idle (state survives in R2). The client idle gate (src/idle.ts) closes
+  // both SSE streams after ~2m of no user activity (pointer/keyboard), so an open-but-idle
+  // tab no longer pins the container via the 15s ping — this 5m window is the remaining
+  // sleep delay once the streams go quiet (total idle-to-sleep ~7m).
+  sleepAfter = '5m';
+}
+
+export interface Env {
+  Sandbox: DurableObjectNamespace<Sandbox>;
+  GATE_SECRET: string;
+  R2_BUCKET: string;
+  R2_ACCESS_KEY_ID: string;
+  R2_SECRET_ACCESS_KEY: string;
+  R2_ENDPOINT: string;
+  CLAUDE_CODE_OAUTH_TOKEN: string;
+}
+
+const SANDBOX_ID = 'canvas';
+const VITE_PORT = 4510;
+const PREVIEW_TOKEN = 'canvasproxy';
+const START = 'bash -lc "cd /app/agent-canvas && exec bun run scripts/container-start.ts"';
+
+const SIGN_IN = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>agent-canvas</title><body style="font:16px system-ui;display:grid;place-content:center;height:100vh;margin:0;background:#0b0b0c;color:#e7e7ea">
+<div style="text-align:center"><h1 style="font-weight:600">agent-canvas</h1>
+<p style="opacity:.7">Locked. Open this URL with <code>?key=…</code> to sign in.</p></div>`;
+
+// Container env injected at process spawn (PRD: ANTHROPIC_API_KEY intentionally
+// absent so it can't override the OAuth token).
+const containerEnv = (env: Env): Record<string, string> => ({
+  R2_BUCKET: env.R2_BUCKET,
+  R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
+  R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
+  R2_ENDPOINT: env.R2_ENDPOINT,
+  CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
+  CANVAS_WORKSPACE: 'default',
+});
+
+// Start (or recover) the dev stack and wait for vite. Mirrors the spike's warm/
+// stale handling: try the running process, else start fresh; on a cold boot give
+// vite + bridge time to come up (node_modules is image-resident, so no install).
+// Write the creds to .env in the container so bun auto-loads them for the bridge
+// and every child. setEnvVars / ProcessOptions.envVars proved racy across recycles
+// (the bridge intermittently came up with no R2 creds and silently used local-fs);
+// a file bun reads at startup is deterministic. Only called before a FRESH start —
+// never while the bridge runs, so `bun --watch` can't restart-loop on .env churn.
+async function writeEnvFile(sandbox: ReturnType<typeof getSandbox>, ev: Record<string, string>): Promise<void> {
+  const body =
+    Object.entries(ev)
+      .map(([k, v]) => `${k}=${v ?? ''}`)
+      .join('\n') + '\n';
+  await sandbox.writeFile('/app/agent-canvas/.env', body).catch(() => {});
+}
+
+async function ensureStack(sandbox: ReturnType<typeof getSandbox>, env: Env): Promise<void> {
+  const ev = containerEnv(env);
+  await sandbox.setEnvVars(ev).catch(() => {}); // kept as a secondary path
+  const opts = { processId: 'canvas', envVars: ev } as const;
+  let proc = await sandbox.getProcess('canvas').catch(() => null);
+  if (!proc) {
+    await writeEnvFile(sandbox, ev); // creds in place BEFORE the bridge starts
+    proc = await sandbox.startProcess(START, opts).catch(() => null);
+  }
+  // Generous first wait: a cold vite boot (esp. the first pull of a new image)
+  // can take tens of seconds; a short timeout would kill a healthy-but-slow boot
+  // and restart it pointlessly.
+  const up = proc
+    ? await proc.waitForPort(VITE_PORT, { timeout: 40000 }).then(() => true).catch(() => false)
+    : false;
+  if (up) return;
+  await sandbox.killProcess('canvas').catch(() => {});
+  await writeEnvFile(sandbox, ev);
+  const fresh = await sandbox.startProcess(START, opts);
+  await fresh.waitForPort(VITE_PORT, { timeout: 60000 });
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === '/health') return new Response('ok');
+
+    const secret = env.GATE_SECRET;
+    const cookies = (request.headers.get('cookie') ?? '').split(/;\s*/);
+    const gated = !!secret && cookies.includes(`cs_gate=${secret}`);
+    if (!gated) {
+      if (secret && url.searchParams.get('key') === secret) {
+        // Set the gate cookie and strip ?key from the URL.
+        return new Response(null, {
+          status: 302,
+          headers: {
+            'set-cookie': `cs_gate=${secret}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`,
+            location: url.pathname,
+          },
+        });
+      }
+      return new Response(SIGN_IN, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } });
+    }
+
+    // Force the container to recycle so a freshly deployed image takes effect (CF
+    // keeps the in-use instance on the old image until it idle-sleeps). The next
+    // request cold-boots the new image; canvas-state restores from R2.
+    if (url.pathname === '/__recycle') {
+      const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
+      const r = await sandbox.stop().then(() => 'stopped').catch((e) => String(e));
+      return Response.json({ recycle: r });
+    }
+
+    // Container stdout (the [boot] phase lines + vite/bridge startup) is NOT in
+    // Workers Observability yet (CF gap), so surface getProcessLogs directly. Gated.
+    if (url.pathname === '/__bootlog') {
+      const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
+      const r: unknown = await sandbox.getProcessLogs('canvas').catch((e) => ({ error: String(e) }));
+      const body =
+        typeof r === 'string'
+          ? r
+          : [(r as { stdout?: string }).stdout, (r as { stderr?: string }).stderr].filter(Boolean).join('\n') ||
+            JSON.stringify(r, null, 2);
+      return new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+    }
+
+    const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
+    // Warm fast path: the container's been up since a prior request, so the port
+    // is still exposed — just proxy (1 round-trip). The handshake (setEnvVars,
+    // getProcess, waitForPort, exposePort) only matters on a cold start, and
+    // running it on every request added ~4 round-trips (~1s) to every module
+    // fetch and every canvas drag. So skip it here and pay it only on a miss.
+    try {
+      const res = await proxy(sandbox, request);
+      // vite's real answers are 2xx/3xx and 404. A 410 (container stopped/gone) or
+      // a 5xx here is the SANDBOX PROXY reporting the container isn't ready — NOT
+      // an app response — so fall through to the cold start. (Returning the 410
+      // directly is what left the site permanently 410 after a recycle.)
+      if (res.status < 400 || res.status === 404) return res;
+    } catch {
+      /* container unreachable — fall through to the cold path */
+    }
+    // Cold path: bring the stack up, (re)expose the port, retry once.
+    try {
+      await ensureStack(sandbox, env);
+      await sandbox.exposePort(VITE_PORT, { hostname: 'localhost', token: PREVIEW_TOKEN });
+      return await proxy(sandbox, request);
+    } catch (e: unknown) {
+      return new Response('canvas error:\n' + String((e as Error)?.stack ?? e), { status: 500 });
+    }
+  },
+};
+
+// Forward a request into the container's vite dev server (which proxies /api -> the
+// bridge) and stream the response back. The one round-trip that's actually needed.
+function proxy(sandbox: ReturnType<typeof getSandbox>, request: Request): Promise<Response> {
+  const headers = new Headers(request.headers);
+  headers.set('x-sandbox-preview-proxy', '1');
+  headers.set('x-sandbox-preview-port', String(VITE_PORT));
+  headers.set('x-sandbox-preview-token', PREVIEW_TOKEN);
+  headers.set('x-sandbox-preview-sandbox-id', SANDBOX_ID);
+  return sandbox.fetch(new Request(request, { headers }));
+}
