@@ -35,5 +35,39 @@
   "durable_objects": {
     "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }],
+  // Preview environment (zbc: `apply preview canvas` -> `wrangler deploy --env
+  // preview`). A SEPARATE worker `agent-canvas-preview` in the same account, on a
+  // free *.workers.dev URL (no custom domain), so it never touches production's
+  // poc.cedarpad.com. wrangler named environments do NOT inherit bindings/vars/
+  // routes/containers — only main + compatibility_* — so the container, DO, and
+  // migrations are redeclared here verbatim.
+  "env": {
+    "preview": {
+      "name": "agent-canvas-preview",
+      // No custom domain: serve on the account's <name>.<subdomain>.workers.dev.
+      "workers_dev": true,
+      "observability": { "enabled": true },
+      // Better Auth is origin-sensitive. TODO: set both to the real preview origin
+      // — https://agent-canvas-preview.<your-workers-dev-subdomain>.workers.dev —
+      // after the first deploy reveals the subdomain (or provide it up front).
+      "vars": {
+        "BETTER_AUTH_URL": "https://agent-canvas-preview.workers.dev",
+        "WEB_ORIGIN": "https://agent-canvas-preview.workers.dev"
+      },
+      "containers": [
+        {
+          "class_name": "Sandbox",
+          "image": "./Dockerfile",
+          "image_build_context": "../..",
+          "instance_type": "standard-1",
+          "max_instances": 1
+        }
+      ],
+      "durable_objects": {
+        "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }]
+      },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }]
+    }
+  }
 }
