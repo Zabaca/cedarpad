@@ -29,6 +29,15 @@ const VITE_PORT = 4510;
 const PREVIEW_TOKEN = 'canvasproxy';
 const START = 'bash -lc "cd /app/agent-canvas && exec bun run scripts/container-start.ts"';
 
+// DIAGNOSIS (restore SLEEP_AFTER to '5m'): sleepAfter also set here, not just on the
+// class field. keepAlive + sleepAfter persist in the DO's storage across deploys; if
+// keepAlive was ever stuck `true`, the container NEVER auto-sleeps and sleepAfter is
+// ignored entirely (per @cloudflare/sandbox). Passing them to getSandbox re-applies
+// the config via configure() on every entry, forcing keepAlive OFF and re-asserting
+// sleepAfter — the fix for "won't sleep even with zero clients".
+const SLEEP_AFTER = '1m';
+const sb = (env: Env) => getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true, keepAlive: false, sleepAfter: SLEEP_AFTER });
+
 const SIGN_IN = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>agent-canvas</title><body style="font:16px system-ui;display:grid;place-content:center;height:100vh;margin:0;background:#0b0b0c;color:#e7e7ea">
 <div style="text-align:center"><h1 style="font-weight:600">agent-canvas</h1>
@@ -109,7 +118,7 @@ export default {
     // keeps the in-use instance on the old image until it idle-sleeps). The next
     // request cold-boots the new image; canvas-state restores from R2.
     if (url.pathname === '/__recycle') {
-      const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
+      const sandbox = sb(env);
       const r = await sandbox.stop().then(() => 'stopped').catch((e) => String(e));
       return Response.json({ recycle: r });
     }
@@ -117,7 +126,7 @@ export default {
     // Container stdout (the [boot] phase lines + vite/bridge startup) is NOT in
     // Workers Observability yet (CF gap), so surface getProcessLogs directly. Gated.
     if (url.pathname === '/__bootlog') {
-      const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
+      const sandbox = sb(env);
       const r: unknown = await sandbox.getProcessLogs('canvas').catch((e) => ({ error: String(e) }));
       const body =
         typeof r === 'string'
@@ -127,7 +136,7 @@ export default {
       return new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
 
-    const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
+    const sandbox = sb(env);
     // Warm fast path: the container's been up since a prior request, so the port
     // is still exposed — just proxy (1 round-trip). The handshake (setEnvVars,
     // getProcess, waitForPort, exposePort) only matters on a cold start, and
