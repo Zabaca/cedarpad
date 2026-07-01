@@ -9,7 +9,7 @@ product POC — see [`CONTEXT.md`](./CONTEXT.md) for the normative model.
 
 ```bash
 bun install            # from the repo root
-cd packages/agent-canvas
+cd packages/canvas
 bun run dev            # bridge on :4511, web on :4510
 # open http://localhost:4510
 ```
