@@ -228,6 +228,8 @@ function canvasStream(): Response {
     start(controller) {
       self = controller;
       canvasClients.add(controller);
+      markAlive();
+      ensureReaper();
       controller.enqueue(sse(store.getState())); // prime with current state
     },
     cancel() {
@@ -254,6 +256,49 @@ function canvasStream(): Response {
 // every POST (send/shapes) into "pending". One shared stream keeps it flat at 2.
 export const chatClients = new Set<ReadableStreamDefaultController>();
 
+// --- liveness reaping: why the CF container can sleep ---
+// A browser holds SSE streams open; the chat stream's 15s ping AND the sandbox's
+// per-forward inflight counter both keep the container awake. When a tab closes,
+// navigates, or goes idle, the CF sandbox preview-proxy does NOT propagate that
+// disconnect down to us — the streams linger forever and pin the container awake
+// (it never sleeps; proven via bootAt A/B test). Client-side .close() can't fix it
+// because the FIN never reaches the container. So we reap from OUR side: the client
+// POSTs /api/alive while its streams are open; if no beat lands within STALE_MS we
+// close every stream here. Closing from the container settles the proxy forward
+// (propagates UP) and stops the ping, so the container finally idles and sleeps.
+// Covers idle tabs AND closed/crashed tabs (the dominant case). STALE_MS must exceed
+// the client's beat interval with margin. DIAGNOSIS default 25s (restore ~90s).
+const STALE_MS = Number(process.env.CANVAS_STREAM_STALE_MS ?? 25_000);
+let lastAlive = Date.now();
+let reaper: ReturnType<typeof setInterval> | null = null;
+function markAlive(): void {
+  lastAlive = Date.now();
+}
+function ensureReaper(): void {
+  if (reaper) return;
+  reaper = setInterval(() => {
+    if (chatClients.size === 0 && canvasClients.size === 0) {
+      clearInterval(reaper!);
+      reaper = null;
+      return;
+    }
+    if (Date.now() - lastAlive <= STALE_MS) return;
+    const n = chatClients.size + canvasClients.size;
+    for (const c of [...chatClients, ...canvasClients]) {
+      try {
+        c.close();
+      } catch {
+        /* already closed */
+      }
+    }
+    chatClients.clear();
+    canvasClients.clear();
+    console.log(`[clients] reaped ${n} stale stream(s) (no beat ${STALE_MS}ms) -> chat=0 canvas=0, container can sleep`);
+    clearInterval(reaper!);
+    reaper = null;
+  }, 10_000);
+}
+
 function broadcastChat(chatId: string, ev: ChatEvent): void {
   // Build the on-wire frame through the shared type, so a new ChatEvent kind added
   // in only one place fails the build here until the frame shape accounts for it.
@@ -275,6 +320,8 @@ function chatStream(): Response {
     start(controller) {
       self = controller;
       chatClients.add(controller);
+      markAlive();
+      ensureReaper();
       controller.enqueue(enc.encode(': subscribed\n\n')); // comment frame: opens + flushes the stream
       // Heartbeat: keeps the connection from going idle-dead during a long silent think, and
       // a closed socket (bridge died) trips EventSource.onerror on the client -> "reconnecting".
@@ -355,6 +402,14 @@ export async function handleRequest(req: Request): Promise<Response> {
           'access-control-allow-headers': 'content-type',
         },
       });
+    }
+
+    // Liveness: any POST to /api/* means a live client is acting (drawing, chatting,
+    // or an explicit heartbeat), so the reaper must not cull its streams. The client
+    // beats here on a timer while its streams are open; stops when it goes idle/closes.
+    if (req.method === 'POST' && path.startsWith('/api/')) markAlive();
+    if (path === '/api/alive' && req.method === 'POST') {
+      return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*' } });
     }
 
     // --- canvas sync ---
