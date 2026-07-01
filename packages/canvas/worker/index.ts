@@ -9,7 +9,9 @@ export class Sandbox extends BaseSandbox {
   // both SSE streams after ~2m of no user activity (pointer/keyboard), so an open-but-idle
   // tab no longer pins the container via the 15s ping — this 5m window is the remaining
   // sleep delay once the streams go quiet (total idle-to-sleep ~7m).
-  sleepAfter = '5m';
+  // DIAGNOSIS (restore to '5m'): lowered to tighten the sleep-proof loop while
+  // investigating "container won't sleep". See HANDOFF-nosleep.md.
+  sleepAfter = '1m';
 }
 
 export interface Env {
@@ -141,7 +143,11 @@ export default {
     } catch {
       /* container unreachable — fall through to the cold path */
     }
-    // Cold path: bring the stack up, (re)expose the port, retry once.
+    // Cold path: bring the stack up, (re)expose the port, retry once. Reaching here
+    // means the warm proxy reported the container isn't ready — i.e. it had slept or
+    // been recycled. This log line is the observer-effect-free PROOF of a sleep→wake
+    // cycle: watch for it under `wrangler tail` after an idle window.
+    console.log(`[cold] boot — container asleep/gone, cold-starting for ${url.pathname}`);
     try {
       await ensureStack(sandbox, env);
       await sandbox.exposePort(VITE_PORT, { hostname: 'localhost', token: PREVIEW_TOKEN });

@@ -232,6 +232,7 @@ function canvasStream(): Response {
     },
     cancel() {
       canvasClients.delete(self);
+      console.log(`[clients] canvas stream cancel -> canvas=${canvasClients.size} chat=${chatClients.size}`);
     },
   });
   return new Response(stream, {
@@ -283,12 +284,14 @@ function chatStream(): Response {
         } catch {
           clearInterval(ping);
           chatClients.delete(controller);
+          console.log(`[clients] chat ping dead-controller -> chat=${chatClients.size} canvas=${canvasClients.size}`);
         }
       }, 15000);
     },
     cancel() {
       clearInterval(ping);
       chatClients.delete(self);
+      console.log(`[clients] chat stream cancel -> chat=${chatClients.size} canvas=${canvasClients.size}`);
     },
   });
   return new Response(stream, {
@@ -375,7 +378,13 @@ export async function handleRequest(req: Request): Promise<Response> {
         // report health too, so a silent save failure is visible for all four.
         artifacts: sink.healthSnapshot(),
         unsavedVersions: Math.max(0, saveHealth.liveVersion - savedV),
+        // Split client counts: chatClients is the warmth driver (its 15s ping pins the
+        // container), canvasClients is pingless. Both must reach 0 for the container to
+        // idle-sleep. chatClients self-cleans (ping enqueue throws on a dead controller);
+        // canvasClients only shrinks on cancel() or the next broadcast, so it can lag.
         clients: canvasClients.size,
+        chatClients: chatClients.size,
+        canvasClients: canvasClients.size,
         uptimeMs: Date.now() - saveHealth.bootAt,
         at: Date.now(),
       });

@@ -21,7 +21,7 @@ type Toggle = { open: () => void; close: () => void };
 const toggles = new Set<Toggle>();
 let busyCheck: () => boolean = () => false;
 
-const IDLE_MS = 120_000; // no pointer/keyboard for 2m -> close streams
+const IDLE_MS = 30_000; // DIAGNOSIS (restore to 120_000): shortened to tighten the sleep-proof loop. no pointer/keyboard -> close streams
 const HIDDEN_GRACE_MS = 30_000; // tab hidden -> close sooner
 let timer: ReturnType<typeof setTimeout> | null = null;
 let lastBump = 0;
