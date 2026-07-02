@@ -39,6 +39,10 @@ boot from `lib/db/migrations`, reads `web-poc/.dev.vars`), remote Turso in prod.
 The node libSQL client speaks both file and remote, so **no `turso dev` daemon is
 needed**; canvas's Vite serves the SPA and proxies `/v1` + `/api` to the bridge.
 
+For the full request flow (dev + prod), the `/v1` auth model (session vs
+`x-api-key`), remote access, and whether canvas should hold a service key, see
+`docs/API_ACCESS.md`.
+
 ## Local dev
 
 Run everything from canvas — there is no standalone dev server:

@@ -44,6 +44,9 @@ Design points that **changed** after migration (newer than the docs):
 
 ## Index
 
+- **API_ACCESS.md** — how the API is reached post-merge: the internal canvas↔web-poc
+  path (in-process dispatch), the `/v1` auth model (session vs `x-api-key`), remote
+  access (canvas gate + key), and the "should canvas hold a service key" question.
 - **SIMILARITY_SCALING.md** — why find-similar is a brute-force exact cosine scan
   (no ANN index), the benchmark, and the Turso scaling roadmap. *(Code references
   this path.)*
