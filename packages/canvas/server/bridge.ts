@@ -8,8 +8,8 @@ import { readFileSync } from 'node:fs';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
-import { buildApp } from '../web-poc/worker/index.ts';
-import { makeDb } from '../web-poc/lib/db/index.ts';
+import { buildApp } from './notebook/index.ts';
+import { makeDb } from '../lib/db/index.ts';
 
 import type { CanvasState } from '../src/shapes.ts';
 import { createStore } from '../src/store.ts';
@@ -35,19 +35,19 @@ const BUILD_REV =
 
 const PORT = Number(process.env.CANVAS_BRIDGE_PORT ?? 4511);
 
-// --- web-poc mount ---------------------------------------------------------
-// web-poc lives in-tree at ./web-poc (imported by relative path, not a workspace
-// package). Its Hono app (/v1 + Better Auth /api/auth) runs IN this bun process,
-// so the whole repo deploys as one Cloudflare instance. Its env comes from
-// web-poc/.dev.vars in dev and from real process.env in the container. Better Auth is
-// origin-sensitive, so we point baseURL + trustedOrigins at the canvas serving
-// origin (both apps share one origin once mounted); real env wins in the container.
-const WEBPOC_ORIGIN = process.env.WEBPOC_ORIGIN ?? 'http://localhost:4510';
+// --- notebook mount ----------------------------------------------------------
+// Notebook (the Problem/Solution intelligence app) lives in this package:
+// server/notebook (API), src/notebook (UI), lib (shared). Its Hono app (/v1 +
+// Better Auth /api/auth) runs IN this bun process, so the whole repo deploys as
+// one Cloudflare instance. Its env comes from .dev.vars in dev and from real
+// process.env in the container. Better Auth is origin-sensitive, so we point
+// baseURL + trustedOrigins at the serving origin; real env wins in the container.
+const NOTEBOOK_ORIGIN = process.env.NOTEBOOK_ORIGIN ?? 'http://localhost:4510';
 
-function loadWebPocEnv(): Record<string, string> {
+function loadNotebookEnv(): Record<string, string> {
   const vars: Record<string, string> = {};
   try {
-    const text = readFileSync(new URL('../web-poc/.dev.vars', import.meta.url), 'utf8');
+    const text = readFileSync(new URL('../.dev.vars', import.meta.url), 'utf8');
     for (const line of text.split('\n')) {
       const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
       if (m?.[1]) vars[m[1]] = (m[2] ?? '').replace(/^["']|["']$/g, '');
@@ -56,34 +56,34 @@ function loadWebPocEnv(): Record<string, string> {
     // No .dev.vars (container/prod): the container supplies these as real env.
   }
   const env = { ...vars, ...process.env } as Record<string, string>;
-  if (!process.env.BETTER_AUTH_URL) env.BETTER_AUTH_URL = WEBPOC_ORIGIN;
-  if (!process.env.WEB_ORIGIN) env.WEB_ORIGIN = WEBPOC_ORIGIN;
+  if (!process.env.BETTER_AUTH_URL) env.BETTER_AUTH_URL = NOTEBOOK_ORIGIN;
+  if (!process.env.WEB_ORIGIN) env.WEB_ORIGIN = NOTEBOOK_ORIGIN;
   return env;
 }
 
-const webPocEnv = loadWebPocEnv();
+const notebookEnv = loadNotebookEnv();
 
 // DB: local dev uses a libSQL FILE (no turso daemon needed); the container/prod
 // uses the real remote Turso from its env. `@libsql/client` (node) speaks both, so
-// the bridge builds ONE db and injects it into web-poc's app (buildApp then bypasses
-// its workerd `@libsql/client/web` path). Local migrations run on boot (idempotent);
-// remote Turso is migrated by the deploy, so we don't auto-migrate it here.
-const webPocRemoteTurso =
-  !!webPocEnv.TURSO_URL && !/(^file:|127\.0\.0\.1|localhost)/.test(webPocEnv.TURSO_URL);
-const webPocDbUrl = webPocRemoteTurso
-  ? webPocEnv.TURSO_URL!
-  : `file:${fileURLToPath(new URL('../.web-poc-dev.db', import.meta.url))}`;
-const webPocClient = createClient(
-  webPocRemoteTurso && webPocEnv.TURSO_KEY
-    ? { url: webPocDbUrl, authToken: webPocEnv.TURSO_KEY }
-    : { url: webPocDbUrl },
+// the bridge builds ONE db and injects it into the notebook app. Local migrations
+// run on boot (idempotent); remote Turso is migrated by the deploy, so we don't
+// auto-migrate it here.
+const notebookRemoteTurso =
+  !!notebookEnv.TURSO_URL && !/(^file:|127\.0\.0\.1|localhost)/.test(notebookEnv.TURSO_URL);
+const notebookDbUrl = notebookRemoteTurso
+  ? notebookEnv.TURSO_URL!
+  : `file:${fileURLToPath(new URL('../.notebook-dev.db', import.meta.url))}`;
+const notebookClient = createClient(
+  notebookRemoteTurso && notebookEnv.TURSO_KEY
+    ? { url: notebookDbUrl, authToken: notebookEnv.TURSO_KEY }
+    : { url: notebookDbUrl },
 );
-if (!webPocRemoteTurso) {
-  await migrate(drizzle(webPocClient), {
-    migrationsFolder: fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url)),
+if (!notebookRemoteTurso) {
+  await migrate(drizzle(notebookClient), {
+    migrationsFolder: fileURLToPath(new URL('../lib/db/migrations', import.meta.url)),
   });
 }
-const webPocApp = buildApp({ db: makeDb(webPocClient) });
+const notebookApp = buildApp({ db: makeDb(notebookClient) });
 
 // SSE subscribers for live canvas state.
 const canvasClients = new Set<ReadableStreamDefaultController>();
@@ -411,11 +411,11 @@ export async function handleRequest(req: Request): Promise<Response> {
       });
     }
 
-    // web-poc mounted in-process: its data API (/v1/*) and Better Auth (/api/auth/*)
-    // are served by web-poc's Hono app. This MUST precede the canvas's own /api/*
+    // Notebook mounted in-process: its data API (/v1/*) and Better Auth (/api/auth/*)
+    // are served by the notebook Hono app. This MUST precede the canvas's own /api/*
     // routes below, since /api/auth/* lives under the same /api namespace.
     if (path.startsWith('/v1/') || path === '/v1' || path.startsWith('/api/auth/')) {
-      return webPocApp.fetch(req, webPocEnv as never);
+      return notebookApp.fetch(req, notebookEnv as never);
     }
 
     // --- canvas sync ---

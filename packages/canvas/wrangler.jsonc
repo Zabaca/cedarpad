@@ -12,7 +12,7 @@
   // or the dashboard (replaces the ad-hoc /__diag route). Container stdout is
   // separate (sandbox getProcessLogs / CF container logs).
   "observability": { "enabled": true },
-  // Non-secret env for the mounted web-poc's Better Auth (same origin as the app in
+  // Non-secret env for the mounted Notebook's Better Auth (same origin as the app in
   // prod). Secrets (TURSO_*, VOYAGE_API_KEY, BETTER_AUTH_SECRET) are pushed via
   // workerSecrets, not here.
   "vars": {
@@ -23,7 +23,7 @@
     {
       "class_name": "Sandbox",
       "image": "./Dockerfile",
-      // The Dockerfile bakes the whole workspace (canvas + web-poc), so the build
+      // The Dockerfile bakes the whole workspace (canvas incl. Notebook), so the build
       // context is the repo root (two levels up from this package), not the package.
       "image_build_context": "../..",
       // standard-1 is the proven instance type for this account; bump if the

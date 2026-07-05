@@ -15,5 +15,5 @@ packages/app
 # at process spawn.
 **/.env
 **/.dev.vars
-**/.web-poc-dev.db
-**/.web-poc-dev.db-*
+**/.notebook-dev.db
+**/.notebook-dev.db-*

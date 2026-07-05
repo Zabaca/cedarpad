@@ -13,13 +13,13 @@ import { wireSync } from './sync';
 // renders agent-authored React files; `chat` is a chat session living on the canvas.
 const customShapeUtils: TLAnyShapeUtilConstructor[] = [ComponentShapeUtil, ChatShapeUtil];
 
-// The far-left rail switches the stage between the tldraw canvas and web-poc
-// (Problem/Solution Intelligence). web-poc mounts directly into this React tree
+// The far-left rail switches the stage between the tldraw canvas and Notebook
+// (Problem/Solution Intelligence). Notebook mounts directly into this React tree
 // (both apps are on React 19) rather than an iframe: its providers + UI ship as a
 // lazy chunk that only loads when the 3rd rail button is opened. Its /v1 + /api/auth
 // calls are served by the same bridge process (see server/bridge.ts).
-export type AppView = 'canvas' | 'webpoc';
-const WebPocApp = lazy(() => import('../web-poc/src/embed').then((m) => ({ default: m.WebPocApp })));
+export type AppView = 'canvas' | 'notebook';
+const NotebookApp = lazy(() => import('./notebook/embed').then((m) => ({ default: m.NotebookApp })));
 
 // Hide ONLY tldraw's built-in page dropdown ("Avatar ⌄"). Our own LeftPanel now
 // owns the page list. The hamburger MainMenu and the undo/redo/delete/duplicate
@@ -157,7 +157,7 @@ export default function App() {
   const cleanup = useRef<(() => void) | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const [ready, setReady] = useState(false);
-  // Which app the rail is showing: the canvas, or the embedded web-poc.
+  // Which app the rail is showing: the canvas, or the embedded Notebook.
   const [activeApp, setActiveApp] = useState<AppView>('canvas');
 
   // Drop a fresh chat card. If a shape is selected (or a chat is focused), the new
@@ -311,15 +311,15 @@ export default function App() {
   );
 
   return (
-    <div className={`app${activeApp === 'webpoc' ? ' app--webpoc' : ''}`}>
-      {/* Tldraw stays mounted (editor + sync are preserved) while web-poc overlays it. */}
+    <div className={`app${activeApp === 'notebook' ? ' app--notebook' : ''}`}>
+      {/* Tldraw stays mounted (editor + sync are preserved) while Notebook overlays it. */}
       <div className="tl-stage">
         <Tldraw shapeUtils={customShapeUtils} components={tldrawComponents} onMount={onMount} />
       </div>
-      {activeApp === 'webpoc' && (
-        <div className="webpoc-frame">
-          <Suspense fallback={<div className="webpoc-loading">Loading Web POC…</div>}>
-            <WebPocApp />
+      {activeApp === 'notebook' && (
+        <div className="notebook-frame">
+          <Suspense fallback={<div className="notebook-loading">Loading Notebook…</div>}>
+            <NotebookApp />
           </Suspense>
         </div>
       )}

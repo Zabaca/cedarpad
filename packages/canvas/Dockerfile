@@ -11,16 +11,15 @@ FROM docker.io/cloudflare/sandbox:0.12.1
 
 # Build context is the REPO ROOT (wrangler.jsonc `image_build_context: "../.."`), so
 # we bake the workspace — root manifest + lockfile + the packages the canvas instance
-# needs. web-poc now lives in-tree at packages/canvas/web-poc (imported by relative
-# path, mounted into the canvas app + served in the same bridge process), so it is
-# copied with packages/canvas — no separate copy. `bun install` also links
+# needs. Notebook (the former web-poc) is part of packages/canvas itself
+# (src/notebook + server/notebook + lib, served in the same bridge process), so it
+# is copied with packages/canvas — no separate copy. `bun install` also links
 # @cedarpad/infra (a root dependency). packages/app (the separate desktop app) is
 # excluded via the repo-root .dockerignore. The dev stack is vite (not a static
 # build), so node_modules is installed here, not baked.
 WORKDIR /app/agent-canvas
-# Root tsconfig.json is required at runtime too: web-poc/tsconfig.json extends it
-# (../../../tsconfig.json), and vite/esbuild resolves that per-file when it transforms
-# web-poc/src/*.tsx. Without it the dev server errors "failed to resolve extends".
+# Root tsconfig.json is kept for the workspace layout (bun install reads the root
+# manifest beside it); the canvas package's own tsconfig no longer extends it.
 COPY package.json bun.lock tsconfig.json ./
 COPY packages/canvas packages/canvas
 COPY packages/infra packages/infra

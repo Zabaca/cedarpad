@@ -10,15 +10,13 @@
     "build": "vite build",
     "preview": "vite preview --port 4510",
     "typecheck": "tsc --noEmit",
-    "test": "bun test server src",
+    "test": "bun test server src lib",
     "deploy": "bash scripts/deploy.sh",
-    "webpoc:typecheck": "cd web-poc && tsc --noEmit",
-    "webpoc:test": "cd web-poc && vitest run --passWithNoTests",
-    "webpoc:db:generate": "cd web-poc && bunx --bun drizzle-kit generate",
-    "webpoc:db:migrate": "cd web-poc && bun scripts/migrate.ts",
-    "webpoc:seed": "cd web-poc && bun scripts/seed.ts",
-    "webpoc:openapi:emit": "cd web-poc && bun scripts/emit-openapi.ts",
-    "webpoc:gen:api": "cd web-poc && openapi-typescript ./openapi.json -o src/api-types.ts"
+    "notebook:db:generate": "bunx --bun drizzle-kit generate",
+    "notebook:db:migrate": "bun scripts/notebook/migrate.ts",
+    "notebook:seed": "bun scripts/notebook/seed.ts",
+    "notebook:openapi:emit": "bun scripts/notebook/emit-openapi.ts",
+    "notebook:gen:api": "openapi-typescript ./openapi.json -o src/notebook/api-types.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.0",
@@ -59,10 +57,10 @@
     "@vitejs/plugin-react": "^4.3.4",
     "drizzle-kit": "^0.30.1",
     "jsdom": "^29.1.0",
+    "msw": "^2.14.6",
     "openapi-typescript": "^7.13.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
-    "vitest": "^3.0.5",
     "wrangler": "^4.0.0"
   }
 }

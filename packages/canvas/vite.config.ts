@@ -15,8 +15,8 @@ export default defineConfig({
     // proxy under an arbitrary Host; the Worker is the gate, so accept any host.
     allowedHosts: true,
     proxy: {
-      // /api/* → canvas bridge (canvas sync + chat, and web-poc's Better Auth at
-      // /api/auth/*). /v1/* → web-poc's data API, also served by the bridge.
+      // /api/* → canvas bridge (canvas sync + chat, and Notebook's Better Auth at
+      // /api/auth/*). /v1/* → Notebook's data API, also served by the bridge.
       '/api': { target: BRIDGE, changeOrigin: true },
       '/v1': { target: BRIDGE, changeOrigin: true },
     },
