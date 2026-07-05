@@ -19,10 +19,15 @@ function wsSlug(name: string): string {
   return `${base}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// Signup UI is hidden when signup is disabled server-side (AUTH_DISABLE_SIGNUP=1;
+// the vite-served twin VITE_AUTH_DISABLE_SIGNUP drives this). The server flag is
+// the real enforcement — this just keeps the UI honest.
+const signupDisabled = import.meta.env.VITE_AUTH_DISABLE_SIGNUP === "1";
+
 /**
  * Email/password login + signup gate. On signup we also auto-create a personal
  * workspace and make it active, so a new user lands in a usable workspace.
- * `useSession` in `App` flips to the authenticated shell once the cookie is set.
+ * `useSession` in the host gate flips to the app once the cookie is set.
  */
 export function AuthScreen() {
   const [mode, setMode] = useState<"login" | "signup">("login");
@@ -32,7 +37,7 @@ export function AuthScreen() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const isSignup = mode === "signup";
+  const isSignup = mode === "signup" && !signupDisabled;
 
   async function submit() {
     setError(null);
@@ -107,19 +112,21 @@ export function AuthScreen() {
             <Button type="submit" loading={loading} fullWidth>
               {isSignup ? "Sign up" : "Log in"}
             </Button>
-            <Text size="sm" c="dimmed" ta="center">
-              {isSignup ? "Already have an account? " : "No account yet? "}
-              <Anchor
-                component="button"
-                type="button"
-                onClick={() => {
-                  setError(null);
-                  setMode(isSignup ? "login" : "signup");
-                }}
-              >
-                {isSignup ? "Log in" : "Sign up"}
-              </Anchor>
-            </Text>
+            {!signupDisabled && (
+              <Text size="sm" c="dimmed" ta="center">
+                {isSignup ? "Already have an account? " : "No account yet? "}
+                <Anchor
+                  component="button"
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setMode(isSignup ? "login" : "signup");
+                  }}
+                >
+                  {isSignup ? "Log in" : "Sign up"}
+                </Anchor>
+              </Text>
+            )}
           </Stack>
         </form>
       </Card>

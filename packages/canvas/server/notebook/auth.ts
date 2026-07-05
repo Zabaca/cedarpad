@@ -34,7 +34,11 @@ export function createAuth(db: Database, env: Bindings) {
       ...(env.WEB_ORIGIN ? [env.WEB_ORIGIN] : []),
     ],
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
-    emailAndPassword: { enabled: true },
+    // Signup is closed in production (AUTH_DISABLE_SIGNUP=1 in wrangler vars):
+    // Better Auth login is the only gate to the whole app, so open signup would
+    // hand any visitor an account — and with it the canvas agent. Dev leaves the
+    // flag unset so local signup works.
+    emailAndPassword: { enabled: true, disableSignUp: env.AUTH_DISABLE_SIGNUP === "1" },
     plugins: [
       organization({
         schema: {

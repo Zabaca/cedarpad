@@ -17,7 +17,10 @@
   // workerSecrets, not here.
   "vars": {
     "BETTER_AUTH_URL": "https://poc.cedarpad.com",
-    "WEB_ORIGIN": "https://poc.cedarpad.com"
+    "WEB_ORIGIN": "https://poc.cedarpad.com",
+    // Sign-in only: Better Auth login is the sole user gate, so open signup would
+    // hand any visitor an account (and the canvas agent). Unset locally.
+    "AUTH_DISABLE_SIGNUP": "1"
   },
   "containers": [
     {
@@ -52,7 +55,8 @@
       // (the account's workers.dev subdomain, from the first deploy).
       "vars": {
         "BETTER_AUTH_URL": "https://agent-canvas-preview.james-99a.workers.dev",
-        "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev"
+        "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev",
+        "AUTH_DISABLE_SIGNUP": "1"
       },
       "containers": [
         {

@@ -33,6 +33,8 @@ export interface Env {
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
   WEB_ORIGIN?: string;
+  /** "1" (prod/preview vars) disables signup — Better Auth login is the only user gate. */
+  AUTH_DISABLE_SIGNUP?: string;
 }
 
 const SANDBOX_ID = 'canvas';
@@ -60,6 +62,10 @@ const containerEnv = (env: Env): Record<string, string> => ({
   BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET ?? '',
   BETTER_AUTH_URL: env.BETTER_AUTH_URL ?? '',
   WEB_ORIGIN: env.WEB_ORIGIN ?? '',
+  // Signup toggle, twice: the server flag (Better Auth rejects sign-up/email)
+  // and its VITE_ twin (vite exposes it to the AuthScreen, which hides the UI).
+  AUTH_DISABLE_SIGNUP: env.AUTH_DISABLE_SIGNUP ?? '',
+  VITE_AUTH_DISABLE_SIGNUP: env.AUTH_DISABLE_SIGNUP ?? '',
 });
 
 // Start (or recover) the dev stack and wait for vite. Mirrors the spike's warm/

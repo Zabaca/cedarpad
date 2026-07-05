@@ -12,6 +12,8 @@ export interface Bindings {
   ABLY_API_KEY?: string;
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL?: string;
+  /** "1" disables email/password signup (production: sign-in only). */
+  AUTH_DISABLE_SIGNUP?: string;
   /** Production web origin (e.g. the Pages URL) — trusted for CSRF/Origin checks. */
   WEB_ORIGIN?: string;
   /**
