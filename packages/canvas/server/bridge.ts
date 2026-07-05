@@ -97,6 +97,11 @@ const auth = createAuth(makeDb(notebookClient), notebookEnv as never);
 // the full cookie string. A new login mints a new session token (new key), so a
 // stale negative can't lock anyone out; sign-out leaves at most a TTL's grace on
 // the old cookie. Crude size cap: single-digit users, not an LRU problem.
+// A THROWN getSession (transient Turso blip) is NOT cached — otherwise one blip
+// mid-drag would pin ok=false under the logged-in user's unchanged cookie and
+// lock them out of every canvas write for a full TTL. Only a resolved result
+// (valid session, or genuinely no session) is memoized; a throw just fails this
+// one request and the next retries.
 const SESSION_TTL_MS = 60_000;
 const sessionCache = new Map<string, { ok: boolean; exp: number }>();
 async function hasSession(req: Request): Promise<boolean> {
@@ -104,8 +109,13 @@ async function hasSession(req: Request): Promise<boolean> {
   if (!cookie) return false;
   const hit = sessionCache.get(cookie);
   if (hit && hit.exp > Date.now()) return hit.ok;
-  const s = await auth.api.getSession({ headers: req.headers }).catch(() => null);
-  const ok = !!s?.user;
+  let ok: boolean;
+  try {
+    const s = await auth.api.getSession({ headers: req.headers });
+    ok = !!s?.user;
+  } catch {
+    return false; // transient — don't poison the cache with a negative
+  }
   if (sessionCache.size >= 500) sessionCache.clear();
   sessionCache.set(cookie, { ok, exp: Date.now() + SESSION_TTL_MS });
   return ok;
