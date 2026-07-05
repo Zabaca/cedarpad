@@ -48,6 +48,10 @@ Design points that **changed** after migration (newer than the docs):
 - **API_ACCESS.md** — how the API is reached post-merge: the internal canvas↔notebook
   path (in-process dispatch), the `/v1` auth model (session vs `x-api-key`), remote
   access (canvas gate + key), and the "should canvas hold a service key" question.
+- **SECURITY-cs_gate.md** — open security item: why `cs_gate` (the edge gate)
+  can't be dropped for in-app login alone (pre-auth source disclosure + container
+  cold-boot), the current two-layer mitigation, and the Cloudflare Access fix to
+  revisit.
 - **SIMILARITY_SCALING.md** — why find-similar is a brute-force exact cosine scan
   (no ANN index), the benchmark, and the Turso scaling roadmap. *(Code references
   this path.)*

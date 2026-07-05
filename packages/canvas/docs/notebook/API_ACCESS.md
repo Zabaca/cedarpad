@@ -23,6 +23,10 @@ Access is **two layers**:
 
 ## Why the edge gate can't be dropped
 
+> Full write-up with impact, evidence, and the Cloudflare Access migration:
+> [`SECURITY-cs_gate.md`](./SECURITY-cs_gate.md) (open item — revisit to drop the
+> shared secret properly).
+
 This was tried (dropping `cs_gate`, relying on the login alone) and reverted. The
 app **is a vite dev server in production** — vite is the runtime compiler for the
 agent's live components, so a static build is impossible (ADR 0001). A dev server
