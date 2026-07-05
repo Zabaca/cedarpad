@@ -2,6 +2,10 @@
 # local canvas-persistence blobs (dev fs backend)
 .persist/
 
+# local libSQL file backing the mounted web-poc in dev (prod uses remote Turso)
+.web-poc-dev.db
+.web-poc-dev.db-*
+
 # build stamp written by scripts/deploy.sh right before the image build (the git
 # SHA the bridge reports at /api/status). Regenerated per deploy, never committed.
 server/build-rev.txt

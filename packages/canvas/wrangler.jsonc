@@ -12,10 +12,20 @@
   // or the dashboard (replaces the ad-hoc /__diag route). Container stdout is
   // separate (sandbox getProcessLogs / CF container logs).
   "observability": { "enabled": true },
+  // Non-secret env for the mounted web-poc's Better Auth (same origin as the app in
+  // prod). Secrets (TURSO_*, VOYAGE_API_KEY, BETTER_AUTH_SECRET) are pushed via
+  // workerSecrets, not here.
+  "vars": {
+    "BETTER_AUTH_URL": "https://poc.cedarpad.com",
+    "WEB_ORIGIN": "https://poc.cedarpad.com"
+  },
   "containers": [
     {
       "class_name": "Sandbox",
       "image": "./Dockerfile",
+      // The Dockerfile bakes the whole workspace (canvas + web-poc), so the build
+      // context is the repo root (two levels up from this package), not the package.
+      "image_build_context": "../..",
       // standard-1 is the proven instance type for this account; bump if the
       // vite + bridge + agent stack OOMs on cold boot.
       "instance_type": "standard-1",
@@ -25,5 +35,38 @@
   "durable_objects": {
     "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }]
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }],
+  // Preview environment (zbc: `apply preview canvas` -> `wrangler deploy --env
+  // preview`). A SEPARATE worker `agent-canvas-preview` in the same account, on a
+  // free *.workers.dev URL (no custom domain), so it never touches production's
+  // poc.cedarpad.com. wrangler named environments do NOT inherit bindings/vars/
+  // routes/containers — only main + compatibility_* — so the container, DO, and
+  // migrations are redeclared here verbatim.
+  "env": {
+    "preview": {
+      "name": "agent-canvas-preview",
+      // No custom domain: serve on the account's <name>.<subdomain>.workers.dev.
+      "workers_dev": true,
+      "observability": { "enabled": true },
+      // Better Auth is origin-sensitive — these are the deployed preview origin
+      // (the account's workers.dev subdomain, from the first deploy).
+      "vars": {
+        "BETTER_AUTH_URL": "https://agent-canvas-preview.james-99a.workers.dev",
+        "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev"
+      },
+      "containers": [
+        {
+          "class_name": "Sandbox",
+          "image": "./Dockerfile",
+          "image_build_context": "../..",
+          "instance_type": "standard-1",
+          "max_instances": 1
+        }
+      ],
+      "durable_objects": {
+        "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }]
+      },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }]
+    }
+  }
 }

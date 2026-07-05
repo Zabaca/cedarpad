@@ -20,12 +20,24 @@ export interface Env {
   R2_SECRET_ACCESS_KEY: string;
   R2_ENDPOINT: string;
   CLAUDE_CODE_OAUTH_TOKEN: string;
+  // web-poc (mounted in the bridge, served in-process): remote Turso + auth +
+  // embeddings. Secrets (TURSO_*, VOYAGE_API_KEY, BETTER_AUTH_SECRET) come from
+  // workerSecrets; the two origins are plain vars in wrangler.jsonc.
+  TURSO_URL?: string;
+  TURSO_KEY?: string;
+  VOYAGE_API_KEY?: string;
+  BETTER_AUTH_SECRET?: string;
+  BETTER_AUTH_URL?: string;
+  WEB_ORIGIN?: string;
 }
 
 const SANDBOX_ID = 'canvas';
 const VITE_PORT = 4510;
 const PREVIEW_TOKEN = 'canvasproxy';
-const START = 'bash -lc "cd /app/agent-canvas && exec bun run scripts/container-start.ts"';
+// The image is the whole workspace at /app/agent-canvas (root context); the canvas
+// package — and its scripts/bridge/vite, plus the in-tree web-poc at
+// packages/canvas/web-poc — live under packages/canvas.
+const START = 'bash -lc "cd /app/agent-canvas/packages/canvas && exec bun run scripts/container-start.ts"';
 
 const SIGN_IN = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>agent-canvas</title><body style="font:16px system-ui;display:grid;place-content:center;height:100vh;margin:0;background:#0b0b0c;color:#e7e7ea">
@@ -41,6 +53,14 @@ const containerEnv = (env: Env): Record<string, string> => ({
   R2_ENDPOINT: env.R2_ENDPOINT,
   CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
   CANVAS_WORKSPACE: 'default',
+  // web-poc mounted in the bridge: a real remote TURSO_URL makes it use Turso (not
+  // the dev libSQL file); the origins line Better Auth up with poc.cedarpad.com.
+  TURSO_URL: env.TURSO_URL ?? '',
+  TURSO_KEY: env.TURSO_KEY ?? '',
+  VOYAGE_API_KEY: env.VOYAGE_API_KEY ?? '',
+  BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET ?? '',
+  BETTER_AUTH_URL: env.BETTER_AUTH_URL ?? '',
+  WEB_ORIGIN: env.WEB_ORIGIN ?? '',
 });
 
 // Start (or recover) the dev stack and wait for vite. Mirrors the spike's warm/
@@ -56,7 +76,9 @@ async function writeEnvFile(sandbox: ReturnType<typeof getSandbox>, ev: Record<s
     Object.entries(ev)
       .map(([k, v]) => `${k}=${v ?? ''}`)
       .join('\n') + '\n';
-  await sandbox.writeFile('/app/agent-canvas/.env', body).catch(() => {});
+  // Written into the canvas package (the bridge's cwd) so bun auto-loads it for the
+  // bridge and every child — including web-poc's mounted app (Turso/auth secrets).
+  await sandbox.writeFile('/app/agent-canvas/packages/canvas/.env', body).catch(() => {});
 }
 
 async function ensureStack(sandbox: ReturnType<typeof getSandbox>, env: Env): Promise<void> {
@@ -131,21 +153,34 @@ export default {
     // getProcess, waitForPort, exposePort) only matters on a cold start, and
     // running it on every request added ~4 round-trips (~1s) to every module
     // fetch and every canvas drag. So skip it here and pay it only on a miss.
+    // Clone up front so the cold-path retry has an UNCONSUMED body: the warm proxy
+    // below does `new Request(request)`, which marks request's body used, so retrying
+    // the same object throws "Cannot reconstruct a Request with a used body" for any
+    // POST/PUT (e.g. a login) that falls through to the cold path. (#preview)
+    const retryReq = request.clone();
     try {
       const res = await proxy(sandbox, request);
-      // vite's real answers are 2xx/3xx and 404. A 410 (container stopped/gone) or
-      // a 5xx here is the SANDBOX PROXY reporting the container isn't ready — NOT
-      // an app response — so fall through to the cold start. (Returning the 410
-      // directly is what left the site permanently 410 after a recycle.)
-      if (res.status < 400 || res.status === 404) return res;
+      // Return REAL app responses as-is — any status vite or the bridge produced,
+      // including 401/403/404/5xx (a failed login is a legit 401, not a cold start).
+      // Only the SANDBOX PROXY's not-ready signals fall through to the cold start:
+      //   - 410: container stopped/gone (returning it left the site stuck 410).
+      //   - 404/5xx whose body is the sandbox {"code":"INVALID_TOKEN"} / "port not
+      //     exposed" error — a never-warmed or recycled container.
+      // Treating every app 4xx/5xx as not-ready re-proxied each one and turned
+      // failed POSTs into used-body 500s. (#preview)
+      if (res.status !== 410) {
+        if (res.status < 400) return res;
+        const peek = await res.clone().text().catch(() => '');
+        if (!/INVALID_TOKEN|port not exposed/.test(peek)) return res;
+      }
     } catch {
       /* container unreachable — fall through to the cold path */
     }
-    // Cold path: bring the stack up, (re)expose the port, retry once.
+    // Cold path: bring the stack up, (re)expose the port, retry once (with the clone).
     try {
       await ensureStack(sandbox, env);
       await sandbox.exposePort(VITE_PORT, { hostname: 'localhost', token: PREVIEW_TOKEN });
-      return await proxy(sandbox, request);
+      return await proxy(sandbox, retryReq);
     } catch (e: unknown) {
       return new Response('canvas error:\n' + String((e as Error)?.stack ?? e), { status: 500 });
     }
