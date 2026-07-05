@@ -81,15 +81,19 @@ async function ensureStack(sandbox: ReturnType<typeof getSandbox>, env: Env): Pr
   }
   // Generous first wait: a cold vite boot (esp. the first pull of a new image)
   // can take tens of seconds; a short timeout would kill a healthy-but-slow boot
-  // and restart it pointlessly.
+  // and restart it pointlessly. 40s was too short: on a heavy boot vite bound after
+  // it, so the worker killProcess'd a healthy stack — orphaning the already-bound
+  // bridge/extension, so the restart hit EADDRINUSE, exited code 0, and surfaced as
+  // ProcessExitedBeforeReadyError (intermittent 502 / ~100s boots after an idle sleep).
+  // Reproduced + fixed in the sleep spike: 120s lets a slow-but-healthy boot finish.
   const up = proc
-    ? await proc.waitForPort(VITE_PORT, { timeout: 40000 }).then(() => true).catch(() => false)
+    ? await proc.waitForPort(VITE_PORT, { timeout: 120000 }).then(() => true).catch(() => false)
     : false;
   if (up) return;
   await sandbox.killProcess('canvas').catch(() => {});
   await writeEnvFile(sandbox, ev);
   const fresh = await sandbox.startProcess(START, opts);
-  await fresh.waitForPort(VITE_PORT, { timeout: 60000 });
+  await fresh.waitForPort(VITE_PORT, { timeout: 120000 });
 }
 
 export default {
