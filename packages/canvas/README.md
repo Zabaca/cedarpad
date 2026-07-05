@@ -1,27 +1,41 @@
 # agent-canvas
 
-A tldraw canvas with a built-in **chat agent** that draws on it and reads from it.
-You sketch by hand; you also ask the agent (Claude, via the **Claude Agent SDK**)
-to create / edit / arrange shapes, and it sees whatever you've drawn. Layer-3
-product POC — see [`CONTEXT.md`](./CONTEXT.md) for the normative model.
+ONE application, two surfaces behind one login:
+
+- **Canvas** — a tldraw canvas with a built-in **chat agent** (Claude, via the
+  **Claude Agent SDK**) that draws on it and reads from it. See
+  [`CONTEXT.md`](./CONTEXT.md) for the normative model.
+- **Notebook** — the Problem/Solution intelligence app (React SPA
+  `src/notebook/` + Hono `/v1` API `server/notebook/`, Turso + Voyage
+  embeddings). Domain docs in [`docs/notebook/`](./docs/notebook/).
+
+The far-left rail switches between them.
 
 ## Run it
 
 ```bash
 bun install            # from the repo root
-cd packages/agent-canvas
-bun run dev            # bridge on :4511, web on :4510
+cd packages/canvas
+bun run dev            # bridge :4511, web :4510, extension server :4512
 # open http://localhost:4510
 ```
 
-`bun run dev` starts both the bridge (canvas store + agent) and the vite web app.
-Vite proxies `/api/*` to the bridge, so you only ever open `:4510`.
+`bun run dev` starts the bridge (canvas store + agent + the mounted notebook
+API), the vite web app, and the extension server. Vite proxies `/api/*` and
+`/v1/*` to the bridge, so you only ever open `:4510`.
 
 ### Auth
 
-The agent runs through the Claude Agent SDK, which uses your local Claude Code
-credential (subscription login or `ANTHROPIC_API_KEY`). If you're logged into
-Claude Code, it just works. Override the model with `CANVAS_MODEL` (default
+**Signing in**: the app is gated by a Better Auth email/password login — you land
+on the login screen until you have a session; both surfaces (canvas + notebook)
+sit behind it. In local dev, sign up on the spot (signup is disabled in
+production via `AUTH_DISABLE_SIGNUP=1`). The bridge enforces the session on all
+canvas `/api/*` routes; notebook's `/v1/*` also accepts an API key
+(`x-api-key`) — see [`docs/notebook/API_ACCESS.md`](./docs/notebook/API_ACCESS.md).
+
+**The agent** runs through the Claude Agent SDK, which uses your local Claude
+Code credential (subscription login or `ANTHROPIC_API_KEY`). If you're logged
+into Claude Code, it just works. Override the model with `CANVAS_MODEL` (default
 `sonnet`).
 
 ## Try
@@ -69,8 +83,8 @@ skill (`document` / `critique` / `polish`).
 ## Verify
 
 ```bash
-bun run typecheck      # tsc, clean
-bun test               # store + canvas-ops invariants
+bun run typecheck      # tsc, clean (one project: src, server, shared, scripts, lib)
+bun run test           # bun test server src lib — canvas + notebook suites
 ```
 
 The store, the agent tool logic, the bridge HTTP/SSE sync (both directions), and
@@ -80,8 +94,13 @@ auth, exercised by actually chatting.
 
 ## Notes
 
-- **Local-only, in-memory.** No backend DB; a reload starts from an empty canvas.
-  The whole point is the cross-process bridge (browser ↔ agent) on your machine,
-  so there's no Vercel deploy.
+- **Deploy**: one Cloudflare Worker (`agent-canvas`) + container running this
+  dev stack (vite is the runtime compiler — ADR 0001). `bun run deploy` — only
+  with explicit approval (see `CLAUDE.md`). Canvas state persists to R2;
+  notebook data to Turso. Local dev persists canvas state to `.persist/` and
+  notebook data to `.notebook-dev.db`.
+- **Deploy ops**: `GATE_SECRET` is only the `x-ops-key` header for `/__recycle`
+  and `/__bootlog` (used by `scripts/deploy.sh`). There is no user-facing gate
+  key — login is the gate.
 - The canvas shows a tldraw **non-commercial watermark** until a production
   license key is added.

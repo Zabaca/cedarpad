@@ -1,5 +1,14 @@
 # 0001 — Deploy agent-canvas as a self-modifying dev-mode container on Cloudflare, with R2 overlay persistence
 
+> **Addendum (2026-07, `integration` branch):** the shared-secret `cs_gate`
+> cookie described below was replaced by **Better Auth login as the sole user
+> gate** (enforced in-app: frontend `Gate` + the bridge's session check on
+> canvas `/api/*`; production signup disabled). `GATE_SECRET` survives only as
+> the deploy-ops `x-ops-key` header on `/__recycle` + `/__bootlog`. The
+> "unauthenticated RCE behind a gate cookie" consequence is superseded: the
+> bridge now authenticates every canvas request — any signed-in account is an
+> operator. Gate references below are historical.
+
 Status: accepted, but partially superseded by [ADR 0002](./0002-core-extension-split.md) — the container deploy, vite-as-compiler, R2 persistence, and workspace/canvas topology stand; the "everything mutable / no immutability boundary / whole-subtree overlay / self-modifying backend" stance below is replaced by the core/extension split (the core is image-only; only `src/canvas-components/` + custom handlers persist).
 
 ## Context

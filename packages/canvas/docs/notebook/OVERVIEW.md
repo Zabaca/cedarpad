@@ -1,3 +1,8 @@
+> **Historical snapshot.** This is the module README from when Notebook lived at
+> `packages/canvas/web-poc/` (pre-dissolution). Paths and names below are stale —
+> current state: `CONTEXT.md` (this directory) and the canvas `CLAUDE.md` /
+> `README.md`. Kept for the migration record alongside `MIGRATION.md`.
+
 # web-poc (in-tree module of `@cedarpad/canvas`)
 
 The Cedarpad Problem/Solution intelligence app — a React SPA + a Hono API backed

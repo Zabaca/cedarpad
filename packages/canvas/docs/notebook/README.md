@@ -1,13 +1,14 @@
-# web-poc docs
+# Notebook docs (formerly web-poc)
 
 Architecture/reference docs, migrated from the apex monorepo. They describe the
 domain and subsystems; **read them through the migration delta below**, because
 the code was restructured and a few design points changed after the move.
 
 > **Two migrations happened.** (1) apex → web-poc (paths + design deltas, below).
-> (2) web-poc → embedded in `@cedarpad/canvas` (2026-07-01) — the app now also
+> (2) web-poc → embedded in `@cedarpad/canvas` (2026-07-01), then dissolved into the
+> package as **Notebook** (2026-07) — the app now also
 > runs in-process inside the canvas bridge and ships as one Cloudflare instance;
-> React is now **19**. These `docs/` describe web-poc's *internals* (embeddings,
+> React is now **19**. These docs describe Notebook's *internals* (embeddings,
 > contract, agent, pipeline), which are unchanged by the embed. For the embed
 > itself see `../CONTEXT.md` → "Embedded in canvas" and `../MIGRATION.md` →
 > "Embedded into canvas".
@@ -44,7 +45,7 @@ Design points that **changed** after migration (newer than the docs):
 
 ## Index
 
-- **API_ACCESS.md** — how the API is reached post-merge: the internal canvas↔web-poc
+- **API_ACCESS.md** — how the API is reached post-merge: the internal canvas↔notebook
   path (in-process dispatch), the `/v1` auth model (session vs `x-api-key`), remote
   access (canvas gate + key), and the "should canvas hold a service key" question.
 - **SIMILARITY_SCALING.md** — why find-similar is a brute-force exact cosine scan
@@ -54,7 +55,7 @@ Design points that **changed** after migration (newer than the docs):
   per above; embedding provider is now Voyage.)*
 - **CONTRACT_ARCHITECTURE.md** — the single zod-openapi contract shared by SPA +
   worker; `openapi:emit` → `gen:api` regen flow. *(Still accurate; run the
-  scripts from the web-poc root.)*
+  scripts from the canvas root — `scripts/notebook/`.)*
 - **ASYNC_PIPELINE.md** — the `agent_jobs` queue + pipeline. *(Embedding step is
   now inline; the queue is optional — see delta above.)*
 - **AGENT_GRAPH_ACCESS.md** — the read-only graph tools exposed to the LLM agent.

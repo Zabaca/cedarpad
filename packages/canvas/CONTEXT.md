@@ -3,11 +3,18 @@
 A throwaway product POC: a **tldraw canvas with a built-in chat agent**. You draw
 by hand; you also chat with an agent that draws on the same canvas and reads what
 is there. The agent is driven by the **Claude Agent SDK** with a set of custom
-canvas tools. It runs **locally** today (the agent needs an API/subscription
-credential that can't live in the browser, and the component path needs the vite
-dev server as its compiler), so this is not a Vercel deploy. A Cloudflare-container
-deploy that preserves the dev stack is **designed** in [ADR 0001](./docs/decisions/0001-cloudflare-container-deploy.md)
-(not yet built).
+canvas tools. The component path needs the vite dev server as its compiler, so
+the deploy ships the DEV stack in a Cloudflare container ([ADR 0001](./docs/decisions/0001-cloudflare-container-deploy.md)).
+
+The canvas is one of TWO surfaces in this package. The far-left rail also opens
+**Notebook** (the Problem/Solution intelligence app, `src/notebook/` +
+`server/notebook/` + `lib/`; its own domain model lives in
+[docs/notebook/CONTEXT.md](./docs/notebook/CONTEXT.md)). ONE Better Auth login
+gates both: the frontend gate is `src/App.tsx` (`Gate`), and the bridge requires
+the session cookie on every canvas `/api/*` route (open: `/api/health`,
+`/api/status`; in-stack callers use `x-internal-key`). There is no cs_gate
+cookie anymore — `GATE_SECRET` survives only as the deploy-ops `x-ops-key`
+header on the worker's `/__recycle` + `/__bootlog`.
 
 ## Workspace, canvas, page, chat — the containment hierarchy
 

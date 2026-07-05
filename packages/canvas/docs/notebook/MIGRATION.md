@@ -275,3 +275,33 @@ removed, folding this into canvas as a plain in-tree module.
   GraphView chunks unchanged), `bun run webpoc:typecheck` ✅, bridge bundles under
   bun (1214 modules resolve) ✅, `bun run webpoc:db:generate` → "No schema changes"
   ✅. Not run: the live dev stack + a container deploy.
+
+
+## Dissolved into canvas as "Notebook" (2026-07, `integration` branch)
+
+The nested `packages/canvas/web-poc/` directory is gone; the module was renamed
+**Notebook** and its pieces merged into the canvas package proper (git mv, history
+preserved):
+
+- `web-poc/src/` → `src/notebook/` (the SPA; `embed.tsx` deleted — the host
+  `src/App.tsx` now owns the providers and mounts `NotebookApp` from
+  `src/notebook/App.tsx`), `web-poc/worker/` → `server/notebook/`,
+  `web-poc/lib/` → `lib/`, `web-poc/scripts/` → `scripts/notebook/`,
+  `web-poc/docs/` + module docs → `docs/notebook/`, `drizzle.config.ts` +
+  `openapi.json` → the canvas package root. Deleted as dead: `index.html`,
+  `src/main.tsx`, `worker/runtime.ts` (+ `dbMiddleware`), the unused Hono default
+  export, `worker-configuration.d.ts`, `web-poc/tsconfig.json` (one canvas
+  tsconfig now typechecks everything).
+- **One test runner**: the vitest suites converted to `bun:test`
+  (`vi.fn` → `mock`); vitest removed; `msw` added (the `ai/test` peer the
+  reasoner suite always needed). Stale apex-era paths (openapi artifact,
+  `lib/db/migrations`) fixed, resurrecting suites that hadn't run since the move.
+- **Scripts**: `webpoc:*` → `notebook:*` (`db:generate`, `db:migrate`, `seed`,
+  `openapi:emit`, `gen:api`), run from the canvas root, no `cd`.
+- **Auth unified** (the reason for the merge): Better Auth login now gates the
+  whole app — canvas included (`src/App.tsx` `Gate`; the bridge requires the
+  session cookie on canvas `/api/*`). The worker's `cs_gate` cookie is gone;
+  `GATE_SECRET` survives only as the deploy-ops `x-ops-key` header. Production
+  signup is disabled (`AUTH_DISABLE_SIGNUP=1`). See `API_ACCESS.md`.
+- Local rename: `.web-poc-dev.db` → `.notebook-dev.db`, `web-poc/.dev.vars` →
+  `packages/canvas/.dev.vars` (operators: `mv` your local copies to keep data).
