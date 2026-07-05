@@ -26,12 +26,16 @@ API), the vite web app, and the extension server. Vite proxies `/api/*` and
 
 ### Auth
 
-**Signing in**: the app is gated by a Better Auth email/password login — you land
-on the login screen until you have a session; both surfaces (canvas + notebook)
-sit behind it. In local dev, sign up on the spot (signup is disabled in
-production via `AUTH_DISABLE_SIGNUP=1`). The bridge enforces the session on all
-canvas `/api/*` routes; notebook's `/v1/*` also accepts an API key
-(`x-api-key`) — see [`docs/notebook/API_ACCESS.md`](./docs/notebook/API_ACCESS.md).
+**Signing in** (two layers in the deploy): the worker's `cs_gate` shared-secret
+cookie fronts the whole site (`?key=<secret>` sets it), then a Better Auth
+email/password login gates the app itself — you land on the login screen until
+you have a session; both surfaces (canvas + notebook) sit behind it. Locally
+`cs_gate` isn't in front (you hit vite directly), so you only see the login. In
+local dev, sign up on the spot (signup is disabled in production via
+`AUTH_DISABLE_SIGNUP=1`). The bridge enforces the session on all canvas `/api/*`
+routes; notebook's `/v1/*` also accepts an API key (`x-api-key`) — see
+[`docs/notebook/API_ACCESS.md`](./docs/notebook/API_ACCESS.md), incl. "Why the
+edge gate can't be dropped".
 
 **The agent** runs through the Claude Agent SDK, which uses your local Claude
 Code credential (subscription login or `ANTHROPIC_API_KEY`). If you're logged
@@ -99,8 +103,10 @@ auth, exercised by actually chatting.
   with explicit approval (see `CLAUDE.md`). Canvas state persists to R2;
   notebook data to Turso. Local dev persists canvas state to `.persist/` and
   notebook data to `.notebook-dev.db`.
-- **Deploy ops**: `GATE_SECRET` is only the `x-ops-key` header for `/__recycle`
-  and `/__bootlog` (used by `scripts/deploy.sh`). There is no user-facing gate
-  key — login is the gate.
+- **Edge gate**: `GATE_SECRET` is the `cs_gate` shared-secret cookie the worker
+  requires on every path except `/health` (incl. `/__recycle` + `/__bootlog`,
+  which `scripts/deploy.sh` reaches with the cookie). It is mandatory because the
+  deploy serves a vite dev server — login alone can't protect it. Replace with
+  Cloudflare Access long-term. See `worker/index.ts` + `docs/notebook/API_ACCESS.md`.
 - The canvas shows a tldraw **non-commercial watermark** until a production
   license key is added.

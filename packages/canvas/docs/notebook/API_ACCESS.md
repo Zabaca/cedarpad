@@ -12,10 +12,45 @@ the **canvas Worker origin**:
 - **preview:** `https://agent-canvas-preview.james-99a.workers.dev`
 - **prod:** `https://poc.cedarpad.com`
 
-The Worker gates **nothing user-facing** — there is no cs_gate cookie. Auth is
-in-app: Better Auth login for humans, `x-api-key` for programmatic callers.
-(`GATE_SECRET` survives only as the `x-ops-key` header on the worker's
-`/__recycle` + `/__bootlog` deploy-ops endpoints.)
+Access is **two layers**:
+
+1. **Edge gate (`cs_gate`)** — the Worker gates everything except `/health` with
+   a shared-secret cookie (`?key=<GATE_SECRET>` sets it). This keeps the
+   in-container vite dev server and the container itself off the public internet.
+2. **App auth** — Better Auth login for humans (session cookie), `x-api-key` for
+   programmatic callers, enforced inside the container (bridge session gate on
+   canvas `/api/*`; notebook `authMiddleware` on `/v1/*`).
+
+## Why the edge gate can't be dropped
+
+This was tried (dropping `cs_gate`, relying on the login alone) and reverted. The
+app **is a vite dev server in production** — vite is the runtime compiler for the
+agent's live components, so a static build is impossible (ADR 0001). A dev server
+has no auth of its own and inherently serves:
+
+- raw source and source maps (`GET /src/...` returns transpiled modules),
+- its `/@fs/<abs-path>` file-read endpoint (anything under vite's `fs.allow`),
+- an HMR websocket.
+
+In-app Better Auth login **cannot** protect that layer: the login page is *itself*
+served by vite, so the Worker must proxy the first unauthenticated request into
+the container to render it. Without an edge gate, therefore:
+
+1. anyone reads the app's source with no login (`/src/...`, `/@fs/...`), and
+2. any anonymous hit cold-boots the paid Cloudflare Container (cost + DoS lever).
+
+`cs_gate` answers both from the edge — a static 401, no proxy, no boot — before
+anything reaches vite. The in-app login is a **second** layer (per-user identity),
+not a replacement for the first.
+
+**Proper long-term fix:** replace the shared-secret `cs_gate` with **Cloudflare
+Access** in front of the Worker — an identity-aware proxy that authenticates at
+the edge (SSO / one-time-PIN), so unauthenticated traffic never reaches the
+container and there is no shared secret to distribute. ADR 0001 already names this
+as the intended end state ("the gate must become Cloudflare Access before the URL
+is shared"). It is fully possible; `cs_gate` is the interim mechanism until it's
+set up. What is **not** possible is exposing this deployment safely with no edge
+gate at all, because the served artifact is an unauthenticated dev server.
 
 ## Internal communication (canvas ↔ notebook)
 
@@ -57,14 +92,18 @@ browser  ->  canvas Worker (poc.cedarpad.com)  ->  sandbox preview-proxy  ->  co
 
 ## The auth model — who needs which credential
 
-| Surface | Credential | Enforced by |
+Everything except the worker's `/health` also sits behind the **`cs_gate` edge
+cookie** (above); the table below is the *second* layer, inside the container.
+
+| Surface | Credential (in-app layer) | Enforced by |
 |---|---|---|
 | App UI (canvas + notebook) | Better Auth **session cookie** (login) | frontend `Gate` (`src/App.tsx`) + the bridge's canvas-API gate |
 | Canvas `/api/*` (sync, SSE, chat, capture, custom) | session cookie — or `x-internal-key` for in-stack callers | bridge (`server/bridge.ts`, 60s cached `getSession`) |
 | Notebook `/v1/*` | session cookie **or** `x-api-key` | `authMiddleware` (`server/notebook/middleware.ts`) |
-| `/api/auth/*` (login) | public (that's the point) | Better Auth; **signup disabled in prod** (`AUTH_DISABLE_SIGNUP=1`) |
-| `/api/health`, `/api/status`, `/health` | open | — (liveness/ops-health only) |
-| `/__recycle`, `/__bootlog` | `x-ops-key: <GATE_SECRET>` header | worker (`worker/index.ts`) — deploy tooling only |
+| `/api/auth/*` (login) | public within the gate (that's the point) | Better Auth; **signup disabled in prod** (`AUTH_DISABLE_SIGNUP=1`) |
+| `/api/health`, `/api/status` | open within the gate | — (liveness/ops-health only) |
+| `/__recycle`, `/__bootlog` | `cs_gate` cookie | worker (`worker/index.ts`) — deploy tooling only |
+| `/health` (worker) | open (ungated) | worker liveness only |
 
 On `/v1/*`, `authMiddleware` runs `auth.api.getSession(headers)`; the Better
 Auth **apiKey** plugin (`enableSessionForAPIKeys: true`,
@@ -82,17 +121,22 @@ UI (Notebook → user menu → API keys), scoped per workspace via key metadata.
 
 ## Remote / programmatic access
 
-One credential — the API key. No gate cookie, no second secret:
+Two credentials, because the edge gate fronts everything: the `cs_gate` cookie
+**and** the API key.
 
 ```bash
 curl -X POST https://poc.cedarpad.com/v1/observations \
+  -H "cookie: cs_gate=<GATE_SECRET>" \
   -H "x-api-key: <your-api-key>" \
   -H "content-type: application/json" \
   -d '{"title":"...","body":"..."}'
 ```
 
 (`x-api-key` uses the API-key path, so it does **not** need the browser
-`Origin`/CSRF header that interactive `/api/auth` login requires.)
+`Origin`/CSRF header that interactive `/api/auth` login requires. The `cs_gate`
+cookie is the edge gate — see "Why the edge gate can't be dropped" above. Once
+`cs_gate` is replaced by Cloudflare Access, remote API callers authenticate to
+Access instead, and `x-api-key` remains the app-layer credential.)
 
 **Security posture:** login and `/v1` are internet-facing. Signup is disabled in
 production, keys are scoped + revocable, and the canvas API (which fronts the

@@ -28,20 +28,21 @@ for f in cli-plugins contexts buildx; do [ -e "$HOME/.docker/$f" ] && ln -s "$HO
 cleanup() { rm -rf "$DC"; }
 trap cleanup EXIT
 
-# GATE_SECRET is the deploy-ops key (x-ops-key header on /__recycle + /__bootlog).
-# It is NOT a user gate — the app itself gates users via Better Auth login.
+# GATE_SECRET is the edge-gate shared secret (cs_gate cookie). It gates the whole
+# deployed surface incl. /__recycle + /api/status; Better Auth login is the second
+# (per-user) layer on top. See worker/index.ts "WHY THE EDGE GATE IS MANDATORY".
 GATE=$(bunx sops -d "$SECRETS" 2>/dev/null | awk -F': ' '/^GATE_SECRET:/{print $2}')
 
 echo "→ zbc apply production canvas (build + deploy + push secrets)"
 ( cd "$REPO_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }
 
 echo "→ recycle the warm container onto the new image"
-curl -s -H "x-ops-key: $GATE" "$URL/__recycle" >/dev/null || true
+curl -s -H "cookie: cs_gate=$GATE" "$URL/__recycle" >/dev/null || true
 
 echo "→ verifying served buildRev == $SHA (cold boot + rollout settle; up to $((TRIES*5))s)"
 cur="?"
 for i in $(seq 1 "$TRIES"); do
-  cur=$(curl -s --max-time 20 "$URL/api/status" \
+  cur=$(curl -s --max-time 20 -H "cookie: cs_gate=$GATE" "$URL/api/status" \
         | python3 -c "import sys,json; print(json.load(sys.stdin).get('buildRev','?'))" 2>/dev/null || echo "?")
   if [ "$cur" = "$SHA" ]; then echo "✅ LIVE: $SHA is serving at $URL"; exit 0; fi
   printf '   [%02d/%s] served=%s expected=%s\n' "$i" "$TRIES" "$cur" "$SHA"

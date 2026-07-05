@@ -9,12 +9,15 @@ the deploy ships the DEV stack in a Cloudflare container ([ADR 0001](./docs/deci
 The canvas is one of TWO surfaces in this package. The far-left rail also opens
 **Notebook** (the Problem/Solution intelligence app, `src/notebook/` +
 `server/notebook/` + `lib/`; its own domain model lives in
-[docs/notebook/CONTEXT.md](./docs/notebook/CONTEXT.md)). ONE Better Auth login
-gates both: the frontend gate is `src/App.tsx` (`Gate`), and the bridge requires
-the session cookie on every canvas `/api/*` route (open: `/api/health`,
-`/api/status`; in-stack callers use `x-internal-key`). There is no cs_gate
-cookie anymore — `GATE_SECRET` survives only as the deploy-ops `x-ops-key`
-header on the worker's `/__recycle` + `/__bootlog`.
+[docs/notebook/CONTEXT.md](./docs/notebook/CONTEXT.md)). Access is **two layers**:
+the worker's `cs_gate` shared-secret cookie fronts the whole deployment (it must —
+the app is a vite dev server that would otherwise serve its own source and
+cold-boot the container to anyone; see [API_ACCESS.md](./docs/notebook/API_ACCESS.md)
+"Why the edge gate can't be dropped"), and ONE Better Auth login gates both apps
+on top of that (frontend gate `src/App.tsx` `Gate`; the bridge requires the
+session cookie on every canvas `/api/*` route — open: `/api/health`,
+`/api/status`; in-stack callers use `x-internal-key`). `/__recycle` + `/__bootlog`
+ride `cs_gate` too.
 
 ## Workspace, canvas, page, chat — the containment hierarchy
 

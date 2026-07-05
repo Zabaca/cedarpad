@@ -1,10 +1,23 @@
 import { getSandbox, Sandbox as BaseSandbox } from '@cloudflare/sandbox';
 
-// One container = one workspace = one canvas (v1). The Worker is the proxy into
-// the in-container vite dev server, which serves the app and forwards /api/* to
-// the bridge. AUTH lives in-app: Better Auth (login) gates both apps at the
-// bridge — the Worker no longer gates user traffic. GATE_SECRET survives only as
-// the x-ops-key header check on the deploy-ops endpoints (/__recycle, /__bootlog).
+// One container = one workspace = one canvas (v1). The Worker gates traffic with
+// a shared-secret cookie (cs_gate) and proxies into the in-container vite dev
+// server, which serves the app and forwards /api/* to the bridge.
+//
+// WHY THE EDGE GATE IS MANDATORY (do not remove cs_gate again): the app IS a vite
+// DEV server in production (ADR 0001 — vite is the runtime compiler for the
+// agent's live components, so a static build is impossible). A dev server has no
+// auth and inherently serves raw source, source maps, its `/@fs/` file-read
+// endpoint, and an HMR websocket. In-app Better Auth login CANNOT protect that
+// layer — it gates the React app content and the bridge's /api/* routes, but the
+// worker still has to proxy the very first, unauthenticated request into vite to
+// serve the login page itself. So without an edge gate: (1) anyone reads the
+// app's source via `/src/...` or `/@fs/...` with no login, and (2) any anonymous
+// hit cold-boots the paid container. cs_gate answers both from the edge (static
+// 401, no proxy) before anything reaches vite. See docs/notebook/API_ACCESS.md
+// "Why the edge gate can't be dropped" for the proper long-term fix (Cloudflare
+// Access). Better Auth login + the bridge session gate are the SECOND layer
+// (per-user identity), not a replacement for this one.
 // Same preview-proxy path the SSE spike proved streams unbuffered, so the canvas
 // SSE stream works as-is.
 export class Sandbox extends BaseSandbox {
@@ -17,7 +30,7 @@ export class Sandbox extends BaseSandbox {
 
 export interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
-  /** Ops-endpoints-only secret (x-ops-key on /__recycle + /__bootlog). Not a user gate. */
+  /** Edge gate shared secret (cs_gate cookie / ?key=). See the WHY note above. */
   GATE_SECRET: string;
   R2_BUCKET: string;
   R2_ACCESS_KEY_ID: string;
@@ -44,6 +57,11 @@ const PREVIEW_TOKEN = 'canvasproxy';
 // package — its scripts/bridge/vite, plus Notebook (src/notebook + server/notebook
 // + lib) — lives under packages/canvas.
 const START = 'bash -lc "cd /app/agent-canvas/packages/canvas && exec bun run scripts/container-start.ts"';
+
+const SIGN_IN = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>agent-canvas</title><body style="font:16px system-ui;display:grid;place-content:center;height:100vh;margin:0;background:#0b0b0c;color:#e7e7ea">
+<div style="text-align:center"><h1 style="font-weight:600">agent-canvas</h1>
+<p style="opacity:.7">Locked. Open this URL with <code>?key=…</code>, then sign in.</p></div>`;
 
 // Container env injected at process spawn (PRD: ANTHROPIC_API_KEY intentionally
 // absent so it can't override the OAuth token).
@@ -113,12 +131,28 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
 
-    // Deploy-ops endpoints: shared secret via the x-ops-key header (sent by
-    // deploy.sh), never a cookie, never required for humans — Better Auth in the
-    // app is the user gate. Default closed: no secret configured, no ops access.
-    const isOps = url.pathname === '/__recycle' || url.pathname === '/__bootlog';
-    if (isOps && (!env.GATE_SECRET || request.headers.get('x-ops-key') !== env.GATE_SECRET)) {
-      return new Response('unauthorized', { status: 401 });
+    // Edge gate (cs_gate): everything except /health is behind the shared secret,
+    // so unauthenticated traffic never reaches the in-container vite dev server
+    // (no source disclosure, no cold-boot). This is the FIRST of two layers; the
+    // app's Better Auth login is the second (per-user identity). See the WHY note
+    // at the top of this file — do not drop this in favour of login alone. The
+    // gate also covers /__recycle + /__bootlog, which deploy.sh reaches by sending
+    // the same cookie.
+    const secret = env.GATE_SECRET;
+    const cookies = (request.headers.get('cookie') ?? '').split(/;\s*/);
+    const gated = !!secret && cookies.includes(`cs_gate=${secret}`);
+    if (!gated) {
+      if (secret && url.searchParams.get('key') === secret) {
+        // Set the gate cookie and strip ?key from the URL.
+        return new Response(null, {
+          status: 302,
+          headers: {
+            'set-cookie': `cs_gate=${secret}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`,
+            location: url.pathname,
+          },
+        });
+      }
+      return new Response(SIGN_IN, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
 
     // Force the container to recycle so a freshly deployed image takes effect (CF
@@ -131,7 +165,7 @@ export default {
     }
 
     // Container stdout (the [boot] phase lines + vite/bridge startup) is NOT in
-    // Workers Observability yet (CF gap), so surface getProcessLogs directly. Ops-key gated.
+    // Workers Observability yet (CF gap), so surface getProcessLogs directly. Behind cs_gate.
     if (url.pathname === '/__bootlog') {
       const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
       const r: unknown = await sandbox.getProcessLogs('canvas').catch((e) => ({ error: String(e) }));

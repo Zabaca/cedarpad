@@ -1,13 +1,17 @@
 # 0001 — Deploy agent-canvas as a self-modifying dev-mode container on Cloudflare, with R2 overlay persistence
 
-> **Addendum (2026-07, `integration` branch):** the shared-secret `cs_gate`
-> cookie described below was replaced by **Better Auth login as the sole user
-> gate** (enforced in-app: frontend `Gate` + the bridge's session check on
-> canvas `/api/*`; production signup disabled). `GATE_SECRET` survives only as
-> the deploy-ops `x-ops-key` header on `/__recycle` + `/__bootlog`. The
-> "unauthenticated RCE behind a gate cookie" consequence is superseded: the
-> bridge now authenticates every canvas request — any signed-in account is an
-> operator. Gate references below are historical.
+> **Addendum (2026-07, `integration` branch):** a **Better Auth login** was added
+> as a second, per-user layer (frontend `Gate` + the bridge's session check on
+> canvas `/api/*`; production signup disabled), and the two POC apps were merged
+> (canvas + Notebook) behind it. **The shared-secret `cs_gate` cookie described
+> below is RETAINED** — it was briefly removed in favour of the login alone and
+> that had to be reverted: the app is a vite dev server, so with no edge gate its
+> source is readable without login (`/src/...`, `/@fs/...`) and anonymous traffic
+> cold-boots the container. In-app login can't protect the layer that serves the
+> login page. So the model is now **two layers**: `cs_gate` at the edge (this ADR)
+> + Better Auth login in-app. The end state this ADR anticipates — **Cloudflare
+> Access** replacing `cs_gate` — remains the proper fix. See `worker/index.ts`
+> "WHY THE EDGE GATE IS MANDATORY" and `docs/notebook/API_ACCESS.md".
 
 Status: accepted, but partially superseded by [ADR 0002](./0002-core-extension-split.md) — the container deploy, vite-as-compiler, R2 persistence, and workspace/canvas topology stand; the "everything mutable / no immutability boundary / whole-subtree overlay / self-modifying backend" stance below is replaced by the core/extension split (the core is image-only; only `src/canvas-components/` + custom handlers persist).
 

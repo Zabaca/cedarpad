@@ -19,17 +19,25 @@ server, shipped as the single `agent-canvas` Cloudflare Worker + container.
 Vite is the RUNTIME compiler (the agent authors components live), so the
 container runs the dev stack — never introduce a static build (ADR 0001).
 
-## Auth model (post cs_gate)
+## Auth model (two layers)
 
-- **Users**: Better Auth email/password login gates EVERYTHING. The frontend
-  gate lives in `src/App.tsx` (`Gate`); the bridge enforces a session cookie on
-  all canvas `/api/*` routes (open: `/api/health`, `/api/status`), with a 60s
-  in-memory validation cache. Notebook's `/v1/*` gates itself
-  (`server/notebook/middleware.ts`: session cookie or `x-api-key`).
+- **Layer 1 — edge gate (`cs_gate`)**: the worker gates everything except
+  `/health` with a shared-secret cookie (`?key=<GATE_SECRET>` sets it). This is
+  MANDATORY and must not be removed in favour of the login alone — the app is a
+  vite dev server in prod (serves raw source, `/@fs/`, HMR; ADR 0001), and the
+  login page is served by vite, so only an edge gate can keep the dev server +
+  container off the public internet. Proper long-term replacement: Cloudflare
+  Access. See `worker/index.ts` "WHY THE EDGE GATE IS MANDATORY" and
+  `docs/notebook/API_ACCESS.md` "Why the edge gate can't be dropped".
+- **Layer 2 — app auth (Better Auth login)**: per-user identity. Frontend gate in
+  `src/App.tsx` (`Gate`); the bridge enforces a session cookie on all canvas
+  `/api/*` routes (open: `/api/health`, `/api/status`), with a 60s in-memory
+  validation cache. Notebook's `/v1/*` gates itself (`server/notebook/
+  middleware.ts`: session cookie or `x-api-key`).
 - **Signup is disabled in production** (`AUTH_DISABLE_SIGNUP=1` in wrangler
   vars; `VITE_AUTH_DISABLE_SIGNUP` hides the UI). Local dev signup is open.
-- **Deploy ops**: `GATE_SECRET` is ONLY the `x-ops-key` header for the worker's
-  `/__recycle` + `/__bootlog`. There is no user-facing key or gate cookie.
+- **Deploy ops**: `/__recycle` + `/__bootlog` are behind `cs_gate`; `deploy.sh`
+  sends the cookie.
 - **In-stack calls**: agent-authored custom handlers (extension server) call the
   core `/api/canvas` with `x-internal-key: CANVAS_INTERNAL_KEY` (minted per boot
   by `scripts/dev.ts`).

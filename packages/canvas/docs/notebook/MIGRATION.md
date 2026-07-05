@@ -300,8 +300,11 @@ preserved):
   `openapi:emit`, `gen:api`), run from the canvas root, no `cd`.
 - **Auth unified** (the reason for the merge): Better Auth login now gates the
   whole app — canvas included (`src/App.tsx` `Gate`; the bridge requires the
-  session cookie on canvas `/api/*`). The worker's `cs_gate` cookie is gone;
-  `GATE_SECRET` survives only as the deploy-ops `x-ops-key` header. Production
-  signup is disabled (`AUTH_DISABLE_SIGNUP=1`). See `API_ACCESS.md`.
+  session cookie on canvas `/api/*`). This is a SECOND layer on top of the
+  worker's `cs_gate` edge cookie, which is **retained** (an attempt to drop it in
+  favour of login alone was reverted — the app is a vite dev server whose source
+  and container can't be protected by an in-app login; see `API_ACCESS.md` "Why
+  the edge gate can't be dropped"). Production signup is disabled
+  (`AUTH_DISABLE_SIGNUP=1`).
 - Local rename: `.web-poc-dev.db` → `.notebook-dev.db`, `web-poc/.dev.vars` →
   `packages/canvas/.dev.vars` (operators: `mv` your local copies to keep data).
