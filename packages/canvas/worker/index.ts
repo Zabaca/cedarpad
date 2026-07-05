@@ -1,9 +1,12 @@
 import { getSandbox, Sandbox as BaseSandbox } from '@cloudflare/sandbox';
 
-// One container = one workspace = one canvas (v1). The Worker is the gate (shared
-// secret cookie) and the proxy into the in-container vite dev server, which
-// serves the app and forwards /api/* to the bridge. Same preview-proxy path the
-// SSE spike proved streams unbuffered, so the canvas SSE stream works as-is.
+// One container = one workspace = one canvas (v1). The Worker is the proxy into
+// the in-container vite dev server, which serves the app and forwards /api/* to
+// the bridge. AUTH lives in-app: Better Auth (login) gates both apps at the
+// bridge — the Worker no longer gates user traffic. GATE_SECRET survives only as
+// the x-ops-key header check on the deploy-ops endpoints (/__recycle, /__bootlog).
+// Same preview-proxy path the SSE spike proved streams unbuffered, so the canvas
+// SSE stream works as-is.
 export class Sandbox extends BaseSandbox {
   // Sleep after idle (state survives in R2). The client idle gate (src/idle.ts) closes
   // both SSE streams after ~2m of no user activity (pointer/keyboard), so an open-but-idle
@@ -14,6 +17,7 @@ export class Sandbox extends BaseSandbox {
 
 export interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  /** Ops-endpoints-only secret (x-ops-key on /__recycle + /__bootlog). Not a user gate. */
   GATE_SECRET: string;
   R2_BUCKET: string;
   R2_ACCESS_KEY_ID: string;
@@ -38,11 +42,6 @@ const PREVIEW_TOKEN = 'canvasproxy';
 // package — its scripts/bridge/vite, plus Notebook (src/notebook + server/notebook
 // + lib) — lives under packages/canvas.
 const START = 'bash -lc "cd /app/agent-canvas/packages/canvas && exec bun run scripts/container-start.ts"';
-
-const SIGN_IN = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>agent-canvas</title><body style="font:16px system-ui;display:grid;place-content:center;height:100vh;margin:0;background:#0b0b0c;color:#e7e7ea">
-<div style="text-align:center"><h1 style="font-weight:600">agent-canvas</h1>
-<p style="opacity:.7">Locked. Open this URL with <code>?key=…</code> to sign in.</p></div>`;
 
 // Container env injected at process spawn (PRD: ANTHROPIC_API_KEY intentionally
 // absent so it can't override the OAuth token).
@@ -108,21 +107,12 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
 
-    const secret = env.GATE_SECRET;
-    const cookies = (request.headers.get('cookie') ?? '').split(/;\s*/);
-    const gated = !!secret && cookies.includes(`cs_gate=${secret}`);
-    if (!gated) {
-      if (secret && url.searchParams.get('key') === secret) {
-        // Set the gate cookie and strip ?key from the URL.
-        return new Response(null, {
-          status: 302,
-          headers: {
-            'set-cookie': `cs_gate=${secret}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`,
-            location: url.pathname,
-          },
-        });
-      }
-      return new Response(SIGN_IN, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } });
+    // Deploy-ops endpoints: shared secret via the x-ops-key header (sent by
+    // deploy.sh), never a cookie, never required for humans — Better Auth in the
+    // app is the user gate. Default closed: no secret configured, no ops access.
+    const isOps = url.pathname === '/__recycle' || url.pathname === '/__bootlog';
+    if (isOps && (!env.GATE_SECRET || request.headers.get('x-ops-key') !== env.GATE_SECRET)) {
+      return new Response('unauthorized', { status: 401 });
     }
 
     // Force the container to recycle so a freshly deployed image takes effect (CF
@@ -135,7 +125,7 @@ export default {
     }
 
     // Container stdout (the [boot] phase lines + vite/bridge startup) is NOT in
-    // Workers Observability yet (CF gap), so surface getProcessLogs directly. Gated.
+    // Workers Observability yet (CF gap), so surface getProcessLogs directly. Ops-key gated.
     if (url.pathname === '/__bootlog') {
       const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
       const r: unknown = await sandbox.getProcessLogs('canvas').catch((e) => ({ error: String(e) }));

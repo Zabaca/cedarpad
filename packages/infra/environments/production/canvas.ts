@@ -2,8 +2,9 @@ import { cloudflareModule } from '../../modules/cloudflare'
 
 /**
  * canvas — tldraw canvas + Claude agent (imported from the ceo repo). A Worker
- * gates access (the shared-secret `cs_gate` cookie) and proxies into a
- * Durable-Object-owned Container running the vite + bridge dev stack. Branded
+ * proxies into a Durable-Object-owned Container running the vite + bridge dev
+ * stack; users are gated in-app by Better Auth login (the Worker gates nothing
+ * user-facing). Branded
  * entry host poc.cedarpad.com, declared as a `custom_domain` in the package's
  * wrangler.jsonc (wrangler provisions the DNS record + cert on deploy). Canvas
  * state, the code overlay, and Claude session transcripts persist to R2 bucket
@@ -14,7 +15,8 @@ import { cloudflareModule } from '../../modules/cloudflare'
  * zone + R2 bucket) — no new worker, no domain re-bind, no R2 migration.
  *
  * Requires in the environment's secrets.yaml: CLOUDFLARE_API_TOKEN (deploy),
- * CLAUDE_CODE_OAUTH_TOKEN (the agent), GATE_SECRET (the access gate), and four
+ * CLAUDE_CODE_OAUTH_TOKEN (the agent), GATE_SECRET (deploy-ops key: the
+ * x-ops-key header on /__recycle + /__bootlog — not a user gate), and four
  * R2 S3 creds R2_BUCKET / R2_ENDPOINT / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY.
  *
  * R2 cred coupling: the R2 S3 creds are derived from the CF API token
