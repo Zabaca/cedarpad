@@ -5,6 +5,15 @@ export {};
 
 const BRIDGE = process.env.CANVAS_BRIDGE ?? 'http://localhost:4511';
 
+// Internal key for in-stack calls to the bridge's canvas API, minted fresh per
+// boot. The bridge gates /api/* behind a Better Auth session; the extension
+// server's handlers have no session, so they authenticate with this key
+// (x-internal-key). Never leaves the process family; unset = bypass disabled.
+// Passed via explicit spawn env: Bun.spawn's default env inheritance does NOT
+// see runtime process.env mutations, so relying on it silently drops the key.
+const INTERNAL_KEY = crypto.randomUUID();
+const stackEnv = { ...process.env, CANVAS_INTERNAL_KEY: INTERNAL_KEY };
+
 // --watch only in LOCAL dev (restart the bridge when we edit its code). In the
 // container (IS_SANDBOX) the bridge code only changes via a redeploy, so --watch
 // buys nothing and a stray file touch restarting the live bridge mid-session just
@@ -14,11 +23,13 @@ const bridgeArgs = process.env.IS_SANDBOX
   : ['bun', 'run', '--watch', 'server/bridge.ts'];
 const bridge = Bun.spawn(bridgeArgs, {
   stdio: ['inherit', 'inherit', 'inherit'],
+  env: stackEnv,
 });
 // `bun run dev:web`, not `bunx vite`: the container base image ships `bun` but
 // not the `bunx` shim, so `bunx` ENOENTs and the dev stack dies on boot.
 const web = Bun.spawn(['bun', 'run', 'dev:web'], {
   stdio: ['inherit', 'inherit', 'inherit'],
+  env: stackEnv,
 });
 
 // Extension server: isolated agent-authored backend handlers (ADR 0002). SUPERVISED,
@@ -30,7 +41,7 @@ let extension: ReturnType<typeof Bun.spawn> | null = null;
 const startExtension = () => {
   extension = Bun.spawn(['bun', 'run', 'server/extension-server.ts'], {
     stdio: ['inherit', 'inherit', 'inherit'],
-    env: { ...process.env, CANVAS_BRIDGE: BRIDGE },
+    env: { ...stackEnv, CANVAS_BRIDGE: BRIDGE },
   });
   void extension.exited.then(() => {
     if (shuttingDown) return;

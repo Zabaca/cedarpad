@@ -9,6 +9,7 @@ import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import { buildApp } from './notebook/index.ts';
+import { createAuth } from './notebook/auth.ts';
 import { makeDb } from '../lib/db/index.ts';
 
 import type { CanvasState } from '../src/shapes.ts';
@@ -84,6 +85,43 @@ if (!notebookRemoteTurso) {
   });
 }
 const notebookApp = buildApp({ db: makeDb(notebookClient) });
+
+// --- canvas-route auth ------------------------------------------------------
+// Better Auth's session is THE gate for the canvas API (the worker no longer
+// gates user traffic). Same auth config + db the notebook app uses, so the
+// session cookie set by /api/auth/* validates here too.
+const auth = createAuth(makeDb(notebookClient), notebookEnv as never);
+
+// getSession is a DB roundtrip (remote Turso in prod), and canvas sync POSTs
+// fire every ~80ms during a drag — so validation is cached in-memory, keyed by
+// the full cookie string. A new login mints a new session token (new key), so a
+// stale negative can't lock anyone out; sign-out leaves at most a TTL's grace on
+// the old cookie. Crude size cap: single-digit users, not an LRU problem.
+const SESSION_TTL_MS = 60_000;
+const sessionCache = new Map<string, { ok: boolean; exp: number }>();
+async function hasSession(req: Request): Promise<boolean> {
+  const cookie = req.headers.get('cookie');
+  if (!cookie) return false;
+  const hit = sessionCache.get(cookie);
+  if (hit && hit.exp > Date.now()) return hit.ok;
+  const s = await auth.api.getSession({ headers: req.headers }).catch(() => null);
+  const ok = !!s?.user;
+  if (sessionCache.size >= 500) sessionCache.clear();
+  sessionCache.set(cookie, { ok, exp: Date.now() + SESSION_TTL_MS });
+  return ok;
+}
+
+// Test seam (mirrors setChatTurnDispatcher): tests substitute the session check
+// so they can drive canvas routes without a real Better Auth session — and assert
+// the 401 path by leaving it in place.
+let checkSession: typeof hasSession = hasSession;
+export function setSessionCheck(fn: typeof hasSession): () => void {
+  const prev = checkSession;
+  checkSession = fn;
+  return () => {
+    checkSession = prev;
+  };
+}
 
 // SSE subscribers for live canvas state.
 const canvasClients = new Set<ReadableStreamDefaultController>();
@@ -413,9 +451,24 @@ export async function handleRequest(req: Request): Promise<Response> {
 
     // Notebook mounted in-process: its data API (/v1/*) and Better Auth (/api/auth/*)
     // are served by the notebook Hono app. This MUST precede the canvas's own /api/*
-    // routes below, since /api/auth/* lives under the same /api namespace.
+    // routes below, since /api/auth/* lives under the same /api namespace. Notebook
+    // routes gate themselves (authMiddleware: session cookie or x-api-key).
     if (path.startsWith('/v1/') || path === '/v1' || path.startsWith('/api/auth/')) {
       return notebookApp.fetch(req, notebookEnv as never);
+    }
+
+    // Auth gate for every canvas route. Open: /api/health (liveness) and
+    // /api/status (ops health — deploy.sh polls it unauthenticated). Bypass:
+    // x-internal-key, minted per boot by scripts/dev.ts so agent-authored custom
+    // handlers (a different process) can call the core API; disabled (default
+    // closed) when the env var is unset. Everything else needs a Better Auth
+    // session cookie — including the SSE streams, which ride cookies fine.
+    if (path.startsWith('/api/') && path !== '/api/health' && path !== '/api/status') {
+      const internalKey = process.env.CANVAS_INTERNAL_KEY;
+      const internal = !!internalKey && req.headers.get('x-internal-key') === internalKey;
+      if (!internal && !(await checkSession(req))) {
+        return json({ error: 'unauthorized' }, 401);
+      }
     }
 
     // --- canvas sync ---

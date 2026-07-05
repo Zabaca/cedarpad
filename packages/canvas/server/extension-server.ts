@@ -7,8 +7,10 @@
 // fatally crashes it, dev.ts restarts just this process; the canvas is untouched.
 //
 // Contract: a handler gets the raw Request, may call outbound (third-party APIs,
-// DBs, the core's own http://<CANVAS_BRIDGE>/api/canvas — passed as env), and
-// returns a Response (or any JSON-serializable value, wrapped in Response.json).
+// DBs, the core's own http://<CANVAS_BRIDGE>/api/canvas — passed as env, sending
+// `x-internal-key: <CANVAS_INTERNAL_KEY>` since the bridge's canvas API requires
+// a session or that key), and returns a Response (or any JSON-serializable
+// value, wrapped in Response.json).
 export {};
 
 import { stat } from 'node:fs/promises';
