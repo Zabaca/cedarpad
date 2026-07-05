@@ -31,8 +31,7 @@ import { cloudflareModule } from '../../modules/cloudflare'
 export default cloudflareModule.instance({
   // zbc instance id (matches the package + filename). The deployed Cloudflare WORKER
   // name is independent — it stays `agent-canvas` (set in the package's wrangler.jsonc)
-  // so this updates the existing worker in place. (web-poc does the same: instance
-  // `web-poc` deploys worker `cedarpad-web-poc`.)
+  // so this updates the existing worker in place.
   name: 'canvas',
   config: {
     workdir: 'packages/canvas',
@@ -44,7 +43,7 @@ export default cloudflareModule.instance({
       'R2_ENDPOINT',
       'R2_ACCESS_KEY_ID',
       'R2_SECRET_ACCESS_KEY',
-      // web-poc is mounted into the canvas bridge (one instance), so its secrets ride
+      // Notebook is mounted into the canvas bridge (one instance), so its secrets ride
       // this container too. Must exist in production/secrets.yaml. (BETTER_AUTH_URL /
       // WEB_ORIGIN are non-secret vars in the package's wrangler.jsonc.)
       'TURSO_URL',

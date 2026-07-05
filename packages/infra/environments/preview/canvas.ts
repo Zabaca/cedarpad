@@ -2,7 +2,7 @@ import { cloudflareModule } from '../../modules/cloudflare'
 
 /**
  * canvas — PREVIEW. The same package as production (`packages/canvas`: tldraw
- * canvas + Claude agent + the in-tree web-poc), deployed as a SEPARATE worker so
+ * canvas + Claude agent + the embedded Notebook), deployed as a SEPARATE worker so
  * it never touches production.
  *
  * Isolation is via a wrangler named environment: `wranglerEnv: 'preview'` makes
@@ -17,7 +17,7 @@ import { cloudflareModule } from '../../modules/cloudflare'
  * Currently REUSES production's values (secrets.yaml is a copy of production's), so
  * preview shares production's R2 bucket (`agent-canvas`) and Turso DB.
  * ⚠️  This means preview and production read/write the SAME persisted canvas state
- * and the SAME web-poc data — a preview edit can mutate what production serves at
+ * and the SAME notebook data — a preview edit can mutate what production serves at
  * poc.cedarpad.com. Give preview its own R2 bucket + Turso DB before using it for
  * anything real. As with production, Docker must be running locally at apply time
  * (the worker is container-backed) on a Workers Paid plan with Containers enabled.
@@ -36,7 +36,7 @@ export default cloudflareModule.instance({
     accountId: '99a19e584439be0568f33aad0477372b',
     // Selects env.preview in packages/canvas/wrangler.jsonc → agent-canvas-preview.
     wranglerEnv: 'preview',
-    // Same secrets as production (web-poc rides the canvas worker) — currently the
+    // Same secrets as production (Notebook rides the canvas worker) — currently the
     // SAME values (preview/secrets.yaml copies production/secrets.yaml), so R2_* and
     // TURSO_* point at prod's bucket + DB (see the ⚠️ in the header).
     // BETTER_AUTH_URL / WEB_ORIGIN are non-secret vars in env.preview, not here.
