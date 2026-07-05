@@ -12,7 +12,6 @@ import {
 } from "@mantine/core";
 import { Suspense, lazy, useEffect } from "react";
 import { ApiKeysView } from "./components/ApiKeysView.js";
-import { AuthScreen } from "./components/AuthScreen.js";
 import { LibraryView } from "./components/LibraryView.js";
 import { WorkspacePicker } from "./components/WorkspacePicker.js";
 import { signOut, useSession } from "./auth.js";
@@ -127,16 +126,11 @@ function AuthedApp({ email }: { email: string }) {
   );
 }
 
-export function App() {
-  const { data: session, isPending } = useSession();
-
-  if (isPending) {
-    return (
-      <Center h="100vh">
-        <Loader />
-      </Center>
-    );
-  }
-  if (!session) return <AuthScreen />;
-  return <AuthedApp email={session.user.email} />;
+/**
+ * Notebook's authenticated shell. The HOST (src/App.tsx) owns the auth gate —
+ * this only renders once a session exists, so it just reads the email off it.
+ */
+export function NotebookApp() {
+  const { data: session } = useSession();
+  return <AuthedApp email={session?.user.email ?? ""} />;
 }

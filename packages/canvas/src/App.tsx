@@ -1,4 +1,10 @@
 import { Suspense, lazy, useCallback, useRef, useState } from 'react';
+import { Center, Loader, MantineProvider } from '@mantine/core';
+import '@mantine/core/styles.css';
+import { Notifications } from '@mantine/notifications';
+import '@mantine/notifications/styles.css';
+import '@xyflow/react/dist/style.css';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Tldraw, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLPageId, type TLShapeId, createBindingId, createShapeId } from 'tldraw';
 import 'tldraw/tldraw.css';
 
@@ -7,6 +13,8 @@ import { ChatShapeUtil } from './ChatShape';
 import { closeSession, forkSession } from './chat-store';
 import { ComponentShapeUtil } from './ComponentShape';
 import { LeftPanel } from './LeftPanel';
+import { useSession } from './notebook/auth';
+import { AuthScreen } from './notebook/components/AuthScreen';
 import { wireSync } from './sync';
 
 // Registered once, at editor construction: our two custom shapes. `component`
@@ -15,11 +23,17 @@ const customShapeUtils: TLAnyShapeUtilConstructor[] = [ComponentShapeUtil, ChatS
 
 // The far-left rail switches the stage between the tldraw canvas and Notebook
 // (Problem/Solution Intelligence). Notebook mounts directly into this React tree
-// (both apps are on React 19) rather than an iframe: its providers + UI ship as a
-// lazy chunk that only loads when the 3rd rail button is opened. Its /v1 + /api/auth
-// calls are served by the same bridge process (see server/bridge.ts).
+// (both apps are on React 19) rather than an iframe: its UI ships as a lazy chunk
+// that only loads when its rail button is opened. Its /v1 + /api/auth calls are
+// served by the same bridge process (see server/bridge.ts).
 export type AppView = 'canvas' | 'notebook';
-const NotebookApp = lazy(() => import('./notebook/embed').then((m) => ({ default: m.NotebookApp })));
+const NotebookApp = lazy(() => import('./notebook/App').then((m) => ({ default: m.NotebookApp })));
+
+// One provider stack for the whole app (Mantine + React Query), hoisted from the
+// old notebook embed so the login screen and both apps share it.
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 5_000, refetchOnWindowFocus: false } },
+});
 
 // Hide ONLY tldraw's built-in page dropdown ("Avatar ⌄"). Our own LeftPanel now
 // owns the page list. The hamburger MainMenu and the undo/redo/delete/duplicate
@@ -154,6 +168,33 @@ function freeSpot(editor: Editor, x: number, y: number): { x: number; y: number 
 }
 
 export default function App() {
+  return (
+    <MantineProvider defaultColorScheme="auto">
+      <Notifications position="top-right" />
+      <QueryClientProvider client={queryClient}>
+        <Gate />
+      </QueryClientProvider>
+    </MantineProvider>
+  );
+}
+
+// The auth gate: Better Auth's session is THE gate for both apps (the worker no
+// longer gates user traffic). Until a session exists nothing mounts — no Tldraw,
+// no sync/chat SSE, no notebook — just the login screen.
+function Gate() {
+  const { data: session, isPending } = useSession();
+  if (isPending) {
+    return (
+      <Center h="100vh">
+        <Loader />
+      </Center>
+    );
+  }
+  if (!session) return <AuthScreen />;
+  return <Shell email={session.user.email} />;
+}
+
+function Shell({ email }: { email: string }) {
   const cleanup = useRef<(() => void) | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const [ready, setReady] = useState(false);
@@ -324,7 +365,7 @@ export default function App() {
         </div>
       )}
       {ready && editorRef.current && (
-        <LeftPanel editor={editorRef.current} activeApp={activeApp} onSelectApp={setActiveApp} />
+        <LeftPanel editor={editorRef.current} activeApp={activeApp} onSelectApp={setActiveApp} email={email} />
       )}
       {activeApp === 'canvas' && (
         <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">

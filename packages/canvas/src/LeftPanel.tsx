@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { type Editor, PageRecordType, type TLPageId, useValue } from 'tldraw';
 import type { AppView } from './App';
+import { signOut } from './notebook/auth';
 
 // A custom left-hand nav, rendered as a SIBLING of <Tldraw> (outside tldraw's
 // React context), so it receives the live `editor` by prop rather than via
@@ -47,10 +48,12 @@ export function LeftPanel({
   editor,
   activeApp,
   onSelectApp,
+  email,
 }: {
   editor: Editor;
   activeApp: AppView;
   onSelectApp: (app: AppView) => void;
+  email: string;
 }) {
   // Track pages + the current page live. useValue only needs the signal-reading
   // function, so it works fine outside the editor's React context.
@@ -68,17 +71,23 @@ export function LeftPanel({
   // Workspace switcher popover (the rail's Z). One real workspace today; this is
   // the seam for multi-workspace if the data model ever grows.
   const [wsOpen, setWsOpen] = useState(false);
+  // Account popover (the rail-bottom avatar): the session email + sign out.
+  const [acctOpen, setAcctOpen] = useState(false);
   const rootRef = useRef<HTMLElement>(null);
 
-  // Close the popover on outside-click or Escape. Clicks on the Z button and on
+  // Close the popovers on outside-click or Escape. Clicks on the rail buttons and
   // popover rows are inside rootRef, so they don't trigger the outside handler.
   useEffect(() => {
-    if (!wsOpen) return;
+    if (!wsOpen && !acctOpen) return;
+    const closeAll = () => {
+      setWsOpen(false);
+      setAcctOpen(false);
+    };
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setWsOpen(false);
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) closeAll();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setWsOpen(false);
+      if (e.key === 'Escape') closeAll();
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -86,7 +95,7 @@ export function LeftPanel({
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [wsOpen]);
+  }, [wsOpen, acctOpen]);
 
   const startRename = (id: TLPageId, name: string) => {
     setEditingId(id);
@@ -150,7 +159,16 @@ export function LeftPanel({
           <IconNotebook />
         </button>
         <div className="lp-rail-bottom">
-          <div className="lp-avatar" title="James">J</div>
+          <button
+            type="button"
+            className={`lp-avatar${acctOpen ? ' active' : ''}`}
+            title={email}
+            aria-haspopup="menu"
+            aria-expanded={acctOpen}
+            onClick={() => setAcctOpen((v) => !v)}
+          >
+            {(email[0] ?? '?').toUpperCase()}
+          </button>
         </div>
       </nav>
 
@@ -253,6 +271,20 @@ export function LeftPanel({
               </svg>
             </span>
           </div>
+        </div>
+      )}
+
+      {/* Account popover: who's signed in + sign out. On sign-out the session hook
+          in the host Gate flips the whole app back to the login screen. */}
+      {acctOpen && (
+        <div className="lp-ws-popover lp-acct-popover" role="menu">
+          <div className="lp-ws-label">Signed in as</div>
+          <div className="lp-ws-row" title={email}>
+            <span className="lp-ws-name lp-acct-email">{email}</span>
+          </div>
+          <button type="button" className="lp-ws-row lp-acct-signout" role="menuitem" onClick={() => void signOut()}>
+            <span className="lp-ws-name">Sign out</span>
+          </button>
         </div>
       )}
     </aside>
