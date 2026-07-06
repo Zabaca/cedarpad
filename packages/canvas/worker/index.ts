@@ -9,6 +9,9 @@ export class Sandbox extends BaseSandbox {
   // both SSE streams after ~2m of no user activity (pointer/keyboard), so an open-but-idle
   // tab no longer pins the container via the 15s ping — this 5m window is the remaining
   // sleep delay once the streams go quiet (total idle-to-sleep ~7m).
+  // Fallback only: the bridge self-exits on idle (server/bridge.ts) since the sandbox
+  // won't idle-sleep while an SSE forward is pinned. sleepAfter still covers the
+  // never-had-a-client case.
   sleepAfter = '5m';
 }
 
@@ -38,6 +41,14 @@ const PREVIEW_TOKEN = 'canvasproxy';
 // package — and its scripts/bridge/vite, plus the in-tree web-poc at
 // packages/canvas/web-poc — live under packages/canvas.
 const START = 'bash -lc "cd /app/agent-canvas/packages/canvas && exec bun run scripts/container-start.ts"';
+
+// keepAlive + sleepAfter persist in the DO's storage across deploys; if keepAlive is
+// ever stuck `true`, the container NEVER auto-sleeps and sleepAfter is ignored entirely
+// (per @cloudflare/sandbox). Passing them to getSandbox re-applies the config via
+// configure() on every entry, forcing keepAlive OFF and re-asserting sleepAfter — cheap
+// hygiene so a stray keepAlive can't silently pin the container forever.
+const SLEEP_AFTER = '5m';
+const sb = (env: Env) => getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true, keepAlive: false, sleepAfter: SLEEP_AFTER });
 
 const SIGN_IN = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>agent-canvas</title><body style="font:16px system-ui;display:grid;place-content:center;height:100vh;margin:0;background:#0b0b0c;color:#e7e7ea">
@@ -92,15 +103,19 @@ async function ensureStack(sandbox: ReturnType<typeof getSandbox>, env: Env): Pr
   }
   // Generous first wait: a cold vite boot (esp. the first pull of a new image)
   // can take tens of seconds; a short timeout would kill a healthy-but-slow boot
-  // and restart it pointlessly.
+  // and restart it pointlessly. 40s was too short: on a heavy boot vite bound after
+  // it, so the worker killProcess'd a healthy stack — orphaning the already-bound
+  // bridge/extension, so the restart hit EADDRINUSE, exited code 0, and surfaced as
+  // ProcessExitedBeforeReadyError (intermittent 502 / ~100s boots after an idle sleep).
+  // Reproduced + fixed in the sleep spike: 120s lets a slow-but-healthy boot finish.
   const up = proc
-    ? await proc.waitForPort(VITE_PORT, { timeout: 40000 }).then(() => true).catch(() => false)
+    ? await proc.waitForPort(VITE_PORT, { timeout: 120000 }).then(() => true).catch(() => false)
     : false;
   if (up) return;
   await sandbox.killProcess('canvas').catch(() => {});
   await writeEnvFile(sandbox, ev);
   const fresh = await sandbox.startProcess(START, opts);
-  await fresh.waitForPort(VITE_PORT, { timeout: 60000 });
+  await fresh.waitForPort(VITE_PORT, { timeout: 120000 });
 }
 
 export default {
@@ -129,7 +144,7 @@ export default {
     // keeps the in-use instance on the old image until it idle-sleeps). The next
     // request cold-boots the new image; canvas-state restores from R2.
     if (url.pathname === '/__recycle') {
-      const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
+      const sandbox = sb(env);
       const r = await sandbox.stop().then(() => 'stopped').catch((e) => String(e));
       return Response.json({ recycle: r });
     }
@@ -137,7 +152,7 @@ export default {
     // Container stdout (the [boot] phase lines + vite/bridge startup) is NOT in
     // Workers Observability yet (CF gap), so surface getProcessLogs directly. Gated.
     if (url.pathname === '/__bootlog') {
-      const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
+      const sandbox = sb(env);
       const r: unknown = await sandbox.getProcessLogs('canvas').catch((e) => ({ error: String(e) }));
       const body =
         typeof r === 'string'
@@ -147,7 +162,7 @@ export default {
       return new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
 
-    const sandbox = getSandbox(env.Sandbox, SANDBOX_ID, { normalizeId: true });
+    const sandbox = sb(env);
     // Warm fast path: the container's been up since a prior request, so the port
     // is still exposed — just proxy (1 round-trip). The handshake (setEnvVars,
     // getProcess, waitForPort, exposePort) only matters on a cold start, and
@@ -177,6 +192,10 @@ export default {
       /* container unreachable — fall through to the cold path */
     }
     // Cold path: bring the stack up, (re)expose the port, retry once (with the clone).
+    // Reaching here means the warm proxy reported the container isn't ready — it had
+    // slept or been recycled. This log is the observer-effect-free PROOF of a sleep→wake
+    // cycle: watch for it under `wrangler tail` after an idle window.
+    console.log(`[cold] boot — container asleep/gone, cold-starting for ${url.pathname}`);
     try {
       await ensureStack(sandbox, env);
       await sandbox.exposePort(VITE_PORT, { hostname: 'localhost', token: PREVIEW_TOKEN });

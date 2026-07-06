@@ -21,11 +21,34 @@ type Toggle = { open: () => void; close: () => void };
 const toggles = new Set<Toggle>();
 let busyCheck: () => boolean = () => false;
 
-const IDLE_MS = 120_000; // no pointer/keyboard for 2m -> close streams
+const IDLE_MS = 120_000; // no pointer/keyboard for 2m -> close streams + stop beating
 const HIDDEN_GRACE_MS = 30_000; // tab hidden -> close sooner
+// Heartbeat: while our SSE streams are open, tell the bridge we're still here. The CF
+// sandbox proxy never tells the bridge when a tab closes, so without this the bridge
+// can't distinguish a live tab from a dead one and the container never sleeps. When we
+// go idle/hidden we close the streams AND stop beating; the bridge reaps the now-silent
+// streams (see server/bridge.ts STALE_MS) and the container can sleep. Must be well
+// under the server's STALE_MS (bridge exits after STALE_MS with no beat).
+const BEAT_MS = 30_000;
 let timer: ReturnType<typeof setTimeout> | null = null;
+let beatTimer: ReturnType<typeof setInterval> | null = null;
 let lastBump = 0;
 let closed = false;
+
+function beat(): void {
+  void fetch('/api/alive', { method: 'POST', keepalive: true }).catch(() => {});
+}
+function startBeats(): void {
+  if (beatTimer) return;
+  beat(); // immediate, so a just-opened stream is marked alive at once
+  beatTimer = setInterval(beat, BEAT_MS);
+}
+function stopBeats(): void {
+  if (beatTimer) {
+    clearInterval(beatTimer);
+    beatTimer = null;
+  }
+}
 
 /** Register a stream's open/close. Returns an unregister fn (call on teardown). */
 export function registerStream(t: Toggle): () => void {
@@ -52,12 +75,14 @@ function doClose(): void {
   if (closed) return;
   closed = true;
   for (const t of toggles) t.close();
+  stopBeats(); // streams closed -> stop telling the bridge we're here -> it can reap + sleep
 }
 
 function reopen(): void {
   if (!closed) return;
   closed = false;
   for (const t of toggles) t.open();
+  startBeats(); // streams reopened -> resume heartbeat so the bridge keeps them
 }
 
 function activity(): void {
@@ -77,4 +102,5 @@ if (typeof document !== 'undefined') {
     else activity();
   });
   scheduleClose(IDLE_MS); // arm on load so a never-touched tab still closes
+  startBeats(); // streams open on load -> beat until we go idle/hidden
 }

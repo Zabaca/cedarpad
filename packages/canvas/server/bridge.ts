@@ -285,10 +285,13 @@ function canvasStream(): Response {
     start(controller) {
       self = controller;
       canvasClients.add(controller);
+      markAlive();
+      ensureReaper();
       controller.enqueue(sse(store.getState())); // prime with current state
     },
     cancel() {
       canvasClients.delete(self);
+      console.log(`[clients] canvas stream cancel -> canvas=${canvasClients.size} chat=${chatClients.size}`);
     },
   });
   return new Response(stream, {
@@ -309,6 +312,55 @@ function canvasStream(): Response {
 // a single tab with ~5 chats + the canvas stream saturates the cap and starves
 // every POST (send/shapes) into "pending". One shared stream keeps it flat at 2.
 export const chatClients = new Set<ReadableStreamDefaultController>();
+
+// --- idle liveness: why the CF container can sleep ---
+// A browser holds SSE streams open; the sandbox's per-forward inflight hold keeps the
+// container awake for as long as each forward is open. The CF preview-proxy never
+// propagates a client disconnect to the container, and the forward's inflight hold
+// does NOT release when we close/error the stream from here either (proven via bootAt:
+// the hold sticks whether the client is gone or still connected). So the container
+// cannot idle-sleep on its own while any tab has ever opened a stream. Instead the
+// client POSTs /api/alive while its streams are open; when no beat lands within
+// STALE_MS there's no live tab, and the reaper exits the process (see ensureReaper) —
+// which stops the container. STALE_MS must exceed the client's beat interval (BEAT_MS)
+// with margin — 90s tolerates ~2 missed 30s beats (blips). Override via env.
+const STALE_MS = Number(process.env.CANVAS_STREAM_STALE_MS ?? 90_000);
+let lastAlive = Date.now();
+let reaper: ReturnType<typeof setInterval> | null = null;
+function markAlive(): void {
+  lastAlive = Date.now();
+}
+function ensureReaper(): void {
+  if (reaper) return;
+  reaper = setInterval(() => {
+    if (Date.now() - lastAlive <= STALE_MS) return; // a live tab beat recently — stay warm
+    // No heartbeat for STALE_MS => no live browser. The sandbox CANNOT sleep while our
+    // SSE forwards are open, and their teardown never reaches the container: the CF
+    // preview-proxy doesn't propagate a client disconnect, and closing/erroring from
+    // our side doesn't settle the forward either (proven — the DO's inflight hold
+    // sticks, so it never idles). The one lever we have is to exit: dev.ts and
+    // container-start exit with us, CF stops the container, and the next request
+    // cold-boots and restores from R2. Flush canvas state first so nothing is lost
+    // (idle already means no in-flight edits, but be safe), with a hard bail so a
+    // stuck write can't keep us alive.
+    if (reaper) {
+      clearInterval(reaper);
+      reaper = null;
+    }
+    // Only self-exit inside the CF container (where it maps to container sleep). In
+    // local dev there is nothing to sleep, so never kill the developer's dev server.
+    if (!process.env.IS_SANDBOX) return;
+    console.log(`[idle] no client heartbeat for ${STALE_MS}ms -> flush + exit so the container can sleep`);
+    const bail = setTimeout(() => process.exit(0), 3000);
+    void persist
+      .save(store.getState())
+      .catch(() => {})
+      .finally(() => {
+        clearTimeout(bail);
+        process.exit(0);
+      });
+  }, 10_000);
+}
 
 function broadcastChat(chatId: string, ev: ChatEvent): void {
   // Build the on-wire frame through the shared type, so a new ChatEvent kind added
@@ -331,6 +383,8 @@ function chatStream(): Response {
     start(controller) {
       self = controller;
       chatClients.add(controller);
+      markAlive();
+      ensureReaper();
       controller.enqueue(enc.encode(': subscribed\n\n')); // comment frame: opens + flushes the stream
       // Heartbeat: keeps the connection from going idle-dead during a long silent think, and
       // a closed socket (bridge died) trips EventSource.onerror on the client -> "reconnecting".
@@ -340,12 +394,14 @@ function chatStream(): Response {
         } catch {
           clearInterval(ping);
           chatClients.delete(controller);
+          console.log(`[clients] chat ping dead-controller -> chat=${chatClients.size} canvas=${canvasClients.size}`);
         }
       }, 15000);
     },
     cancel() {
       clearInterval(ping);
       chatClients.delete(self);
+      console.log(`[clients] chat stream cancel -> chat=${chatClients.size} canvas=${canvasClients.size}`);
     },
   });
   return new Response(stream, {
@@ -411,6 +467,14 @@ export async function handleRequest(req: Request): Promise<Response> {
       });
     }
 
+    // Liveness: any POST to /api/* means a live client is acting (drawing, chatting,
+    // or an explicit heartbeat), so the reaper must not cull its streams. The client
+    // beats here on a timer while its streams are open; stops when it goes idle/closes.
+    if (req.method === 'POST' && path.startsWith('/api/')) markAlive();
+    if (path === '/api/alive' && req.method === 'POST') {
+      return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*' } });
+    }
+
     // web-poc mounted in-process: its data API (/v1/*) and Better Auth (/api/auth/*)
     // are served by web-poc's Hono app. This MUST precede the canvas's own /api/*
     // routes below, since /api/auth/* lives under the same /api namespace.
@@ -439,7 +503,13 @@ export async function handleRequest(req: Request): Promise<Response> {
         // report health too, so a silent save failure is visible for all four.
         artifacts: sink.healthSnapshot(),
         unsavedVersions: Math.max(0, saveHealth.liveVersion - savedV),
+        // Split client counts: chatClients is the warmth driver (its 15s ping pins the
+        // container), canvasClients is pingless. Both must reach 0 for the container to
+        // idle-sleep. chatClients self-cleans (ping enqueue throws on a dead controller);
+        // canvasClients only shrinks on cancel() or the next broadcast, so it can lag.
         clients: canvasClients.size,
+        chatClients: chatClients.size,
+        canvasClients: canvasClients.size,
         uptimeMs: Date.now() - saveHealth.bootAt,
         at: Date.now(),
       });
