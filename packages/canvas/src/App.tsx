@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useRef, useState } from 'react';
 import { Tldraw, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLPageId, type TLShapeId, createBindingId, createShapeId } from 'tldraw';
 import 'tldraw/tldraw.css';
 
@@ -12,6 +12,14 @@ import { wireSync } from './sync';
 // Registered once, at editor construction: our two custom shapes. `component`
 // renders agent-authored React files; `chat` is a chat session living on the canvas.
 const customShapeUtils: TLAnyShapeUtilConstructor[] = [ComponentShapeUtil, ChatShapeUtil];
+
+// The far-left rail switches the stage between the tldraw canvas and web-poc
+// (Problem/Solution Intelligence). web-poc mounts directly into this React tree
+// (both apps are on React 19) rather than an iframe: its providers + UI ship as a
+// lazy chunk that only loads when the 3rd rail button is opened. Its /v1 + /api/auth
+// calls are served by the same bridge process (see server/bridge.ts).
+export type AppView = 'canvas' | 'webpoc';
+const WebPocApp = lazy(() => import('../web-poc/src/embed').then((m) => ({ default: m.WebPocApp })));
 
 // Hide ONLY tldraw's built-in page dropdown ("Avatar ⌄"). Our own LeftPanel now
 // owns the page list. The hamburger MainMenu and the undo/redo/delete/duplicate
@@ -149,6 +157,8 @@ export default function App() {
   const cleanup = useRef<(() => void) | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const [ready, setReady] = useState(false);
+  // Which app the rail is showing: the canvas, or the embedded web-poc.
+  const [activeApp, setActiveApp] = useState<AppView>('canvas');
 
   // Drop a fresh chat card. If a shape is selected (or a chat is focused), the new
   // card lands just to the right of it and is joined by a bound arrow — so chats
@@ -301,14 +311,26 @@ export default function App() {
   );
 
   return (
-    <div className="app">
+    <div className={`app${activeApp === 'webpoc' ? ' app--webpoc' : ''}`}>
+      {/* Tldraw stays mounted (editor + sync are preserved) while web-poc overlays it. */}
       <div className="tl-stage">
         <Tldraw shapeUtils={customShapeUtils} components={tldrawComponents} onMount={onMount} />
       </div>
-      {ready && editorRef.current && <LeftPanel editor={editorRef.current} />}
-      <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">
-        ＋ New chat
-      </button>
+      {activeApp === 'webpoc' && (
+        <div className="webpoc-frame">
+          <Suspense fallback={<div className="webpoc-loading">Loading Web POC…</div>}>
+            <WebPocApp />
+          </Suspense>
+        </div>
+      )}
+      {ready && editorRef.current && (
+        <LeftPanel editor={editorRef.current} activeApp={activeApp} onSelectApp={setActiveApp} />
+      )}
+      {activeApp === 'canvas' && (
+        <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">
+          ＋ New chat
+        </button>
+      )}
     </div>
   );
 }

@@ -91,6 +91,15 @@ export const cloudflareModule = defineModule({
      * deploy time. No-op for asset-only Workers.
      */
     immediateContainerRollout: z.boolean().default(false),
+    /**
+     * Wrangler named environment (`--env <name>`). When set, deploy and every
+     * `secret put` target the matching `env.<name>` block in the package's
+     * wrangler.jsonc, so a non-production zbc environment (e.g. `preview`) can
+     * ship a DISTINCT worker (own name/domain/bindings) from the same package —
+     * without a separate wrangler config. Omit for the top-level (production)
+     * worker.
+     */
+    wranglerEnv: z.string().optional(),
   }),
   outputs: z.object({
     deployUrl: z.string(),
@@ -117,10 +126,13 @@ export const cloudflareModule = defineModule({
     }
 
     // 2. Deploy. Creates/updates the Worker script (+ assets, DO, container).
+    //    --env selects the named wrangler environment (e.g. preview) so it ships
+    //    a distinct worker from the same package; omitted = top-level worker.
     const deployArgs = ['deploy']
+    if (config.wranglerEnv) deployArgs.push('--env', config.wranglerEnv)
     if (config.immediateContainerRollout) deployArgs.push('--containers-rollout', 'immediate')
     console.log(
-      `  Deploying via wrangler (in ${config.workdir})${config.immediateContainerRollout ? ' [immediate container rollout]' : ''}`,
+      `  Deploying via wrangler (in ${config.workdir})${config.wranglerEnv ? ` [env: ${config.wranglerEnv}]` : ''}${config.immediateContainerRollout ? ' [immediate container rollout]' : ''}`,
     )
     const out = wrangler(workdir, deployArgs, env)
     const urlMatch = out.match(/https:\/\/[^\s"',]+\.workers\.dev[^\s"',]*/)
@@ -136,7 +148,9 @@ export const cloudflareModule = defineModule({
           `workerSecrets references "${name}" but it's missing from this environment's secrets.yaml`,
         )
       }
-      wrangler(workdir, ['secret', 'put', name], env, value)
+      const secretArgs = ['secret', 'put', name]
+      if (config.wranglerEnv) secretArgs.push('--env', config.wranglerEnv)
+      wrangler(workdir, secretArgs, env, value)
       console.log(`  Set Worker secret: ${name}`)
     }
 
@@ -152,9 +166,11 @@ export const cloudflareModule = defineModule({
     }
     const workdir = path.resolve(ctx.projectRoot, config.workdir)
     // `wrangler delete` removes the Worker (and its DO/container). Non-fatal if
-    // already gone.
+    // already gone. --env targets the named environment's worker.
     try {
-      wrangler(workdir, ['delete', '--force'], env)
+      const deleteArgs = ['delete', '--force']
+      if (config.wranglerEnv) deleteArgs.push('--env', config.wranglerEnv)
+      wrangler(workdir, deleteArgs, env)
       console.log('  Deleted Worker')
     } catch (err) {
       console.log(`  Worker delete skipped: ${(err as Error).message}`)

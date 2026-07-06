@@ -1,0 +1,30 @@
+# Copy to web-poc/.dev.vars (gitignored). The canvas bridge reads these when it
+# mounts web-poc (`cd packages/canvas && bun run dev`). In prod these are Worker
+# secrets on the canvas worker, pushed by the zbc module (from SOPS), never here.
+
+# Local libSQL: leave TURSO_URL BLANK in dev — the bridge then uses a local file
+# (packages/canvas/.web-poc-dev.db) and migrates on boot (no `turso` daemon needed).
+# Set it to a remote Turso URL only to point local dev at a real DB.
+TURSO_URL=""
+TURSO_KEY=""
+
+# Embeddings: Voyage (active embedding provider, voyage-3.5-lite). Without it the
+# embedder falls back to the deterministic local hash (lexical, not semantic).
+VOYAGE_API_KEY=""
+
+# LLM agent providers — only used if you run the optional agent-jobs consumer
+# (`bun scripts/worker.ts` from web-poc/) for classification/linking/synthesis.
+# Not needed for the inline embed→store→search loop.
+ANTHROPIC_API_KEY=""
+OPENAI_API_KEY=""
+
+# Realtime (optional). Leave blank to disable Ably.
+ABLY_API_KEY=""
+
+# Better Auth (required). Same-origin with the canvas app in dev (vite on :4510).
+BETTER_AUTH_SECRET="dev-secret-change-me-at-least-32-chars"
+BETTER_AUTH_URL="http://localhost:4510"
+
+# Production web origin trusted for Better Auth CSRF/Origin checks. Same-origin
+# in this model, so usually left blank.
+WEB_ORIGIN=""

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { type Editor, PageRecordType, type TLPageId, useValue } from 'tldraw';
+import type { AppView } from './App';
 
 // A custom left-hand nav, rendered as a SIBLING of <Tldraw> (outside tldraw's
 // React context), so it receives the live `editor` by prop rather than via
@@ -29,7 +30,28 @@ function IconCanvases() {
   );
 }
 
-export function LeftPanel({ editor }: { editor: Editor }) {
+// A small node-graph glyph for web-poc (the Problem/Solution knowledge graph).
+function IconWebPoc() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="6" cy="6" r="2.4" />
+      <circle cx="18" cy="6" r="2.4" />
+      <circle cx="12" cy="18" r="2.4" />
+      <path d="M8 6h8M7.4 8l3.4 7.8M16.6 8l-3.4 7.8" />
+    </svg>
+  );
+}
+
+export function LeftPanel({
+  editor,
+  activeApp,
+  onSelectApp,
+}: {
+  editor: Editor;
+  activeApp: AppView;
+  onSelectApp: (app: AppView) => void;
+}) {
   // Track pages + the current page live. useValue only needs the signal-reading
   // function, so it works fine outside the editor's React context.
   const pages = useValue('pages', () => editor.getPages(), [editor]);
@@ -108,20 +130,33 @@ export function LeftPanel({ editor }: { editor: Editor }) {
         </button>
         <button
           type="button"
-          className="lp-rail-btn active"
+          className={`lp-rail-btn${activeApp === 'canvas' ? ' active' : ''}`}
           title="Canvases"
-          aria-current="page"
-          onClick={() => setView('canvases')}
+          aria-current={activeApp === 'canvas' ? 'page' : undefined}
+          onClick={() => {
+            onSelectApp('canvas');
+            setView('canvases');
+          }}
         >
           <IconCanvases />
+        </button>
+        <button
+          type="button"
+          className={`lp-rail-btn${activeApp === 'webpoc' ? ' active' : ''}`}
+          title="Web POC — Problem/Solution Intelligence"
+          aria-current={activeApp === 'webpoc' ? 'page' : undefined}
+          onClick={() => onSelectApp('webpoc')}
+        >
+          <IconWebPoc />
         </button>
         <div className="lp-rail-bottom">
           <div className="lp-avatar" title="James">J</div>
         </div>
       </nav>
 
-      {/* Panel body: canvas list, or the selected canvas's pages. */}
-      {view === 'canvases' ? (
+      {/* Panel body: hidden for web-poc (the rail alone — see .app--webpoc), else the
+          canvas list or the selected canvas's pages. */}
+      {activeApp === 'webpoc' ? null : view === 'canvases' ? (
         <div className="lp-body">
           <div className="left-panel-head">
             <span className="left-panel-title">Canvases</span>
