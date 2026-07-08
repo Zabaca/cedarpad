@@ -526,6 +526,31 @@ export const workspaces = sqliteTable(
 export type WorkspaceRow = typeof workspaces.$inferSelect;
 export type NewWorkspaceRow = typeof workspaces.$inferInsert;
 
+/* ------------------------------------------------------------------ *
+ * Canvas registry (ADR-0007, PRD #48) — the per-workspace index of canvases
+ *
+ * A workspace owns many canvases. This table is the edge-queryable INDEX only:
+ * which canvases exist, in which workspace, and their names. Canvas *state*
+ * lives in R2 (ADR-0001), never here. `ownerRef` is the owner edge — nullable
+ * and unused this slice (#52), populated by a later slice.
+ * ------------------------------------------------------------------ */
+export const canvases = sqliteTable(
+  "canvases",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    name: text("name").notNull(),
+    ownerRef: text("owner_ref"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [index("canvases_workspace_idx").on(t.workspaceId)],
+);
+
+export type CanvasRow = typeof canvases.$inferSelect;
+export type NewCanvasRow = typeof canvases.$inferInsert;
+
 export type Workspace = typeof workspace.$inferSelect;
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;
