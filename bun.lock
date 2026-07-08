@@ -62,6 +62,7 @@
         "@xyflow/react": "^12.3.0",
         "ably": "^2.5.0",
         "ai": "^5.0.0",
+        "aws4fetch": "^1.0.20",
         "better-auth": "^1.6.0",
         "drizzle-orm": "^0.38.3",
         "hono": "^4.6.20",

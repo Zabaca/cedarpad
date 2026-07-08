@@ -7,7 +7,8 @@ import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
-import { handleCanvasesApi, handleWorkspacesApi, renderLogin, renderShell } from './shell.ts';
+import { handleCanvasesApi, handleWorkspacesApi, renderInbox, renderLogin, renderShell } from './shell.ts';
+import { handleInboxApi } from './inbox.ts';
 import {
   CANVAS_COOKIE,
   DEFAULT_CANVAS_ID,
@@ -132,6 +133,18 @@ export default {
     if (canvasApiMatch) {
       return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user, canvasApiMatch[1]);
     }
+
+    // Edge Inbox API (ADR-0007, PRD #50 slice #62), user-scoped. Served HERE against remote
+    // Turso + R2: list/detail/close/reopen never wake a container (history reads from the R2
+    // transcript while the runner sleeps); only reply forwards into the container (#61).
+    const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen))?)?$/.exec(url.pathname);
+    if (inboxApiMatch) {
+      return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
+    }
+
+    // The Inbox surface itself — a self-contained static page (like the Shell launcher),
+    // behind the edge session gate above.
+    if (url.pathname === '/inbox') return renderInbox();
 
     // /w/:workspaceId/canvas/:canvasId — the canvas app-surface URL. Selecting it pins
     // BOTH the workspace (cs_workspace, HttpOnly — the proxy routes by it) and the canvas
