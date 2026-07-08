@@ -7,6 +7,7 @@ import * as React from 'react';
 import { type Editor, T, type TLBaseShape } from 'tldraw';
 
 import { type AgentComponent, LOAD_ATTEMPTS, loadComponent } from './component-loader';
+import { activeCanvasId } from './active-canvas';
 import { type EventGuards, InteractiveBoxShapeUtil } from './InteractiveBoxShapeUtil';
 import { isInteractiveControl } from './predicates';
 // ComponentStatus is the read bridge's concern too, so it lives in the model
@@ -145,7 +146,7 @@ export function ComponentHost({
   module,
   data,
   rev,
-  load = loadComponent,
+  load = (module, rev) => loadComponent(module, rev, activeCanvasId()),
 }: {
   shapeId: string;
   editor: Editor;

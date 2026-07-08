@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { type Editor, PageRecordType, type TLPageId, useValue } from 'tldraw';
 import type { AppView } from './App';
+import { activeCanvasId, DEFAULT_CANVAS_ID } from './active-canvas';
 
 // A custom left-hand nav, rendered as a SIBLING of <Tldraw> (outside tldraw's
 // React context), so it receives the live `editor` by prop rather than via
@@ -18,7 +19,6 @@ import type { AppView } from './App';
 // because extra canvases would share the single page set until the backend exists.
 
 const WORKSPACE_NAME = 'Zabaca';
-const CANVAS_NAME = 'Canvas 1';
 
 function IconCanvases() {
   return (
@@ -64,6 +64,81 @@ export function LeftPanel({
 
   // Panel view: the Canvases section drills canvas-list <-> that canvas's pages.
   const [view, setView] = useState<'canvases' | 'pages'>('pages');
+
+  // The Canvas app index (ADR-0007, #54): the workspace's canvases from /api/canvases
+  // (edge, scoped to the active workspace via cs_workspace). Switching navigates to
+  // /w/:ws/canvas/:id, which pins cs_canvas and reloads onto that canvas. The active
+  // one is whatever cs_canvas currently selects (default when unset).
+  type CanvasEntry = { id: string; name: string };
+  const [wsId, setWsId] = useState<string>(DEFAULT_CANVAS_ID);
+  const [canvases, setCanvases] = useState<CanvasEntry[]>([]);
+  const [switching, setSwitching] = useState<string | null>(null);
+  const [cvEditingId, setCvEditingId] = useState<string | null>(null);
+  const [cvDraft, setCvDraft] = useState('');
+  const activeCanvas = activeCanvasId();
+
+  const loadCanvases = useCallback(async () => {
+    try {
+      const r = await fetch('/api/canvases', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const d = (await r.json()) as { workspaceId: string; canvases: CanvasEntry[] };
+      setWsId(d.workspaceId);
+      setCanvases(d.canvases);
+    } catch {
+      /* bridge/edge offline — leave the list as-is */
+    }
+  }, []);
+  useEffect(() => {
+    if (view === 'canvases') void loadCanvases();
+  }, [view, loadCanvases]);
+
+  // The full switch list always offers the legacy Default canvas (no registry row) so
+  // you can return to it; registry canvases follow.
+  const canvasList: CanvasEntry[] = [{ id: DEFAULT_CANVAS_ID, name: 'Default' }, ...canvases];
+  const activeCanvasName = canvasList.find((c) => c.id === activeCanvas)?.name ?? 'Canvas';
+
+  const switchCanvas = (id: string) => {
+    if (id === activeCanvas) {
+      setView('pages');
+      return;
+    }
+    setSwitching(id);
+    window.location.href = `/w/${encodeURIComponent(wsId)}/canvas/${encodeURIComponent(id)}`;
+  };
+
+  const createCanvas = async () => {
+    const name = `Canvas ${canvases.length + 1}`;
+    const r = await fetch('/api/canvases', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!r.ok) return;
+    const c = (await r.json()) as CanvasEntry;
+    setSwitching(c.id);
+    window.location.href = `/w/${encodeURIComponent(wsId)}/canvas/${encodeURIComponent(c.id)}`;
+  };
+
+  const commitCanvasRename = async () => {
+    if (!cvEditingId) return;
+    const name = cvDraft.trim();
+    const id = cvEditingId;
+    setCvEditingId(null);
+    if (!name) return;
+    await fetch(`/api/canvases/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }).catch(() => {});
+    void loadCanvases();
+  };
+
+  const deleteCanvas = async (id: string) => {
+    await fetch(`/api/canvases/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
+    void loadCanvases();
+  };
 
   // Workspace switcher popover (the rail's Z). One real workspace today; this is
   // the seam for multi-workspace if the data model ever grows.
@@ -160,11 +235,64 @@ export function LeftPanel({
         <div className="lp-body">
           <div className="left-panel-head">
             <span className="left-panel-title">Canvases</span>
+            <button type="button" className="left-panel-add" onClick={createCanvas} title="Create a new canvas">
+              +
+            </button>
           </div>
           <ul className="page-list">
-            <li className="page-row active" onClick={() => setView('pages')}>
-              <span className="page-name">{CANVAS_NAME}</span>
-            </li>
+            {canvasList.map((c) => {
+              const active = c.id === activeCanvas;
+              const isSwitching = switching === c.id;
+              return (
+                <li
+                  key={c.id}
+                  className={`page-row${active ? ' active' : ''}`}
+                  onClick={() => switchCanvas(c.id)}
+                >
+                  {cvEditingId === c.id ? (
+                    <input
+                      className="page-rename"
+                      value={cvDraft}
+                      autoFocus
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => setCvDraft(e.target.value)}
+                      onBlur={commitCanvasRename}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void commitCanvasRename();
+                        else if (e.key === 'Escape') setCvEditingId(null);
+                      }}
+                    />
+                  ) : (
+                    <span
+                      className="page-name"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        // The legacy Default canvas has no registry row, so it can't be renamed.
+                        if (c.id === DEFAULT_CANVAS_ID) return;
+                        setCvEditingId(c.id);
+                        setCvDraft(c.name);
+                      }}
+                    >
+                      {c.name}
+                      {isSwitching && <span className="lp-crumb-sep"> · waking…</span>}
+                    </span>
+                  )}
+                  {c.id !== DEFAULT_CANVAS_ID && !active && (
+                    <button
+                      type="button"
+                      className="page-del"
+                      title="Delete canvas"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void deleteCanvas(c.id);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : (
@@ -176,7 +304,7 @@ export function LeftPanel({
             <span className="lp-crumb-sep" aria-hidden="true">
               ›
             </span>
-            <span className="lp-crumb-cur">{CANVAS_NAME}</span>
+            <span className="lp-crumb-cur">{activeCanvasName}</span>
           </div>
           <div className="left-panel-head">
             <span className="left-panel-title">Pages</span>
