@@ -141,7 +141,14 @@ export default {
     // that does. `/assets/*` is vite's default output prefix and cannot collide with the
     // container's dev-server paths (`/src/*`, `/@vite/*`, `/node_modules/*`), which still
     // fall through to serveWorkspace at the bottom.
-    if (url.pathname === '/') return asset('/index.html');
+    //
+    // Request '/' itself, NOT '/index.html': Workers static-assets' default html_handling
+    // ("auto-trailing-slash") 307s an explicit `/index.html` request to its canonical `/`
+    // form. Passing that path here made ASSETS hand back that redirect, which we returned
+    // verbatim — the browser followed it back to `/`, which asked for `/index.html` again,
+    // forever (prod outage, ERR_TOO_MANY_REDIRECTS). `/` is already canonical, so ASSETS
+    // serves it directly with no redirect.
+    if (url.pathname === '/') return asset('/');
     if (url.pathname.startsWith('/assets/')) return asset(url.pathname);
 
     // Notebook is a Shell stage now (ADR-0007, PRD #103 slice #107), not its own SPA
