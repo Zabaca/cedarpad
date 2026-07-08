@@ -46,8 +46,8 @@ runs against that workspace's `Zabaca/…` repo and promotes into the one user I
 
 ## Canvas as a shared surface (not owned by the Canvas app)
 
-**Canvas**: a workspace-owned drawing surface — its own vite dev server (own port),
-its own pages, and its own component dir. It is NOT property of the Canvas app.
+**Canvas**: a workspace-owned drawing surface — its own pages and its own component
+dir (isolated by path, served by the workspace's single vite). It is NOT property of the Canvas app.
 It carries an optional **owner** edge:
 
 - `none` — standalone.
@@ -65,16 +65,19 @@ Rules:
 Mirrors the canvas glossary's own shape: a `chat` is a shape *on* a canvas; here a
 canvas is a surface *on* a notebook item or session — an attachment edge, not a copy.
 
-**Components & the shared library**:
-- Each canvas owns its own component dir (`canvas-<id>/components/*.tsx`), served by that
-  canvas's own vite dev server.
-- The workspace has one **shared component library** (`shared/components/`) that every
-  canvas's vite resolves (an `@shared` alias). **Promote** = move a component from a
-  canvas's own dir into the shared library.
+**Components & the shared library** (runtime revised during #53 — see note):
+- Each canvas has its own component dir (`canvas-<id>/components/*.tsx`), isolated **by
+  path**, served by the workspace's **single vite** (not a per-canvas vite process —
+  `component-loader` imports components by path, so a path prefix gives the isolation
+  without N servers; a per-canvas vite was rejected because it multiplies the container
+  cold-boot/sleep cost).
+- The workspace has one **shared component library** (`shared/components/`) that the vite
+  resolves via an `@shared` alias. **Promote** = move a component from a canvas's own dir
+  into the shared library.
 - Shared components are a **live single source, imported by reference**: new canvases see
   them automatically, existing canvases see them too, and editing a shared component
   rev-bumps + hot-reloads every canvas that placed it (extends today's per-canvas
-  `bumpAllComponents` to a workspace-level signal across the N canvas vites). A broken
+  `bumpAllComponents` to a workspace-level signal). A broken
   edit is isolated per-instance by the existing error boundary; a canvas that needs to
   diverge copies the component back into its own dir.
 

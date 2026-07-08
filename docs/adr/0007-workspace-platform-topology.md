@@ -3,7 +3,7 @@
 cedarpad becomes a multi-app platform: a **static edge Shell** (launcher + top nav +
 login + workspace switcher) fronts **per-workspace runtime containers** — James may have
 many workspaces (e.g. one per repo/project), each a container hosting **many canvases**
-(each its own vite dev server + component dir) plus the agent runtime — while **Notebook**
+(one vite serving per-canvas component dirs) plus the agent runtime — while **Notebook**
 runs as a pure **edge + Turso** app and **continuous dev workflows** run in a **separate
 sandbox instance**. This inverts today's arrangement, where the frontend (and, per PR #40,
 a rail-menu of apps) is served *inside* a single-canvas container. **Single-tenant
@@ -24,9 +24,9 @@ Edge Worker
 └─ proxy        /canvas/:id/* and dev-agent control → the container(s), only after auth
 
 Product container  (one PER workspace; James switches workspaces in the Shell; sleeps @5m)
-├─ N canvases   each its own vite dev server (own port) + own components dir
-├─ shared/components/   live workspace library; "promote" moves a component here
-└─ bridge       CanvasStore + Claude Agent SDK (canvas / notebook / inbox chats)
+├─ one vite    serves per-canvas dirs canvas-<id>/components/ (isolated by path)
+├─ shared/components/   live workspace library (@shared); "promote" moves a component here
+└─ bridge       N CanvasStores (keyed by canvasId) + Claude Agent SDK (canvas / notebook / inbox chats)
    (per-workspace sandbox ID + R2 prefix `workspaces/<ws>/…`)
 
 Dev-agent sandbox (same image, own sleep schedule)
@@ -42,9 +42,14 @@ Inbox = coordinator over Sessions (agnostic to where a Session runs)
   problem the container is tuned to avoid. The edge Shell serves login/UI and proxies to the
   container **only after auth**.
 - **One container, many canvases.** The workspace runtime is a single container hosting a
-  vite dev server per open canvas plus a workspace-level **shared component library** (live,
+  **single vite** that serves per-canvas component dirs (`canvas-<id>/components/`, isolated
+  by import path) plus a workspace-level **shared component library** (`@shared`, live,
   import-by-reference; promoting moves a component into it and edits propagate to every
-  canvas that placed it). One sleep timer, one paid instance.
+  canvas that placed it). One sleep timer, one paid instance. **(Revised from "a vite dev
+  server per open canvas" during #53 implementation — per-canvas vite processes multiply the
+  container cold-boot/sleep cost and add worker-side per-port routing, whereas
+  `component-loader` imports by path, so a path prefix delivers the same per-canvas isolation
+  with one server.)**
 - **Canvas is a workspace-owned surface, not owned by the Canvas app.** It carries an
   optional owner edge (none / a Notebook item / an Inbox session). All canvases are indexed
   by the Canvas app regardless of owner; **owner-delete orphans, never cascades**.
@@ -81,8 +86,9 @@ Inbox = coordinator over Sessions (agnostic to where a Session runs)
 - **Cross-canvas breakage from the live shared library**: editing a shared component can
   break multiple canvases at once. Accepted at single-user scale; the existing per-instance
   error boundary contains it, and a canvas can copy a component back to diverge.
-- **N vite dev servers in one container** raise its warm footprint; per-canvas servers should
-  start lazily on open and stop when a canvas is closed.
+- **The bridge holds N `CanvasStore`s** (keyed by `canvasId`) in one process; per-canvas
+  component dirs are served by the single vite (path-isolated), so there is no per-canvas
+  process to start/stop.
 - **Auth is now our code to run at the edge** (Better Auth in the Worker) rather than a
   managed gate. Accepted for app-level user records and portability.
 
