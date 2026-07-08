@@ -70,9 +70,13 @@ const webPocEnv = loadWebPocEnv();
 // remote Turso is migrated by the deploy, so we don't auto-migrate it here.
 const webPocRemoteTurso =
   !!webPocEnv.TURSO_URL && !/(^file:|127\.0\.0\.1|localhost)/.test(webPocEnv.TURSO_URL);
+// Worktree-safe: with-worktree-db.sh sets CANVAS_DEV_DB to a per-worktree file:
+// URL so parallel worktrees don't share one dev DB. Unset falls back to the
+// canonical .web-poc-dev.db, so a plain `bun run dev` is unchanged.
 const webPocDbUrl = webPocRemoteTurso
   ? webPocEnv.TURSO_URL!
-  : `file:${fileURLToPath(new URL('../.web-poc-dev.db', import.meta.url))}`;
+  : (process.env.CANVAS_DEV_DB ??
+    `file:${fileURLToPath(new URL('../.web-poc-dev.db', import.meta.url))}`);
 const webPocClient = createClient(
   webPocRemoteTurso && webPocEnv.TURSO_KEY
     ? { url: webPocDbUrl, authToken: webPocEnv.TURSO_KEY }

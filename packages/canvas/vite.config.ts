@@ -5,11 +5,14 @@ import { defineConfig } from 'vite';
 // All same-origin /api/* calls proxy to the bridge so the browser never needs
 // to know the bridge port.
 const BRIDGE = process.env.CANVAS_BRIDGE ?? 'http://localhost:4511';
+// Worktree-safe: the dev/e2e port comes from env (with-worktree-port.sh sets it);
+// unset falls back to 4510 so a plain `bun run dev` is unchanged.
+const PORT = Number(process.env.PORT ?? 4510);
 
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 4510,
+    port: PORT,
     host: true, // bind 0.0.0.0 so the app is reachable from other machines on the LAN (e.g. http://192.168.0.233:4510). The /api proxy still targets the bridge on the host.
     // The container deploy reaches vite through the Cloudflare sandbox preview
     // proxy under an arbitrary Host; the Worker is the gate, so accept any host.
