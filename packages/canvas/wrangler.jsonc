@@ -28,7 +28,11 @@
     "AUTH_DISABLE_SIGNUP": "true",
     // Dev-agent scheduled run kill-switch (#94.5): cron fires but no-ops until
     // repo-connection (#96) ships. Flip to "true" to enable.
-    "DEV_AGENT_ENABLED": "false"
+    "DEV_AGENT_ENABLED": "false",
+    // The single-tenant owner every `ask_human`/Inbox Conversation gets filed under —
+    // must be this deployment's Better Auth user.id (Turso `user` table), not an email.
+    // Single-tenant-only: revisit when #98 (multi-user) lands.
+    "CANVAS_USER": "2hfe21p0OsrHWQBPgfKhwSH9ZYUK9ajw"
   },
   // The Shell SPA build (PRD #103). `bun run build` emits shell/dist — the Shell at `/`
   // and its `/assets/*`, plus the Notebook SPA under `/notebook` (shell/dist/notebook) —
@@ -75,7 +79,9 @@
         "BETTER_AUTH_URL": "https://agent-canvas-preview.james-99a.workers.dev",
         "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev",
         "AUTH_DISABLE_SIGNUP": "true",
-        "DEV_AGENT_ENABLED": "false"
+        "DEV_AGENT_ENABLED": "false",
+        // Preview shares production's Turso DB (secrets.yaml is a copy) — same one user row.
+        "CANVAS_USER": "2hfe21p0OsrHWQBPgfKhwSH9ZYUK9ajw"
       },
       "assets": {
         "directory": "./shell/dist",
