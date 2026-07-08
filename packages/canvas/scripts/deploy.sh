@@ -15,7 +15,6 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 SHA=$(git rev-parse --short HEAD)
 URL=${CANVAS_URL:-https://poc.cedarpad.com}
 TRIES=${POLL_TRIES:-60}
-SECRETS="$REPO_ROOT/packages/infra/environments/production/secrets.yaml"
 
 echo "→ stamping build-rev $SHA (uncommitted change = stamp is the working SHA, not what's deployed)"
 git diff --quiet && git diff --cached --quiet || echo "  ⚠️  working tree dirty — buildRev reflects HEAD, not your uncommitted edits"
@@ -28,18 +27,20 @@ for f in cli-plugins contexts buildx; do [ -e "$HOME/.docker/$f" ] && ln -s "$HO
 cleanup() { rm -rf "$DC"; }
 trap cleanup EXIT
 
-GATE=$(bunx sops -d "$SECRETS" 2>/dev/null | awk -F': ' '/^GATE_SECRET:/{print $2}')
-
 echo "→ zbc apply production canvas (build + deploy + push secrets)"
 ( cd "$REPO_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }
 
+# NOTE (#47 cutover): /__recycle and /api/status are now behind the edge Better Auth
+# gate (cs_gate is gone). These unauthenticated curls will be denied (served the login
+# page) until this script carries a valid Better Auth session cookie. Follow-up: mint a
+# deploy session / service token and pass it here so the verify loop works post-cutover.
 echo "→ recycle the warm container onto the new image"
-curl -s -H "cookie: cs_gate=$GATE" "$URL/__recycle" >/dev/null || true
+curl -s "$URL/__recycle" >/dev/null || true
 
 echo "→ verifying served buildRev == $SHA (cold boot + rollout settle; up to $((TRIES*5))s)"
 cur="?"
 for i in $(seq 1 "$TRIES"); do
-  cur=$(curl -s --max-time 20 -H "cookie: cs_gate=$GATE" "$URL/api/status" \
+  cur=$(curl -s --max-time 20 "$URL/api/status" \
         | python3 -c "import sys,json; print(json.load(sys.stdin).get('buildRev','?'))" 2>/dev/null || echo "?")
   if [ "$cur" = "$SHA" ]; then echo "✅ LIVE: $SHA is serving at $URL"; exit 0; fi
   printf '   [%02d/%s] served=%s expected=%s\n' "$i" "$TRIES" "$cur" "$SHA"

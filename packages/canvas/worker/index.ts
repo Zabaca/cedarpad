@@ -5,7 +5,7 @@ import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
-import { handleWorkspacesApi, renderShell } from './shell.ts';
+import { handleWorkspacesApi, renderLogin, renderShell } from './shell.ts';
 import {
   DEFAULT_WORKSPACE_ID,
   WORKSPACE_COOKIE,
@@ -14,9 +14,10 @@ import {
   readWorkspaceCookie,
 } from './shell-routing.ts';
 
-// One container = one workspace = one canvas (v1). The Worker is the gate (shared
-// secret cookie) and the proxy into the in-container vite dev server, which
-// serves the app and forwards /api/* to the bridge. Same preview-proxy path the
+// One container = one workspace = one canvas (v1). The Worker is the proxy into the
+// in-container vite dev server, which serves the app and forwards /api/* to the bridge.
+// Edge Better Auth (ADR-0007, #45) is the SOLE gate — the legacy `cs_gate` shared-secret
+// cookie was removed in the #47 cutover. Same preview-proxy path the
 // SSE spike proved streams unbuffered, so the canvas SSE stream works as-is.
 export class Sandbox extends BaseSandbox {
   // Sleep after idle (state survives in R2). The client idle gate (src/idle.ts) closes
@@ -31,7 +32,6 @@ export class Sandbox extends BaseSandbox {
 
 export interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
-  GATE_SECRET: string;
   R2_BUCKET: string;
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
@@ -48,35 +48,13 @@ export interface Env {
   WEB_ORIGIN?: string;
 }
 
-const SIGN_IN = `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>agent-canvas</title><body style="font:16px system-ui;display:grid;place-content:center;height:100vh;margin:0;background:#0b0b0c;color:#e7e7ea">
-<div style="text-align:center"><h1 style="font-weight:600">agent-canvas</h1>
-<p style="opacity:.7">Locked. Open this URL with <code>?key=…</code> to sign in.</p></div>`;
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
 
-    const secret = env.GATE_SECRET;
-    const cookies = (request.headers.get('cookie') ?? '').split(/;\s*/);
-    const gated = !!secret && cookies.includes(`cs_gate=${secret}`);
-    if (!gated) {
-      if (secret && url.searchParams.get('key') === secret) {
-        // Set the gate cookie and strip ?key from the URL.
-        return new Response(null, {
-          status: 302,
-          headers: {
-            'set-cookie': `cs_gate=${secret}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`,
-            location: url.pathname,
-          },
-        });
-      }
-      return new Response(SIGN_IN, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } });
-    }
-
-    // Edge auth (ADR-0007, slice #45), layered on top of cs_gate above. Better Auth's
-    // endpoints are served AT THE EDGE so login/session happen here without ever
+    // Edge auth (ADR-0007, slice #45) — the SOLE gate now that cs_gate is gone. Better
+    // Auth's endpoints are served AT THE EDGE so login/session happen here without ever
     // proxying to a container; every other route must carry a valid session.
     if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')) {
       return handleAuth(request, env);
@@ -88,7 +66,10 @@ export default {
     const session = await authenticate(request, env);
     const gate = decideGate(url.pathname, session);
     if (gate.decision === 'deny' || !gate.user) {
-      return new Response(SIGN_IN, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } });
+      // Sole-gate deny: serve the edge Better Auth login (#47 cutover) so an
+      // unauthenticated user can sign in — never the deleted cs_gate `?key=` page,
+      // and never the container.
+      return renderLogin();
     }
     const user = gate.user;
 
