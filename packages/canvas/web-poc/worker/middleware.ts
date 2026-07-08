@@ -1,8 +1,10 @@
 import { schema } from "../lib/db/index.js";
 import { eq } from "drizzle-orm";
+import type { Context } from "hono";
+import { getCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
-import { type AccessScope, canAccessWorkspace, scopeFromAllowlist } from "./access.js";
-import { type Auth, createAuth } from "./auth.js";
+import { type AccessScope, canAccessWorkspace, scopeForWorkspace } from "./access.js";
+import { createAuth } from "./auth.js";
 import type { AppEnv } from "./context.js";
 import { createDbForWorker } from "./runtime.js";
 
@@ -12,59 +14,54 @@ export const dbMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   await next();
 });
 
-/** First workspace the user belongs to (fallback create target when none active). */
-async function firstMembershipWorkspace(
-  db: AppEnv["Variables"]["db"],
-  userId: string,
-): Promise<string | null> {
-  const rows = await db
-    .select({ workspaceId: schema.member.workspaceId })
-    .from(schema.member)
-    .where(eq(schema.member.userId, userId))
-    .limit(1);
-  return rows[0]?.workspaceId ?? null;
+/**
+ * Cookie the platform Shell sets to pin the active workspace (ADR-0007, #46).
+ * Mirrors `WORKSPACE_COOKIE` in `packages/canvas/worker/shell-routing.ts`.
+ */
+const WORKSPACE_COOKIE = "cs_workspace";
+/** Header an agent (`x-api-key`) passes to pick its active workspace. */
+const WORKSPACE_HEADER = "x-workspace-id";
+/** The legacy/default platform workspace — used when no selection is present. */
+const DEFAULT_WORKSPACE_ID = "default";
+
+/**
+ * Pure resolution of the active PLATFORM workspace (ADR-0007, #57). Notebook
+ * data is isolated per platform workspace — NOT the Better Auth organization.
+ *   - agent (`x-api-key`): the `x-workspace-id` header.
+ *   - session: the `cs_workspace` cookie set by the Shell.
+ * Absent/empty in either case ⇒ the legacy `default` workspace, so existing
+ * (backfilled) rows stay reachable and nothing is lost.
+ */
+export function resolveActiveWorkspace(input: {
+  isAgent: boolean;
+  header: string | null | undefined;
+  cookie: string | null | undefined;
+}): string {
+  const selected = input.isAgent ? input.header : input.cookie;
+  return selected && selected.length > 0 ? selected : DEFAULT_WORKSPACE_ID;
 }
 
-/** A user's optional workspace allowlist (null ⇒ access all). */
-async function userAllowedWorkspaces(
-  db: AppEnv["Variables"]["db"],
-  userId: string,
-): Promise<string[] | null> {
-  const rows = await db
-    .select({ allowed: schema.user.allowedWorkspaces })
-    .from(schema.user)
-    .where(eq(schema.user.id, userId))
-    .limit(1);
-  return rows[0]?.allowed ?? null;
-}
-
-/** Custom fields we store on an API key's metadata. */
-interface ApiKeyMetadata {
-  /** Workspaces this key may access (absent ⇒ all). */
-  allowedWorkspaces?: string[];
-  /** Where this key's writes land (absent ⇒ the owner's first workspace). */
-  defaultWorkspaceId?: string;
-}
-
-/** Read an API key's metadata via Better Auth (the reliable server-side surface). */
-async function apiKeyMetadata(auth: Auth, key: string): Promise<ApiKeyMetadata | null> {
-  const result = await auth.api.verifyApiKey({ body: { key } }).catch(() => null);
-  return (result?.key?.metadata as ApiKeyMetadata | null | undefined) ?? null;
+/** Request-bound wrapper: read the selection from the header (agent) or cookie. */
+function activeWorkspaceId(c: Context<AppEnv>, isAgent: boolean): string {
+  return resolveActiveWorkspace({
+    isAgent,
+    header: c.req.header(WORKSPACE_HEADER),
+    cookie: getCookie(c, WORKSPACE_COOKIE),
+  });
 }
 
 /**
- * Resolve the caller, their access scope, and their create target.
+ * Resolve the caller and their active platform workspace.
  *
  * 1. `x-api-key` or session cookie → Better Auth `getSession` (the apiKey
- *    plugin makes both resolve here).
- *    - Human session: `accessScope` from the user's allowlist (default all);
- *      create target = the session's active workspace.
- *    - API key (agent): `accessScope` from the key's `metadata.allowedWorkspaces`
- *      (default all); create target = `metadata.defaultWorkspaceId`.
+ *    plugin makes both resolve here). The active workspace is the platform
+ *    workspace: `x-workspace-id` header (agent) or `cs_workspace` cookie
+ *    (session); absent ⇒ `default`. Reads/writes are isolated to it.
  * 2. Dev escape hatch: `DEV_AUTH_WORKSPACE` + `x-dev-workspace` ⇒ act as that
- *    workspace with full (all) access, no auth (local dev only).
+ *    workspace, no auth (local dev only).
  *
- * Sets `workspaceId` (create target), `userId`, `isAgent`, `accessScope`.
+ * Sets `workspaceId` (active + create target), `userId`, `isAgent`,
+ * `accessScope` (scoped to the active workspace so A never sees B).
  */
 export const authMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   const db = c.get("db");
@@ -73,35 +70,13 @@ export const authMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers }).catch(() => null);
 
   if (session?.user) {
-    const apiKeyHeader = c.req.header("x-api-key");
-    const isAgent = apiKeyHeader != null;
+    const isAgent = c.req.header("x-api-key") != null;
+    const workspaceId = activeWorkspaceId(c, isAgent);
 
-    let accessScope: AccessScope;
-    let target: string | null;
-
-    if (isAgent) {
-      const meta = await apiKeyMetadata(auth, apiKeyHeader);
-      accessScope = scopeFromAllowlist(meta?.allowedWorkspaces);
-      target = meta?.defaultWorkspaceId ?? (await firstMembershipWorkspace(db, session.user.id));
-    } else {
-      accessScope = scopeFromAllowlist(await userAllowedWorkspaces(db, session.user.id));
-      const activeWorkspace =
-        (session.session as { activeOrganizationId?: string | null }).activeOrganizationId ?? null;
-      target = activeWorkspace ?? (await firstMembershipWorkspace(db, session.user.id));
-    }
-
-    // Keep the create target inside the access scope when restricted.
-    if (target && !canAccessWorkspace(accessScope, target)) {
-      target = accessScope.kind === "list" ? (accessScope.workspaceIds[0] ?? null) : target;
-    }
-    if (!target) {
-      return c.json({ error: "no_workspace", message: "User has no workspace" }, 403);
-    }
-
-    c.set("workspaceId", target);
+    c.set("workspaceId", workspaceId);
     c.set("userId", session.user.id);
     c.set("isAgent", isAgent);
-    c.set("accessScope", accessScope);
+    c.set("accessScope", scopeForWorkspace(workspaceId));
     await next();
     return;
   }
@@ -112,7 +87,7 @@ export const authMiddleware = createMiddleware<AppEnv>(async (c, next) => {
     c.set("workspaceId", reqDevWorkspace);
     c.set("userId", null);
     c.set("isAgent", true);
-    c.set("accessScope", { kind: "all" });
+    c.set("accessScope", scopeForWorkspace(reqDevWorkspace));
     await next();
     return;
   }

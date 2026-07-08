@@ -115,6 +115,9 @@ function problemSolutionJoin(ids: string[]) {
  * Top-k semantically similar problems, each annotated with the kinds of links
  * already attached and whether it has an accepted solution. Backed by the exact
  * cosine scan in {@link findSimilarProblems} + a single-hop link join.
+ *
+ * Pass `workspaceId` to confine results to one platform workspace (Notebook
+ * search isolation, #57): workspace A's search never returns workspace B's rows.
  */
 export async function searchGraph(
   db: Database,
@@ -122,6 +125,7 @@ export async function searchGraph(
     queryVector: number[];
     topK: number;
     excludeProblemId?: string;
+    workspaceId?: string;
   },
 ): Promise<GraphSearchResult[]> {
   const hits = await findSimilarProblems(db, params);
