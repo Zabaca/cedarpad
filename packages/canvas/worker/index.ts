@@ -61,6 +61,14 @@ export interface Env {
   // Kill-switch for the scheduled dev-agent run (#63/#66). Default off ("false"); the cron
   // fires but no-ops until repo-connection (#96) lands. Flip to "true" to enable.
   DEV_AGENT_ENABLED?: string;
+  // The single-tenant owner of everything the bridge files under a user id (Inbox
+  // Conversations via `ask_human`, the dev-agent's promoted items): must be this
+  // deployment's Better Auth user.id, NOT an email or display name — the Inbox query
+  // filters by exactly that column. Unset ⇒ the bridge falls back to the literal string
+  // `'default'`, which never matches a real authenticated user, so `ask_human` items
+  // silently never appear in the Inbox. Revisit when #98 (multi-user) lands — a single
+  // static id can't represent "whichever of N users is calling."
+  CANVAS_USER?: string;
 }
 
 // Notebook's Hono API (web-poc's `buildApp`), mounted AT THE EDGE (ADR-0007, #56). No
