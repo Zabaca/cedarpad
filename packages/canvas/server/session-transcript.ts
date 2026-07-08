@@ -25,24 +25,32 @@ export function projectTranscript(msgs: SDKMessage[]): ChatEvent[] {
   return out;
 }
 
+/** Parse + project a raw session JSONL blob (the on-disk / R2 record) into replay events.
+ *  Torn/malformed lines are skipped, subagent (isSidechain) lines dropped. Shared by the
+ *  on-disk loader and the R2 read path (transcript-r2.ts) so both project identically. */
+export function projectJsonl(text: string): ChatEvent[] {
+  const msgs: SDKMessage[] = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let rec: { isSidechain?: boolean } & SDKMessage;
+    try {
+      rec = JSON.parse(line);
+    } catch {
+      continue; // a torn last line / malformed record is skipped, not fatal
+    }
+    if (rec.isSidechain) continue; // subagent internals: not the main transcript
+    msgs.push(rec);
+  }
+  return projectTranscript(msgs);
+}
+
 /** Load + project a session's transcript. Globs `**\/<sessionId>.jsonl` so it is robust to
  *  flat vs cwd-hash nesting; an absent file yields `[]` (not an error). */
 export async function loadSessionTranscript(projectsDir: string, sessionId: string): Promise<ChatEvent[]> {
   const glob = new Bun.Glob(`**/${sessionId}.jsonl`);
-  const msgs: SDKMessage[] = [];
+  let text = '';
   for await (const path of glob.scan({ cwd: projectsDir, absolute: true })) {
-    const text = await Bun.file(path).text();
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
-      let rec: { isSidechain?: boolean } & SDKMessage;
-      try {
-        rec = JSON.parse(line);
-      } catch {
-        continue; // a torn last line / malformed record is skipped, not fatal
-      }
-      if (rec.isSidechain) continue; // subagent internals: not the main transcript
-      msgs.push(rec);
-    }
+    text += (text ? '\n' : '') + (await Bun.file(path).text());
   }
-  return projectTranscript(msgs);
+  return projectJsonl(text);
 }
