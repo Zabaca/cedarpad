@@ -62,9 +62,8 @@ const shapeInput = z.object({
 
 const result = (r: OpResult) => ({ content: [{ type: 'text' as const, text: r.text }], ...(r.isError ? { isError: true } : {}) });
 
-/** Capture a PNG of a page (data URL), or null if no browser is connected.
- * `pageId` selects which tldraw page to render; omit for the human's current page. */
-export type CaptureView = (pageId?: string) => Promise<string | null>;
+/** Capture a PNG of the canvas (data URL), or null if no browser is connected. */
+export type CaptureView = () => Promise<string | null>;
 
 /** Build the in-process MCP server whose tools mutate `store`. `originChatId` is the
  * chat shape id this turn runs in; shapes the agent creates are tucked beside it and
@@ -92,9 +91,9 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
     tools: [
       tool(
         'read_canvas',
-        'Read every shape on THIS chat\'s page (the canvas has multiple pages; you only see the one your chat card is on, including shapes the human drew there). Returns id, type, geometry, text, and color for each. Call this before editing so you know what exists and where the free space is.',
+        'Read every shape on the canvas, including the ones the human drew. Returns id, type, geometry, text, and color for each. Call this before editing so you know what exists and where the free space is.',
         {},
-        async () => result(readOp(store, originChatId)),
+        async () => result(readOp(store)),
       ),
       tool(
         'read_connected',
@@ -129,12 +128,11 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
       ),
       tool(
         'view_canvas',
-        'Look at a PNG of THIS chat\'s page (the canvas has multiple pages; this renders the one your chat card is on). Good for checking spacing, overlapping labels, and layout of primitive shapes. CAVEAT: this is a tldraw EXPORT that re-renders shapes cleanly, NOT a capture of the human\'s live screen — a custom render_component (especially Mermaid) can look perfect here while being broken/empty in the human\'s actual view. So do not treat a good view_canvas as proof the human can see a component; if the human says a component looks empty or wrong, believe them over this tool. Pairs well with read_canvas (which gives exact coordinates).',
+        'Look at a PNG of the canvas. Good for checking spacing, overlapping labels, and layout of primitive shapes. CAVEAT: this is a tldraw EXPORT that re-renders shapes cleanly, NOT a capture of the human\'s live screen — a custom render_component (especially Mermaid) can look perfect here while being broken/empty in the human\'s actual view. So do not treat a good view_canvas as proof the human can see a component; if the human says a component looks empty or wrong, believe them over this tool. Pairs well with read_canvas (which gives exact coordinates).',
         {},
         async () => {
           if (!captureView) return { content: [{ type: 'text' as const, text: 'Visual view is unavailable in this setup.' }] };
-          const page = originChatId ? store.getState().shapes.find((s) => s.id === originChatId)?.pageId : undefined;
-          const url = await captureView(page);
+          const url = await captureView();
           if (!url) {
             return { content: [{ type: 'text' as const, text: 'No canvas view is open right now (the browser tab may be closed or empty), so I cannot see it. Use read_canvas for the shape list.' }] };
           }

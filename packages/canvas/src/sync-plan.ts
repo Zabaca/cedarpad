@@ -12,19 +12,16 @@
 // the diff/order/hold/binding helpers live here (and only here), not in `sync.ts`.
 
 import type {
-  IndexKey,
   TLAsset,
   TLAssetId,
   TLBindingCreate,
   TLBindingId,
-  TLPage,
-  TLPageId,
   TLShape,
   TLShapeId,
   TLShapePartial,
 } from 'tldraw';
 
-import type { CanvasPage, CanvasShape, CanvasState } from './shapes';
+import type { CanvasShape, CanvasState } from './shapes';
 // All three are pure (type-only on tldraw, no Editor/DOM): `canon` for change
 // detection, `toTldrawPartial` for the simplified -> tldraw partial assembly, and
 // `imageAssetId` for the deterministic per-image asset id.
@@ -56,14 +53,10 @@ export interface ArrowBindingPair {
 export interface EditorSnapshot {
   /** Every shape record currently in the store, keyed by id (values unused beyond presence). */
   shapes: Map<string, TLShape>;
-  /** The editor's pages, in order. */
-  pages: TLPage[];
   /** Every asset record, keyed by asset id. */
   assets: Map<string, TLAsset>;
   /** Per-arrow resolved bindings, keyed by the arrow's shape id. */
   arrowBindings: Map<string, ArrowBindingPair>;
-  /** The page the user is currently on (never auto-removed). */
-  currentPageId: string;
   /** The shape being text-edited, if any. */
   editingId: string | null;
   /** True while the human is dragging/pointing or text-editing (shapes are mid-flight). */
@@ -85,10 +78,6 @@ export interface ReconcileInput {
   snapshot: EditorSnapshot;
   /** Shape ids the server has ever sent (only these are ever deleted locally). */
   mirroredShapes: Set<string>;
-  /** Page ids the server has ever sent (only these are ever removed locally). */
-  mirroredPages: Set<string>;
-  /** The bootstrap page legacy/page-less shapes fall back onto. */
-  homePageId: string;
 }
 
 /**
@@ -96,15 +85,13 @@ export interface ReconcileInput {
  * per frame), and the planner emits them in a fixed sequence (see `OP_ORDER`).
  */
 export type ReconcileOp =
-  | { kind: 'pagePut'; pages: TLPage[] }
   | { kind: 'assetCreate'; assets: TLAsset[] }
   | { kind: 'assetUpdate'; assets: TLAsset[] }
   | { kind: 'shapeCreate'; partials: TLShapePartial[] }
   | { kind: 'shapeUpdate'; partials: TLShapePartial[] }
   | { kind: 'shapeDelete'; ids: TLShapeId[] }
   | { kind: 'bindingDelete'; ids: TLBindingId[] }
-  | { kind: 'bindingCreate'; bindings: TLBindingCreate[] }
-  | { kind: 'pageRemove'; ids: TLPageId[] };
+  | { kind: 'bindingCreate'; bindings: TLBindingCreate[] };
 
 export interface ReconcilePlan {
   ops: ReconcileOp[];
@@ -173,43 +160,9 @@ function planImageAssets(
   return { create, update };
 }
 
-// Bring the editor's pages in line with the remote model: create pages the server
-// has but we don't, and update a page whose name or order changed. Pages must land
-// before the shapes that parent to them.
-function planPagesUpsert(remote: Map<string, CanvasPage>, pages: TLPage[]): TLPage[] {
-  const editorPages = new Map(pages.map((p) => [p.id as string, p]));
-  const toPut: TLPage[] = [];
-  for (const [id, rp] of remote) {
-    const ex = editorPages.get(id);
-    if (!ex) {
-      toPut.push({ id: id as TLPageId, typeName: 'page', name: rp.name, index: rp.index as IndexKey, meta: {} } as unknown as TLPage);
-    } else if (ex.name !== rp.name || (ex.index as string) !== rp.index) {
-      toPut.push({ ...ex, name: rp.name, index: rp.index as IndexKey });
-    }
-  }
-  return toPut;
-}
-
-// Delete pages the server once had and then dropped. Never removes the page the user
-// is currently on or the last remaining page (tldraw requires >= 1 page).
-function planPagesRemove(
-  remote: Map<string, CanvasPage>,
-  pages: TLPage[],
-  mirroredPages: Set<string>,
-  currentPageId: string,
-): TLPageId[] {
-  const removable = pages
-    .filter((p) => !remote.has(p.id as string) && mirroredPages.has(p.id as string) && (p.id as string) !== currentPageId)
-    .map((p) => p.id);
-  if (removable.length && pages.length - removable.length >= 1) return removable as TLPageId[];
-  return [];
-}
-
-// The fixed apply sequence. Pages and assets exist before the shapes that
-// reference them; bindings reconcile after both arrow and target shapes exist;
-// page deletions land last, after a deleted page's shapes are already gone.
+// The fixed apply sequence. Assets exist before the shapes that reference them;
+// bindings reconcile after both arrow and target shapes exist.
 const OP_ORDER: ReadonlyArray<ReconcileOp['kind']> = [
-  'pagePut',
   'assetCreate',
   'assetUpdate',
   'shapeCreate',
@@ -217,7 +170,6 @@ const OP_ORDER: ReadonlyArray<ReconcileOp['kind']> = [
   'shapeDelete',
   'bindingDelete',
   'bindingCreate',
-  'pageRemove',
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,7 +177,7 @@ const OP_ORDER: ReadonlyArray<ReconcileOp['kind']> = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function planReconcile(input: ReconcileInput): ReconcilePlan {
-  const { remote: state, lastVersion, snapshot, mirroredShapes, mirroredPages, homePageId } = input;
+  const { remote: state, lastVersion, snapshot, mirroredShapes } = input;
 
   // Version-watermark gate: ignore an echo of (or older than) what we last applied.
   if (state.version <= lastVersion) {
@@ -234,7 +186,6 @@ export function planReconcile(input: ReconcileInput): ReconcilePlan {
   const nextVersion = state.version;
 
   const remote = new Map(state.shapes.map((s) => [s.id, s]));
-  const remotePages = new Map(state.pages.map((p) => [p.id, p]));
 
   // While the human is actively pointing/dragging/text-editing, the shapes they're
   // manipulating are mid-flight; applying a remote echo to them snaps them back.
@@ -242,9 +193,6 @@ export function planReconcile(input: ReconcileInput): ReconcilePlan {
   const held = new Set<string>();
   if (snapshot.interacting) for (const id of snapshot.selectedIds) held.add(id);
   if (snapshot.editingId) held.add(snapshot.editingId);
-
-  // The pages that will exist this frame (already here + about to be created).
-  const knownPages = new Set<string>([...snapshot.pages.map((p) => p.id as string), ...remotePages.keys()]);
 
   const toCreate: TLShapePartial[] = [];
   const toUpdate: TLShapePartial[] = [];
@@ -256,18 +204,12 @@ export function planReconcile(input: ReconcileInput): ReconcilePlan {
     const existing = snapshot.shapes.has(id);
     if (existing && held.has(id)) continue; // mid-drag: leave the human's live shape alone
     if (!existing) {
-      // Resolve the page this shape lands on. A page parent we don't (and won't)
-      // have, or no parent at all, falls back to the session's home page.
-      const parent = (partial as { parentId?: string }).parentId;
-      if (parent === undefined || (parent.startsWith('page:') && !knownPages.has(parent))) {
-        (partial as { parentId?: string }).parentId = homePageId;
-      }
       toCreate.push(partial);
     } else {
       const curCanon = snapshot.canonical.get(id);
       if (curCanon === undefined || curCanon !== canon(rs)) {
-        // Don't reparent an existing shape across pages on update (tldraw fights it
-        // and it would churn); only position/props/bindings update in place.
+        // Don't reparent an existing shape on update (tldraw fights it and it would
+        // churn); only position/props/bindings update in place.
         delete (partial as { parentId?: string }).parentId;
         toUpdate.push(partial);
       }
@@ -312,12 +254,9 @@ export function planReconcile(input: ReconcileInput): ReconcilePlan {
   }
 
   const assetBatches = planImageAssets(remote, snapshot.assets);
-  const pagePut = planPagesUpsert(remotePages, snapshot.pages);
-  const pageRemove = planPagesRemove(remotePages, snapshot.pages, mirroredPages, snapshot.currentPageId);
 
   // Assemble into the fixed apply sequence, dropping empty op kinds.
   const byKind: Partial<Record<ReconcileOp['kind'], ReconcileOp>> = {};
-  if (pagePut.length) byKind.pagePut = { kind: 'pagePut', pages: pagePut };
   if (assetBatches.create.length) byKind.assetCreate = { kind: 'assetCreate', assets: assetBatches.create };
   if (assetBatches.update.length) byKind.assetUpdate = { kind: 'assetUpdate', assets: assetBatches.update };
   if (createPartials.length) byKind.shapeCreate = { kind: 'shapeCreate', partials: createPartials };
@@ -325,7 +264,6 @@ export function planReconcile(input: ReconcileInput): ReconcilePlan {
   if (toDelete.length) byKind.shapeDelete = { kind: 'shapeDelete', ids: toDelete };
   if (bindingDelete.length) byKind.bindingDelete = { kind: 'bindingDelete', ids: bindingDelete };
   if (bindingCreate.length) byKind.bindingCreate = { kind: 'bindingCreate', bindings: bindingCreate };
-  if (pageRemove.length) byKind.pageRemove = { kind: 'pageRemove', ids: pageRemove };
 
   const ops: ReconcileOp[] = [];
   for (const kind of OP_ORDER) {

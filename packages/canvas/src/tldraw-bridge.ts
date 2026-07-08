@@ -53,13 +53,10 @@ export function fromTldrawShape(editor: Editor, shape: TLShape): CanvasShape | n
     const asset = editor.getAsset(p.assetId as never) as { props?: { src?: string | null } } | undefined;
     imageSrc = asset?.props?.src ?? undefined;
   }
-  // The page this shape lives on (walking up past any containing frame), so the
-  // simplified model partitions shapes by page and they round-trip onto their page.
-  const pageId = editor.getAncestorPageId(shape.id) as string | undefined;
-  return pureFromTldrawShape(shape, { plaintext, arrowBindings, imageSrc, pageId });
+  return pureFromTldrawShape(shape, { plaintext, arrowBindings, imageSrc });
 }
 
-/** Read the whole current page as simplified shapes. */
+/** Read the whole canvas as simplified shapes. */
 export function readPage(editor: Editor): CanvasShape[] {
   return editor.getCurrentPageShapes().map((s) => fromTldrawShape(editor, s)).filter((s): s is CanvasShape => s !== null);
 }

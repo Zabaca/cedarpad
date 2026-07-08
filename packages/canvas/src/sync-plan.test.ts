@@ -3,7 +3,7 @@
 // invariant of `planReconcile` ported from today's `reconcile()`.
 
 import { describe, expect, test } from 'bun:test';
-import type { TLAsset, TLPage, TLShape } from 'tldraw';
+import type { TLAsset, TLShape } from 'tldraw';
 
 import type { CanvasShape, CanvasState } from './shapes';
 import { canon, imageAssetId } from './tldraw-conventions';
@@ -18,11 +18,6 @@ import {
 // Fixture builders
 // ─────────────────────────────────────────────────────────────────────────────
 
-const HOME = 'page:home';
-
-const tlpage = (id: string, name = 'Page', index = 'a1'): TLPage =>
-  ({ id, typeName: 'page', name, index, meta: {} }) as unknown as TLPage;
-
 const tlasset = (assetId: string, src: string, w = 100, h = 100): TLAsset =>
   ({
     id: assetId,
@@ -36,21 +31,19 @@ const tlasset = (assetId: string, src: string, w = 100, h = 100): TLAsset =>
 const present = (): TLShape => ({}) as unknown as TLShape;
 
 const rect = (id: string, x: number, over: Partial<CanvasShape> = {}): CanvasShape =>
-  ({ id, type: 'rectangle', x, y: 0, w: 100, h: 100, color: 'black', text: '', pageId: HOME, ...over }) as CanvasShape;
+  ({ id, type: 'rectangle', x, y: 0, w: 100, h: 100, color: 'black', text: '', ...over }) as CanvasShape;
 
 const image = (id: string, src: string): CanvasShape =>
-  ({ id, type: 'image', x: 0, y: 0, w: 100, h: 100, src, alt: '', color: 'black', pageId: HOME }) as CanvasShape;
+  ({ id, type: 'image', x: 0, y: 0, w: 100, h: 100, src, alt: '', color: 'black' }) as CanvasShape;
 
 const arrow = (id: string, over: Partial<CanvasShape> = {}): CanvasShape =>
-  ({ id, type: 'arrow', x1: 0, y1: 0, x2: 10, y2: 10, color: 'black', text: '', pageId: HOME, ...over }) as CanvasShape;
+  ({ id, type: 'arrow', x1: 0, y1: 0, x2: 10, y2: 10, color: 'black', text: '', ...over }) as CanvasShape;
 
 function snap(over: Partial<EditorSnapshot> = {}): EditorSnapshot {
   return {
     shapes: new Map(),
-    pages: [tlpage(HOME, 'Home')],
     assets: new Map(),
     arrowBindings: new Map(),
-    currentPageId: HOME,
     editingId: null,
     interacting: false,
     selectedIds: new Set(),
@@ -61,12 +54,10 @@ function snap(over: Partial<EditorSnapshot> = {}): EditorSnapshot {
 
 function input(over: Partial<ReconcileInput> = {}): ReconcileInput {
   return {
-    remote: { version: 1, shapes: [], pages: [] } as CanvasState,
+    remote: { version: 1, shapes: [] } as CanvasState,
     lastVersion: 0,
     snapshot: snap(),
     mirroredShapes: new Set(),
-    mirroredPages: new Set(),
-    homePageId: HOME,
     ...over,
   };
 }
@@ -76,7 +67,7 @@ const opOf = <K extends ReconcileOp['kind']>(ops: ReconcileOp[], kind: K): Extra
 
 const ids = (partials: Array<{ id: unknown }>): string[] => partials.map((p) => String(p.id));
 
-// The delete/remove ops carry branded id arrays (TLShapeId/TLBindingId/TLPageId), which
+// The delete/remove ops carry branded id arrays (TLShapeId/TLBindingId), which
 // are plain strings at runtime; compare them as strings so the literal expecteds type-check.
 const idsOf = (op?: { ids: readonly string[] }): string[] | undefined => (op ? [...op.ids] : undefined);
 
@@ -89,7 +80,7 @@ test('1. version gate: remote.version <= lastVersion yields an empty plan', () =
     input({
       lastVersion: 5,
       // A would-be create that must be short-circuited by the gate.
-      remote: { version: 5, shapes: [rect('shape:a', 0)], pages: [] },
+      remote: { version: 5, shapes: [rect('shape:a', 0)] },
     }),
   );
   expect(plan.ops).toEqual([]);
@@ -109,7 +100,6 @@ test('2. mid-drag hold: a selected shape while interacting gets no update/delete
         version: 2,
         // Both changed (moved); plus c absent so it would delete if mirrored.
         shapes: [rect('shape:a', 50), rect('shape:b', 50)],
-        pages: [],
       },
       mirroredShapes: new Set(['shape:a', 'shape:b', 'shape:c']),
       snapshot: snap({
@@ -142,7 +132,7 @@ test('3. editing hold: the text-edited shape gets no update/delete; others recon
   const bCur = rect('shape:b', 0);
   const plan = planReconcile(
     input({
-      remote: { version: 2, shapes: [rect('shape:e', 50), rect('shape:b', 50)], pages: [] },
+      remote: { version: 2, shapes: [rect('shape:e', 50), rect('shape:b', 50)] },
       mirroredShapes: new Set(['shape:e', 'shape:b']),
       snapshot: snap({
         shapes: new Map([
@@ -163,18 +153,14 @@ test('3. editing hold: the text-edited shape gets no update/delete; others recon
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4. Missing-page fallback
+// 4. Top-level create carries no parent
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('4. missing-page fallback: a remote shape on an unknown page lands on homePageId', () => {
-  const plan = planReconcile(
-    input({
-      remote: { version: 1, shapes: [rect('shape:x', 0, { pageId: 'page:gone' })], pages: [] },
-    }),
-  );
+test('4. a top-level remote shape is created with no parentId (tldraw parents it to the canvas)', () => {
+  const plan = planReconcile(input({ remote: { version: 1, shapes: [rect('shape:x', 0)] } }));
   const create = opOf(plan.ops, 'shapeCreate');
   expect(create?.partials).toHaveLength(1);
-  expect((create!.partials[0] as { parentId?: string }).parentId).toBe(HOME);
+  expect((create!.partials[0] as { parentId?: string }).parentId).toBeUndefined();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,11 +169,11 @@ test('4. missing-page fallback: a remote shape on an unknown page lands on homeP
 
 test('5. parent-first ordering: a frame is created before a child that arrives first', () => {
   const child = rect('shape:c', 0, { parentId: 'shape:f' });
-  const frame = { id: 'shape:f', type: 'frame', x: 0, y: 0, w: 300, h: 300, name: 'F', color: 'black', pageId: HOME } as CanvasShape;
+  const frame = { id: 'shape:f', type: 'frame', x: 0, y: 0, w: 300, h: 300, name: 'F', color: 'black' } as CanvasShape;
   const plan = planReconcile(
     input({
       // Child appears BEFORE its frame in the remote list.
-      remote: { version: 1, shapes: [child, frame], pages: [] },
+      remote: { version: 1, shapes: [child, frame] },
     }),
   );
   expect(ids(opOf(plan.ops, 'shapeCreate')!.partials)).toEqual(['shape:f', 'shape:c']);
@@ -197,11 +183,11 @@ test('5. parent-first ordering: a frame is created before a child that arrives f
 // 6. Update without reparent
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('6. update without reparent: a moved-page existing shape updates with no parentId', () => {
-  const cur = rect('shape:u', 0, { pageId: 'page:a' });
+test('6. update without reparent: an existing frame child updates with no parentId', () => {
+  const cur = rect('shape:u', 0, { parentId: 'shape:f' });
   const plan = planReconcile(
     input({
-      remote: { version: 2, shapes: [rect('shape:u', 0, { pageId: 'page:b' })], pages: [] },
+      remote: { version: 2, shapes: [rect('shape:u', 50, { parentId: 'shape:f' })] },
       snapshot: snap({
         shapes: new Map([['shape:u', present()]]),
         canonical: new Map([['shape:u', canon(cur)]]),
@@ -220,7 +206,7 @@ test('6. update without reparent: a moved-page existing shape updates with no pa
 test('7. delete only if mirrored: an absent local shape deletes only when mirrored', () => {
   const base = () =>
     input({
-      remote: { version: 2, shapes: [], pages: [] },
+      remote: { version: 2, shapes: [] },
       snapshot: snap({
         shapes: new Map([['shape:x', present()]]),
         canonical: new Map([['shape:x', canon(rect('shape:x', 0))]]),
@@ -244,7 +230,6 @@ test('8. binding when both terminals are created this batch: bindingCreate order
       remote: {
         version: 1,
         shapes: [arrow('shape:arr', { endShapeId: 'shape:tgt' }), rect('shape:tgt', 0)],
-        pages: [],
       },
     }),
   );
@@ -265,7 +250,7 @@ test('9. absent target: no bindingCreate; a stale existing binding is deleted', 
   const remoteArrow = arrow('shape:arr', { endShapeId: 'shape:ghost' });
   const plan = planReconcile(
     input({
-      remote: { version: 2, shapes: [remoteArrow], pages: [] },
+      remote: { version: 2, shapes: [remoteArrow] },
       snapshot: snap({
         shapes: new Map([['shape:arr', present()]]),
         // Same canon -> no shapeUpdate, isolating the binding behavior.
@@ -281,57 +266,6 @@ test('9. absent target: no bindingCreate; a stale existing binding is deleted', 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 10. Page-delete safety
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('10. page-delete safety', () => {
-  test('would drop page count below 1: no pageRemove', () => {
-    const plan = planReconcile(
-      input({
-        remote: { version: 2, shapes: [], pages: [] },
-        mirroredPages: new Set(['page:1']),
-        // Current page is elsewhere so page:1 is otherwise removable; the count guard stops it.
-        snapshot: snap({ pages: [tlpage('page:1')], currentPageId: 'page:keep' }),
-      }),
-    );
-    expect(opOf(plan.ops, 'pageRemove')).toBeUndefined();
-  });
-
-  test('current page is never removed', () => {
-    const plan = planReconcile(
-      input({
-        remote: { version: 2, shapes: [], pages: [] },
-        mirroredPages: new Set(['page:cur']),
-        snapshot: snap({ pages: [tlpage(HOME), tlpage('page:cur')], currentPageId: 'page:cur' }),
-      }),
-    );
-    expect(opOf(plan.ops, 'pageRemove')).toBeUndefined();
-  });
-
-  test('a non-mirrored extra page is never removed', () => {
-    const plan = planReconcile(
-      input({
-        remote: { version: 2, shapes: [], pages: [] },
-        mirroredPages: new Set(), // page:extra was never mirrored
-        snapshot: snap({ pages: [tlpage(HOME), tlpage('page:extra')], currentPageId: HOME }),
-      }),
-    );
-    expect(opOf(plan.ops, 'pageRemove')).toBeUndefined();
-  });
-
-  test('a mirrored, non-current, dropped page IS removed', () => {
-    const plan = planReconcile(
-      input({
-        remote: { version: 2, shapes: [], pages: [] },
-        mirroredPages: new Set(['page:m']),
-        snapshot: snap({ pages: [tlpage(HOME), tlpage('page:m')], currentPageId: HOME }),
-      }),
-    );
-    expect(idsOf(opOf(plan.ops, 'pageRemove'))).toEqual(['page:m']);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // 11. Asset upsert
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -339,7 +273,7 @@ describe('11. image asset upsert', () => {
   test('changed src on an existing asset -> assetUpdate (no assetCreate)', () => {
     const plan = planReconcile(
       input({
-        remote: { version: 1, shapes: [image('shape:img', 'data:image/png;base64,NEW')], pages: [] },
+        remote: { version: 1, shapes: [image('shape:img', 'data:image/png;base64,NEW')] },
         snapshot: snap({
           assets: new Map([[imageAssetId('shape:img'), tlasset(imageAssetId('shape:img'), 'data:image/png;base64,OLD')]]),
         }),
@@ -354,7 +288,7 @@ describe('11. image asset upsert', () => {
   test('a new image -> assetCreate ordered before its shapeCreate', () => {
     const plan = planReconcile(
       input({
-        remote: { version: 1, shapes: [image('shape:img', 'data:image/png;base64,XXX')], pages: [] },
+        remote: { version: 1, shapes: [image('shape:img', 'data:image/png;base64,XXX')] },
       }),
     );
     expect(opOf(plan.ops, 'assetCreate')?.assets).toHaveLength(1);
@@ -383,13 +317,9 @@ test('12. op-ordering invariant: a batch touching every kind emits them in canon
           aexist, // existing arrow, binding now stale -> bindingDelete
           // shape:d is absent -> shapeDelete (mirrored)
         ],
-        pages: [tlpage('page:keep', 'Keep', 'a2'), tlpage('page:new', 'New', 'a3')], // page:new -> pagePut
       },
       mirroredShapes: new Set(['shape:d']),
-      mirroredPages: new Set(['page:keep', 'page:remove']),
       snapshot: snap({
-        pages: [tlpage(HOME), tlpage('page:keep', 'Keep', 'a2'), tlpage('page:remove', 'Gone', 'a4')],
-        currentPageId: HOME,
         shapes: new Map([
           ['shape:u', present()],
           ['shape:d', present()],
@@ -406,13 +336,12 @@ test('12. op-ordering invariant: a batch touching every kind emits them in canon
   );
 
   const kinds = plan.ops.map((o) => o.kind);
-  // Every kind fired exactly once...
+  // Every kind fired exactly once — and there is no page op kind left to fire.
   expect(([...kinds] as string[]).sort()).toEqual(
-    ['assetCreate', 'assetUpdate', 'bindingCreate', 'bindingDelete', 'pagePut', 'pageRemove', 'shapeCreate', 'shapeDelete', 'shapeUpdate'].sort(),
+    ['assetCreate', 'assetUpdate', 'bindingCreate', 'bindingDelete', 'shapeCreate', 'shapeDelete', 'shapeUpdate'].sort(),
   );
   // ...and in the canonical apply order.
   expect(kinds).toEqual([
-    'pagePut',
     'assetCreate',
     'assetUpdate',
     'shapeCreate',
@@ -420,6 +349,5 @@ test('12. op-ordering invariant: a batch touching every kind emits them in canon
     'shapeDelete',
     'bindingDelete',
     'bindingCreate',
-    'pageRemove',
   ]);
 });

@@ -28,15 +28,6 @@ export interface BaseShape {
    * round-trip without coordinate math — the frame just has to be created first.
    */
   parentId?: string;
-  /**
-   * The tldraw page this shape lives on (e.g. "page:abc"). Shapes are partitioned by
-   * page: a shape appears only on its own page. Omitted means the default/first page
-   * (back-compat with canvases persisted before pages existed). A top-level shape is
-   * created with `parentId = pageId`; a frame child parents to the frame (whose own
-   * `pageId` carries the page), so `pageId` rides along on both but only positions
-   * top-level shapes. Resolved from `editor.getAncestorPageId` on the way up.
-   */
-  pageId?: string;
 }
 
 export interface RectangleShape extends BaseShape {
@@ -214,26 +205,10 @@ export type ShapeType = CanvasShape['type'];
 /** Types an agent is allowed to author. Freehand `draw` is human-only. */
 export const AGENT_DRAWABLE_TYPES = ['rectangle', 'ellipse', 'text', 'note', 'arrow', 'component'] as const;
 
-/**
- * A tldraw page. The canvas is partitioned into pages; each shape carries the
- * `pageId` of the page it lives on. Pages are synced + persisted alongside shapes
- * so a multi-page canvas survives a reload (without this, every shape would
- * collapse onto the single default page on restart).
- */
-export interface CanvasPage {
-  /** tldraw page id, e.g. "page:abc". */
-  id: string;
-  name: string;
-  /** tldraw fractional index (a sortable string) that orders pages in the menu. */
-  index: string;
-}
-
 export interface CanvasState {
   /** Monotonic counter, bumped on every mutation. Drives client reconciliation. */
   version: number;
   shapes: CanvasShape[];
-  /** The canvas's pages, ordered by `index`. Empty = the implicit default page only. */
-  pages: CanvasPage[];
 }
 
 export const isColor = (v: unknown): v is ShapeColor =>

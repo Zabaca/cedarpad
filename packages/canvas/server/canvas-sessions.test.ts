@@ -6,9 +6,13 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import { createSessionRegistry } from './canvas-sessions.ts';
+import { createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
+import { BlobStore, memBackend } from './blob-store.ts';
 import { createStore } from '../src/store.ts';
+import { planReconcile } from '../src/sync-plan.ts';
+import { canon } from '../src/tldraw-conventions.ts';
 import type { CanvasShape } from '../src/shapes.ts';
+import type { TLShape } from 'tldraw';
 
 const shape = (id: string): CanvasShape =>
   ({ id, type: 'geo', x: 0, y: 0, props: {} }) as unknown as CanvasShape;
@@ -23,6 +27,74 @@ function storeRegistry() {
   });
   return { reg, builds };
 }
+
+// A canvas persisted BEFORE the pages layer was removed. R2 holds these blobs right
+// now: a `pages` array beside the shapes, and a `pageId` on every shape. Nothing
+// migrates them, so restoring one must drop both and still yield every shape.
+const legacyBlob = () => ({
+  version: 7,
+  pages: [
+    { id: 'page:home', name: 'Page 1', index: 'a1' },
+    { id: 'page:two', name: 'Notes', index: 'a2' },
+  ],
+  shapes: [
+    { id: 'shape:a', type: 'rectangle', x: 0, y: 0, w: 10, h: 10, color: 'black', text: 'A', pageId: 'page:home' },
+    { id: 'shape:b', type: 'note', x: 5, y: 5, color: 'blue', text: 'B', pageId: 'page:two' },
+    { id: 'shape:c', type: 'chat', x: 9, y: 9, w: 380, h: 460, color: 'black', title: 'Chat 1', pageId: 'page:two' },
+  ],
+});
+
+// The same three shapes as the browser decodes them off a live tldraw editor: no
+// `pageId`, because nothing on the browser side knows what a page is any more.
+const browserShapes = (): CanvasShape[] => [
+  { id: 'shape:a', type: 'rectangle', x: 0, y: 0, w: 10, h: 10, color: 'black', text: 'A' },
+  { id: 'shape:b', type: 'note', x: 5, y: 5, color: 'blue', text: 'B' },
+  { id: 'shape:c', type: 'chat', x: 9, y: 9, w: 380, h: 460, color: 'black', title: 'Chat 1' },
+];
+
+describe('back-compat: a canvas persisted with pages restores without them', () => {
+  test('every shape is restored and the state carries no pages', async () => {
+    const blobs = new BlobStore(memBackend());
+    await blobs.saveCanvasState('ws1', 'c1', legacyBlob() as never);
+
+    const session = await createCanvasSession(blobs, 'ws1', 'c1');
+    const state = session.store.getState();
+
+    expect(state.shapes.map((s) => s.id)).toEqual(['shape:a', 'shape:b', 'shape:c']);
+    expect(state.shapes.map((s) => s.type)).toEqual(['rectangle', 'note', 'chat']);
+    expect(Object.keys(state).sort()).toEqual(['shapes', 'version']);
+  });
+
+  // `canon()` serializes EVERY key of a shape, so a restored shape that still carried
+  // `pageId` could never equal the browser's re-encoded shape — the planner's change
+  // detector (`curCanon !== canon(rs)`) would fire for it on every frame, forever.
+  // The whole production `default` canvas is legacy shapes, so that would be constant
+  // churn. Restore must hand back shapes the browser can recognize as unchanged.
+  test('a restored legacy shape provokes no shapeUpdate on the first frame', async () => {
+    const blobs = new BlobStore(memBackend());
+    await blobs.saveCanvasState('ws1', 'c1', legacyBlob() as never);
+    const session = await createCanvasSession(blobs, 'ws1', 'c1');
+
+    const present = () => ({}) as unknown as TLShape;
+    const plan = planReconcile({
+      remote: session.store.getState(),
+      lastVersion: -1,
+      mirroredShapes: new Set(),
+      snapshot: {
+        // The browser already has all three shapes, unchanged.
+        shapes: new Map(browserShapes().map((s) => [s.id, present()])),
+        canonical: new Map(browserShapes().map((s) => [s.id, canon(s)])),
+        assets: new Map(),
+        arrowBindings: new Map(),
+        editingId: null,
+        interacting: false,
+        selectedIds: new Set(),
+      },
+    });
+
+    expect(plan.ops).toEqual([]);
+  });
+});
 
 describe('createSessionRegistry: per-canvas store keying', () => {
   test('same canvasId → same session (built once, reused)', async () => {

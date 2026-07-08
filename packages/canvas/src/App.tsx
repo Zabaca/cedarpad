@@ -1,7 +1,8 @@
 import { Suspense, lazy, useCallback, useRef, useState } from 'react';
-import { DefaultContextMenu, DefaultContextMenuContent, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLPageId, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
+import { DefaultContextMenu, DefaultContextMenuContent, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
 import 'tldraw/tldraw.css';
 
+import { activeCanvasId } from './active-canvas';
 import { getActiveChat, setForkHandler } from './agent-link';
 import { ChatShapeUtil } from './ChatShape';
 import { closeSession, forkSession } from './chat-store';
@@ -22,9 +23,8 @@ const customShapeUtils: TLAnyShapeUtilConstructor[] = [ComponentShapeUtil, ChatS
 export type AppView = 'canvas' | 'webpoc';
 const WebPocApp = lazy(() => import('../web-poc/src/embed').then((m) => ({ default: m.WebPocApp })));
 
-// Hide ONLY tldraw's built-in page dropdown ("Avatar ⌄"). Our own LeftPanel now
-// owns the page list. The hamburger MainMenu and the undo/redo/delete/duplicate
-// QuickActions are left in place.
+// Hide tldraw's built-in page dropdown ("Avatar ⌄"): a canvas has no pages. The
+// hamburger MainMenu and the undo/redo/delete/duplicate QuickActions are left in place.
 // The shared-library UI action (#55): when exactly one `component` shape is selected, add
 // "Promote to shared library" (move it to @shared) / "Copy to this canvas" (diverge from
 // shared) to the right-click menu — the UI mirror of the agent's promote/adopt tools.
@@ -60,10 +60,10 @@ function CanvasContextMenu(props: TLUiContextMenuProps) {
 
 const tldrawComponents: TLComponents = { PageMenu: null, ContextMenu: CanvasContextMenu };
 
-// Persist the camera (pan + zoom) PER PAGE across reloads + page switches, so each
-// page returns to where you left it rather than the default center. Canvas shapes
-// live in the in-memory bridge, so the camera is the one piece of view state the
-// client owns. Stored as a { pageId -> {x,y,z} } map.
+// Persist the camera (pan + zoom) PER CANVAS across reloads, so a canvas returns to
+// where you left it rather than the default center. Canvas shapes live in the
+// in-memory bridge, so the camera is the one piece of view state the client owns.
+// Stored as a { canvasId -> {x,y,z} } map.
 const CAM_KEY = 'agent-canvas:cameras';
 
 type Cam = { x: number; y: number; z: number };
@@ -85,47 +85,6 @@ const isCam = (c: unknown): c is Cam =>
 function applyCamera(editor: Editor, cams: CamMap, key: string): void {
   const c = cams[key];
   if (isCam(c)) editor.setCamera({ x: c.x, y: c.y, z: c.z }, { immediate: true });
-}
-
-// Which page the user was last on. Pages arrive from the bridge over SSE *after*
-// mount, so we can't switch immediately — we wait for the saved page to exist, then
-// switch once. An explicitly-created page has a stable id and round-trips, so this
-// lands you back on it; the default page regenerates its id on reload, so a saved
-// default just never matches and we stay on the fresh page 1 (the same place).
-const PAGE_KEY = 'agent-canvas:page';
-
-function restoreCurrentPage(editor: Editor): () => void {
-  let saved: string | null = null;
-  try {
-    saved = localStorage.getItem(PAGE_KEY);
-  } catch {
-    /* storage unavailable */
-  }
-  if (!saved || saved === editor.getCurrentPageId()) return () => {};
-  const target = saved;
-  const trySwitch = (): boolean => {
-    if (!editor.getPage(target as TLPageId)) return false;
-    editor.setCurrentPage(target as TLPageId);
-    return true;
-  };
-  if (trySwitch()) return () => {};
-  // Wait for the page to arrive over sync, then switch once. Give up after a few
-  // seconds (a saved default-page id will never reappear) so the listener can't leak.
-  let giveUp: ReturnType<typeof setTimeout> | null = null;
-  const un = editor.store.listen(
-    () => {
-      if (trySwitch()) {
-        un();
-        if (giveUp) clearTimeout(giveUp);
-      }
-    },
-    { scope: 'document' },
-  );
-  giveUp = setTimeout(un, 5000);
-  return () => {
-    un();
-    if (giveUp) clearTimeout(giveUp);
-  };
 }
 
 // A strictly-increasing chat number that never reuses a value. Seeded above both
@@ -263,36 +222,22 @@ export default function App() {
       editorRef.current = editor;
       setReady(true);
       const unsync = wireSync(editor);
-      const unrestorePage = restoreCurrentPage(editor); // return to the last-viewed page
       setForkHandler((pid) => forkChat(pid as TLShapeId)); // chat cards' fork button routes here
 
-      // Per-page camera. The default (home) page's id regenerates each load, so key
-      // its camera under a stable sentinel; explicit pages key under their own id.
-      const homePageId = editor.getCurrentPageId() as string;
-      const camKey = (pid: string) => (pid === homePageId ? '__home__' : pid);
+      // Per-canvas camera: restore the one we land on, then save (debounced) on move.
+      const camKey = activeCanvasId();
       const cameras = loadCameras();
-      applyCamera(editor, cameras, camKey(homePageId)); // restore the page we land on
+      applyCamera(editor, cameras, camKey);
 
-      // On a page switch, restore that page's saved camera (synchronously, before the
-      // debounced save below reads getCamera). On a camera move, save it (debounced),
-      // keyed by the current page. Both ride the same session-scope listener.
-      let lastPageId = homePageId;
       let camTimer: ReturnType<typeof setTimeout> | null = null;
       const uncam = editor.store.listen(
         () => {
-          const pid = editor.getCurrentPageId() as string;
-          if (pid !== lastPageId) {
-            lastPageId = pid;
-            applyCamera(editor, cameras, camKey(pid));
-          }
           if (camTimer) clearTimeout(camTimer);
           camTimer = setTimeout(() => {
             const c = editor.getCamera();
-            cameras[camKey(pid)] = { x: c.x, y: c.y, z: c.z };
+            cameras[camKey] = { x: c.x, y: c.y, z: c.z };
             try {
               localStorage.setItem(CAM_KEY, JSON.stringify(cameras));
-              // Remember the page too, so a refresh returns to it (not always page 1).
-              localStorage.setItem(PAGE_KEY, pid);
             } catch {
               /* storage full/unavailable: skip */
             }
@@ -337,7 +282,6 @@ export default function App() {
         setForkHandler(null);
         uncam();
         unlisten();
-        unrestorePage();
         unsync();
       };
     },
@@ -357,9 +301,7 @@ export default function App() {
           </Suspense>
         </div>
       )}
-      {ready && editorRef.current && (
-        <LeftPanel editor={editorRef.current} activeApp={activeApp} onSelectApp={setActiveApp} />
-      )}
+      <LeftPanel activeApp={activeApp} onSelectApp={setActiveApp} />
       {activeApp === 'canvas' && (
         <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">
           ＋ New chat

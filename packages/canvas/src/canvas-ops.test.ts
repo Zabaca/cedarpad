@@ -55,17 +55,17 @@ describe('canvas ops (the agent tool logic)', () => {
     expect(text).toContain('module threw on import');
   });
 
-  test('read_canvas is scoped to the originating chat\'s page', () => {
+  test('read_canvas returns every shape on the canvas', () => {
     const s = createStore();
     s.upsert([
-      normalizeShape({ id: 'shape:chat', type: 'chat', x: 0, y: 0, pageId: 'page:a' }),
-      normalizeShape({ id: 'shape:onA', type: 'rectangle', x: 0, y: 0, text: 'A', pageId: 'page:a' }),
-      normalizeShape({ id: 'shape:onB', type: 'rectangle', x: 0, y: 0, text: 'B', pageId: 'page:b' }),
+      normalizeShape({ id: 'shape:chat', type: 'chat', x: 0, y: 0 }),
+      normalizeShape({ id: 'shape:one', type: 'rectangle', x: 0, y: 0, text: 'A' }),
+      normalizeShape({ id: 'shape:two', type: 'rectangle', x: 0, y: 0, text: 'B' }),
     ]);
-    const scoped = readOp(s, 'shape:chat').text;
-    expect(scoped).toContain('shape:onA');
-    expect(scoped).not.toContain('shape:onB');
-    expect(readOp(s).text).toContain('shape:onB'); // no chat -> whole canvas
+    const text = readOp(s).text;
+    expect(text).toContain('3 shape(s)');
+    expect(text).toContain('shape:one');
+    expect(text).toContain('shape:two');
   });
 
   test('create fills defaults and mints ids', () => {
@@ -203,15 +203,9 @@ describe('canvas ops (the agent tool logic)', () => {
     });
   });
 
-  describe('attachBatchToChat: the single attach seam (position + root link + page stamp)', () => {
-    const chatWithPage = () => {
+  describe('attachBatchToChat: the single attach seam (position + root link)', () => {
+    const chatOnCanvas = () => {
       const s = createStore();
-      s.upsert([normalizeShape({ id: 'shape:chat', type: 'chat', color: 'black', x: 1000, y: 200, w: 380, h: 460, title: 'Chat', pageId: 'page:a' })]);
-      return s;
-    };
-    const legacyChat = () => {
-      const s = createStore();
-      // No pageId: a chat persisted before pages existed.
       s.upsert([normalizeShape({ id: 'shape:chat', type: 'chat', color: 'black', x: 1000, y: 200, w: 380, h: 460, title: 'Chat' })]);
       return s;
     };
@@ -220,27 +214,25 @@ describe('canvas ops (the agent tool logic)', () => {
       normalizeShape({ type: 'ellipse', x: 300, y: 100, w: 160, h: 100 }),
     ];
 
-    test('chat-missing => batch identity: length unchanged, no arrows, no pageId stamped', () => {
+    test('chat-missing => batch identity: length unchanged, no arrows', () => {
       const s = createStore(); // no chat on the canvas
       const made = batch();
       const out = attachBatchToChat(s, made, 'shape:missing', { preservePosition: false });
       expect(out).toBe(made); // same array reference, returned untouched
       expect(out).toHaveLength(2);
       expect(out.some((sh) => sh.type === 'arrow')).toBe(false);
-      expect(out.every((sh) => sh.pageId === undefined)).toBe(true);
     });
 
-    test('legacy chat (pageId undefined) => arrows appended + roots linked, but NO shape stamped', () => {
-      const s = legacyChat();
+    test('every root shape is linked back to the chat with a grey arrow', () => {
+      const s = chatOnCanvas();
       const out = attachBatchToChat(s, batch(), 'shape:chat', { preservePosition: true });
       const arrows = out.filter((sh) => sh.type === 'arrow');
       expect(arrows).toHaveLength(2); // one root link per non-arrow shape
       expect(arrows.every((a) => a.type === 'arrow' && a.startShapeId === 'shape:chat')).toBe(true);
-      expect(out.every((sh) => sh.pageId === undefined)).toBe(true); // silent no-stamp fallback
     });
 
-    test('preservePosition: true => every input shape keeps x/y, arrows appended, page stamped', () => {
-      const s = chatWithPage();
+    test('preservePosition: true => every input shape keeps x/y, arrows appended', () => {
+      const s = chatOnCanvas();
       const made = batch();
       const before = new Map(made.map((sh) => [sh.id, coordOf(sh)]));
       const out = attachBatchToChat(s, made, 'shape:chat', { preservePosition: true });
@@ -249,11 +241,10 @@ describe('canvas ops (the agent tool logic)', () => {
         expect(coordOf(after)).toEqual(xy); // coords untouched
       }
       expect(out.filter((sh) => sh.type === 'arrow')).toHaveLength(2);
-      expect(out.every((sh) => sh.pageId === 'page:a')).toBe(true);
     });
 
-    test('preservePosition: false => batch tucked (positions move), root arrows appended, page stamped', () => {
-      const s = chatWithPage();
+    test('preservePosition: false => batch tucked (positions move), root arrows appended', () => {
+      const s = chatOnCanvas();
       const made = batch();
       const before = new Map(made.map((sh) => [sh.id, coordOf(sh)]));
       const out = attachBatchToChat(s, made, 'shape:chat', { preservePosition: false });
@@ -263,11 +254,10 @@ describe('canvas ops (the agent tool logic)', () => {
       });
       expect(moved).toBe(true); // the tuck heuristic shifted the batch
       expect(out.filter((sh) => sh.type === 'arrow')).toHaveLength(2);
-      expect(out.every((sh) => sh.pageId === 'page:a')).toBe(true);
     });
 
     test('roots rule: a batch with one internal arrow links exactly ONE root to the chat', () => {
-      const s = chatWithPage();
+      const s = chatOnCanvas();
       const a = normalizeShape({ type: 'rectangle', x: 0, y: 0, w: 100, h: 100 });
       const b = normalizeShape({ type: 'rectangle', x: 200, y: 0, w: 100, h: 100 });
       const internal = normalizeShape({ type: 'arrow', color: 'grey', startShapeId: a.id, endShapeId: b.id });
@@ -281,7 +271,7 @@ describe('canvas ops (the agent tool logic)', () => {
   });
 
   describe('placeComponentOp routes attach through the seam (no inline duplication)', () => {
-    test('a missing origin chat is the seam no-op: shape upserted unchanged, no link, no stamp', () => {
+    test('a missing origin chat is the seam no-op: shape upserted unchanged, no link', () => {
       const s = createStore(); // the chat id below was never added to the canvas
       const r = placeComponentOp(s, { module: 'KpiCard', x: 700, y: 680, w: 360, h: 260, rev: 1 }, 'shape:missing');
       expect(r.isError).toBeUndefined();
@@ -293,36 +283,32 @@ describe('canvas ops (the agent tool logic)', () => {
       expect(comp.type === 'component' && comp.x).toBe(700); // coords untouched
       expect(comp.type === 'component' && comp.y).toBe(680);
       expect(shapes.some((sh) => sh.type === 'arrow')).toBe(false);
-      expect(comp.pageId).toBeUndefined(); // nothing stamped
     });
 
-    test('legacy (no-pageId) chat: placeComponentOp and createShapesOp attach identically', () => {
-      const seedLegacyChat = () => {
+    test('placeComponentOp and createShapesOp attach identically', () => {
+      const seedChat = () => {
         const st = createStore();
-        // No pageId: a chat persisted before pages existed (the silent no-stamp fallback).
         st.upsert([normalizeShape({ id: 'shape:chat', type: 'chat', color: 'black', x: 1000, y: 200, w: 380, h: 460, title: 'Chat' })]);
         return st;
       };
-      // The same fresh batch (one root shape) attached two ways against the same legacy chat.
-      const viaCreate = seedLegacyChat();
+      // The same fresh batch (one root shape) attached two ways against the same chat.
+      const viaCreate = seedChat();
       createShapesOp(viaCreate, [{ type: 'rectangle', x: 0, y: 0, w: 160, h: 100 }], 'shape:chat');
-      const viaPlace = seedLegacyChat();
+      const viaPlace = seedChat();
       placeComponentOp(viaPlace, { module: 'KpiCard', x: 0, y: 0, w: 360, h: 260, rev: 1 }, 'shape:chat');
 
-      // Parity is on the attach OUTCOME (arrow set + page stamp), not the shape ids/coords.
+      // Parity is on the attach OUTCOME (the arrow set), not the shape ids/coords.
       const attachShape = (st: ReturnType<typeof createStore>) => {
-        const shapes = st.getState().shapes;
-        const arrows = shapes.filter((sh) => sh.type === 'arrow');
+        const arrows = st.getState().shapes.filter((sh) => sh.type === 'arrow');
         return {
           arrowCount: arrows.length,
           starts: arrows.map((a) => a.type === 'arrow' && a.startShapeId),
           colors: arrows.map((a) => a.color),
-          anyStamped: shapes.some((sh) => sh.pageId !== undefined), // legacy chat stamps nothing
         };
       };
       expect(attachShape(viaPlace)).toEqual(attachShape(viaCreate));
-      // And concretely: exactly one grey link from the chat, nothing page-stamped.
-      expect(attachShape(viaPlace)).toEqual({ arrowCount: 1, starts: ['shape:chat'], colors: ['grey'], anyStamped: false });
+      // And concretely: exactly one grey link from the chat.
+      expect(attachShape(viaPlace)).toEqual({ arrowCount: 1, starts: ['shape:chat'], colors: ['grey'] });
     });
   });
 

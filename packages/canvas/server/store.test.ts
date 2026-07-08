@@ -8,7 +8,7 @@ const rect = (id: string, x = 0): CanvasShape => ({ id, type: 'rectangle', x, y:
 describe('store', () => {
   test('starts empty at version 0', () => {
     const s = createStore();
-    expect(s.getState()).toEqual({ version: 0, shapes: [], pages: [] });
+    expect(s.getState()).toEqual({ version: 0, shapes: [] });
   });
 
   test('upsert bumps version and is keyed by id', () => {
@@ -74,26 +74,6 @@ describe('store', () => {
     expect(versions).toEqual([1]);
   });
 
-  test('upsertPages: identical page is a no-op, mixed identical+changed bumps once', () => {
-    const versions: number[] = [];
-    const s = createStore([], (st) => versions.push(st.version));
-    expect(
-      s.upsertPages([
-        { id: 'page:a', name: 'A', index: 'a1' },
-        { id: 'page:b', name: 'B', index: 'a2' },
-      ]),
-    ).toBe(1); // both new
-    expect(s.upsertPages([{ id: 'page:a', name: 'A', index: 'a1' }])).toBe(1); // identical -> no-op
-    // A unchanged (no-op), B renamed (change) -> exactly one bump
-    expect(
-      s.upsertPages([
-        { id: 'page:a', name: 'A', index: 'a1' },
-        { id: 'page:b', name: 'B renamed', index: 'a2' },
-      ]),
-    ).toBe(2);
-    expect(versions).toEqual([1, 2]);
-  });
-
   test('shapes come back sorted by id (deterministic reads)', () => {
     const s = createStore();
     s.upsert([rect('shape:c'), rect('shape:a'), rect('shape:b')]);
@@ -109,23 +89,5 @@ describe('store', () => {
     s.remove(['shape:a']); // 2
     s.clear(); // no-op (already empty)
     expect(versions).toEqual([1, 2]);
-  });
-
-  test('pages: upsert/remove bump version, dedupe by id, sort by index', () => {
-    const s = createStore();
-    expect(s.upsertPages([{ id: 'page:b', name: 'B', index: 'a2' }, { id: 'page:a', name: 'A', index: 'a1' }])).toBe(1);
-    expect(s.getState().pages.map((p) => p.id)).toEqual(['page:a', 'page:b']); // ordered by index
-    expect(s.upsertPages([{ id: 'page:a', name: 'A', index: 'a1' }])).toBe(1); // identical -> no bump
-    expect(s.upsertPages([{ id: 'page:a', name: 'A renamed', index: 'a1' }])).toBe(2); // change -> bump
-    expect(s.removePages(['nope'])).toBe(2); // missing -> no bump
-    expect(s.removePages(['page:b'])).toBe(3);
-    expect(s.getState().pages.map((p) => p.id)).toEqual(['page:a']);
-  });
-
-  test('clear drops shapes but leaves pages intact', () => {
-    const s = createStore([rect('shape:a')], undefined, [{ id: 'page:a', name: 'A', index: 'a1' }]);
-    s.clear();
-    expect(s.getState().shapes).toHaveLength(0);
-    expect(s.getState().pages).toHaveLength(1);
   });
 });
