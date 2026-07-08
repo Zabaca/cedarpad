@@ -23,13 +23,21 @@ export interface DevAgentRunner {
   exec(command: string): Promise<{ exitCode: number; stdout: string }>;
 }
 
-// #63 STUB run: a trivial liveness step that proves the wake→run→sleep path is real and
-// testable end-to-end without the workflow. The actual Explore→gate→ask_human→PR
-// workflow is #66; the git/worktree machinery is #64. Keep this a no-op-ish liveness
-// check — do NOT grow it into the workflow harness here.
+// The command the container runs for one scheduled workflow. The Explore→gate→ask_human
+// harness (#66) is CONTAINER-side (it needs the SDK/Turso/git) — the edge only wakes the
+// sandbox and execs this entrypoint (`server/dev-agent-run.ts`), which assembles the real
+// seams and calls `runDevAgentWorkflow`. Kept as a string command so the edge worker never
+// imports the container-only harness (bundle stays clean).
+export const DEV_AGENT_WORKFLOW_CMD =
+  'cd /app/agent-canvas/packages/canvas && bun run server/dev-agent-run.ts';
+
+// #66 run: kick ONE scheduled workflow inside the container. The edge wakes the dev-agent
+// sandbox (dispatchDevAgentRun) then calls this; a non-zero exit is surfaced (thrown) so the
+// dispatcher rethrows it rather than silently swallowing a failed run.
 export async function runDevAgent(sandbox: DevAgentRunner): Promise<void> {
-  const res = await sandbox.exec('echo dev-agent-alive');
-  console.log(`[dev-agent] liveness exit=${res.exitCode} out=${res.stdout.trim()}`);
+  const res = await sandbox.exec(DEV_AGENT_WORKFLOW_CMD);
+  console.log(`[dev-agent] workflow exit=${res.exitCode} out=${res.stdout.trim()}`);
+  if (res.exitCode !== 0) throw new Error(`dev-agent workflow exited ${res.exitCode}: ${res.stdout.trim()}`);
 }
 
 // The dispatch seam: which sandbox to wake, and what run to kick. The default seam

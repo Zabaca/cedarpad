@@ -21,6 +21,9 @@ import { PersistSink } from './persistable.ts';
 import { maxMtimeMs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
 import { type Notify, resumeConversation } from './inbox.ts';
+import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-worktree.ts';
+import { isDevAgentConversation, runDevAgentApproval } from './dev-agent-workflow.ts';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import { backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, runChat } from './agent.ts';
 import { adoptSharedComponent, promoteComponent } from './components.ts';
@@ -627,6 +630,52 @@ export async function handleRequest(req: Request): Promise<Response> {
       if (!message) return json({ error: 'message required' }, 400);
       const conv = await conversations.get(webPocDb, id);
       if (!conv) return json({ error: `conversation not found: ${id}` }, 404);
+
+      // Dev-agent Conversations (#51/#66) resume down the PR path, NOT the canvas chat path:
+      // James's reply approves a candidate, so we drive the chosen refactor in a fresh
+      // worktree and open a PR (#64) — the durable code artifact. Routed solely by the
+      // Conversation's dev-agent workspace tag. Simplification (noted on #66): the refactor
+      // runs a fresh SDK turn in the worktree seeded with the thread summary + reply rather
+      // than resuming the explore session's JSONL into the worktree cwd; the PR fields are
+      // derived from the summary. The PR — not a resumed transcript — is the durable output.
+      if (isDevAgentConversation(conv)) {
+        const git = createRepoWorktreeManager({
+          repo: DEFAULT_REPO,
+          workspaceRoot: `${CANVAS_CWD}/.dev-agent/${conv.id}`,
+        });
+        const url = await runDevAgentApproval(
+          {
+            git,
+            branch: branchName(conv.id, String(Date.now())),
+            applyRefactor: async (worktreePath, humanMessage) => {
+              const prompt = [
+                `Architecture review thread: ${conv.summary ?? '(no summary)'}`,
+                '',
+                `The human approved with: ${humanMessage}`,
+                '',
+                'Implement the approved deepening in this worktree. Make the edits only — do not commit or push.',
+              ].join('\n');
+              for await (const _m of query({
+                prompt,
+                options: { cwd: worktreePath, permissionMode: 'bypassPermissions', maxTurns: 50 },
+              })) {
+                // drain the stream; the edits land on disk, which commit() then stages.
+              }
+              return {
+                commitMessage: `refactor: ${conv.summary ?? 'dev-agent deepening'}`,
+                pr: {
+                  title: conv.summary ?? 'Dev-agent architecture deepening',
+                  body: `Approved from the Inbox thread.\n\n> ${humanMessage}`,
+                },
+              };
+            },
+          },
+          message,
+        );
+        const flipped = await conversations.reply(webPocDb, conv.id);
+        return json({ ok: true, conversation: flipped, pr: url });
+      }
+
       const updated = await resumeConversation(
         {
           db: webPocDb,
