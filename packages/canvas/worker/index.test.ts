@@ -17,6 +17,7 @@ let session: realAuthGate.ResolvedSession = { user: { id: 'u_1' } };
 let workspaceRecord: { id: string } | null = null;
 let canvasRecord: { workspaceId: string } | null = null;
 let served: SandboxCoords[] = [];
+let assets: string[] = [];
 
 mock.module('@cloudflare/sandbox', () => ({ Sandbox: class {} }));
 mock.module('./sandbox-runtime.ts', () => ({
@@ -44,7 +45,16 @@ mock.module('../web-poc/lib/db/queries/canvases.ts', () => ({
 const worker = (await import('./index.ts')).default;
 const { resolve, DEFAULT_WORKSPACE } = await import('./sandbox-resolver.ts');
 
-const env = {} as Parameters<typeof worker.fetch>[1];
+// The Workers static-assets binding, recorded by file path so we can assert WHICH file
+// the Shell SPA routes serve — and, crucially, that they never touch `serveWorkspace`.
+const env = {
+  ASSETS: {
+    fetch: (req: Request) => {
+      assets.push(new URL(req.url).pathname);
+      return new Response('asset');
+    },
+  },
+} as unknown as Parameters<typeof worker.fetch>[1];
 const GET = (path: string) => worker.fetch(new Request(`https://poc.cedarpad.com${path}`), env);
 
 beforeEach(() => {
@@ -52,6 +62,66 @@ beforeEach(() => {
   workspaceRecord = null;
   canvasRecord = null;
   served = [];
+  assets = [];
+});
+
+// THE invariant of PRD #103: browsing the Shell must never wake (or bill) a container.
+// The whole point of the pad iframe is that mounting it is the ONLY thing that does.
+describe('GET / — the Shell SPA, served from ASSETS without waking the container', () => {
+  test('an authenticated `/` serves the shell build and NEVER calls serveWorkspace', async () => {
+    const res = await GET('/');
+
+    expect(res.status).toBe(200);
+    expect(assets).toEqual(['/index.html']);
+    expect(served).toEqual([]);
+  });
+
+  test('a workspace selection does not change that — `/` is the shell, not the container', async () => {
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/', { headers: { cookie: 'cs_workspace=ws_abc' } }),
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(assets).toEqual(['/index.html']);
+    expect(served).toEqual([]);
+  });
+
+  test('the shell’s built assets come from ASSETS, unrewritten', async () => {
+    await GET('/assets/main-a1b2c3.js');
+
+    expect(assets).toEqual(['/assets/main-a1b2c3.js']);
+    expect(served).toEqual([]);
+  });
+
+  test('UNAUTHENTICATED `/` is the login page, not the shell', async () => {
+    session = null;
+
+    const res = await GET('/');
+
+    expect(res.status).toBe(401);
+    expect(assets).toEqual([]);
+    expect(served).toEqual([]);
+  });
+
+  // The catch-all fallthrough is what lets the container's vite dev server serve the pad's
+  // modules. `/assets/*` is the shell's prefix; vite's are `/src/*`, `/@vite/*`, `/node_modules/*`.
+  test('the container’s vite paths still fall through to serveWorkspace', async () => {
+    await GET('/src/main.tsx');
+
+    expect(assets).toEqual([]);
+    expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
+  });
+
+  // The Notebook SPA now builds into shell/dist/notebook, so it shares the one ASSETS
+  // binding with the shell. Slice #107 re-homes it as a stage; until then /notebook serves.
+  test('/notebook still serves its own SPA build, alongside the shell', async () => {
+    await GET('/notebook');
+    await GET('/notebook/assets/main.js');
+
+    expect(assets).toEqual(['/notebook/index.html', '/notebook/assets/main.js']);
+    expect(served).toEqual([]);
+  });
 });
 
 describe('GET /w/:ws/canvas/:id/pad — serve the Render Pad in place, no redirect', () => {

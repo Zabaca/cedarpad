@@ -43,7 +43,7 @@ server-owned, not inside canvas state. (The tldraw **pages** layer was removed �
 The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decisions/0002-core-extension-split.md)):
 
 **Core**: the code that must stay correct for the canvas to work — image-only, the agent must not modify it. Two parts:
-- **Shell**: the frontend app frame — `App.tsx`, `sync.ts`, `ComponentShape`, `LeftPanel`, the canvas chrome. _Avoid_: calling a canvas-component part of the "shell".
+- **Render Pad**: the container-served frontend — `App.tsx`, `sync.ts`, `ComponentShape`, the tldraw canvas + chat. The navigation chrome (rail, canvas selector) now lives in the edge **Shell SPA** (`shell/`, PRD #103), which iframes this pad. _Avoid_: calling a canvas-component part of the "pad".
 - **Bridge** (a.k.a. **bridge core**): the single stateful backend process — the `CanvasStore`, persistence, the agent runner, the core `/api/*` routes. The authoritative owner of canvas state.
 
 **Extension**: what the agent authors — hot-reloaded and persisted to R2:

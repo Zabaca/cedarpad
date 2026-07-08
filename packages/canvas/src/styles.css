@@ -50,10 +50,11 @@ body,
   background: var(--bg);
 }
 
-/* tldraw canvas docked to the right of the full-height left nav */
+/* Full-bleed tldraw canvas: the container serves only the Render Pad now (the rail moved
+   to the edge Shell, which iframes this pad). */
 .tl-stage {
   position: absolute;
-  inset: 0 0 0 var(--nav-w);
+  inset: 0;
 }
 
 /* Floating control to spawn a new chat card. Bottom-center, just above tldraw's
@@ -83,38 +84,6 @@ body,
 .new-chat-fab:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-/* Web POC embed: mounted in-tree (not an iframe), overlaying the canvas stage
-   (docked right of the nav rail, which stays visible + clickable at z-index 400)
-   when the 3rd rail button is active. Scroll container for web-poc's own layout. */
-.webpoc-frame {
-  position: absolute;
-  inset: 0 0 0 var(--nav-w);
-  z-index: 350;
-  background: var(--bg);
-  overflow: auto;
-  /* web-poc uses Mantine AppShell, whose header/navbar are position:fixed (viewport-
-     relative) and would slide under the rail. A transform makes this frame the
-     containing block for those fixed descendants, so they lay out within the frame
-     (starting at its left edge) instead of the viewport. */
-  transform: translateZ(0);
-}
-.webpoc-loading {
-  display: grid;
-  place-items: center;
-  height: 100%;
-  color: var(--muted);
-  font-size: 13px;
-}
-/* Web POC view: collapse the left nav to just the 52px icon rail so web-poc's own
-   layout gets the full width; the rail stays for switching back. Canvas is untouched
-   (it keeps the full panel + pages list) — these rules apply only under .app--webpoc. */
-.app--webpoc .left-panel {
-  width: 52px;
-}
-.app--webpoc .webpoc-frame {
-  left: 52px;
 }
 
 /* A chat card: fills its shape (w×h). Header is the drag handle; body interacts. */
