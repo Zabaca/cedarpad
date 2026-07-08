@@ -1,5 +1,6 @@
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from './index.ts';
+import { DEV_AGENT_SANDBOX_ID, DEV_AGENT_SLEEP_AFTER } from './dev-agent.ts';
 import { type SandboxCoords, decideWarm } from './sandbox-resolver.ts';
 
 // The Sandbox resolver's runtime half: the wake/expose/proxy orchestration that used
@@ -26,6 +27,16 @@ const SLEEP_AFTER = '5m';
 /** The DO stub for a resolved workspace's container. */
 export const sandboxFor = (env: Env, sandboxId: string) =>
   getSandbox(env.Sandbox, sandboxId, { normalizeId: true, keepAlive: false, sleepAfter: SLEEP_AFTER });
+
+// The dev-agent's own container stub (ADR-0007, #63): a distinctly-keyed instance of the
+// same image on its OWN, shorter sleep schedule — separate from every `sandboxFor`
+// workspace container so a scheduled run never pins or reaps a product container.
+export const devAgentSandbox = (env: Env) =>
+  getSandbox(env.Sandbox, DEV_AGENT_SANDBOX_ID, {
+    normalizeId: true,
+    keepAlive: false,
+    sleepAfter: DEV_AGENT_SLEEP_AFTER,
+  });
 
 type SandboxStub = ReturnType<typeof getSandbox>;
 

@@ -12,6 +12,11 @@
   // or the dashboard (replaces the ad-hoc /__diag route). Container stdout is
   // separate (sandbox getProcessLogs / CF container logs).
   "observability": { "enabled": true },
+  // Dev-agent scheduler (ADR-0007, PRD #51 slice #63). Off-hours daily cron that wakes
+  // the separate `dev-agent` sandbox (its own sleep schedule) and kicks one workflow run
+  // via the Worker's `scheduled` handler, then lets it sleep. 09:00 UTC ≈ 02:00 PT — off
+  // James's active hours. Interval is config here; the real workflow is #66.
+  "triggers": { "crons": ["0 9 * * *"] },
   // Non-secret env for the mounted web-poc's Better Auth (same origin as the app in
   // prod). Secrets (TURSO_*, VOYAGE_API_KEY, BETTER_AUTH_SECRET) are pushed via
   // workerSecrets, not here.
