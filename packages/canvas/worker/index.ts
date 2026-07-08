@@ -58,6 +58,9 @@ export interface Env {
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
   WEB_ORIGIN?: string;
+  // Kill-switch for the scheduled dev-agent run (#63/#66). Default off ("false"); the cron
+  // fires but no-ops until repo-connection (#96) lands. Flip to "true" to enable.
+  DEV_AGENT_ENABLED?: string;
 }
 
 // Notebook's Hono API (web-poc's `buildApp`), mounted AT THE EDGE (ADR-0007, #56). No

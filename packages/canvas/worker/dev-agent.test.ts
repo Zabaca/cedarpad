@@ -56,7 +56,22 @@ describe('runDevAgent — #66 workflow kick', () => {
 
 describe('dispatchDevAgentRun — the scheduled dispatch', () => {
   const event = { cron: '0 9 * * *', scheduledTime: Date.UTC(2026, 6, 7, 9, 0, 0) };
-  const env = {} as Env;
+  const env = { DEV_AGENT_ENABLED: 'true' } as Env;
+
+  test('skips entirely when DEV_AGENT_ENABLED is not "true" (kill-switch)', async () => {
+    let touched = false;
+    const seam: DevAgentSeam = {
+      sandbox: () => {
+        touched = true;
+        return { exec: async () => ({ exitCode: 0, stdout: '' }) };
+      },
+      run: async () => {
+        touched = true;
+      },
+    };
+    await dispatchDevAgentRun(event, {} as Env, seam); // flag unset ⇒ disabled
+    expect(touched).toBe(false);
+  });
 
   test('resolves the dev-agent sandbox and kicks the run through the seam', async () => {
     const order: string[] = [];
