@@ -48,6 +48,10 @@ export default cloudflareModule.instance({
       'TURSO_KEY',
       'VOYAGE_API_KEY',
       'BETTER_AUTH_SECRET',
+      // Dev-agent runner (PRD #51 / ADR-0007): the token the in-container repo worktree
+      // manager uses to push a branch + open a PR on Zabaca/cedarpad. Must be added to
+      // production/secrets.yaml (sops). NOT YET PROVISIONED — add before the dev-agent runs.
+      'DEV_AGENT_GITHUB_TOKEN',
     ],
     // Single always-warm DO-bound container; the gradual default never drains it,
     // so a redeployed image would silently never take effect. Roll immediately.
