@@ -25,7 +25,10 @@
     "WEB_ORIGIN": "https://poc.cedarpad.com",
     // Prod is James-only: Better Auth signup is disabled at the edge (dev leaves it
     // open — the var is unset in .dev.vars). See web-poc/worker/auth.ts. (PRD #49 #15)
-    "AUTH_DISABLE_SIGNUP": "true"
+    "AUTH_DISABLE_SIGNUP": "true",
+    // Dev-agent scheduled run kill-switch (#94.5): cron fires but no-ops until
+    // repo-connection (#96) ships. Flip to "true" to enable.
+    "DEV_AGENT_ENABLED": "false"
   },
   // The Notebook SPA static build (PRD #49 slice #58). `bun run webpoc:build` emits
   // web-poc/dist; the edge Worker serves it under /notebook via env.ASSETS after the
@@ -70,7 +73,8 @@
       "vars": {
         "BETTER_AUTH_URL": "https://agent-canvas-preview.james-99a.workers.dev",
         "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev",
-        "AUTH_DISABLE_SIGNUP": "true"
+        "AUTH_DISABLE_SIGNUP": "true",
+        "DEV_AGENT_ENABLED": "false"
       },
       "assets": {
         "directory": "./web-poc/dist",

@@ -57,6 +57,14 @@ export async function dispatchDevAgentRun(
   env: Env,
   seam: DevAgentSeam,
 ): Promise<void> {
+  // Kill-switch: the cron fires daily, but the workflow can't do anything useful until
+  // repo-connection (the GitHub App, #96) is wired — a run would just fail to clone. So
+  // gate the whole dispatch behind DEV_AGENT_ENABLED (default off) to avoid daily errors
+  // + wasted dev-agent boots. Flip the var to "true" once repo-connection ships.
+  if (env.DEV_AGENT_ENABLED !== 'true') {
+    console.log('[dev-agent] scheduled run skipped — DEV_AGENT_ENABLED is not "true"');
+    return;
+  }
   console.log(`[dev-agent] scheduled run — cron=${event.cron} at=${new Date(event.scheduledTime).toISOString()}`);
   const sandbox = seam.sandbox(env);
   try {
