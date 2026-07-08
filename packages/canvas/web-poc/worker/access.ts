@@ -13,6 +13,16 @@ import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
  */
 export type AccessScope = { kind: "all" } | { kind: "list"; workspaceIds: string[] };
 
+/**
+ * The default scope for a request: exactly the active platform workspace
+ * (ADR-0007, #57). Notebook data is isolated per platform workspace, so every
+ * read is confined to the one workspace the caller is currently in — workspace
+ * A's list/search never returns workspace B's rows.
+ */
+export function scopeForWorkspace(workspaceId: string): AccessScope {
+  return { kind: "list", workspaceIds: [workspaceId] };
+}
+
 /** Build a scope from an optional allowlist — the single place the rule lives. */
 export function scopeFromAllowlist(allowed: string[] | null | undefined): AccessScope {
   return allowed && allowed.length > 0 ? { kind: "list", workspaceIds: allowed } : { kind: "all" };

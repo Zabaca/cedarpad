@@ -1,4 +1,4 @@
-import { and, gte, isNotNull, ne, sql } from "drizzle-orm";
+import { and, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
 import type { Database } from "../client.js";
 import { observations, problems } from "../schema.js";
 import { cosineSimilarity } from "../vector.js";
@@ -24,9 +24,9 @@ export type SimilarObservation = SimilarProblem;
  * ~250 ms up to ~100k rows — comfortably inside the async intake path. Revisit
  * (ANN + a smaller embedding dim, or a dedicated vector store) past ~250k rows.
  *
- * Identicalness is recognised across every workspace — the search is not
- * tenant-filtered — so a problem in one workspace can match problems in any
- * other. `excludeProblemId` omits the just-inserted problem from its own results.
+ * By default the scan spans every workspace; pass `workspaceId` to confine it to
+ * one platform workspace (Notebook search isolation, #57). `excludeProblemId`
+ * omits the just-inserted problem from its own results.
  *
  * Turso-scaling note: this is a full scan, and on Turso every scanned row is a
  * metered read (see `docs/SIMILARITY_SCALING.md`). Two cheap levers narrow the
@@ -43,9 +43,11 @@ export async function findSimilarProblems(
     excludeProblemId?: string;
     /** Optional recency window: only consider rows created at/after this time. */
     since?: Date;
+    /** When set, confine the scan to one platform workspace (isolation, #57). */
+    workspaceId?: string;
   },
 ): Promise<SimilarProblem[]> {
-  const { queryVector, topK, excludeProblemId, since } = params;
+  const { queryVector, topK, excludeProblemId, since, workspaceId } = params;
 
   const rows = await db
     .select({
@@ -63,6 +65,7 @@ export async function findSimilarProblems(
         ne(problems.status, "archived"),
         excludeProblemId ? ne(problems.id, excludeProblemId) : undefined,
         since ? gte(problems.createdAt, since) : undefined,
+        workspaceId ? eq(problems.workspaceId, workspaceId) : undefined,
       ),
     )
     .orderBy(sql`similarity desc`)
@@ -75,7 +78,8 @@ export async function findSimilarProblems(
  * Find the nearest observations to `queryVector`. Mirrors
  * {@link findSimilarProblems} (exact `vector_distance_cos` scan) — the agent uses
  * this to recognise when several loose observations cluster into a problem. Like
- * problem similarity, this spans every workspace. See {@link findSimilarProblems}
+ * problem similarity, this spans every workspace unless `workspaceId` narrows it.
+ * See {@link findSimilarProblems}
  * for the `archived` filter, `since` recency window, and single-cosine notes.
  */
 export async function findSimilarObservations(
@@ -86,9 +90,11 @@ export async function findSimilarObservations(
     excludeObservationId?: string;
     /** Optional recency window: only consider rows created at/after this time. */
     since?: Date;
+    /** When set, confine the scan to one platform workspace (isolation, #57). */
+    workspaceId?: string;
   },
 ): Promise<SimilarObservation[]> {
-  const { queryVector, topK, excludeObservationId, since } = params;
+  const { queryVector, topK, excludeObservationId, since, workspaceId } = params;
 
   const rows = await db
     .select({
@@ -105,6 +111,7 @@ export async function findSimilarObservations(
         ne(observations.status, "archived"),
         excludeObservationId ? ne(observations.id, excludeObservationId) : undefined,
         since ? gte(observations.createdAt, since) : undefined,
+        workspaceId ? eq(observations.workspaceId, workspaceId) : undefined,
       ),
     )
     .orderBy(sql`similarity desc`)

@@ -38,7 +38,13 @@ Each app has its own document model, in its own `CONTEXT.md`.
 
 **Scoping across workspaces** (given James has many): **Canvas** and **Notebook** data are
 **per-workspace** — a workspace's canvases and its Observations/Problems belong to that
-workspace (Turso rows carry `workspace_id`). The **Inbox is user-scoped** — one attention
+workspace (Turso rows carry `workspace_id`). This `workspace_id` is the **platform**
+workspace (the `workspaces` registry / the `cs_workspace` cookie the Shell sets; agents pass
+`x-workspace-id`), **not** the Better Auth organization. Notebook records are **isolated per
+platform workspace** — workspace A's list/search never returns B's rows (#57); the original
+cross-project solution-reuse in the graph is intentionally dropped (a possible future
+opt-in). Absent a selection, requests fall back to the legacy `default` workspace, where
+pre-#57 rows are backfilled. The **Inbox is user-scoped** — one attention
 inbox for James, aggregating Conversations across all his workspaces, each Conversation
 tagged with its `workspace_id` (filterable by workspace). The **dev-agent workflow maps to
 a workspace's repo**: a per-repo workspace's scheduled `/improve-codebase-architecture`

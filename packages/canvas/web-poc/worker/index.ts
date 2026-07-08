@@ -648,6 +648,8 @@ export function buildApp(opts: BuildAppOptions = {}) {
       const results = await searchGraph(db, {
         queryVector,
         topK: k ?? configuration.graph.defaultK,
+        // Isolation (#57): confine search to the caller's active platform workspace.
+        workspaceId: c.get("workspaceId"),
       });
       return c.json(results, 200);
     })

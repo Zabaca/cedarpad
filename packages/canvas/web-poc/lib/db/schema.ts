@@ -168,15 +168,18 @@ export const apikey = sqliteTable("apikey", {
 /* ------------------------------------------------------------------ *
  * Domain
  *
- *   workspace (tenant) → observations → problems → solutions
+ *   platform workspace → observations → problems → solutions
  *
  * Observations are the entry layer: loose, workspace-local records of
  * something worth noting. Many observations synthesize into a problem
  * (many-to-many) — the specific, prioritized, urgent item a pile of
  * observations points to. Solutions attach polymorphically, so an observation
- * or a problem can each carry one. The graph that links and clusters these
- * (similarity, synthesis, solutions) spans every workspace so solutions are
- * reused across tenants; only the records themselves are workspace-owned.
+ * or a problem can each carry one. `workspace_id` is the PLATFORM workspace
+ * (the `workspaces` registry / `cs_workspace`, ADR-0007), NOT the Better Auth
+ * organization — a plain text column with no FK (the legacy `default` workspace
+ * has no registry row). Records are isolated per workspace: a workspace's search
+ * (#57) never returns another's. (The graph's original cross-workspace
+ * solution-reuse was intentionally dropped; a future opt-in may reintroduce it.)
  * "Project" is a weightless human meta tag stored inline on
  * observations/problems and is deliberately excluded from every embedding and
  * LLM input.
@@ -198,9 +201,9 @@ export const observations = sqliteTable(
   "observations",
   {
     id: text("id").primaryKey(),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => workspace.id, { onDelete: "cascade" }),
+    // Platform workspace id (registry / `cs_workspace`). Plain text, no FK: the
+    // legacy `default` workspace has no registry row. (ADR-0007, #57.)
+    workspaceId: text("workspace_id").notNull(),
     title: text("title").notNull(),
     body: text("body").notNull(),
     /**
@@ -238,9 +241,9 @@ export const problems = sqliteTable(
   "problems",
   {
     id: text("id").primaryKey(),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => workspace.id, { onDelete: "cascade" }),
+    // Platform workspace id (registry / `cs_workspace`). Plain text, no FK: the
+    // legacy `default` workspace has no registry row. (ADR-0007, #57.)
+    workspaceId: text("workspace_id").notNull(),
     title: text("title").notNull(),
     body: text("body").notNull(),
     /** The concrete impact this problem calls out. */
