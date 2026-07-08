@@ -5,6 +5,7 @@ import { sandboxId as deriveSandboxId } from '../web-poc/lib/db/queries/workspac
 import {
   DEV_AGENT_SANDBOX_ID,
   DEV_AGENT_SLEEP_AFTER,
+  DEV_AGENT_WORKFLOW_CMD,
   type DevAgentRunner,
   type DevAgentSeam,
   dispatchDevAgentRun,
@@ -32,17 +33,24 @@ describe('dev-agent sandbox id is distinct from every workspace container', () =
   });
 });
 
-describe('runDevAgent — #63 liveness stub', () => {
-  test('kicks a single liveness step on the sandbox', async () => {
+describe('runDevAgent — #66 workflow kick', () => {
+  test('execs the container workflow entrypoint', async () => {
     const calls: string[] = [];
     const sandbox: DevAgentRunner = {
       exec: async (command) => {
         calls.push(command);
-        return { exitCode: 0, stdout: 'dev-agent-alive\n' };
+        return { exitCode: 0, stdout: 'ok\n' };
       },
     };
     await runDevAgent(sandbox);
-    expect(calls).toEqual(['echo dev-agent-alive']);
+    expect(calls).toEqual([DEV_AGENT_WORKFLOW_CMD]);
+  });
+
+  test('a non-zero workflow exit is surfaced (thrown)', async () => {
+    const sandbox: DevAgentRunner = {
+      exec: async () => ({ exitCode: 1, stdout: 'boom' }),
+    };
+    await expect(runDevAgent(sandbox)).rejects.toThrow('dev-agent workflow exited 1');
   });
 });
 
