@@ -8,7 +8,7 @@ import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
 import { dispatchDevAgentRun, runDevAgent } from './dev-agent.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { devAgentSandbox, sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
-import { handleCanvasesApi, handleWorkspacesApi, renderInbox, renderLogin } from './shell.ts';
+import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 import { handleInboxApi } from './inbox.ts';
 import {
   DEFAULT_CANVAS_ID,
@@ -180,9 +180,12 @@ export default {
       return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
     }
 
-    // The Inbox surface itself — a self-contained static page (like the Shell launcher),
-    // behind the edge session gate above.
-    if (url.pathname === '/inbox') return renderInbox();
+    // The Inbox is a Shell stage now (#108) — no standalone page. The legacy edge route
+    // redirects to the stage URL so old bookmarks/links land inside the one chrome. Behind
+    // the gate above, so an unauthenticated hit still gets the login first.
+    if (url.pathname === '/inbox') {
+      return new Response(null, { status: 302, headers: { location: '/?stage=inbox' } });
+    }
 
     // Ownership check shared by the two canvas routes below: the workspace must be owned
     // (the legacy `default` id needs no row) AND the canvas must belong to it, else the

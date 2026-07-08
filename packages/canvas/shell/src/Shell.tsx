@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { InboxStage } from './inbox/Inbox';
 import { type Stage, stageFromUrl, urlForStage } from './stage';
 
 // The Shell: the ONE chrome (ADR-0007, PRD #103). A vite SPA served from the edge Worker's
@@ -96,7 +97,7 @@ export function Shell() {
       <Rail stage={stage} onSelectStage={selectStage} activeWorkspace={registry.workspaceId} />
       {stage === 'canvas' && <CanvasStage registry={registry} />}
       {stage === 'notebook' && <div className="shell-stage stage-notebook">Notebook</div>}
-      {stage === 'inbox' && <div className="shell-stage stage-inbox">Inbox</div>}
+      {stage === 'inbox' && <InboxStage />}
     </div>
   );
 }

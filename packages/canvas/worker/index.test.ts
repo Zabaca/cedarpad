@@ -18,6 +18,7 @@ let workspaceRecord: { id: string } | null = null;
 let canvasRecord: { workspaceId: string } | null = null;
 let served: SandboxCoords[] = [];
 let assets: string[] = [];
+let inboxCalls: Array<{ id?: string; action?: string }> = [];
 
 mock.module('@cloudflare/sandbox', () => ({ Sandbox: class {} }));
 mock.module('./sandbox-runtime.ts', () => ({
@@ -41,6 +42,14 @@ mock.module('../web-poc/lib/db/queries/canvases.ts', () => ({
   ...realCanvases,
   get: () => Promise.resolve(canvasRecord),
 }));
+// The edge Inbox API handler is out of scope for this slice — stub it so we can assert the
+// Worker still ROUTES `/api/inbox*` to it (unchanged) without exercising Turso/R2.
+mock.module('./inbox.ts', () => ({
+  handleInboxApi: (_req: Request, _env: unknown, _user: unknown, id?: string, action?: string) => {
+    inboxCalls.push({ id, action });
+    return new Response('inbox-api');
+  },
+}));
 
 const worker = (await import('./index.ts')).default;
 const { resolve, DEFAULT_WORKSPACE } = await import('./sandbox-resolver.ts');
@@ -63,6 +72,7 @@ beforeEach(() => {
   canvasRecord = null;
   served = [];
   assets = [];
+  inboxCalls = [];
 });
 
 // THE invariant of PRD #103: browsing the Shell must never wake (or bill) a container.
@@ -179,6 +189,38 @@ describe('GET /w/:ws/canvas/:id/pad — serve the Render Pad in place, no redire
     expect(res.status).toBe(401);
     expect(res.headers.get('content-type')).toContain('text/html');
     expect(served).toEqual([]);
+  });
+});
+
+// The Inbox is a Shell stage now (#108): the standalone `renderInbox` page is gone. The
+// legacy `/inbox` route redirects into the shell; the `/api/inbox*` data API is UNCHANGED.
+describe('GET /inbox — redirect to the Shell inbox stage, no standalone page', () => {
+  test('/inbox 302s to /?stage=inbox and never wakes a container or renders its own page', async () => {
+    const res = await GET('/inbox');
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('/?stage=inbox');
+    expect(served).toEqual([]);
+    expect(assets).toEqual([]);
+    expect(inboxCalls).toEqual([]);
+  });
+
+  test('the inbox data API still routes to handleInboxApi (list), no container woken', async () => {
+    const res = await GET('/api/inbox?status=open');
+
+    expect(await res.text()).toBe('inbox-api');
+    expect(inboxCalls).toEqual([{ id: undefined, action: undefined }]);
+    expect(served).toEqual([]);
+  });
+
+  test('per-conversation actions still route to handleInboxApi with id + action', async () => {
+    await worker.fetch(new Request('https://poc.cedarpad.com/api/inbox/c_1/close', { method: 'POST' }), env);
+    await GET('/api/inbox/c_1');
+
+    expect(inboxCalls).toEqual([
+      { id: 'c_1', action: 'close' },
+      { id: 'c_1', action: undefined },
+    ]);
   });
 });
 
