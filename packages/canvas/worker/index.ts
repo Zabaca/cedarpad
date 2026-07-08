@@ -1,15 +1,20 @@
 import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
 import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
+import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
-import { handleWorkspacesApi, renderLogin, renderShell } from './shell.ts';
+import { handleCanvasesApi, handleWorkspacesApi, renderLogin, renderShell } from './shell.ts';
 import {
+  CANVAS_COOKIE,
+  DEFAULT_CANVAS_ID,
   DEFAULT_WORKSPACE_ID,
   WORKSPACE_COOKIE,
+  decideCanvasRoute,
   decideWorkspaceRoute,
+  parseCanvasRoute,
   parseWorkspaceRoute,
   readWorkspaceCookie,
 } from './shell-routing.ts';
@@ -79,6 +84,44 @@ export default {
 
     // Registry API the launcher calls (owner-scoped list/create).
     if (url.pathname === '/api/workspaces') return handleWorkspacesApi(request, env, user);
+
+    // Canvas registry API (Canvas app index), scoped to the active workspace via the
+    // cs_workspace cookie. Served at the edge like /api/workspaces — no container woken.
+    if (url.pathname === '/api/canvases') {
+      return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user);
+    }
+    const canvasApiMatch = /^\/api\/canvases\/([^/]+)$/.exec(url.pathname);
+    if (canvasApiMatch) {
+      return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user, canvasApiMatch[1]);
+    }
+
+    // /w/:workspaceId/canvas/:canvasId — the canvas app-surface URL. Selecting it pins
+    // BOTH the workspace (cs_workspace, HttpOnly — the proxy routes by it) and the canvas
+    // (cs_canvas, NON-HttpOnly — the frontend reads it to stamp x-canvas-id). Validate
+    // that the workspace is owned AND the canvas belongs to it, else 404 (never proxied).
+    const canvasRoute = parseCanvasRoute(url.pathname);
+    if (canvasRoute) {
+      const workerDb = createDbForWorker(env as unknown as Bindings);
+      const wsRecord =
+        canvasRoute.workspaceId === DEFAULT_WORKSPACE_ID
+          ? null
+          : await getWorkspace(workerDb, canvasRoute.workspaceId, user.id);
+      const cvRecord =
+        canvasRoute.canvasId === DEFAULT_CANVAS_ID ? null : await getCanvas(workerDb, canvasRoute.canvasId);
+      const decision = decideCanvasRoute(canvasRoute.workspaceId, canvasRoute.canvasId, wsRecord, cvRecord);
+      if (decision.decision === 'not-found') {
+        return new Response('canvas not found', { status: 404 });
+      }
+      const cookieAttrs = 'Path=/; Secure; SameSite=Lax';
+      return new Response(null, {
+        status: 302,
+        headers: new Headers([
+          ['set-cookie', `${WORKSPACE_COOKIE}=${decision.workspaceId}; ${cookieAttrs}; HttpOnly`],
+          ['set-cookie', `${CANVAS_COOKIE}=${decision.canvasId}; ${cookieAttrs}`],
+          ['location', '/'],
+        ]),
+      });
+    }
 
     // /w/:workspaceId — the app-surface URL. Enforce ownership via the registry (the
     // `default` id is the legacy prod workspace and needs no row), then pin the

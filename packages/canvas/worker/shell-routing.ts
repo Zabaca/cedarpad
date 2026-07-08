@@ -14,6 +14,16 @@ export const WORKSPACE_COOKIE = 'cs_workspace';
  *  behavior-preserving prod coordinates (`canvas` / `workspaces/default/`). */
 export const DEFAULT_WORKSPACE_ID = 'default';
 
+/** Cookie that pins which canvas the frontend addresses. Unlike `cs_workspace` it is
+ *  NON-HttpOnly: the container-served canvas frontend reads it client-side to stamp
+ *  `x-canvas-id` on its bridge calls (the edge proxy itself doesn't route by canvas —
+ *  one container per workspace hosts N canvases, path-isolated). */
+export const CANVAS_COOKIE = 'cs_canvas';
+
+/** The legacy/default canvas id. Absent selection resolves here, so today's
+ *  un-namespaced canvas is byte-for-byte preserved. */
+export const DEFAULT_CANVAS_ID = 'default';
+
 /**
  * Parse `/w/:workspaceId` (with or without a trailing app-surface segment) into its
  * workspace id. The segment after the id is the app surface (canvas today) and is not
@@ -27,11 +37,31 @@ export function parseWorkspaceRoute(pathname: string): { workspaceId: string } |
 
 /** Read the workspace-selection cookie, or null when unset. */
 export function readWorkspaceCookie(cookieHeader: string | null): string | null {
+  return readCookie(cookieHeader, WORKSPACE_COOKIE);
+}
+
+/** Read the canvas-selection cookie, or null when unset. */
+export function readCanvasCookie(cookieHeader: string | null): string | null {
+  return readCookie(cookieHeader, CANVAS_COOKIE);
+}
+
+function readCookie(cookieHeader: string | null, name: string): string | null {
   for (const c of (cookieHeader ?? '').split(/;\s*/)) {
     const [k, ...v] = c.split('=');
-    if (k === WORKSPACE_COOKIE && v.length) return v.join('=');
+    if (k === name && v.length) return v.join('=');
   }
   return null;
+}
+
+/**
+ * Parse `/w/:workspaceId/canvas/:canvasId` into its two ids. This is the canvas
+ * app-surface URL: selecting it pins BOTH the workspace and the canvas. Returns null
+ * for any path that isn't exactly a canvas route (an empty id ⇒ null). A bare
+ * `/w/:id` (no `/canvas/:id`) is a workspace route, handled by `parseWorkspaceRoute`.
+ */
+export function parseCanvasRoute(pathname: string): { workspaceId: string; canvasId: string } | null {
+  const m = /^\/w\/([^/]+)\/canvas\/([^/]+)\/?$/.exec(pathname);
+  return m ? { workspaceId: m[1], canvasId: m[2] } : null;
 }
 
 /**
@@ -59,5 +89,33 @@ export function decideWorkspaceRoute(
 ): WorkspaceRouteDecision {
   if (workspaceId === DEFAULT_WORKSPACE_ID) return { decision: 'serve', workspace: DEFAULT_WORKSPACE };
   if (record) return { decision: 'serve', workspace: { id: record.id } };
+  return { decision: 'not-found' };
+}
+
+export type CanvasRouteDecision =
+  | { decision: 'select'; workspaceId: string; canvasId: string }
+  | { decision: 'not-found' };
+
+/**
+ * Decide `/w/:ws/canvas/:id` from the ownership-checked lookups: `workspaceRecord`
+ * is null unless the workspace is owned (the `default` id needs no row); `canvasRecord`
+ * is the registry row or null. Select only when the workspace is servable AND the canvas
+ * exists AND it belongs to that workspace — otherwise 404, never proxied. Pure: the DB
+ * lookups happen in the caller so this stays unit-testable off a live runtime.
+ */
+export function decideCanvasRoute(
+  workspaceId: string,
+  canvasId: string,
+  workspaceRecord: { id: string } | null,
+  canvasRecord: { workspaceId: string } | null,
+): CanvasRouteDecision {
+  const workspaceServable = workspaceId === DEFAULT_WORKSPACE_ID || !!workspaceRecord;
+  if (!workspaceServable) return { decision: 'not-found' };
+  // The legacy `default` canvas has no registry row (like the default workspace); it is
+  // always selectable within a servable workspace so the index can switch back to it.
+  if (canvasId === DEFAULT_CANVAS_ID) return { decision: 'select', workspaceId, canvasId };
+  if (canvasRecord && canvasRecord.workspaceId === workspaceId) {
+    return { decision: 'select', workspaceId, canvasId };
+  }
   return { decision: 'not-found' };
 }

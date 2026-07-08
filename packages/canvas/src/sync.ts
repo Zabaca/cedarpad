@@ -24,6 +24,7 @@ import { fromTldrawShape } from './tldraw-bridge';
 import { canon } from './tldraw-conventions';
 import { planReconcile, type ArrowBindingPair, type EditorSnapshot, type ReconcileOp } from './sync-plan';
 import { registerStream } from './idle';
+import { withCanvasHeader, withCanvasParam } from './active-canvas';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // remote -> editor: snapshot the live editor, plan with the pure planner, apply.
@@ -189,7 +190,7 @@ export function wireSync(editor: Editor): () => void {
     const reply = (url: string | null) =>
       fetch(`${API}/canvas/screenshot`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: withCanvasHeader({ 'content-type': 'application/json' }),
         body: JSON.stringify({ id, url }),
       }).catch(() => {});
     try {
@@ -208,7 +209,7 @@ export function wireSync(editor: Editor): () => void {
   let es: EventSource | null = null;
   const openCanvasStream = (): void => {
     if (es) return;
-    es = new EventSource(`${API}/canvas/stream`);
+    es = new EventSource(withCanvasParam(`${API}/canvas/stream`));
     // A freshly (re)established SSE connection means the bridge may have restarted
     // and reset its monotonic version counter (it does on every server-code reload).
     // Drop our high-water mark so the next primed frame is accepted as authoritative;
@@ -294,28 +295,28 @@ export function wireSync(editor: Editor): () => void {
       if (pageUps.length) {
         await fetch(`${API}/canvas/pages`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: withCanvasHeader({ 'content-type': 'application/json' }),
           body: JSON.stringify({ pages: pageUps }),
         });
       }
       if (ups.length) {
         await fetch(`${API}/canvas/shapes`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: withCanvasHeader({ 'content-type': 'application/json' }),
           body: JSON.stringify({ shapes: ups }),
         });
       }
       if (dels.length) {
         await fetch(`${API}/canvas/delete`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: withCanvasHeader({ 'content-type': 'application/json' }),
           body: JSON.stringify({ ids: dels }),
         });
       }
       if (pageDels.length) {
         await fetch(`${API}/canvas/pages/delete`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: withCanvasHeader({ 'content-type': 'application/json' }),
           body: JSON.stringify({ ids: pageDels }),
         });
       }

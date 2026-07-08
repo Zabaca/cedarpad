@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import type { Bindings } from '../web-poc/worker/context.ts';
+import type { Database } from '../web-poc/lib/db/index.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
-import { createWorkspace, listWorkspaces } from '../web-poc/lib/db/queries/workspaces.ts';
+import { createWorkspace, getWorkspace, listWorkspaces } from '../web-poc/lib/db/queries/workspaces.ts';
+import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
-import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { DEFAULT_WORKSPACE_ID, readWorkspaceCookie } from './shell-routing.ts';
 
 // The edge Shell's DB-touching half (ADR-0007, #46): the workspace registry API the
 // launcher calls, and the static launcher HTML itself. Served entirely at the edge —
@@ -40,6 +42,79 @@ export async function handleWorkspacesApi(request: Request, env: Env, user: Gate
     if (!parsed.success) return Response.json({ error: 'invalid name' }, { status: 400 });
     const ws = await createWorkspace(db(env), { name: parsed.data.name, ownerUserId: user.id });
     return Response.json({ id: ws.id, name: ws.name }, { status: 201 });
+  }
+  return new Response('method not allowed', { status: 405 });
+}
+
+// Single contract for the canvas registry API (CLAUDE.md §7). Both the frontend's
+// LeftPanel index and this handler speak these shapes.
+const CreateCanvasInput = z.object({ name: z.string().trim().min(1).max(100) });
+const RenameCanvasInput = z.object({ name: z.string().trim().min(1).max(100) });
+const CanvasView = z.object({ id: z.string(), name: z.string() });
+export type CanvasView = z.infer<typeof CanvasView>;
+
+/**
+ * Resolve the active workspace for a canvas-registry call from the `cs_workspace`
+ * cookie (set by /w/:id), enforcing ownership. Returns the workspace id to scope by,
+ * or null when the selection is an unknown/non-owned workspace (⇒ the caller 404s).
+ * The `default` id needs no registry row (the legacy prod workspace).
+ */
+async function activeWorkspaceId(request: Request, database: Database, user: GateUser): Promise<string | null> {
+  const selected = readWorkspaceCookie(request.headers.get('cookie')) ?? DEFAULT_WORKSPACE_ID;
+  if (selected === DEFAULT_WORKSPACE_ID) return DEFAULT_WORKSPACE_ID;
+  const ws = await getWorkspace(database, selected, user.id);
+  return ws ? ws.id : null;
+}
+
+/**
+ * The Canvas app's registry API, scoped to the active workspace (from `cs_workspace`):
+ *   GET    /api/canvases            → { workspaceId, canvases: CanvasView[] }
+ *   POST   /api/canvases {name}      → the created CanvasView (201)
+ *   PATCH  /api/canvases/:id {name}  → the renamed CanvasView
+ *   DELETE /api/canvases/:id         → 204
+ * Mutations verify the target canvas belongs to the active workspace (never cross-
+ * workspace). Mirrors handleWorkspacesApi — served at the edge, so listing/creating a
+ * canvas never wakes a container.
+ */
+export async function handleCanvasesApi(
+  request: Request,
+  database: Database,
+  user: GateUser,
+  canvasId?: string,
+): Promise<Response> {
+  const workspaceId = await activeWorkspaceId(request, database, user);
+  if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
+
+  if (!canvasId) {
+    if (request.method === 'GET') {
+      const rows = await canvasRegistry.list(database, workspaceId);
+      const canvases: CanvasView[] = rows.map((c) => ({ id: c.id, name: c.name }));
+      return Response.json({ workspaceId, canvases });
+    }
+    if (request.method === 'POST') {
+      const parsed = CreateCanvasInput.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return Response.json({ error: 'invalid name' }, { status: 400 });
+      const row = await canvasRegistry.create(database, { workspaceId, name: parsed.data.name });
+      return Response.json({ id: row.id, name: row.name }, { status: 201 });
+    }
+    return new Response('method not allowed', { status: 405 });
+  }
+
+  // Per-canvas mutations: the target must belong to the active workspace.
+  const existing = await canvasRegistry.get(database, canvasId);
+  if (!existing || existing.workspaceId !== workspaceId) {
+    return Response.json({ error: 'canvas not found' }, { status: 404 });
+  }
+  if (request.method === 'PATCH') {
+    const parsed = RenameCanvasInput.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return Response.json({ error: 'invalid name' }, { status: 400 });
+    const row = await canvasRegistry.rename(database, canvasId, parsed.data.name);
+    if (!row) return Response.json({ error: 'canvas not found' }, { status: 404 });
+    return Response.json({ id: row.id, name: row.name });
+  }
+  if (request.method === 'DELETE') {
+    await canvasRegistry.delete(database, canvasId);
+    return new Response(null, { status: 204 });
   }
   return new Response('method not allowed', { status: 405 });
 }
