@@ -1,4 +1,5 @@
 import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
+import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 
@@ -60,6 +61,21 @@ export default {
           },
         });
       }
+      return new Response(SIGN_IN, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } });
+    }
+
+    // Edge auth (ADR-0007, slice #45), layered on top of cs_gate above. Better Auth's
+    // endpoints are served AT THE EDGE so login/session happen here without ever
+    // proxying to a container; every other route must carry a valid session.
+    if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')) {
+      return handleAuth(request, env);
+    }
+    // Verify the session and decide the gate BEFORE the resolver/proxy below — an
+    // unauthenticated request never reaches serveWorkspace, so it never reaches the
+    // container. Notebook's /v1/* verifies the SAME Better Auth session (same Turso,
+    // same secret, same cookie) in-container, so one auth system spans the platform.
+    const session = await authenticate(request, env);
+    if (decideGate(url.pathname, session).decision === 'deny') {
       return new Response(SIGN_IN, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
 
