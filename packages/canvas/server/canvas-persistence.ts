@@ -4,10 +4,29 @@
 // non-empty save is always fine, and a clean/absent load clears degradation so
 // a legitimate "user cleared the canvas" empty save still goes through.
 
-import type { CanvasState } from '../src/shapes.ts';
+import type { CanvasShape, CanvasState } from '../src/shapes.ts';
 import type { BlobStore } from './blob-store.ts';
 
 const isEmpty = (state: CanvasState): boolean => state.shapes.length === 0;
+
+/**
+ * Legacy-blob migration. Canvases persisted before the tldraw pages layer was removed
+ * carry a `pages` array beside the shapes and a `pageId` on every shape. `load()` is
+ * the one place a stored blob first becomes a `CanvasState` — and every seed path (the
+ * boot load, and the reseed-from-disk after a blocked shrink) goes through it — so both
+ * fields die here rather than leaking into the live store.
+ *
+ * `pageId` in particular must not survive: `canon()` serializes every key of a shape,
+ * so a shape still carrying one could never match the browser's re-encoded shape, and
+ * the reconcile planner would emit an update for it on every frame, indefinitely.
+ */
+const dropLegacyPages = (state: CanvasState): CanvasState => ({
+  version: state.version,
+  shapes: state.shapes.map((s) => {
+    const { pageId: _pageId, ...shape } = s as CanvasShape & { pageId?: string };
+    return shape as CanvasShape;
+  }),
+});
 
 // Destructive-shrink guard (the tldraw-crash nuke that wiped 364 shapes → 1). A save that
 // collapses a substantial canvas to near-empty in one step is almost always a crash, not an
@@ -39,14 +58,15 @@ export class CanvasPersistence {
     private readonly canvas: string,
   ) {}
 
-  /** Load the saved canvas. A throw marks us degraded (then rethrows); an absent
-   * canvas (null) is a clean, non-degraded empty. Seeds the shrink-guard baseline. */
+  /** Load the saved canvas, dropping any legacy pages layer. A throw marks us degraded
+   * (then rethrows); an absent canvas (null) is a clean, non-degraded empty. Seeds the
+   * shrink-guard baseline. */
   async load(): Promise<CanvasState | null> {
     try {
       const state = await this.store.loadCanvasState(this.ws, this.canvas);
       this.degraded = false;
       this.lastSavedShapeCount = state?.shapes.length ?? 0;
-      return state;
+      return state && dropLegacyPages(state);
     } catch (err) {
       this.degraded = true;
       throw err;

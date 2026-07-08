@@ -116,8 +116,10 @@ A `CanvasShape` is one of:
 - **A canvas has no pages.** A top-level shape carries no tldraw parent (tldraw
   parents it to the canvas itself); only a frame child carries one. Canvases
   persisted before the pages layer was removed still hold a `pages` array and a
-  per-shape `pageId`: both fields are simply **ignored** on load, so no R2 migration
-  is needed.
+  per-shape `pageId`; both are **dropped in `CanvasPersistence.load()`**, the one place
+  a stored blob becomes a `CanvasState`, so no R2 migration is needed. A `pageId` that
+  survived into the live store would defeat `canon()` change detection for that shape
+  on every sync frame — which is why the strip is at the boundary and not left implicit.
 - `id` is shared verbatim with the tldraw shape id (`shape:...`). Agent-created
   ids are minted `shape:agent_N`.
 - `color` ∈ `black, grey, blue, green, red, orange, yellow, violet` (a subset of
