@@ -10,7 +10,7 @@
     "build": "vite build",
     "preview": "vite preview --port 4510",
     "typecheck": "tsc --noEmit",
-    "test": "bun test server src",
+    "test": "bun test ./server ./src ./worker",
     "deploy": "bash scripts/deploy.sh",
     "webpoc:typecheck": "cd web-poc && tsc --noEmit",
     "webpoc:test": "cd web-poc && vitest run --passWithNoTests",
