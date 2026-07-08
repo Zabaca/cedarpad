@@ -5,8 +5,9 @@ import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
+import { dispatchDevAgentRun, runDevAgent } from './dev-agent.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
-import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
+import { devAgentSandbox, sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleWorkspacesApi, renderInbox, renderLogin, renderShell } from './shell.ts';
 import { handleInboxApi } from './inbox.ts';
 import {
@@ -67,6 +68,15 @@ export interface Env {
 const notebookApi = buildApp();
 
 export default {
+  // Cron trigger (ADR-0007, PRD #51 slice #63). Off-hours the edge wakes the dev-agent
+  // sandbox — a SEPARATE instance on its own sleep schedule — and kicks one run, which
+  // then idle-sleeps on its own timer. This path touches ONLY the dev-agent instance:
+  // no workspace container is woken or reaped by a scheduled run. `waitUntil` keeps the
+  // isolate alive for the async run past the handler return.
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(dispatchDevAgentRun(event, env, { sandbox: devAgentSandbox, run: runDevAgent }));
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
