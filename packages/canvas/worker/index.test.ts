@@ -113,14 +113,16 @@ describe('GET /w/:ws/canvas/:id/pad — serve the Render Pad in place, no redire
 });
 
 describe('dispatch order regressions', () => {
-  test('/w/:ws/canvas/:id (no /pad) still 302s to / and sets only cs_workspace', async () => {
+  // The deep-link must preserve WHICH canvas was asked for. It used to 302 to `/` and let
+  // cs_canvas carry the id; with the cookie gone, `/` would serve the DEFAULT canvas.
+  test('/w/:ws/canvas/:id (no /pad) 302s to that canvas pad and sets only cs_workspace', async () => {
     workspaceRecord = { id: 'ws_abc' };
     canvasRecord = { workspaceId: 'ws_abc' };
 
     const res = await GET('/w/ws_abc/canvas/cv_1');
 
     expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe('/');
+    expect(res.headers.get('location')).toBe('/w/ws_abc/canvas/cv_1/pad');
     const cookies = res.headers.getSetCookie().join('\n');
     expect(cookies).toContain('cs_workspace=ws_abc');
     expect(cookies).not.toContain('cs_canvas');

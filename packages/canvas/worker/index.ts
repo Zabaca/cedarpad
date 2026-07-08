@@ -204,8 +204,10 @@ export default {
       return response;
     }
 
-    // /w/:workspaceId/canvas/:canvasId — the canvas app-surface URL. Selecting it pins the
-    // workspace (cs_workspace, HttpOnly — the proxy routes by it) and lands on the canvas.
+    // /w/:workspaceId/canvas/:canvasId — the canvas deep-link. Pins the workspace
+    // (cs_workspace, HttpOnly — the proxy routes by it) and redirects to that canvas's pad.
+    // It must NOT land on `/`: the canvas id used to ride along in cs_canvas, and with the
+    // cookie gone `/` would silently serve the DEFAULT canvas instead of the requested one.
     const canvasRoute = parseCanvasRoute(url.pathname);
     if (canvasRoute) {
       const decision = await ownedCanvas(canvasRoute.workspaceId, canvasRoute.canvasId);
@@ -216,7 +218,7 @@ export default {
         status: 302,
         headers: new Headers([
           ['set-cookie', workspaceCookie(decision.workspaceId)],
-          ['location', '/'],
+          ['location', `/w/${encodeURIComponent(decision.workspaceId)}/canvas/${encodeURIComponent(decision.canvasId)}/pad`],
         ]),
       });
     }
