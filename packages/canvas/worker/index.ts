@@ -81,6 +81,17 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
 
+    // Public build stamp (#74). deploy.sh polls this post-deploy to confirm the SERVED
+    // container image's SHA, and it carries no Better Auth session — so it's routed HERE,
+    // ahead of the edge gate, straight to the default workspace container (the bridge's
+    // /api/buildrev returns ONLY the SHA, never /api/status's health/client counts).
+    // isPublicPath also lists it, but the gate below denies any null-user request, so the
+    // stamp must be served before the gate to actually reach the container. This is the
+    // one unauthenticated path that can cold-boot a container; bounded by max_instances.
+    if (url.pathname === '/api/buildrev') {
+      return serveWorkspace(request, env, resolve(DEFAULT_WORKSPACE));
+    }
+
     // Edge auth (ADR-0007, slice #45) — the SOLE gate now that cs_gate is gone. Better
     // Auth's endpoints are served AT THE EDGE so login/session happen here without ever
     // proxying to a container; every other route must carry a valid session. This branch

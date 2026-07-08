@@ -434,6 +434,14 @@ export async function handleRequest(req: Request): Promise<Response> {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
       return json(session.store.getState() satisfies CanvasState);
     }
+    // Public build stamp (#74): the SHA baked into this container image, and NOTHING
+    // else. deploy.sh polls this at the edge WITHOUT a session to confirm a rollout is
+    // live. Kept separate from /api/status (which exposes persistence health + client
+    // counts and stays edge-gated) so the public surface is exactly one non-sensitive
+    // field — the "minor info disclosure" rated acceptable in SECURITY-cs_gate.
+    if (path === '/api/buildrev' && req.method === 'GET') {
+      return json({ buildRev: BUILD_REV });
+    }
     // Persistence health in one read: is the backend R2 or fs, are we degraded, and
     // is what's in memory actually reaching R2? `unsavedVersions` > 0 and rising =
     // edits aren't being persisted (the exact failure that was invisible before).
