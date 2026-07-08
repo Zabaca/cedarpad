@@ -8,15 +8,49 @@
 
 ## Runtime & frames
 
-**Workspace**: an isolated runtime — one Cloudflare Container, its own filesystem, its own
-R2 prefix (`workspaces/<ws>/…`, already keyed this way in ADR-0001), its own sleep timer.
-James may have **many** workspaces (e.g. one per repo/project), switched in the Shell; each
-gets its own per-workspace sandbox ID + R2 prefix. Within a workspace it's still one
-container hosting N canvases + one shared component library (the "one container, N canvases"
-model applies *per workspace*). **Single-tenant (James-only)** — no other users — so
-ADR-0001's "unsandboxed RCE is acceptable because it's just me" stance still holds.
-**Multi-tenant (other people sign up) is deferred** to its own step (it reopens that RCE
-safety stance). _Avoid_: "sandbox", "instance".
+**Workspace**: an isolated runtime **and project/working context** — one Cloudflare
+Container, its own filesystem, its own R2 prefix (`workspaces/<ws>/…`, already keyed this
+way in ADR-0001), its own sleep timer. A workspace is **NOT tied to one repo**; James may
+have **many** workspaces (a project/desk), switched in the Shell; each gets its own
+per-workspace sandbox ID + R2 prefix. Within a workspace it's still one container hosting N
+canvases + one shared component library (the "one container, N canvases" model applies *per
+workspace*). A workspace **attaches 0..N Repos** (see below). A Workspace **is** the isolated
+deployment + org/tenant + membership unit (see Tenancy). _Avoid_: "sandbox", "instance".
+
+## Tenancy — a Workspace IS a deployment (control plane)
+
+**The Workspace is the isolation + membership unit.** A Workspace is, all in one:
+- a **deployment** — its own isolated stack (container + Turso DB + R2), provisioned/routed by
+  the **control plane** (the shared edge layer: auth, provisioning, routing);
+- an **org/tenant** — it **is** the Better Auth **organization** (the org plugin's members +
+  invitations); you **invite people directly to a Workspace**;
+- the **RCE trust boundary** — its container runs the unsandboxed agent, shared among *that
+  workspace's* members (all trusted invitees); different workspaces = different members =
+  different isolated deployments.
+
+There is **no separate "Team" layer** — "your team" is a Workspace's member list. This **collapses
+the #57 split**: the Better Auth org-"workspace" (singular) and the platform "workspace" are the
+**same concept** now — a Workspace is the org *and* the deployment.
+
+**One deployment per Workspace** (chosen isolation model — [ADR-0008]). Isolation is **physical**,
+so we **never build RCE-agent sandboxing** — the deployment is the boundary. Rejected: a shared
+multi-tenant plane (`tenant_id` scoping + RBAC), which would force sandboxing the RCE agent against
+untrusted members — the biggest, most safety-critical build, catastrophic if wrong.
+
+**Data is per-workspace (per Turso DB) in the target.** Because a Workspace = a deployment, its
+data lives in its **own Turso DB** (idiomatic for Turso — db-per-tenant), so cross-workspace
+`workspace_id` scoping (#57) largely **dissolves**: the DB *is* the workspace.
+
+- **Today (single-deployment approximation)**: one edge Worker + per-workspace *containers* + R2,
+  but **one shared Turso DB with `workspace_id` scoping** — what the 20 shipped slices built. It's
+  the one-deployment starting point.
+- **Target (control plane)**: the control plane promotes each Workspace to a real isolated
+  deployment (own Turso DB); `workspace_id` scoping becomes vestigial. **Open public signup** (if
+  ever) rides the same control plane — auto-provision an isolated workspace-deployment per signup,
+  never a shared plane, so RCE isolation always holds.
+
+_Avoid_: reintroducing a "Team" concept separate from Workspace, or treating the platform Workspace
+as a *sub*-thing inside a bigger tenant — the Workspace **is** the tenant/deployment.
 
 **Shell**: the top-level launcher + top nav, served **statically at the edge** (the
 Worker), NOT inside the container. Always instant; wakes the workspace runtime only
@@ -46,9 +80,28 @@ cross-project solution-reuse in the graph is intentionally dropped (a possible f
 opt-in). Absent a selection, requests fall back to the legacy `default` workspace, where
 pre-#57 rows are backfilled. The **Inbox is user-scoped** — one attention
 inbox for James, aggregating Conversations across all his workspaces, each Conversation
-tagged with its `workspace_id` (filterable by workspace). The **dev-agent workflow maps to
-a workspace's repo**: a per-repo workspace's scheduled `/improve-codebase-architecture`
-runs against that workspace's `Zabaca/…` repo and promotes into the one user Inbox.
+tagged with its `workspace_id` (filterable by workspace). The **dev-agent workflow operates
+on a workspace's attached Repos** (see **Repo**): its scheduled `/improve-codebase-architecture`
+runs against a repo the workspace attaches and promotes into the one user Inbox. [per-repo
+run granularity — being resolved]
+
+**Repo**: a first-class **GitHub repository attached to a Workspace** (0..N per workspace — a
+canvas-only workspace has zero; a dev project attaches several, e.g. app + infra + docs).
+Repos are the codebases a workspace's code-aware work (the dev-agent, and future code
+surfaces) operates on. There is a global set of repos granted to the platform (via GitHub
+auth); each workspace **attaches a subset**, and attachment is **many-to-many** — the same
+repo may be attached to several workspaces (it lives on GitHub, cloned transiently, so two
+workspaces = two independent clones/PRs). _Avoid_: conflating "workspace" with "repo" — a
+workspace is the project/runtime; repos are resources it attaches.
+
+**GitHub auth** (per Workspace): a **GitHub App** installed on the Workspace's GitHub org/account
+is the connection — the install matches the Workspace (= org) boundary. Granted repos = the
+Workspace's attachable pool; the workspace attaches a subset. The runtime mints **short-lived, per-repo installation tokens** (from
+the App private key) for clone/push/PR; commits/PRs are the bot's identity, not tied to any one
+member (survives member changes). **"Connect GitHub"** lives in the **Shell** (the owner's
+session). This **supersedes `DEV_AGENT_GITHUB_TOKEN`** — the single-repo PAT #64 stubbed in
+(`server/repo-worktree.ts`, `GITHUB_TOKEN_ENV`); that becomes the App-token path. Rejected: an
+OAuth user token (acts as one person, breaks on member changes, fights the team model).
 
 ## Canvas as a shared surface (not owned by the Canvas app)
 
