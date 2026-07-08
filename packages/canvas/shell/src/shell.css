@@ -334,3 +334,208 @@ body,
   background: var(--overlay);
   color: var(--text);
 }
+
+/* ---- Inbox stage (#108) ------------------------------------------------- */
+/* Two panes under the rail's one chrome — a Conversation list and the open thread. Ported
+   from the retired edge INBOX_HTML, restyled onto the shell's warm-graphite tokens. This
+   `.stage-inbox` follows the shared placeholder rule above, so it overrides its grid. */
+.stage-inbox {
+  display: flex;
+  place-items: stretch;
+  color: var(--text);
+  font-size: 14px;
+}
+.inbox-list {
+  width: 340px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+.inbox-filters {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.inbox-filters select {
+  flex: 1;
+  min-width: 0;
+  background: var(--void);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+}
+.inbox-items {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.inbox-item {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.inbox-item:hover {
+  background: var(--raised);
+}
+.inbox-item.sel {
+  background: var(--overlay);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.inbox-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.inbox-item-top b {
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-item small {
+  color: var(--muted);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.inbox-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+.inbox-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: oklch(0.3 0.05 60);
+  color: var(--accent);
+  flex: none;
+}
+.inbox-badge.closed {
+  background: var(--overlay);
+  color: var(--muted);
+}
+.inbox-thread {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.inbox-threadhead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.inbox-threadhead b {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-threadhead button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 5px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+}
+.inbox-threadhead button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.inbox-events {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 18px 22px;
+}
+.inbox-ev {
+  margin: 0 0 10px;
+  max-width: 80%;
+}
+.inbox-ev.user {
+  margin-left: auto;
+}
+.inbox-ev.meta {
+  color: var(--faint);
+  font-size: 12px;
+  max-width: 100%;
+}
+.inbox-bubble {
+  padding: 9px 13px;
+  border-radius: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.inbox-ev.assistant .inbox-bubble {
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.inbox-ev.user .inbox-bubble {
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+}
+.inbox-reply {
+  display: flex;
+  gap: 8px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--line);
+  flex: none;
+}
+.inbox-reply textarea {
+  flex: 1;
+  min-width: 0;
+  background: var(--void);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 9px 12px;
+  border-radius: 8px;
+  font: inherit;
+  resize: none;
+  height: 40px;
+}
+.inbox-reply button {
+  background: var(--accent);
+  border: none;
+  color: var(--void);
+  font-weight: 600;
+  padding: 0 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+}
+.inbox-reply button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.inbox-empty {
+  color: var(--muted);
+  margin: auto;
+  text-align: center;
+  padding: 40px;
+  font-size: 13px;
+}
