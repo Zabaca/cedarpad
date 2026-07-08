@@ -3,6 +3,7 @@ import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
+import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
@@ -53,6 +54,13 @@ export interface Env {
   WEB_ORIGIN?: string;
 }
 
+// Notebook's Hono API (web-poc's `buildApp`), mounted AT THE EDGE (ADR-0007, #56). No
+// db is injected, so its `dbMiddleware` builds one per request via
+// `createDbForWorker(c.env)` — the workerd-safe `@libsql/client/web` client against
+// remote Turso — so Notebook's `/v1/*` runs here without ever waking a container.
+// Built once per isolate (route setup is pure); the db is per-request.
+const notebookApi = buildApp();
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -60,9 +68,21 @@ export default {
 
     // Edge auth (ADR-0007, slice #45) — the SOLE gate now that cs_gate is gone. Better
     // Auth's endpoints are served AT THE EDGE so login/session happen here without ever
-    // proxying to a container; every other route must carry a valid session.
+    // proxying to a container; every other route must carry a valid session. This branch
+    // precedes the Notebook mount below, so `buildApp`'s own `/api/auth/*` mount is never
+    // reached — ONE auth path (this `handleAuth`) across the platform.
     if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')) {
       return handleAuth(request, env);
+    }
+
+    // Notebook API at the edge (ADR-0007, #56). `/v1/*` is served HERE against remote
+    // Turso, so Notebook no longer depends on / wakes the container. It SELF-gates via
+    // web-poc's `authMiddleware` (Better Auth session cookie OR `x-api-key`) against the
+    // SAME `createAuth` + Turso the edge `/api/auth` path uses — one auth system — so we
+    // deliberately route it BEFORE the edge session gate below (which would `renderLogin`
+    // HTML and can't honour agent `x-api-key`). Notebook returns its own JSON 401.
+    if (url.pathname === '/v1' || url.pathname.startsWith('/v1/')) {
+      return notebookApi.fetch(request, env as never);
     }
     // Verify the session and decide the gate BEFORE the resolver/proxy below — an
     // unauthenticated request never reaches serveWorkspace, so it never reaches the
