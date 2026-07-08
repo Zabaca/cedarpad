@@ -48,6 +48,22 @@ export async function get(db: Database, id: string): Promise<ConversationRow | n
 }
 
 /**
+ * Get the Conversation coupled to a Session, or null if none exists yet. Newest
+ * activity first (a sessionId maps to one Conversation, but ordering keeps the
+ * find-or-create in `ask_human` deterministic). This is how the promote protocol
+ * upserts by `sessionId` instead of by our own id.
+ */
+export async function getBySessionId(db: Database, sessionId: string): Promise<ConversationRow | null> {
+  const [row] = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.sessionId, sessionId))
+    .orderBy(desc(conversations.lastActivity))
+    .limit(1);
+  return row ?? null;
+}
+
+/**
  * List a user's Conversations, newest activity first. The Inbox is user-scoped:
  * only the caller's rows, aggregated across their workspaces. Optionally filter
  * by `status` and/or platform `workspaceId`.

@@ -9,7 +9,7 @@ import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import { buildApp } from '../web-poc/worker/index.ts';
-import { makeDb } from '../web-poc/lib/db/index.ts';
+import { conversations, makeDb } from '../web-poc/lib/db/index.ts';
 
 import type { CanvasState } from '../src/shapes.ts';
 import { normalizeIncomingShape, normalizePage } from '../src/normalize.ts';
@@ -20,6 +20,8 @@ import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeMs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
+import { type Notify, resumeConversation } from './inbox.ts';
+import { backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, runChat } from './agent.ts';
 import { adoptSharedComponent, promoteComponent } from './components.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
@@ -88,7 +90,15 @@ if (!webPocRemoteTurso) {
     migrationsFolder: fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url)),
   });
 }
-const webPocApp = buildApp({ db: makeDb(webPocClient) });
+const webPocDb = makeDb(webPocClient);
+const webPocApp = buildApp({ db: webPocDb });
+
+// Inbox (#61): the promote protocol runs against the same web-poc Turso db. The bridge is a
+// single-user localhost surface, so the inbox owner + platform workspace come from env (the
+// authenticated-user wiring is a platform/#62 concern). notify is a best-effort stub this slice.
+const INBOX_USER = process.env.CANVAS_USER ?? 'default';
+const notify: Notify = (conv, question) =>
+  console.log(`[inbox] waiting_on:human conv=${conv.id} session=${conv.sessionId} q=${question.slice(0, 80)}`);
 
 // SSE encoder shared by the chat multiplexer (canvas SSE lives per-session now).
 const enc = new TextEncoder();
@@ -101,7 +111,10 @@ const sse = (data: unknown) => enc.encode(`data: ${JSON.stringify(data)}\n\n`);
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
 const DEFAULT_CANVAS_ID = process.env.CANVAS_ID ?? 'default';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
-const blobStore = new BlobStore(selectBackend(`${PKG_ROOT}.persist`));
+// Capture the raw backend too: the Inbox transcript backup/restore (#60/#61) keys blobs by
+// sessionId (transcript-r2), so it needs the low-level get/put seam, not BlobStore's canvas API.
+const blobBackend = selectBackend(`${PKG_ROOT}.persist`);
+const blobStore = new BlobStore(blobBackend);
 
 // Per-canvas sessions, keyed by canvasId. The default canvas runs the exact same
 // factory as every other, so its single-store behavior is unchanged (it is just the
@@ -333,7 +346,8 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
   void (async () => {
     let finalSessionId = sessionId;
     try {
-      for await (const ev of runChat(defaultSession.store, message, sessionId, defaultSession.requestScreenshot, images, chatId, model, forkSession, ac, effort, defaultSession.canvasId, bumpSharedModuleAcrossCanvases)) {
+      const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: WORKSPACE, notify };
+      for await (const ev of runChat(defaultSession.store, message, sessionId, defaultSession.requestScreenshot, images, chatId, model, forkSession, ac, effort, defaultSession.canvasId, bumpSharedModuleAcrossCanvases, inbox)) {
         if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
         broadcastChat(chatId, ev satisfies ChatEvent);
       }
@@ -345,6 +359,13 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
       if (finalSessionId && finalSessionId !== sessionId) chatMeta.set(chatId, { sessionId: finalSessionId });
       // ADR 0003: persist sessions/components/custom now that the turn settled.
       await onTurnComplete();
+      // Inbox (#60/#61): mirror THIS session's transcript to R2 keyed by sessionId, so the Inbox
+      // can render history and resume can restore it while the runner sleeps. Best-effort.
+      if (finalSessionId) {
+        await backupTranscript(blobBackend, SESSIONS_DIR, finalSessionId).catch((err) =>
+          console.error('[inbox] transcript backup failed:', err),
+        );
+      }
     }
   })();
 }
@@ -359,6 +380,17 @@ export function setChatTurnDispatcher(fn: typeof runChatTurn): () => void {
   return () => {
     dispatchChatTurn = prev;
   };
+}
+
+// The cwd sessions ran under (matches agent.ts's query cwd), so transcript restore lands the JSONL
+// at the exact path SDK resume reads. Restore before a resumed turn (which the SDK cwd re-derives).
+const CANVAS_CWD = process.env.CANVAS_CWD ?? process.cwd();
+
+// The JSONL carries no chatId, so the chatId→sessionId link lives in ChatMeta (ADR 0004). Reverse
+// it to route a resumed inbox turn back to its chat card's SSE; absent (a session with no canvas
+// chat home) ⇒ fall back to the conversation id so the turn still streams under a stable channel.
+function chatIdForSession(sessionId: string): string | undefined {
+  return Object.entries(chatMeta.snapshot()).find(([, m]) => m.sessionId === sessionId)?.[0];
 }
 
 export async function handleRequest(req: Request): Promise<Response> {
@@ -581,6 +613,35 @@ export async function handleRequest(req: Request): Promise<Response> {
       const chatId = decodeURIComponent(interruptRoute[1] as string);
       aborters.get(chatId)?.abort();
       return json({ ok: true });
+    }
+
+    // POST /api/inbox/:id/reply — the human answers an ask_human item (#61). Restore the session's
+    // transcript from R2, resume the SDK Session with the reply, and flip waiting_on:agent. The
+    // Inbox UI (#62) calls this. Auth is deferred to the platform Shell that fronts the bridge
+    // (single-user localhost today); resumeConversation itself is runner-agnostic.
+    const inboxReplyRoute = /^\/api\/inbox\/([^/]+)\/reply$/.exec(path);
+    if (inboxReplyRoute && req.method === 'POST') {
+      const id = decodeURIComponent(inboxReplyRoute[1] as string);
+      const body = await readBody(req);
+      const message = typeof body.message === 'string' ? body.message.trim() : '';
+      if (!message) return json({ error: 'message required' }, 400);
+      const conv = await conversations.get(webPocDb, id);
+      if (!conv) return json({ error: `conversation not found: ${id}` }, 404);
+      const updated = await resumeConversation(
+        {
+          db: webPocDb,
+          getter: blobBackend,
+          projectsDir: SESSIONS_DIR,
+          cwd: CANVAS_CWD,
+          // Reuse the chat-turn machinery: resume streams + persists + backs up like any turn.
+          runTurn: (sessionId, msg) => {
+            dispatchChatTurn(chatIdForSession(sessionId) ?? conv.id, msg, sessionId, []);
+          },
+        },
+        conv,
+        message,
+      );
+      return json({ ok: true, conversation: updated });
     }
 
     if (path === '/api/health') return json({ ok: true, shapes: defaultSession.store.getState().shapes.length });
