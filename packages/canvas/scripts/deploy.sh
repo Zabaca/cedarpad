@@ -27,11 +27,13 @@ for f in cli-plugins contexts buildx; do [ -e "$HOME/.docker/$f" ] && ln -s "$HO
 cleanup() { rm -rf "$DC"; }
 trap cleanup EXIT
 
-# Notebook SPA static build (PRD #49 slice #58): wrangler's `assets` binding bundles
-# web-poc/dist, so it must exist before zbc runs `wrangler deploy`. The zbc cloudflare
-# module has no build hook, so build it here.
-echo "→ building Notebook SPA (web-poc/dist)"
-bun run webpoc:build || { echo "❌ webpoc:build failed"; exit 1; }
+# Shell SPA + Notebook static build (PRD #103): wrangler's `assets` binding bundles
+# shell/dist (the shell at `/`, the Notebook SPA under `/notebook`), so it must exist
+# before zbc runs `wrangler deploy`. The zbc cloudflare module has no build hook, so
+# build it here. `bun run build` builds the shell (empties shell/dist) THEN the Notebook
+# into shell/dist/notebook — order matters.
+echo "→ building Shell SPA + Notebook (shell/dist)"
+bun run build || { echo "❌ shell build failed"; exit 1; }
 
 echo "→ zbc apply production canvas (build + deploy + push secrets)"
 ( cd "$REPO_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }

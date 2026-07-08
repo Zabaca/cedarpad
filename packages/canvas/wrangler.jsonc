@@ -30,12 +30,13 @@
     // repo-connection (#96) ships. Flip to "true" to enable.
     "DEV_AGENT_ENABLED": "false"
   },
-  // The Notebook SPA static build (PRD #49 slice #58). `bun run webpoc:build` emits
-  // web-poc/dist; the edge Worker serves it under /notebook via env.ASSETS after the
-  // edge session gate. `run_worker_first: true` means the Worker runs on every request
-  // (assets are never auto-served pre-auth) and pulls files through the ASSETS binding.
+  // The Shell SPA build (PRD #103). `bun run build` emits shell/dist — the Shell at `/`
+  // and its `/assets/*`, plus the Notebook SPA under `/notebook` (shell/dist/notebook) —
+  // and the edge Worker serves it all through env.ASSETS after the edge session gate.
+  // `run_worker_first: true` means the Worker runs on every request (assets are never
+  // auto-served pre-auth) and pulls files through the ASSETS binding.
   "assets": {
-    "directory": "./web-poc/dist",
+    "directory": "./shell/dist",
     "binding": "ASSETS",
     "run_worker_first": true
   },
@@ -77,7 +78,7 @@
         "DEV_AGENT_ENABLED": "false"
       },
       "assets": {
-        "directory": "./web-poc/dist",
+        "directory": "./shell/dist",
         "binding": "ASSETS",
         "run_worker_first": true
       },

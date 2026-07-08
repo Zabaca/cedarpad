@@ -6,12 +6,17 @@ import { defineConfig } from 'vite';
 // Worker under `/notebook` as the Notebook app surface — no container, no dev vite.
 //
 // `base: '/notebook/'` so the built index.html references its assets at
-// `/notebook/assets/*`; the edge Worker strips the `/notebook` prefix before handing
-// the request to the Workers static-assets binding (see worker/index.ts). The SPA's
-// client uses relative paths (`VITE_API_URL` unset → ""), so it calls `/v1` and
-// `/api/auth/*` on the same edge origin — already workspace-scoped by `cs_workspace`.
+// `/notebook/assets/*`; the edge Worker serves those file paths straight out of the single
+// static-assets build (see worker/index.ts). The SPA's client uses relative paths
+// (`VITE_API_URL` unset → ""), so it calls `/v1` and `/api/auth/*` on the same edge origin
+// — already workspace-scoped by `cs_workspace`.
+//
+// Output lands in the SHELL's build tree (`shell/dist/notebook`, PRD #103): the Shell SPA
+// owns the one ASSETS directory, and Notebook is a subtree under it (`/notebook/*`) sharing
+// that single binding — no second ASSETS directory. `emptyOutDir` clears only this subtree,
+// so it must run AFTER the shell build populates `shell/dist` (see package.json `build`).
 export default defineConfig({
   base: '/notebook/',
   plugins: [react()],
-  build: { outDir: 'dist', emptyOutDir: true },
+  build: { outDir: '../shell/dist/notebook', emptyOutDir: true },
 });

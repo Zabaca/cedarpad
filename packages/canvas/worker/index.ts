@@ -8,7 +8,7 @@ import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
 import { dispatchDevAgentRun, runDevAgent } from './dev-agent.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { devAgentSandbox, sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
-import { handleCanvasesApi, handleWorkspacesApi, renderInbox, renderLogin, renderShell } from './shell.ts';
+import { handleCanvasesApi, handleWorkspacesApi, renderInbox, renderLogin } from './shell.ts';
 import { handleInboxApi } from './inbox.ts';
 import {
   DEFAULT_CANVAS_ID,
@@ -127,18 +127,32 @@ export default {
     }
     const user = gate.user;
 
+    /** Serve `path` out of the static-assets build (shell/dist), preserving method/headers. */
+    const asset = (path: string) => {
+      const assetUrl = new URL(request.url);
+      assetUrl.pathname = path;
+      return env.ASSETS.fetch(new Request(assetUrl, request));
+    };
+
+    // The Shell SPA (ADR-0007, PRD #103) — the ONE chrome, served HERE from the static-assets
+    // build behind the gate above. THE INVARIANT: `/` must reach env.ASSETS without ever
+    // calling serveWorkspace/sandboxFor, so browsing the shell never wakes (or bills) a
+    // container. Mounting the pad iframe (/w/:ws/canvas/:id/pad, below) is the only thing
+    // that does. `/assets/*` is vite's default output prefix and cannot collide with the
+    // container's dev-server paths (`/src/*`, `/@vite/*`, `/node_modules/*`), which still
+    // fall through to serveWorkspace at the bottom.
+    if (url.pathname === '/') return asset('/index.html');
+    if (url.pathname.startsWith('/assets/')) return asset(url.pathname);
+
     // Notebook SPA static build (ADR-0007, PRD #49 slice #58). Served HERE, behind the
     // edge session gate above, from the Workers static-assets binding — no container,
-    // no dev vite. The SPA is built with base `/notebook/`, so its asset URLs are
-    // `/notebook/assets/*`; strip the `/notebook` prefix before the ASSETS lookup (which
-    // maps request path → file path in web-poc/dist). `/notebook` (or `/notebook/`) maps
-    // to the SPA's index.html. Its client then calls `/v1` + `/api/auth/*` on this same
-    // edge origin, already workspace-scoped by the `cs_workspace` cookie (#57).
+    // no dev vite. The SPA is built with base `/notebook/` into shell/dist/notebook, so
+    // its asset URLs (`/notebook/assets/*`) map straight onto file paths; only the bare
+    // surface URL needs pointing at the SPA's index.html. Its client then calls `/v1` +
+    // `/api/auth/*` on this same edge origin, already workspace-scoped by `cs_workspace` (#57).
     if (url.pathname === '/notebook' || url.pathname.startsWith('/notebook/')) {
-      const assetPath = url.pathname.slice('/notebook'.length) || '/';
-      const assetUrl = new URL(request.url);
-      assetUrl.pathname = assetPath;
-      return env.ASSETS.fetch(new Request(assetUrl, request));
+      const notebookPath = url.pathname === '/notebook' || url.pathname === '/notebook/' ? '/notebook/index.html' : url.pathname;
+      return asset(notebookPath);
     }
 
     // Edge Shell (ADR-0007, #46). The launcher + its registry API are served HERE — no
@@ -250,9 +264,6 @@ export default {
     // checked at set-time), defaulting to the legacy workspace when unset — so direct
     // asset/API hits with no selection behave exactly as today.
     const selected = readWorkspaceCookie(request.headers.get('cookie'));
-
-    // The launcher is the root when no workspace is selected yet — instant, no boot.
-    if (url.pathname === '/' && !selected) return renderShell();
 
     const workspace =
       !selected || selected === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: selected };

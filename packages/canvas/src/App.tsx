@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { DefaultContextMenu, DefaultContextMenuContent, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
 import 'tldraw/tldraw.css';
 
@@ -8,20 +8,15 @@ import { ChatShapeUtil } from './ChatShape';
 import { closeSession, forkSession } from './chat-store';
 import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
-import { LeftPanel } from './LeftPanel';
 import { wireSync } from './sync';
 
 // Registered once, at editor construction: our two custom shapes. `component`
 // renders agent-authored React files; `chat` is a chat session living on the canvas.
 const customShapeUtils: TLAnyShapeUtilConstructor[] = [ComponentShapeUtil, ChatShapeUtil];
 
-// The far-left rail switches the stage between the tldraw canvas and web-poc
-// (Problem/Solution Intelligence). web-poc mounts directly into this React tree
-// (both apps are on React 19) rather than an iframe: its providers + UI ship as a
-// lazy chunk that only loads when the 3rd rail button is opened. Its /v1 + /api/auth
-// calls are served by the same bridge process (see server/bridge.ts).
-export type AppView = 'canvas' | 'webpoc';
-const WebPocApp = lazy(() => import('../web-poc/src/embed').then((m) => ({ default: m.WebPocApp })));
+// This is the Render Pad (ADR-0007, PRD #103): the container serves ONLY the tldraw canvas
+// + chat now. The rail, canvas selector, and Notebook stage moved to the edge Shell SPA
+// (packages/canvas/shell), which iframes this pad at /w/:ws/canvas/:id/pad. Chat stays here.
 
 // Hide tldraw's built-in page dropdown ("Avatar ⌄"): a canvas has no pages. The
 // hamburger MainMenu and the undo/redo/delete/duplicate QuickActions are left in place.
@@ -150,8 +145,6 @@ export default function App() {
   const cleanup = useRef<(() => void) | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const [ready, setReady] = useState(false);
-  // Which app the rail is showing: the canvas, or the embedded web-poc.
-  const [activeApp, setActiveApp] = useState<AppView>('canvas');
 
   // Drop a fresh chat card. If a shape is selected (or a chat is focused), the new
   // card lands just to the right of it and is joined by a bound arrow — so chats
@@ -289,24 +282,13 @@ export default function App() {
   );
 
   return (
-    <div className={`app${activeApp === 'webpoc' ? ' app--webpoc' : ''}`}>
-      {/* Tldraw stays mounted (editor + sync are preserved) while web-poc overlays it. */}
+    <div className="app">
       <div className="tl-stage">
         <Tldraw shapeUtils={customShapeUtils} components={tldrawComponents} onMount={onMount} />
       </div>
-      {activeApp === 'webpoc' && (
-        <div className="webpoc-frame">
-          <Suspense fallback={<div className="webpoc-loading">Loading Web POC…</div>}>
-            <WebPocApp />
-          </Suspense>
-        </div>
-      )}
-      <LeftPanel activeApp={activeApp} onSelectApp={setActiveApp} />
-      {activeApp === 'canvas' && (
-        <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">
-          ＋ New chat
-        </button>
-      )}
+      <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">
+        ＋ New chat
+      </button>
     </div>
   );
 }
