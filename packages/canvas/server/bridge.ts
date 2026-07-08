@@ -12,10 +12,9 @@ import { buildApp } from '../web-poc/worker/index.ts';
 import { makeDb } from '../web-poc/lib/db/index.ts';
 
 import type { CanvasState } from '../src/shapes.ts';
-import { createStore } from '../src/store.ts';
-import { normalizeIncomingShape, normalizePage, primeIdCounter } from '../src/normalize.ts';
+import { normalizeIncomingShape, normalizePage } from '../src/normalize.ts';
 import { BlobStore, selectBackend } from './blob-store.ts';
-import { CanvasPersistence } from './canvas-persistence.ts';
+import { type CanvasSession, createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
 import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeMs, tarSubtree } from './overlay.ts';
@@ -89,20 +88,32 @@ if (!webPocRemoteTurso) {
 }
 const webPocApp = buildApp({ db: makeDb(webPocClient) });
 
-// SSE subscribers for live canvas state.
-const canvasClients = new Set<ReadableStreamDefaultController>();
+// SSE encoder shared by the chat multiplexer (canvas SSE lives per-session now).
 const enc = new TextEncoder();
 const sse = (data: unknown) => enc.encode(`data: ${JSON.stringify(data)}\n\n`);
 
 // Canvas persistence: local disk in dev, R2 in the container (selected by env).
-// One workspace, one canvas for v1. Load is async, so the store is constructed
-// after the boot read; the data-loss guard refuses to overwrite a saved canvas
-// with empty if that read failed (story 30).
+// A workspace hosts N canvases (ADR-0007); each canvas is a CanvasSession keyed by
+// canvasId in the registry below. Sessions are built lazily on first access; the
+// data-loss guard refuses to overwrite a saved canvas with empty if its read failed.
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
-const CANVAS_ID = process.env.CANVAS_ID ?? 'default';
+const DEFAULT_CANVAS_ID = process.env.CANVAS_ID ?? 'default';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
 const blobStore = new BlobStore(selectBackend(`${PKG_ROOT}.persist`));
-const persist = new CanvasPersistence(blobStore, WORKSPACE, CANVAS_ID);
+
+// Per-canvas sessions, keyed by canvasId. The default canvas runs the exact same
+// factory as every other, so its single-store behavior is unchanged (it is just the
+// first registry entry). The browser selects a canvas via the `x-canvas-id` header
+// (or `?canvas=`); absent → the default, so today's un-namespaced /api/canvas/* calls
+// resolve to the default canvas exactly as before.
+const canvasSessions = createSessionRegistry((id) => createCanvasSession(blobStore, WORKSPACE, id));
+function canvasIdFrom(req: Request, url: URL): string {
+  return req.headers.get('x-canvas-id') ?? url.searchParams.get('canvas') ?? DEFAULT_CANVAS_ID;
+}
+// Build the default session at boot so it restores from R2 before the first request —
+// preserving today's boot-time load. Chats (multiplexed, not yet per-canvas) run
+// against the default canvas's store, as they always have.
+const defaultSession: CanvasSession = await canvasSessions.get(DEFAULT_CANVAS_ID);
 
 // Per-chat durable state (ADR 0004): server-owned { sessionId, model, effort, forkNext },
 // the single home that replaces browser localStorage. Persisted via blobStore (local disk
@@ -146,128 +157,10 @@ async function onTurnComplete(): Promise<void> {
   await flushIfDirty('custom', CUSTOM_DIR);
 }
 
-let restored: CanvasState | null = null;
-try {
-  restored = await persist.load();
-} catch (err) {
-  // Visible error (story 29): start degraded rather than silently handing back an
-  // empty canvas. The guard then blocks an empty-over-known-good save.
-  console.error('[persist] canvas-state load failed; starting in degraded mode:', err);
-}
-const seedShapes = restored?.shapes ?? [];
-primeIdCounter(seedShapes.map((s) => s.id));
-
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-// Persistence health, surfaced at /api/status and logged on every flush. The whole
-// point: a save that silently never fires (the bug that hid for an hour) is now
-// visible — `pending` true with a growing live-vs-saved gap means edits aren't
-// reaching R2.
-const saveHealth = {
-  bootAt: Date.now(),
-  liveVersion: restored?.version ?? 0,
-  savedVersion: restored ? (restored.version ?? 0) : -1, // best guess at what R2 holds
-  lastAttemptAt: 0,
-  lastOkAt: 0,
-  lastResult: 'none' as 'none' | 'ok' | 'skipped' | 'failed' | 'blocked',
-  lastError: null as string | null,
-  blockedShrink: null as { from: number; to: number } | null,
-  pending: false,
-};
-const store = createStore(
-  seedShapes,
-  (state) => {
-    // Save is TRIGGERED here on every real store mutation (version advanced),
-    // debounced 1s so rapid edits coalesce into one R2 write.
-    saveHealth.liveVersion = state.version;
-    saveHealth.pending = true;
-    console.log(`[persist] change → v${state.version} (${state.shapes.length} shapes, ${state.pages.length} pages); flush scheduled`);
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      saveTimer = null;
-      const v = state.version;
-      saveHealth.lastAttemptAt = Date.now();
-      console.log(`[persist] flushing v${v} → ${process.env.R2_BUCKET ? 'R2' : 'fs'}…`);
-      persist
-        .save(state)
-        .then(async (wrote) => {
-          saveHealth.pending = false;
-          if (wrote) {
-            saveHealth.lastResult = 'ok';
-            saveHealth.savedVersion = v;
-            saveHealth.lastOkAt = Date.now();
-            saveHealth.blockedShrink = null;
-            console.log(`[persist] flush OK v${v}`);
-          } else if (persist.blockedShrink) {
-            // The destructive-shrink guard refused to overwrite a substantial canvas with a
-            // near-empty one (a tldraw-crash nuke). The disk still holds the good state, so
-            // reseed the LIVE store from it: the upsert's onChange re-broadcasts the restored
-            // canvas to every browser and re-persists it, so the session self-heals with no
-            // reload or restart. (A genuine full clear is also caught — delete in chunks or
-            // restart to intentionally empty a large canvas.)
-            const { from, to } = persist.blockedShrink;
-            saveHealth.lastResult = 'blocked';
-            saveHealth.blockedShrink = persist.blockedShrink;
-            console.warn(`[persist] BLOCKED catastrophic shrink v${v}: ${from} → ${to} shapes (kept ${Math.round((100 * to) / from)}%). Disk preserved; reseeding live store from disk.`);
-            try {
-              const good = await persist.load();
-              if (good) {
-                store.upsertPages(good.pages);
-                store.upsert(good.shapes);
-              }
-            } catch (err) {
-              console.error('[persist] reseed-from-disk failed; restart the bridge to recover the canvas:', err);
-            }
-          } else {
-            saveHealth.lastResult = 'skipped';
-            console.log(`[persist] flush SKIPPED v${v} (degraded + empty)`);
-          }
-        })
-        .catch((err) => {
-          saveHealth.pending = false;
-          saveHealth.lastResult = 'failed';
-          saveHealth.lastError = String((err as Error)?.message ?? err);
-          console.error(`[persist] flush FAILED v${v}:`, err);
-        });
-    }, 1000);
-    for (const c of canvasClients) {
-      try {
-        c.enqueue(sse(state));
-      } catch {
-        canvasClients.delete(c);
-      }
-    }
-  },
-  restored?.pages ?? [],
-);
-
-// Screenshot round-trip: the agent's view_canvas tool asks the browser (over SSE)
-// for a PNG of the live canvas; the browser renders via tldraw and POSTs it back,
-// correlated by id. Returns null if no browser is connected or it times out.
-let shotSeq = 0;
-const pendingShots = new Map<string, (url: string | null) => void>();
-function requestScreenshot(pageId?: string, timeoutMs = 7000): Promise<string | null> {
-  if (canvasClients.size === 0) return Promise.resolve(null);
-  const id = `shot${(shotSeq += 1)}`;
-  const frame = enc.encode(`event: screenshot\ndata: ${JSON.stringify({ id, pageId })}\n\n`);
-  for (const c of canvasClients) {
-    try {
-      c.enqueue(frame);
-    } catch {
-      canvasClients.delete(c);
-    }
-  }
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pendingShots.delete(id);
-      resolve(null);
-    }, timeoutMs);
-    pendingShots.set(id, (url) => {
-      clearTimeout(timer);
-      pendingShots.delete(id);
-      resolve(url);
-    });
-  });
-}
+// The per-canvas store, persistence, save-health, SSE subscriber set, and screenshot
+// round-trip now live in CanvasSession (server/canvas-sessions.ts). `defaultSession`
+// (built at boot above) is the default canvas; the chat path uses it, exactly as the
+// single global store did before.
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -283,19 +176,20 @@ async function readBody(req: Request): Promise<Record<string, unknown>> {
   }
 }
 
-function canvasStream(): Response {
+function canvasStream(session: CanvasSession): Response {
+  const clients = session.clients;
   let self: ReadableStreamDefaultController;
   const stream = new ReadableStream({
     start(controller) {
       self = controller;
-      canvasClients.add(controller);
+      clients.add(controller);
       markAlive();
       ensureReaper();
-      controller.enqueue(sse(store.getState())); // prime with current state
+      controller.enqueue(sse(session.store.getState())); // prime with current state
     },
     cancel() {
-      canvasClients.delete(self);
-      console.log(`[clients] canvas stream cancel -> canvas=${canvasClients.size} chat=${chatClients.size}`);
+      clients.delete(self);
+      console.log(`[clients] canvas ${session.canvasId} stream cancel -> canvas=${clients.size} chat=${chatClients.size}`);
     },
   });
   return new Response(stream, {
@@ -356,8 +250,11 @@ function ensureReaper(): void {
     if (!process.env.IS_SANDBOX) return;
     console.log(`[idle] no client heartbeat for ${STALE_MS}ms -> flush + exit so the container can sleep`);
     const bail = setTimeout(() => process.exit(0), 3000);
-    void persist
-      .save(store.getState())
+    // Flush every canvas session built this run (not just the default) so no canvas
+    // loses in-flight edits when the container sleeps.
+    void Promise.allSettled(
+      canvasSessions.resolved().map((p) => p.then((s) => s.persist.save(s.store.getState()))),
+    )
       .catch(() => {})
       .finally(() => {
         clearTimeout(bail);
@@ -398,14 +295,14 @@ function chatStream(): Response {
         } catch {
           clearInterval(ping);
           chatClients.delete(controller);
-          console.log(`[clients] chat ping dead-controller -> chat=${chatClients.size} canvas=${canvasClients.size}`);
+          console.log(`[clients] chat ping dead-controller -> chat=${chatClients.size} canvas(default)=${defaultSession.clients.size}`);
         }
       }, 15000);
     },
     cancel() {
       clearInterval(ping);
       chatClients.delete(self);
-      console.log(`[clients] chat stream cancel -> chat=${chatClients.size} canvas=${canvasClients.size}`);
+      console.log(`[clients] chat stream cancel -> chat=${chatClients.size} canvas(default)=${defaultSession.clients.size}`);
     },
   });
   return new Response(stream, {
@@ -429,7 +326,7 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
   void (async () => {
     let finalSessionId = sessionId;
     try {
-      for await (const ev of runChat(store, message, sessionId, requestScreenshot, images, chatId, model, forkSession, ac, effort)) {
+      for await (const ev of runChat(defaultSession.store, message, sessionId, defaultSession.requestScreenshot, images, chatId, model, forkSession, ac, effort)) {
         if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
         broadcastChat(chatId, ev satisfies ChatEvent);
       }
@@ -487,15 +384,23 @@ export async function handleRequest(req: Request): Promise<Response> {
     }
 
     // --- canvas sync ---
+    // Every canvas route resolves its CanvasSession from the request's canvasId
+    // (x-canvas-id header / ?canvas=, default 'default'), so N canvases share one
+    // bridge with per-canvas stores. Un-namespaced calls resolve to the default
+    // canvas, so today's single-canvas frontend is unchanged.
     if (path === '/api/canvas' && req.method === 'GET') {
-      return json(store.getState() satisfies CanvasState);
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      return json(session.store.getState() satisfies CanvasState);
     }
     // Persistence health in one read: is the backend R2 or fs, are we degraded, and
     // is what's in memory actually reaching R2? `unsavedVersions` > 0 and rising =
     // edits aren't being persisted (the exact failure that was invisible before).
     if (path === '/api/status' && req.method === 'GET') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const { store, persist, saveHealth } = session;
       const s = store.getState();
       const savedV = saveHealth.savedVersion < 0 ? 0 : saveHealth.savedVersion;
+      const canvasClients = session.clients;
       return json({
         buildRev: BUILD_REV,
         backend: process.env.R2_BUCKET ? 'r2' : 'fs',
@@ -519,47 +424,53 @@ export async function handleRequest(req: Request): Promise<Response> {
       });
     }
     if (path === '/api/canvas/stream' && req.method === 'GET') {
-      return canvasStream();
+      return canvasStream(await canvasSessions.get(canvasIdFrom(req, url)));
     }
     if (path === '/api/canvas/shapes' && req.method === 'POST') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
       const body = await readBody(req);
       const raw = Array.isArray(body.shapes) ? body.shapes : [];
       try {
         const shapes = raw.map((s) => normalizeIncomingShape(s as Record<string, unknown>));
-        const version = store.upsert(shapes);
+        const version = session.store.upsert(shapes);
         return json({ version, count: shapes.length });
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
     }
     if (path === '/api/canvas/delete' && req.method === 'POST') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
       const body = await readBody(req);
       const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
-      return json({ version: store.remove(ids) });
+      return json({ version: session.store.remove(ids) });
     }
     if (path === '/api/canvas/pages' && req.method === 'POST') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
       const body = await readBody(req);
       const raw = Array.isArray(body.pages) ? body.pages : [];
       try {
         const pages = raw.map((p) => normalizePage(p as Record<string, unknown>));
-        return json({ version: store.upsertPages(pages), count: pages.length });
+        return json({ version: session.store.upsertPages(pages), count: pages.length });
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
     }
     if (path === '/api/canvas/pages/delete' && req.method === 'POST') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
       const body = await readBody(req);
       const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
-      return json({ version: store.removePages(ids) });
+      return json({ version: session.store.removePages(ids) });
     }
     if (path === '/api/canvas/clear' && req.method === 'POST') {
-      return json({ version: store.clear() });
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      return json({ version: session.store.clear() });
     }
     if (path === '/api/canvas/screenshot' && req.method === 'POST') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
       const body = await readBody(req);
       const id = typeof body.id === 'string' ? body.id : '';
-      const url = typeof body.url === 'string' ? body.url : null;
-      pendingShots.get(id)?.(url);
+      const screenurl = typeof body.url === 'string' ? body.url : null;
+      session.resolveScreenshot(id, screenurl);
       return json({ ok: true });
     }
 
@@ -640,7 +551,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       return json({ ok: true });
     }
 
-    if (path === '/api/health') return json({ ok: true, shapes: store.getState().shapes.length });
+    if (path === '/api/health') return json({ ok: true, shapes: defaultSession.store.getState().shapes.length });
 
     // Avatar-capture handoff: persist a recorded clip to disk so the next pipeline
     // step can read it. Browser sends FormData { file, session, shot, mime, duration }.
