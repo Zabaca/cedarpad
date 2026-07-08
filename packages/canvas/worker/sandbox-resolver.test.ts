@@ -10,22 +10,24 @@ import {
 
 describe('resolve', () => {
   // Table-driven: a workspace record maps to the EXACT expected coordinates.
-  const cases: Array<{ name: string; ws: { id: string; legacy?: boolean }; sandboxId: string; r2Prefix: string }> = [
+  const cases: Array<{ name: string; ws: { id: string; legacy?: boolean }; sandboxId: string; r2Prefix: string; canvasWorkspace: string }> = [
     // The default/legacy workspace MUST resolve to the coordinates the single
-    // hardcoded container already uses in production — behavior-preserving.
-    { name: 'default/legacy → legacy coords', ws: DEFAULT_WORKSPACE, sandboxId: 'canvas', r2Prefix: 'workspaces/default/' },
-    // A NEW workspace uses the derived `workspace-<id>` / `workspaces/<id>/` scheme.
-    { name: 'new workspace → derived coords', ws: { id: 'ws_abc123' }, sandboxId: 'workspace-ws_abc123', r2Prefix: 'workspaces/ws_abc123/' },
+    // hardcoded container already uses in production — behavior-preserving, and it
+    // MUST still run the container with CANVAS_WORKSPACE='default'.
+    { name: 'default/legacy → legacy coords', ws: DEFAULT_WORKSPACE, sandboxId: 'canvas', r2Prefix: 'workspaces/default/', canvasWorkspace: 'default' },
+    // A NEW workspace uses the derived `workspace-<id>` / `workspaces/<id>/` scheme,
+    // and its own id as CANVAS_WORKSPACE so its R2 state is isolated.
+    { name: 'new workspace → derived coords', ws: { id: 'ws_abc123' }, sandboxId: 'workspace-ws_abc123', r2Prefix: 'workspaces/ws_abc123/', canvasWorkspace: 'ws_abc123' },
   ];
 
   for (const c of cases) {
     test(c.name, () => {
-      expect(resolve(c.ws)).toEqual({ sandboxId: c.sandboxId, r2Prefix: c.r2Prefix });
+      expect(resolve(c.ws)).toEqual({ sandboxId: c.sandboxId, r2Prefix: c.r2Prefix, canvasWorkspace: c.canvasWorkspace });
     });
   }
 
   test('legacy constants match the default workspace resolution', () => {
-    expect(resolve(DEFAULT_WORKSPACE)).toEqual({ sandboxId: LEGACY_SANDBOX_ID, r2Prefix: LEGACY_R2_PREFIX });
+    expect(resolve(DEFAULT_WORKSPACE)).toEqual({ sandboxId: LEGACY_SANDBOX_ID, r2Prefix: LEGACY_R2_PREFIX, canvasWorkspace: 'default' });
   });
 });
 
