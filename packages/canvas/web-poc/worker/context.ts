@@ -15,6 +15,11 @@ export interface Bindings {
   /** Production web origin (e.g. the Pages URL) — trusted for CSRF/Origin checks. */
   WEB_ORIGIN?: string;
   /**
+   * When "true", Better Auth email/password signup is disabled (prod is James-only,
+   * PRD #49 #15). Unset in dev leaves signup open. Set as an edge Worker var.
+   */
+  AUTH_DISABLE_SIGNUP?: string;
+  /**
    * Dev-only: when set, requests may pass `x-dev-workspace: <workspaceId>` to
    * act as that workspace WITHOUT authentication. Never set this in production.
    */

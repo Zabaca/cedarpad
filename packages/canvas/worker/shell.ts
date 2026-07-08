@@ -198,7 +198,8 @@ document.getElementById('f').onsubmit=async(e)=>{
 // no-container constraint means it can't pull `/src`). Lists the user's workspaces from
 // /api/workspaces, creates one, opens one by navigating to /w/:id (the Worker sets the
 // selection cookie and proxies that workspace's container). Top nav establishes the
-// Canvas/Notebook/Inbox frame; Notebook/Inbox are placeholders this slice.
+// Canvas/Notebook/Inbox frame; Notebook opens the static SPA at /notebook (PRD #49
+// slice #58), Inbox stays a placeholder.
 export function renderShell(): Response {
   return new Response(SHELL_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } });
 }
@@ -232,7 +233,7 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#8a8a92;ma
   <h1>cedarpad</h1>
   <nav>
     <button class=on title="Launcher">Canvas</button>
-    <button disabled title="Coming soon">Notebook</button>
+    <button id=nav-notebook title="Notebook">Notebook</button>
     <button disabled title="Coming soon">Inbox</button>
   </nav>
   <span class=sp></span>
@@ -263,6 +264,7 @@ document.getElementById('make').onsubmit=async(e)=>{
     headers:{'content-type':'application/json'},body:JSON.stringify({name})});
   if(r.ok){const w=await r.json();open_(w.id);}else{alert('Could not create workspace');}
 };
+document.getElementById('nav-notebook').onclick=()=>{location.href='/notebook';};
 document.getElementById('out').onclick=async()=>{
   await fetch('/api/auth/sign-out',{method:'POST',credentials:'same-origin'}).catch(()=>{});
   location.href='/';

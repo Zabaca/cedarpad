@@ -34,7 +34,9 @@ export function createAuth(db: Database, env: Bindings) {
       ...(env.WEB_ORIGIN ? [env.WEB_ORIGIN] : []),
     ],
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
-    emailAndPassword: { enabled: true },
+    // Signup is disabled in prod (James-only) and open in dev (PRD #49 #15): the edge
+    // sets AUTH_DISABLE_SIGNUP="true" in prod, leaves it unset in dev.
+    emailAndPassword: { enabled: true, disableSignUp: env.AUTH_DISABLE_SIGNUP === "true" },
     plugins: [
       organization({
         schema: {
