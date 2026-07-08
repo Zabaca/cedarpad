@@ -44,6 +44,81 @@ export async function handleWorkspacesApi(request: Request, env: Env, user: Gate
   return new Response('method not allowed', { status: 405 });
 }
 
+// The edge login page (ADR-0007, #47 cutover). With `cs_gate` gone, the edge Better Auth
+// gate is the sole gate: any unauthenticated request to a non-public route is DENIED here
+// and served this page instead of the container. It is self-contained static HTML (the
+// no-container constraint — it can't pull `/src`) that posts email/password to the PUBLIC
+// Better Auth endpoints (`/api/auth/*`, served at the edge), so a user signs in without a
+// container ever waking. On success the session cookie is set and it reloads to `/`.
+// Served with 401 so the deny is machine-legible (matches the pre-cutover gate status).
+export function renderLogin(): Response {
+  return new Response(LOGIN_HTML, {
+    status: 401,
+    headers: { 'content-type': 'text/html; charset=utf-8' },
+  });
+}
+
+const LOGIN_HTML = `<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><title>cedarpad</title>
+<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+body{font:15px/1.5 system-ui,sans-serif;margin:0;background:#0b0b0c;color:#e7e7ea;display:grid;place-content:center;min-height:100vh}
+.card{width:340px;border:1px solid #2c2c33;border-radius:12px;padding:24px;background:#141416}
+h1{font-size:18px;font-weight:600;margin:0 0 4px}
+p.sub{color:#8a8a92;margin:0 0 18px;font-size:13px}
+label{display:block;font-size:12px;color:#8a8a92;margin:12px 0 4px}
+input{width:100%;background:#0b0b0c;border:1px solid #2c2c33;color:#e7e7ea;padding:9px 12px;border-radius:8px;font:inherit}
+button{width:100%;margin-top:18px;background:#4b6bff;border:0;color:#fff;padding:10px 16px;border-radius:8px;cursor:pointer;font:inherit}
+button:disabled{opacity:.5;cursor:default}
+.err{color:#ff6b6b;font-size:13px;margin-top:12px;min-height:16px}
+.toggle{margin-top:16px;text-align:center;font-size:13px;color:#8a8a92}
+.toggle a{color:#4b6bff;cursor:pointer}
+#nameRow{display:none}
+</style></head><body>
+<div class=card>
+  <h1>cedarpad</h1>
+  <p class=sub id=sub>Sign in to continue.</p>
+  <form id=f>
+    <div id=nameRow><label for=name>Name</label><input id=name autocomplete=name></div>
+    <label for=email>Email</label><input id=email type=email autocomplete=email required>
+    <label for=pw>Password</label><input id=pw type=password autocomplete=current-password required>
+    <button id=go type=submit>Log in</button>
+    <div class=err id=err></div>
+  </form>
+  <div class=toggle id=toggle>No account yet? <a id=swap>Sign up</a></div>
+</div>
+<script>
+let signup=false;
+const err=document.getElementById('err'),go=document.getElementById('go');
+document.getElementById('swap').onclick=()=>{
+  signup=!signup;
+  document.getElementById('nameRow').style.display=signup?'block':'none';
+  document.getElementById('sub').textContent=signup?'Create your account.':'Sign in to continue.';
+  go.textContent=signup?'Sign up':'Log in';
+  document.getElementById('toggle').innerHTML=signup
+    ?'Already have an account? <a id=swap>Log in</a>':'No account yet? <a id=swap>Sign up</a>';
+  document.getElementById('swap').onclick=arguments.callee;
+  err.textContent='';
+};
+document.getElementById('f').onsubmit=async(e)=>{
+  e.preventDefault();err.textContent='';go.disabled=true;
+  const email=document.getElementById('email').value.trim();
+  const password=document.getElementById('pw').value;
+  const name=document.getElementById('name').value.trim();
+  const path=signup?'/api/auth/sign-up/email':'/api/auth/sign-in/email';
+  const body=signup?{email,password,name:name||email}:{email,password};
+  try{
+    const r=await fetch(path,{method:'POST',credentials:'same-origin',
+      headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    if(r.ok){location.href='/';return;}
+    const d=await r.json().catch(()=>null);
+    err.textContent=(d&&(d.message||d.error))||(signup?'Sign up failed':'Sign in failed');
+  }catch(_){err.textContent='Something went wrong';}
+  go.disabled=false;
+};
+</script></body></html>`;
+
 // The launcher: a self-contained static page (no bundler, inline JS/CSS — the strict
 // no-container constraint means it can't pull `/src`). Lists the user's workspaces from
 // /api/workspaces, creates one, opens one by navigating to /w/:id (the Worker sets the

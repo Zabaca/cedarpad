@@ -42,7 +42,6 @@ export default cloudflareModule.instance({
     // BETTER_AUTH_URL / WEB_ORIGIN are non-secret vars in env.preview, not here.
     workerSecrets: [
       'CLAUDE_CODE_OAUTH_TOKEN',
-      'GATE_SECRET',
       'R2_BUCKET',
       'R2_ENDPOINT',
       'R2_ACCESS_KEY_ID',

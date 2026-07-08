@@ -29,7 +29,7 @@
       // standard-1 is the proven instance type for this account; bump if the
       // vite + bridge + agent stack OOMs on cold boot.
       "instance_type": "standard-1",
-      "max_instances": 1
+      "max_instances": 3
     }
   ],
   "durable_objects": {
@@ -60,7 +60,7 @@
           "image": "./Dockerfile",
           "image_build_context": "../..",
           "instance_type": "standard-1",
-          "max_instances": 1
+          "max_instances": 3
         }
       ],
       "durable_objects": {
