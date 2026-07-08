@@ -554,6 +554,58 @@ export const canvases = sqliteTable(
 export type CanvasRow = typeof canvases.$inferSelect;
 export type NewCanvasRow = typeof canvases.$inferInsert;
 
+/* ------------------------------------------------------------------ *
+ * Conversation store (PRD #50, Inbox) — the user-scoped attention inbox
+ *
+ * A Conversation = a Claude Agent SDK Session (`session_id` + transcript) plus
+ * inbox state. The transcript itself lives in the SDK JSONL / R2 (#60), never
+ * here; this table holds the coordinating metadata so the inbox list is fast.
+ * The **Inbox is user-scoped** (`user_id`): one inbox per user aggregating
+ * Conversations across all their workspaces, each tagged with its platform
+ * `workspace_id` (plain text, no FK — same as the notebook/canvas registries,
+ * ADR-0007). `owner_ref` is the nullable canvas owner edge.
+ *
+ * Two-axis state model:
+ *  - `status`:     open | closed  — closed = archived, filtered from default view.
+ *  - `waiting_on`: human | agent | none — `human` = needs attention.
+ *  - `unread`:     new agent activity since the user last looked.
+ * ------------------------------------------------------------------ */
+export const conversationStatus = ["open", "closed"] as const;
+export const conversationWaitingOn = ["human", "agent", "none"] as const;
+
+export const conversations = sqliteTable(
+  "conversations",
+  {
+    id: text("id").primaryKey(),
+    /** The Claude Agent SDK sessionId this Conversation coordinates. */
+    sessionId: text("session_id").notNull(),
+    status: text("status", { enum: conversationStatus }).notNull().default("open"),
+    waitingOn: text("waiting_on", { enum: conversationWaitingOn }).notNull().default("none"),
+    unread: integer("unread", { mode: "boolean" }).notNull().default(false),
+    /** Last activity, epoch ms — the default inbox sort key. */
+    lastActivity: integer("last_activity", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    /** Nullable canvas owner edge (the owner pointer; canvas lives in its registry). */
+    ownerRef: text("owner_ref"),
+    /** Platform workspace id (registry / `cs_workspace`). Plain text, no FK. */
+    workspaceId: text("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    summary: text("summary"),
+    /** Denormalized last-message preview so the inbox list renders without the transcript. */
+    lastMessagePreview: text("last_message_preview"),
+    ...timestamps,
+  },
+  (t) => [
+    index("conversations_user_idx").on(t.userId),
+    index("conversations_status_idx").on(t.status),
+    index("conversations_last_activity_idx").on(t.lastActivity),
+  ],
+);
+
+export type ConversationRow = typeof conversations.$inferSelect;
+export type NewConversationRow = typeof conversations.$inferInsert;
+
 export type Workspace = typeof workspace.$inferSelect;
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;
