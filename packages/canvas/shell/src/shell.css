@@ -72,13 +72,17 @@ body,
   font-size: 13px;
 }
 
-/* Notebook / Inbox stages: placeholders in this slice (#107 / #108 fill them). */
-.stage-notebook,
+/* Inbox stage base layout — overridden below by #108's real Inbox rule. */
 .stage-inbox {
   display: grid;
   place-items: center;
   color: var(--muted);
   font-size: 13px;
+}
+
+/* Notebook stage (#107): WebPocApp mounts here full-size, scrollable. */
+.stage-notebook {
+  overflow: auto;
 }
 
 /* ---- Icon rail ---------------------------------------------------------- */

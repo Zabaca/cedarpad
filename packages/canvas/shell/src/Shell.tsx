@@ -1,7 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 
 import { InboxStage } from './inbox/Inbox';
 import { type Stage, stageFromUrl, urlForStage } from './stage';
+
+// Notebook mounts lazily (PRD #103, slice #107) — the same lazy chunk the container app
+// used to code-split (`src/App.tsx` pre-#106) — so opening the canvas or inbox stage never
+// pulls in web-poc's Mantine/React-Query bundle.
+const WebPocApp = lazy(() => import('../../web-poc/src/embed').then((m) => ({ default: m.WebPocApp })));
 
 // The Shell: the ONE chrome (ADR-0007, PRD #103). A vite SPA served from the edge Worker's
 // static-assets binding at `/`, so opening it never wakes (or bills) a container. The rail
@@ -96,7 +101,15 @@ export function Shell() {
     <div className="shell">
       <Rail stage={stage} onSelectStage={selectStage} activeWorkspace={registry.workspaceId} />
       {stage === 'canvas' && <CanvasStage registry={registry} />}
-      {stage === 'notebook' && <div className="shell-stage stage-notebook">Notebook</div>}
+      {stage === 'notebook' && (
+        <div className="shell-stage stage-notebook">
+          {/* Notebook scopes to the rail's active workspace rather than choosing its own
+              (PRD #103, slice #107) — the rail is the one place a workspace is picked. */}
+          <Suspense fallback={null}>
+            <WebPocApp workspaceId={registry.workspaceId || undefined} />
+          </Suspense>
+        </div>
+      )}
       {stage === 'inbox' && <InboxStage />}
     </div>
   );
