@@ -65,3 +65,15 @@ describe('/api/chat/:id/send: subscribe-before-send (425)', () => {
     expect(dispatched).toEqual([{ chatId: 'chat_subbed', message: 'go' }]);
   });
 });
+
+describe('/api/buildrev: public build stamp (#74)', () => {
+  test('returns ONLY buildRev — none of /api/status persistence/client fields', async () => {
+    const res = await handleRequest(new Request('http://localhost/api/buildrev'));
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    // Exactly one field: the SHA stamp. No backend/degraded/save/clients/etc.
+    expect(Object.keys(body)).toEqual(['buildRev']);
+    expect(typeof body.buildRev).toBe('string');
+  });
+});

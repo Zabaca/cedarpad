@@ -22,11 +22,19 @@ export type Gate = { decision: 'allow'; user: GateUser | null } | { decision: 'd
 
 /**
  * Paths served WITHOUT a session so a user can authenticate at the edge:
- * `/health` (unauthenticated probe) and the Better Auth endpoints themselves
- * (`/api/auth/*` — login/logout/session). Everything else is behind the gate.
+ * `/health` (unauthenticated probe), the Better Auth endpoints themselves
+ * (`/api/auth/*` — login/logout/session), and `/api/buildrev` (#74 — the container's
+ * public build stamp deploy.sh polls to confirm a rollout, no session available).
+ * Everything else — including the sensitive/mutating `/api/status`, `/__recycle`,
+ * `/__bootlog` — is behind the gate.
  */
 export function isPublicPath(pathname: string): boolean {
-  return pathname === '/health' || pathname === '/api/auth' || pathname.startsWith('/api/auth/');
+  return (
+    pathname === '/health' ||
+    pathname === '/api/buildrev' ||
+    pathname === '/api/auth' ||
+    pathname.startsWith('/api/auth/')
+  );
 }
 
 /**
