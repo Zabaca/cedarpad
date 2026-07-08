@@ -498,6 +498,34 @@ export const clusterSummaries = sqliteTable(
   (t) => [index("cluster_summaries_root_idx").on(t.rootProblemId)],
 );
 
+/* ------------------------------------------------------------------ *
+ * Workspace registry (ADR-0007) — the platform's index of workspaces
+ *
+ * Distinct from the Better Auth `workspace` (organization) table above: this is
+ * the workspace-platform registry — the single source of truth for which
+ * runtime workspaces exist and (via the registry module) their DERIVED runtime
+ * coordinates (`sandboxId = workspace-<id>`, `r2Prefix = workspaces/<id>/`).
+ * Those are derived, not stored. Owned per-user (`owner_user_id`).
+ * ------------------------------------------------------------------ */
+export const workspaces = sqliteTable(
+  "workspaces",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    repo: text("repo"),
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [index("workspaces_owner_idx").on(t.ownerUserId)],
+);
+
+export type WorkspaceRow = typeof workspaces.$inferSelect;
+export type NewWorkspaceRow = typeof workspaces.$inferInsert;
+
 export type Workspace = typeof workspace.$inferSelect;
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;
