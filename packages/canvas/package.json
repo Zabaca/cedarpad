@@ -15,6 +15,7 @@
     "test:e2e": "bash scripts/with-worktree-port.sh bash scripts/with-worktree-db.sh playwright test",
     "test:e2e:ui": "bash scripts/with-worktree-port.sh bash scripts/with-worktree-db.sh playwright test --ui",
     "deploy": "bash scripts/deploy.sh",
+    "webpoc:build": "cd web-poc && vite build",
     "webpoc:typecheck": "cd web-poc && tsc --noEmit",
     "webpoc:test": "cd web-poc && vitest run --passWithNoTests",
     "webpoc:db:generate": "cd web-poc && bunx --bun drizzle-kit generate",

@@ -17,7 +17,19 @@
   // workerSecrets, not here.
   "vars": {
     "BETTER_AUTH_URL": "https://poc.cedarpad.com",
-    "WEB_ORIGIN": "https://poc.cedarpad.com"
+    "WEB_ORIGIN": "https://poc.cedarpad.com",
+    // Prod is James-only: Better Auth signup is disabled at the edge (dev leaves it
+    // open — the var is unset in .dev.vars). See web-poc/worker/auth.ts. (PRD #49 #15)
+    "AUTH_DISABLE_SIGNUP": "true"
+  },
+  // The Notebook SPA static build (PRD #49 slice #58). `bun run webpoc:build` emits
+  // web-poc/dist; the edge Worker serves it under /notebook via env.ASSETS after the
+  // edge session gate. `run_worker_first: true` means the Worker runs on every request
+  // (assets are never auto-served pre-auth) and pulls files through the ASSETS binding.
+  "assets": {
+    "directory": "./web-poc/dist",
+    "binding": "ASSETS",
+    "run_worker_first": true
   },
   "containers": [
     {
@@ -52,7 +64,13 @@
       // (the account's workers.dev subdomain, from the first deploy).
       "vars": {
         "BETTER_AUTH_URL": "https://agent-canvas-preview.james-99a.workers.dev",
-        "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev"
+        "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev",
+        "AUTH_DISABLE_SIGNUP": "true"
+      },
+      "assets": {
+        "directory": "./web-poc/dist",
+        "binding": "ASSETS",
+        "run_worker_first": true
       },
       "containers": [
         {

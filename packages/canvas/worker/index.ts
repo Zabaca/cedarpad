@@ -38,6 +38,10 @@ export class Sandbox extends BaseSandbox {
 
 export interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  // Workers static-assets binding for the Notebook SPA build (web-poc/dist, PRD #49
+  // slice #58). Served under /notebook AFTER the edge session gate — it's app content,
+  // so an unauthenticated hit gets the login, never the SPA.
+  ASSETS: Fetcher;
   R2_BUCKET: string;
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
@@ -97,6 +101,20 @@ export default {
       return renderLogin();
     }
     const user = gate.user;
+
+    // Notebook SPA static build (ADR-0007, PRD #49 slice #58). Served HERE, behind the
+    // edge session gate above, from the Workers static-assets binding — no container,
+    // no dev vite. The SPA is built with base `/notebook/`, so its asset URLs are
+    // `/notebook/assets/*`; strip the `/notebook` prefix before the ASSETS lookup (which
+    // maps request path → file path in web-poc/dist). `/notebook` (or `/notebook/`) maps
+    // to the SPA's index.html. Its client then calls `/v1` + `/api/auth/*` on this same
+    // edge origin, already workspace-scoped by the `cs_workspace` cookie (#57).
+    if (url.pathname === '/notebook' || url.pathname.startsWith('/notebook/')) {
+      const assetPath = url.pathname.slice('/notebook'.length) || '/';
+      const assetUrl = new URL(request.url);
+      assetUrl.pathname = assetPath;
+      return env.ASSETS.fetch(new Request(assetUrl, request));
+    }
 
     // Edge Shell (ADR-0007, #46). The launcher + its registry API are served HERE — no
     // container is proxied to for either — so listing/creating a workspace never wakes
