@@ -286,6 +286,17 @@ The round-trip:
    live. Reload-all (not just the edited module) is deliberate: a leaf edit must
    reach the containers that import it; vite refreshes the transitive imports.
 
+- **Shared library (`@shared`, #55)**: besides its own dir, a canvas can `promote_component`
+  a module into the workspace `shared/components/` dir (one live source; vite resolves the
+  `@shared` alias to it). A placed instance references a module by its **bare name**, and
+  `component-loader` resolves **own-dir first, then `@shared`** (`componentUrls`) — so promote
+  is a pure file *move* (`server/components.ts` `promoteComponent`), instances stay stable,
+  and another canvas placing the same bare name gets the one shared source. Editing a shared
+  module fans the rev-bump out to **every canvas that placed it** (`bumpSharedModule` over the
+  session registry's `built()`), not just the current store. `adopt_shared_component` copies a
+  shared module back into a canvas's own dir (own-dir then shadows shared) so it can diverge.
+  Reads (`list_components`/`read_component`) span own dir + `@shared`. UI mirror: right-click a
+  component shape → Promote / Copy to this canvas (`src/component-library.ts`, `App.tsx`).
 - The content renders inside an **error boundary**; a load or render failure shows
   a red card in the box and never crashes the canvas. While a module loads you see
   a "loading…" placeholder.

@@ -74,6 +74,11 @@ canvas is a surface *on* a notebook item or session — an attachment edge, not 
 - The workspace has one **shared component library** (`shared/components/`) that the vite
   resolves via an `@shared` alias. **Promote** = move a component from a canvas's own dir
   into the shared library.
+- A placed instance references a component by its **bare module name**; the loader resolves
+  **own-dir first, then `@shared`**. So promote is a pure file *move* — no store rewrite, and
+  placed instances stay byte-stable — while a component placed on another canvas by the same
+  bare name resolves to the one shared source. Adopting (copy-back) reintroduces an own-dir
+  file that shadows the shared one (own wins), which is how a canvas diverges.
 - Shared components are a **live single source, imported by reference**: new canvases see
   them automatically, existing canvases see them too, and editing a shared component
   rev-bumps + hot-reloads every canvas that placed it (extends today's per-canvas

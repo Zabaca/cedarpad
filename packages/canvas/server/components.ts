@@ -1,46 +1,101 @@
-// Scoped filesystem CRUD for agent-authored component modules. The agent can
-// only touch src/canvas-components/<Name>.tsx (validated names, no path escape),
-// so it stays in the locked sandbox while building a real, composable component
-// library that vite compiles and the canvas dynamic-imports.
+// Scoped filesystem CRUD for agent-authored component modules. The agent can only
+// touch a validated <Name>.tsx (no path escape) inside a canvas's own dir or the
+// workspace shared library, so it stays in the locked sandbox while building a real,
+// composable component library that vite compiles and the canvas dynamic-imports.
+//
+// Dirs (ADR-0007 Option B, mirrors src/component-loader.ts):
+//   default canvas own dir → src/canvas-components/
+//   other canvas own dir   → src/canvas-<id>/components/
+//   workspace shared lib    → shared/components/   (the `@shared` alias)
+// `promote` MOVES a module from a canvas's own dir into the shared lib (one live source);
+// a canvas can `adopt` a shared module back into its own dir to diverge. Reads span the
+// canvas's own dir + the shared lib.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const DIR = fileURLToPath(new URL('../src/canvas-components/', import.meta.url));
+const DEFAULT_CANVAS_ID = 'default';
+const SRC = fileURLToPath(new URL('../src/', import.meta.url));
+const SHARED_DIR = fileURLToPath(new URL('../shared/components/', import.meta.url));
 const NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
+const CANVAS_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
-function pathFor(module: string): string {
+/** The own component dir for a canvas: the default keeps today's flat path (byte-for-byte). */
+function ownDir(canvasId: string = DEFAULT_CANVAS_ID): string {
+  if (canvasId !== DEFAULT_CANVAS_ID && !CANVAS_ID.test(canvasId)) throw new Error(`invalid canvas id "${canvasId}"`);
+  return canvasId === DEFAULT_CANVAS_ID ? `${SRC}canvas-components/` : `${SRC}canvas-${canvasId}/components/`;
+}
+
+function fileIn(dir: string, module: string): string {
   if (!NAME.test(module)) throw new Error(`invalid component name "${module}" — use letters/digits/_/- and no extension`);
-  return `${DIR}${module}.tsx`;
+  return `${dir}${module}.tsx`;
 }
 
-/** Names (no extension) of every component module in the library. */
-export function listComponents(): string[] {
-  if (!existsSync(DIR)) return [];
-  return readdirSync(DIR)
+function namesIn(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
     .filter((f) => f.endsWith('.tsx'))
-    .map((f) => f.replace(/\.tsx$/, ''))
-    .sort();
+    .map((f) => f.replace(/\.tsx$/, ''));
 }
 
-export function readComponent(module: string): string {
-  const p = pathFor(module);
-  if (!existsSync(p)) throw new Error(`component "${module}" does not exist (list_components to see what does)`);
-  return readFileSync(p, 'utf8');
+/** Names (no extension) of every module a canvas can see: its own dir ∪ the shared lib. */
+export function listComponents(canvasId: string = DEFAULT_CANVAS_ID): string[] {
+  return [...new Set([...namesIn(ownDir(canvasId)), ...namesIn(SHARED_DIR)])].sort();
 }
 
-/** Create or overwrite a module file. */
-export function writeComponent(module: string, source: string): void {
+/** True when the module lives in the shared library (and so is the workspace source). */
+export function isShared(module: string): boolean {
+  return existsSync(fileIn(SHARED_DIR, module));
+}
+
+/** Resolve the on-disk path of an existing module: own dir first, then shared. */
+function resolveExisting(module: string, canvasId: string): string {
+  const own = fileIn(ownDir(canvasId), module);
+  if (existsSync(own)) return own;
+  const shared = fileIn(SHARED_DIR, module);
+  if (existsSync(shared)) return shared;
+  throw new Error(`component "${module}" does not exist (list_components to see what does)`);
+}
+
+export function readComponent(module: string, canvasId: string = DEFAULT_CANVAS_ID): string {
+  return readFileSync(resolveExisting(module, canvasId), 'utf8');
+}
+
+/** Create or overwrite a module file — in the shared lib if it already lives there, else the
+ * canvas's own dir. Editing a shared module thus stays the one shared source (propagation). */
+export function writeComponent(module: string, source: string, canvasId: string = DEFAULT_CANVAS_ID): void {
   if (typeof source !== 'string' || source.trim().length === 0) throw new Error('source must be non-empty');
-  if (!existsSync(DIR)) mkdirSync(DIR, { recursive: true });
-  writeFileSync(pathFor(module), source);
+  const dir = isShared(module) ? SHARED_DIR : ownDir(canvasId);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(fileIn(dir, module), source);
 }
 
 /** Per-line edit: replace a unique `oldStr` occurrence with `newStr` in a module file. */
-export function editComponent(module: string, oldStr: string, newStr: string): void {
-  const cur = readComponent(module);
+export function editComponent(module: string, oldStr: string, newStr: string, canvasId: string = DEFAULT_CANVAS_ID): void {
+  const cur = readComponent(module, canvasId);
   const first = cur.indexOf(oldStr);
   if (first === -1) throw new Error('old_string not found — read_component first and copy the exact text');
   if (cur.indexOf(oldStr, first + 1) !== -1) throw new Error('old_string is not unique — include more surrounding context');
-  writeComponent(module, cur.slice(0, first) + newStr + cur.slice(first + oldStr.length));
+  writeComponent(module, cur.slice(0, first) + newStr + cur.slice(first + oldStr.length), canvasId);
+}
+
+/** Move a component from a canvas's own dir into the shared library (one live source).
+ * Placed instances keep referencing it by bare name; the loader falls back to shared. */
+export function promoteComponent(canvasId: string, module: string): void {
+  const src = fileIn(ownDir(canvasId), module);
+  if (!existsSync(src)) throw new Error(`component "${module}" is not in canvas "${canvasId}" own dir to promote`);
+  const dest = fileIn(SHARED_DIR, module);
+  if (existsSync(dest)) throw new Error(`a shared component "${module}" already exists`);
+  if (!existsSync(SHARED_DIR)) mkdirSync(SHARED_DIR, { recursive: true });
+  renameSync(src, dest);
+}
+
+/** Copy a shared component back into a canvas's own dir so that canvas can diverge (its own
+ * dir then wins the loader's own-first resolution, decoupling it from later shared edits). */
+export function adoptSharedComponent(canvasId: string, module: string): void {
+  const src = fileIn(SHARED_DIR, module);
+  if (!existsSync(src)) throw new Error(`no shared component "${module}" to copy`);
+  const dir = ownDir(canvasId);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  copyFileSync(src, fileIn(dir, module));
 }

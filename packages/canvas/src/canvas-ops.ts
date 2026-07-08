@@ -376,6 +376,34 @@ export function bumpAllComponents(store: CanvasStore, rev: number): number {
   return affected.length;
 }
 
+/** True when this canvas's store has at least one placed instance of `module`. */
+export function placesModule(store: CanvasStore, module: string): boolean {
+  return store.getState().shapes.some((s) => s.type === 'component' && s.module === module);
+}
+
+/**
+ * The "who reloads" set for a workspace-level shared-component change (#55): given every
+ * built session and the shared `module`, the exact sessions that placed it. A shared edit
+ * or a promote must hot-reload only those canvases — a canvas that never placed the module
+ * is untouched. Generalizes single-store `bumpAllComponents` to the cross-canvas fan-out;
+ * pure over the session set (each just needs a `store`) so the target set is unit-testable.
+ */
+export function sessionsPlacingModule<T extends { store: CanvasStore }>(sessions: readonly T[], module: string): T[] {
+  return sessions.filter((s) => placesModule(s.store, module));
+}
+
+/**
+ * Bump every placing session's instances so each open canvas re-imports the changed shared
+ * module (vite refreshes the transitive imports, so we reload all instances per store, as
+ * the single-store path does). Returns the number of canvases reloaded. A broken shared edit
+ * stays isolated per instance via the existing render error boundary.
+ */
+export function bumpSharedModule<T extends { store: CanvasStore }>(sessions: readonly T[], module: string): number {
+  const targets = sessionsPlacingModule(sessions, module);
+  for (const { store } of targets) bumpAllComponents(store, nextComponentRev(store));
+  return targets.length;
+}
+
 export function deleteShapesOp(store: CanvasStore, ids: string[]): OpResult {
   store.remove(ids);
   return { text: `Deleted ${ids.length} shape(s).` };
