@@ -11,13 +11,13 @@ import { devAgentSandbox, sandboxFor, serveWorkspace } from './sandbox-runtime.t
 import { handleCanvasesApi, handleWorkspacesApi, renderInbox, renderLogin, renderShell } from './shell.ts';
 import { handleInboxApi } from './inbox.ts';
 import {
-  CANVAS_COOKIE,
   DEFAULT_CANVAS_ID,
   DEFAULT_WORKSPACE_ID,
   WORKSPACE_COOKIE,
   decideCanvasRoute,
   decideWorkspaceRoute,
   parseCanvasRoute,
+  parsePadRoute,
   parseWorkspaceRoute,
   readWorkspaceCookie,
 } from './shell-routing.ts';
@@ -170,30 +170,55 @@ export default {
     // behind the edge session gate above.
     if (url.pathname === '/inbox') return renderInbox();
 
-    // /w/:workspaceId/canvas/:canvasId — the canvas app-surface URL. Selecting it pins
-    // BOTH the workspace (cs_workspace, HttpOnly — the proxy routes by it) and the canvas
-    // (cs_canvas, NON-HttpOnly — the frontend reads it to stamp x-canvas-id). Validate
-    // that the workspace is owned AND the canvas belongs to it, else 404 (never proxied).
-    const canvasRoute = parseCanvasRoute(url.pathname);
-    if (canvasRoute) {
+    // Ownership check shared by the two canvas routes below: the workspace must be owned
+    // (the legacy `default` id needs no row) AND the canvas must belong to it, else the
+    // request is 404'd here and never proxied. This branch is BELOW the auth gate above,
+    // so an unauthenticated request can never reach it — nor cold-boot a container.
+    const ownedCanvas = async (workspaceId: string, canvasId: string) => {
       const workerDb = createDbForWorker(env as unknown as Bindings);
       const wsRecord =
-        canvasRoute.workspaceId === DEFAULT_WORKSPACE_ID
-          ? null
-          : await getWorkspace(workerDb, canvasRoute.workspaceId, user.id);
-      const cvRecord =
-        canvasRoute.canvasId === DEFAULT_CANVAS_ID ? null : await getCanvas(workerDb, canvasRoute.canvasId);
-      const decision = decideCanvasRoute(canvasRoute.workspaceId, canvasRoute.canvasId, wsRecord, cvRecord);
+        workspaceId === DEFAULT_WORKSPACE_ID ? null : await getWorkspace(workerDb, workspaceId, user.id);
+      const cvRecord = canvasId === DEFAULT_CANVAS_ID ? null : await getCanvas(workerDb, canvasId);
+      return decideCanvasRoute(workspaceId, canvasId, wsRecord, cvRecord);
+    };
+
+    /** cs_workspace pins which container the absolute-path asset/API fallthrough proxies to. */
+    const workspaceCookie = (workspaceId: string) =>
+      `${WORKSPACE_COOKIE}=${workspaceId}; Path=/; HttpOnly; Secure; SameSite=Lax`;
+
+    // /w/:workspaceId/canvas/:canvasId/pad — the Render Pad's own URL (#105). Served IN
+    // PLACE (no redirect) so the URL stays stable: the Shell iframes it, and the frontend
+    // reads its canvas id back off the pathname (src/active-canvas.ts) rather than from a
+    // browser-global cookie — which is what lets two tabs hold two canvases.
+    const padRoute = parsePadRoute(url.pathname);
+    if (padRoute) {
+      const decision = await ownedCanvas(padRoute.workspaceId, padRoute.canvasId);
       if (decision.decision === 'not-found') {
         return new Response('canvas not found', { status: 404 });
       }
-      const cookieAttrs = 'Path=/; Secure; SameSite=Lax';
+      const workspace =
+        decision.workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: decision.workspaceId };
+      const proxied = await serveWorkspace(request, env, resolve(workspace));
+      const response = new Response(proxied.body, proxied);
+      response.headers.append('set-cookie', workspaceCookie(decision.workspaceId));
+      return response;
+    }
+
+    // /w/:workspaceId/canvas/:canvasId — the canvas deep-link. Pins the workspace
+    // (cs_workspace, HttpOnly — the proxy routes by it) and redirects to that canvas's pad.
+    // It must NOT land on `/`: the canvas id used to ride along in cs_canvas, and with the
+    // cookie gone `/` would silently serve the DEFAULT canvas instead of the requested one.
+    const canvasRoute = parseCanvasRoute(url.pathname);
+    if (canvasRoute) {
+      const decision = await ownedCanvas(canvasRoute.workspaceId, canvasRoute.canvasId);
+      if (decision.decision === 'not-found') {
+        return new Response('canvas not found', { status: 404 });
+      }
       return new Response(null, {
         status: 302,
         headers: new Headers([
-          ['set-cookie', `${WORKSPACE_COOKIE}=${decision.workspaceId}; ${cookieAttrs}; HttpOnly`],
-          ['set-cookie', `${CANVAS_COOKIE}=${decision.canvasId}; ${cookieAttrs}`],
-          ['location', '/'],
+          ['set-cookie', workspaceCookie(decision.workspaceId)],
+          ['location', `/w/${encodeURIComponent(decision.workspaceId)}/canvas/${encodeURIComponent(decision.canvasId)}/pad`],
         ]),
       });
     }

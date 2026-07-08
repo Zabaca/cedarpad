@@ -1,29 +1,23 @@
-// Which canvas the frontend is addressing. The edge sets a NON-HttpOnly `cs_canvas`
-// cookie when you open `/w/:ws/canvas/:id` (see worker/index.ts); we read it here and
+// Which canvas the frontend is addressing. The Render Pad is served AT its own URL,
+// `/w/:ws/canvas/:id/pad` (see worker/index.ts); we read the id back off the pathname and
 // stamp it onto every bridge call so the single bridge routes to the right per-canvas
-// CanvasStore (#53). Absent selection ⇒ `default`, so today's un-namespaced calls are
-// byte-for-byte preserved.
-
-/** The canvas-selection cookie (mirrors worker/shell-routing.ts CANVAS_COOKIE). */
-export const CANVAS_COOKIE = 'cs_canvas';
+// CanvasStore (#53). The URL — not a browser-global cookie — carries the selection, so an
+// iframed pad is self-describing and two tabs can hold two canvases (#105). Absent
+// selection ⇒ `default`, so today's un-namespaced calls are byte-for-byte preserved.
 
 /** The default canvas id (mirrors component-loader / worker DEFAULT_CANVAS_ID). */
 export const DEFAULT_CANVAS_ID = 'default';
 
-/** Read `cs_canvas` from a raw cookie header string, or null when unset. Pure, so the
- *  selection logic is unit-testable without a document. */
-export function readCanvasCookie(cookieHeader: string | null): string | null {
-  for (const c of (cookieHeader ?? '').split(/;\s*/)) {
-    const [k, ...v] = c.split('=');
-    if (k === CANVAS_COOKIE && v.length) return decodeURIComponent(v.join('='));
-  }
-  return null;
+/** The canvas id out of a pad pathname (mirrors worker/shell-routing.ts parsePadRoute),
+ *  or null when this isn't a pad URL. Pure, so the selection logic is unit-testable. */
+export function canvasIdFromPath(pathname: string): string | null {
+  return /^\/w\/[^/]+\/canvas\/([^/]+)\/pad\/?$/.exec(pathname)?.[1] ?? null;
 }
 
-/** The selected canvas id from the browser's cookies, or `default` when unset. */
+/** The selected canvas id from the pad's own URL, or `default` when it isn't a pad URL. */
 export function activeCanvasId(): string {
-  const raw = typeof document === 'undefined' ? null : document.cookie;
-  return readCanvasCookie(raw) ?? DEFAULT_CANVAS_ID;
+  const path = typeof window === 'undefined' ? null : window.location.pathname;
+  return (path && canvasIdFromPath(path)) || DEFAULT_CANVAS_ID;
 }
 
 /** Merge the `x-canvas-id` selection header into a bridge fetch's headers. */

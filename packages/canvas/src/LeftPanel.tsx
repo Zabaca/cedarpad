@@ -43,9 +43,9 @@ export function LeftPanel({
   onSelectApp: (app: AppView) => void;
 }) {
   // The Canvas app index (ADR-0007, #54): the workspace's canvases from /api/canvases
-  // (edge, scoped to the active workspace via cs_workspace). Switching navigates to
-  // /w/:ws/canvas/:id, which pins cs_canvas and reloads onto that canvas. The active
-  // one is whatever cs_canvas currently selects (default when unset).
+  // (edge, scoped to the active workspace via cs_workspace). Switching navigates to that
+  // canvas's Render Pad URL, /w/:ws/canvas/:id/pad, which the edge serves in place. The
+  // active one is whatever that URL names (default when we're not on a pad URL).
   type CanvasEntry = { id: string; name: string };
   const [wsId, setWsId] = useState<string>(DEFAULT_CANVAS_ID);
   const [canvases, setCanvases] = useState<CanvasEntry[]>([]);
@@ -76,7 +76,7 @@ export function LeftPanel({
   const switchCanvas = (id: string) => {
     if (id === activeCanvas) return;
     setSwitching(id);
-    window.location.href = `/w/${encodeURIComponent(wsId)}/canvas/${encodeURIComponent(id)}`;
+    window.location.href = `/w/${encodeURIComponent(wsId)}/canvas/${encodeURIComponent(id)}/pad`;
   };
 
   const createCanvas = async () => {
@@ -90,7 +90,7 @@ export function LeftPanel({
     if (!r.ok) return;
     const c = (await r.json()) as CanvasEntry;
     setSwitching(c.id);
-    window.location.href = `/w/${encodeURIComponent(wsId)}/canvas/${encodeURIComponent(c.id)}`;
+    window.location.href = `/w/${encodeURIComponent(wsId)}/canvas/${encodeURIComponent(c.id)}/pad`;
   };
 
   const commitCanvasRename = async () => {

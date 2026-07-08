@@ -7,8 +7,8 @@ import {
   decideCanvasRoute,
   decideWorkspaceRoute,
   parseCanvasRoute,
+  parsePadRoute,
   parseWorkspaceRoute,
-  readCanvasCookie,
   readWorkspaceCookie,
   selectInitialWorkspace,
 } from './shell-routing.ts';
@@ -44,12 +44,19 @@ describe('parseCanvasRoute — /w/:ws/canvas/:id', () => {
   });
 });
 
-describe('readCanvasCookie', () => {
-  test('reads the canvas-selection cookie among others, else null', () => {
-    expect(readCanvasCookie('cs_canvas=cv_1')).toBe('cv_1');
-    expect(readCanvasCookie('cs_workspace=ws_a; cs_canvas=cv_2')).toBe('cv_2');
-    expect(readCanvasCookie('cs_workspace=ws_a')).toBeNull();
-    expect(readCanvasCookie(null)).toBeNull();
+describe('parsePadRoute — /w/:ws/canvas/:id/pad (the Render Pad, iframed)', () => {
+  test('extracts both ids', () => {
+    expect(parsePadRoute('/w/default/canvas/cv_1/pad')).toEqual({ workspaceId: 'default', canvasId: 'cv_1' });
+    expect(parsePadRoute('/w/ws_abc/canvas/cv_9/pad')).toEqual({ workspaceId: 'ws_abc', canvasId: 'cv_9' });
+  });
+
+  test('the bare canvas route, a workspace route, and anything deeper are NOT pad routes', () => {
+    expect(parsePadRoute('/w/ws_abc/canvas/cv_1')).toBeNull();
+    expect(parsePadRoute('/w/ws_abc')).toBeNull();
+    expect(parsePadRoute('/pad')).toBeNull();
+    expect(parsePadRoute('/w/ws_abc/canvas/cv_1/pad/extra')).toBeNull();
+    expect(parsePadRoute('/w/ws_abc/canvas//pad')).toBeNull();
+    expect(parsePadRoute('/')).toBeNull();
   });
 });
 

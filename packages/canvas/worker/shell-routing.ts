@@ -14,12 +14,6 @@ export const WORKSPACE_COOKIE = 'cs_workspace';
  *  behavior-preserving prod coordinates (`canvas` / `workspaces/default/`). */
 export const DEFAULT_WORKSPACE_ID = 'default';
 
-/** Cookie that pins which canvas the frontend addresses. Unlike `cs_workspace` it is
- *  NON-HttpOnly: the container-served canvas frontend reads it client-side to stamp
- *  `x-canvas-id` on its bridge calls (the edge proxy itself doesn't route by canvas —
- *  one container per workspace hosts N canvases, path-isolated). */
-export const CANVAS_COOKIE = 'cs_canvas';
-
 /** The legacy/default canvas id. Absent selection resolves here, so today's
  *  un-namespaced canvas is byte-for-byte preserved. */
 export const DEFAULT_CANVAS_ID = 'default';
@@ -40,11 +34,6 @@ export function readWorkspaceCookie(cookieHeader: string | null): string | null 
   return readCookie(cookieHeader, WORKSPACE_COOKIE);
 }
 
-/** Read the canvas-selection cookie, or null when unset. */
-export function readCanvasCookie(cookieHeader: string | null): string | null {
-  return readCookie(cookieHeader, CANVAS_COOKIE);
-}
-
 function readCookie(cookieHeader: string | null, name: string): string | null {
   for (const c of (cookieHeader ?? '').split(/;\s*/)) {
     const [k, ...v] = c.split('=');
@@ -61,6 +50,18 @@ function readCookie(cookieHeader: string | null, name: string): string | null {
  */
 export function parseCanvasRoute(pathname: string): { workspaceId: string; canvasId: string } | null {
   const m = /^\/w\/([^/]+)\/canvas\/([^/]+)\/?$/.exec(pathname);
+  return m ? { workspaceId: m[1], canvasId: m[2] } : null;
+}
+
+/**
+ * Parse `/w/:workspaceId/canvas/:canvasId/pad` into its two ids. This is the Render Pad's
+ * own URL — the canvas app served in place (no redirect) so it can be iframed by the Shell
+ * and read its canvas id back off `window.location.pathname` (#105). Self-describing, so
+ * two tabs can hold two canvases; a browser-global cookie could not. Returns null for any
+ * other path (a bare `/w/:ws/canvas/:id` is `parseCanvasRoute`'s).
+ */
+export function parsePadRoute(pathname: string): { workspaceId: string; canvasId: string } | null {
+  const m = /^\/w\/([^/]+)\/canvas\/([^/]+)\/pad\/?$/.exec(pathname);
   return m ? { workspaceId: m[1], canvasId: m[2] } : null;
 }
 
