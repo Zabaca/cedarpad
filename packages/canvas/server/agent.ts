@@ -25,6 +25,7 @@ import {
   updateShapesOp,
 } from '../src/canvas-ops.ts';
 import { adoptSharedComponent, editComponent, isShared, listComponents, promoteComponent, readComponent, writeComponent } from './components.ts';
+import { type AskHumanDeps, askHuman } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 
@@ -73,7 +74,11 @@ export type CaptureView = (pageId?: string) => Promise<string | null>;
  * Absent (single-store contexts, tests) ⇒ only the current store is bumped. */
 export type BumpShared = (module: string) => number;
 
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared) {
+/** The `ask_human` tool body (server/inbox.ts binds db + sessionId + notify). Present ⇒ the agent
+ * gets an `ask_human` tool; absent (canvas-only contexts, tests) ⇒ the tool is omitted, unchanged. */
+export type AskHuman = (input: { summary: string; question: string }) => Promise<string>;
+
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, askHuman?: AskHuman) {
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -279,6 +284,21 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         { ids: z.array(z.string()).min(2), edge: z.enum(['left', 'right', 'top', 'bottom', 'center-x', 'center-y']) },
         async ({ ids, edge }) => result(alignOp(store, ids, edge)),
       ),
+      // Human-in-the-loop (#61): present only when the bridge injected the inbox seam. Posts to the
+      // Inbox + notifies, then the agent must END its turn — this tool NEVER blocks for a reply.
+      ...(askHuman
+        ? [
+            tool(
+              'ask_human',
+              'Pause and ask the human when you are BLOCKED and need their decision, approval, or missing information you cannot obtain yourself. This posts your question to their Inbox and notifies them; it does NOT wait for an answer. After calling it you MUST commit any work in progress and END YOUR TURN — do not loop or poll. The human replies later, which resumes this exact session with full context. Use sparingly, only when genuinely stuck on something only the human can resolve.',
+              {
+                summary: z.string().describe('One-line summary of what you need (shown in the inbox list).'),
+                question: z.string().describe('The full question / context for the human.'),
+              },
+              async ({ summary, question }) => result({ text: await askHuman({ summary, question }) }),
+            ),
+          ]
+        : []),
     ],
   });
 }
@@ -335,8 +355,15 @@ export async function* runChat(
   effort?: string,
   canvasId: string = 'default',
   bumpShared?: BumpShared,
+  inbox?: Omit<AskHumanDeps, 'getSessionId'>,
 ): AsyncGenerator<ChatEvent> {
-  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared);
+  // acc tracks the (possibly newly-assigned) sessionId across the turn; ask_human reads it lazily
+  // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
+  let acc: TurnAccum = { sessionId, costUsd: 0 };
+  const askHumanSeam = inbox
+    ? (input: { summary: string; question: string }) => askHuman({ ...inbox, getSessionId: () => acc.sessionId }, input)
+    : undefined;
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, askHumanSeam);
 
   // The canvas chat is a full Claude Code agent: all built-in tools (Bash, Read, Write,
   // Edit, Web*, Task, ...) plus the canvas MCP server, auto-approved.
@@ -353,7 +380,6 @@ export async function* runChat(
     maxTurns: 50,
   };
 
-  let acc: TurnAccum = { sessionId, costUsd: 0 };
   try {
     const q = query({
       prompt: buildPrompt(message, images),
