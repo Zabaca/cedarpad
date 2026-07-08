@@ -56,10 +56,18 @@ const { resolve, DEFAULT_WORKSPACE } = await import('./sandbox-resolver.ts');
 
 // The Workers static-assets binding, recorded by file path so we can assert WHICH file
 // the Shell SPA routes serve — and, crucially, that they never touch `serveWorkspace`.
+//
+// This models real Workers static-assets `html_handling` ("auto-trailing-slash", the
+// default): an explicit `/index.html` request gets 307'd to its canonical `/`, same as a
+// real deploy — a naive always-200 stub let a redirect loop reach production undetected
+// (an authenticated `/` asking ASSETS for `/index.html` got that 307 back and returned it
+// verbatim, so the browser followed it to `/`, which asked for `/index.html` again, forever).
 const env = {
   ASSETS: {
     fetch: (req: Request) => {
-      assets.push(new URL(req.url).pathname);
+      const path = new URL(req.url).pathname;
+      assets.push(path);
+      if (path === '/index.html') return new Response(null, { status: 307, headers: { location: '/' } });
       return new Response('asset');
     },
   },
@@ -82,7 +90,7 @@ describe('GET / — the Shell SPA, served from ASSETS without waking the contain
     const res = await GET('/');
 
     expect(res.status).toBe(200);
-    expect(assets).toEqual(['/index.html']);
+    expect(assets).toEqual(['/']);
     expect(served).toEqual([]);
   });
 
@@ -93,8 +101,20 @@ describe('GET / — the Shell SPA, served from ASSETS without waking the contain
     );
 
     expect(res.status).toBe(200);
-    expect(assets).toEqual(['/index.html']);
+    expect(assets).toEqual(['/']);
     expect(served).toEqual([]);
+  });
+
+  // Regression: `/` MUST ask ASSETS for '/' itself, never the explicit '/index.html' path.
+  // Workers static-assets' default html_handling 307s that explicit filename to '/', and a
+  // handler that just returns whatever ASSETS gives back turns that into an infinite
+  // redirect loop in a real browser (this shipped to prod once — ERR_TOO_MANY_REDIRECTS).
+  test('`/` never asks ASSETS for the explicit /index.html path (the redirect-loop regression)', async () => {
+    const res = await GET('/');
+
+    expect(assets).not.toContain('/index.html');
+    expect(res.status).not.toBe(307);
+    expect(res.headers.get('location')).toBeNull();
   });
 
   test('the shell’s built assets come from ASSETS, unrewritten', async () => {
