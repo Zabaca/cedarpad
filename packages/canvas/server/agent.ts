@@ -24,7 +24,7 @@ import {
   setComponentDataOp,
   updateShapesOp,
 } from '../src/canvas-ops.ts';
-import { editComponent, listComponents, readComponent, writeComponent } from './components.ts';
+import { adoptSharedComponent, editComponent, isShared, listComponents, promoteComponent, readComponent, writeComponent } from './components.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 
@@ -68,7 +68,19 @@ export type CaptureView = (pageId?: string) => Promise<string | null>;
 /** Build the in-process MCP server whose tools mutate `store`. `originChatId` is the
  * chat shape id this turn runs in; shapes the agent creates are tucked beside it and
  * linked back to it with an arrow. */
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string) {
+/** Fan out a shared-library change to every OTHER canvas that placed the module (#55): the
+ * bridge injects this (it holds the session registry); it returns how many canvases reloaded.
+ * Absent (single-store contexts, tests) ⇒ only the current store is bumped. */
+export type BumpShared = (module: string) => number;
+
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared) {
+  // After authoring a module: reload every placed instance so the open canvas re-imports it.
+  // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
+  // propagation); an own module reloads only this canvas (behavior-preserving).
+  const reloadAfterAuthor = (module: string): number => {
+    if (bumpShared && isShared(module)) return bumpShared(module);
+    return bumpAllComponents(store, nextComponentRev(store));
+  };
   return createSdkMcpServer({
     name: 'canvas',
     version: '0.1.0',
@@ -154,7 +166,7 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         'List the reusable component modules in the library (src/canvas-components/). These are real React files you can read, edit, compose, and place on the canvas.',
         {},
         async () => {
-          const mods = listComponents();
+          const mods = listComponents(canvasId);
           return result({ text: mods.length ? `Components:\n${mods.join('\n')}` : 'No components yet. write_component to create one.' });
         },
       ),
@@ -164,7 +176,7 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         { module: z.string().describe('Component name, e.g. "KpiCard" (no extension).') },
         async ({ module }) => {
           try {
-            return result({ text: readComponent(module) });
+            return result({ text: readComponent(module, canvasId) });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
           }
@@ -182,9 +194,9 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         },
         async ({ module, source }) => {
           try {
-            writeComponent(module, source);
-            const reloaded = bumpAllComponents(store, nextComponentRev(store));
-            return result({ text: `Wrote ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s))` : ''}.` });
+            writeComponent(module, source, canvasId);
+            const reloaded = reloadAfterAuthor(module);
+            return result({ text: `Wrote ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s)/canvas(es))` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
           }
@@ -200,9 +212,37 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         },
         async ({ module, old_string, new_string }) => {
           try {
-            editComponent(module, old_string, new_string);
+            editComponent(module, old_string, new_string, canvasId);
+            const reloaded = reloadAfterAuthor(module);
+            return result({ text: `Edited ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s)/canvas(es))` : ''}.` });
+          } catch (e) {
+            return result({ text: `Error: ${(e as Error).message}`, isError: true });
+          }
+        },
+      ),
+      tool(
+        'promote_component',
+        'Move a component from THIS canvas into the workspace SHARED library (@shared), making it one live source that any canvas can place. After promoting, editing it hot-reloads every canvas that placed it. Use this when a component is broadly useful, not specific to this canvas.',
+        { module: z.string().describe('Component name to promote (no extension).') },
+        async ({ module }) => {
+          try {
+            promoteComponent(canvasId, module);
+            const canvases = bumpShared ? bumpShared(module) : bumpAllComponents(store, nextComponentRev(store)) && 1;
+            return result({ text: `Promoted ${module}.tsx to the shared library${canvases ? ` (reloaded ${canvases} canvas(es) that placed it)` : ''}.` });
+          } catch (e) {
+            return result({ text: `Error: ${(e as Error).message}`, isError: true });
+          }
+        },
+      ),
+      tool(
+        'adopt_shared_component',
+        'Copy a SHARED component back into THIS canvas so you can diverge it: this canvas then owns a local copy that shadows the shared one, and later edits to the shared source no longer affect this canvas.',
+        { module: z.string().describe('Shared component name to copy into this canvas (no extension).') },
+        async ({ module }) => {
+          try {
+            adoptSharedComponent(canvasId, module);
             const reloaded = bumpAllComponents(store, nextComponentRev(store));
-            return result({ text: `Edited ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s))` : ''}.` });
+            return result({ text: `Copied shared ${module}.tsx into this canvas${reloaded ? ` (reloaded ${reloaded} placed instance(s))` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
           }
@@ -293,8 +333,10 @@ export async function* runChat(
   forkSession?: boolean,
   abortController?: AbortController,
   effort?: string,
+  canvasId: string = 'default',
+  bumpShared?: BumpShared,
 ): AsyncGenerator<ChatEvent> {
-  const canvas = createCanvasMcpServer(store, captureView, originChatId);
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared);
 
   // The canvas chat is a full Claude Code agent: all built-in tools (Bash, Read, Write,
   // Edit, Web*, Task, ...) plus the canvas MCP server, auto-approved.

@@ -29,6 +29,23 @@ export function componentUrl(module: string, rev: number, nonce: number, canvasI
   return `/src/${dir}/${module}.tsx?r=${rev}&n=${nonce}`;
 }
 
+// The workspace shared library lives at `shared/components/` (vite root-relative), the same
+// dir the `@shared` alias points at. #55: a placed instance references a shared module by
+// its BARE name — unchanged by promote — and the loader resolves own-dir first, then here.
+// So `promote` is a pure file MOVE with no store rewrite, and a component placed on another
+// canvas by the same bare name resolves to the one shared source.
+export function sharedComponentUrl(module: string, rev: number, nonce: number): string {
+  return `/shared/components/${module}.tsx?r=${rev}&n=${nonce}`;
+}
+
+/** The URLs to try, in order, to resolve a placed module for a canvas: its own per-canvas
+ * dir first, then the shared library. A bare module name is thus own-dir-first with a
+ * `@shared` fallback — the "live single source, promote = move" model (ADR-0007). Pure, so
+ * the resolution order is unit-testable. */
+export function componentUrls(module: string, rev: number, ownNonce: number, sharedNonce: number, canvasId: string = DEFAULT_CANVAS_ID): string[] {
+  return [componentUrl(module, rev, ownNonce, canvasId), sharedComponentUrl(module, rev, sharedNonce)];
+}
+
 // The browser caches dynamic-import results by full URL, so a failed first import
 // (file not ready) must NOT be retried at the same URL or it returns the cached
 // failure. Give every attempt a unique query.
@@ -49,20 +66,30 @@ async function importWithRetry(module: string, rev: number, canvasId: string): P
   // vite's brief dep re-optimization window — can fail the first import. Retry a
   // few times with backoff (~total 4.5s) so a new component renders on its own,
   // no page refresh. (Caching a single failed import was the "had to refresh" bug.)
+  // NB: param is `r`, NOT `v`. Vite reserves `?v=` for its dep-optimizer version
+  // hashes and serves anything carrying it `Cache-Control: immutable` (1 year).
+  // Using `?v=` made the browser cache an old compile of a component forever, so a
+  // source edit that didn't bump rev kept re-serving the stale (often throwing)
+  // module on every normal reload — only a hard refresh cleared it. Any non-`v`
+  // param gets `no-cache` (etag revalidation), so reloads always pick up fresh source.
+  const importFrom = async (url: string): Promise<AgentComponent> => {
+    const m = await import(/* @vite-ignore */ url);
+    const C = (m as { default?: unknown }).default;
+    if (typeof C !== 'function') throw new Error(`Component "${module}" must \`export default\` a React component.`);
+    return C as AgentComponent;
+  };
   let lastErr: unknown;
   for (let i = 0; i < LOAD_ATTEMPTS; i++) {
     try {
-      // NB: param is `r`, NOT `v`. Vite reserves `?v=` for its dep-optimizer version
-      // hashes and serves anything carrying it `Cache-Control: immutable` (1 year).
-      // Using `?v=` made the browser cache an old compile of a component forever, so a
-      // source edit that didn't bump rev kept re-serving the stale (often throwing)
-      // module on every normal reload — only a hard refresh cleared it. Any non-`v`
-      // param gets `no-cache` (etag revalidation), so reloads always pick up fresh source.
-      const url = componentUrl(module, rev, (attemptNonce += 1), canvasId);
-      const m = await import(/* @vite-ignore */ url);
-      const C = (m as { default?: unknown }).default;
-      if (typeof C !== 'function') throw new Error(`Component "${module}" must \`export default\` a React component.`);
-      return C as AgentComponent;
+      // Resolve own-dir first, then the shared library (#55). A promoted module is gone
+      // from the own dir, so that import 404s and the shared source loads; a canvas's own
+      // module resolves on the first try and never touches shared (behavior-preserving).
+      const [own, shared] = componentUrls(module, rev, (attemptNonce += 1), (attemptNonce += 1), canvasId);
+      try {
+        return await importFrom(own as string);
+      } catch {
+        return await importFrom(shared as string);
+      }
     } catch (e) {
       lastErr = e;
       if (i < RETRY_DELAYS_MS.length) await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[i]));

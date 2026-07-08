@@ -12,6 +12,8 @@ import {
   placeComponentOp,
   readOp,
   updateShapesOp,
+  sessionsPlacingModule,
+  bumpSharedModule,
 } from './canvas-ops.ts';
 import { normalizeIncomingShape, normalizeShape } from './normalize.ts';
 import type { CanvasShape } from './shapes.ts';
@@ -321,6 +323,40 @@ describe('canvas ops (the agent tool logic)', () => {
       expect(attachShape(viaPlace)).toEqual(attachShape(viaCreate));
       // And concretely: exactly one grey link from the chat, nothing page-stamped.
       expect(attachShape(viaPlace)).toEqual({ arrowCount: 1, starts: ['shape:chat'], colors: ['grey'], anyStamped: false });
+    });
+  });
+
+  describe('cross-canvas shared rev-bump: the "who reloads" set (#55)', () => {
+    // A session is anything carrying a store; the target computation is pure over the set.
+    const sessionWith = (id: string, modules: string[]) => {
+      const store = createStore();
+      store.upsert(
+        modules.map((m, i) => normalizeShape({ id: `shape:${id}-${i}`, type: 'component', x: 0, y: 0, w: 360, h: 260, module: m, data: {}, rev: 1 })),
+      );
+      return { canvasId: id, store };
+    };
+
+    test('sessionsPlacingModule selects EXACTLY the sessions that placed the module', () => {
+      const a = sessionWith('a', ['Shared', 'Local']);
+      const b = sessionWith('b', ['Other']);
+      const c = sessionWith('c', ['Shared']);
+      const sessions = [a, b, c];
+      expect(sessionsPlacingModule(sessions, 'Shared').map((s) => s.canvasId)).toEqual(['a', 'c']);
+      expect(sessionsPlacingModule(sessions, 'Other').map((s) => s.canvasId)).toEqual(['b']);
+      expect(sessionsPlacingModule(sessions, 'Nobody')).toHaveLength(0);
+    });
+
+    test('bumpSharedModule bumps rev on every placing session, leaves the rest untouched', () => {
+      const a = sessionWith('a', ['Shared']);
+      const b = sessionWith('b', ['Other']);
+      const revBefore = (s: { store: ReturnType<typeof createStore> }) =>
+        s.store.getState().shapes.map((sh) => (sh.type === 'component' ? sh.rev : -1));
+      expect(revBefore(a)).toEqual([1]);
+
+      const reloaded = bumpSharedModule([a, b], 'Shared');
+      expect(reloaded).toBe(1); // exactly canvas a
+      expect(revBefore(a)[0]!).toBeGreaterThan(1); // a's instance re-imported
+      expect(revBefore(b)).toEqual([1]); // b never placed it → unchanged
     });
   });
 

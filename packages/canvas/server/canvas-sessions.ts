@@ -188,12 +188,16 @@ export async function createCanvasSession(
  */
 export function createSessionRegistry<T>(factory: (canvasId: string) => Promise<T>) {
   const map = new Map<string, Promise<T>>();
+  // Values whose build promise has resolved, for a SYNCHRONOUS cross-canvas fan-out (the
+  // shared-library rev-bump, #55): a settled session's store can be read without awaiting.
+  const settled: T[] = [];
   return {
     get(canvasId: string): Promise<T> {
       let s = map.get(canvasId);
       if (!s) {
         s = factory(canvasId);
         map.set(canvasId, s);
+        void s.then((v) => settled.push(v)).catch(() => map.delete(canvasId));
       }
       return s;
     },
@@ -203,6 +207,10 @@ export function createSessionRegistry<T>(factory: (canvasId: string) => Promise<
     /** Sessions built so far (for cross-canvas fan-out, e.g. flush-all on idle exit). */
     resolved(): Promise<T>[] {
       return [...map.values()];
+    },
+    /** Sessions whose build already RESOLVED, read synchronously (cross-canvas rev-bump). */
+    built(): T[] {
+      return [...settled];
     },
   };
 }

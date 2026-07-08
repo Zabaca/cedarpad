@@ -5,7 +5,7 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import { componentUrl, DEFAULT_CANVAS_ID } from './component-loader';
+import { componentUrl, componentUrls, sharedComponentUrl, DEFAULT_CANVAS_ID } from './component-loader';
 
 describe('componentUrl: per-canvas import path resolution', () => {
   test('default canvas → today\'s flat path (behavior-preserving)', () => {
@@ -31,5 +31,33 @@ describe('componentUrl: per-canvas import path resolution', () => {
 
   test('rev and nonce still cache-bust (carried through unchanged)', () => {
     expect(componentUrl('X', 5, 9, 'c')).toBe('/src/canvas-c/components/X.tsx?r=5&n=9');
+  });
+});
+
+// #55: a placed instance references a shared module by its BARE name; the loader resolves
+// own-dir first, then the workspace shared library (`@shared` → shared/components/).
+describe('shared resolution: own-dir first, then the shared library', () => {
+  test('sharedComponentUrl → the workspace shared/components dir (the @shared source)', () => {
+    expect(sharedComponentUrl('KpiCard', 3, 1)).toBe('/shared/components/KpiCard.tsx?r=3&n=1');
+  });
+
+  test('componentUrls resolves own-dir FIRST, shared library SECOND (default canvas)', () => {
+    expect(componentUrls('KpiCard', 3, 1, 2, DEFAULT_CANVAS_ID)).toEqual([
+      '/src/canvas-components/KpiCard.tsx?r=3&n=1',
+      '/shared/components/KpiCard.tsx?r=3&n=2',
+    ]);
+  });
+
+  test('a non-default canvas: own per-canvas dir first, the same shared dir second', () => {
+    expect(componentUrls('Chart', 7, 1, 2, 'abc')).toEqual([
+      '/src/canvas-abc/components/Chart.tsx?r=7&n=1',
+      '/shared/components/Chart.tsx?r=7&n=2',
+    ]);
+  });
+
+  test('the shared candidate is canvas-agnostic (one source across canvases)', () => {
+    const a = componentUrls('Chart', 1, 1, 1, 'A')[1];
+    const b = componentUrls('Chart', 1, 1, 1, 'B')[1];
+    expect(a).toBe(b);
   });
 });

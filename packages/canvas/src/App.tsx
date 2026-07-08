@@ -1,10 +1,11 @@
 import { Suspense, lazy, useCallback, useRef, useState } from 'react';
-import { Tldraw, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLPageId, type TLShapeId, createBindingId, createShapeId } from 'tldraw';
+import { DefaultContextMenu, DefaultContextMenuContent, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLPageId, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 import { getActiveChat, setForkHandler } from './agent-link';
 import { ChatShapeUtil } from './ChatShape';
 import { closeSession, forkSession } from './chat-store';
+import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
 import { LeftPanel } from './LeftPanel';
 import { wireSync } from './sync';
@@ -24,7 +25,40 @@ const WebPocApp = lazy(() => import('../web-poc/src/embed').then((m) => ({ defau
 // Hide ONLY tldraw's built-in page dropdown ("Avatar ⌄"). Our own LeftPanel now
 // owns the page list. The hamburger MainMenu and the undo/redo/delete/duplicate
 // QuickActions are left in place.
-const tldrawComponents: TLComponents = { PageMenu: null };
+// The shared-library UI action (#55): when exactly one `component` shape is selected, add
+// "Promote to shared library" (move it to @shared) / "Copy to this canvas" (diverge from
+// shared) to the right-click menu — the UI mirror of the agent's promote/adopt tools.
+function CanvasContextMenu(props: TLUiContextMenuProps) {
+  const editor = useEditor();
+  const selected = editor.getSelectedShapes();
+  const only = selected.length === 1 ? selected[0] : undefined;
+  const module = only?.type === 'component' ? (only.props as { module: string }).module : undefined;
+  return (
+    <DefaultContextMenu {...props}>
+      {module && (
+        <TldrawUiMenuGroup id="shared-library">
+          <TldrawUiMenuItem
+            id="promote-component"
+            label={`Promote "${module}" to shared library`}
+            icon="external-link"
+            readonlyOk={false}
+            onSelect={() => void promoteComponent(module).catch((e) => window.alert(`Promote failed: ${(e as Error).message}`))}
+          />
+          <TldrawUiMenuItem
+            id="adopt-component"
+            label={`Copy "${module}" to this canvas`}
+            icon="duplicate"
+            readonlyOk={false}
+            onSelect={() => void adoptSharedComponent(module).catch((e) => window.alert(`Copy failed: ${(e as Error).message}`))}
+          />
+        </TldrawUiMenuGroup>
+      )}
+      <DefaultContextMenuContent />
+    </DefaultContextMenu>
+  );
+}
+
+const tldrawComponents: TLComponents = { PageMenu: null, ContextMenu: CanvasContextMenu };
 
 // Persist the camera (pan + zoom) PER PAGE across reloads + page switches, so each
 // page returns to where you left it rather than the default center. Canvas shapes

@@ -13,6 +13,7 @@ import { makeDb } from '../web-poc/lib/db/index.ts';
 
 import type { CanvasState } from '../src/shapes.ts';
 import { normalizeIncomingShape, normalizePage } from '../src/normalize.ts';
+import { bumpAllComponents, bumpSharedModule, nextComponentRev } from '../src/canvas-ops.ts';
 import { BlobStore, selectBackend } from './blob-store.ts';
 import { type CanvasSession, createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
 import { ChatMetaStore } from './chat-meta.ts';
@@ -20,6 +21,7 @@ import { PersistSink } from './persistable.ts';
 import { maxMtimeMs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
 import { type CanvasImage, type ChatEvent, runChat } from './agent.ts';
+import { adoptSharedComponent, promoteComponent } from './components.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
 
@@ -114,6 +116,11 @@ function canvasIdFrom(req: Request, url: URL): string {
 // preserving today's boot-time load. Chats (multiplexed, not yet per-canvas) run
 // against the default canvas's store, as they always have.
 const defaultSession: CanvasSession = await canvasSessions.get(DEFAULT_CANVAS_ID);
+
+// Cross-canvas rev-bump for a shared-library change (#55): fan a promote / shared-edit out
+// to every already-built canvas that placed the module, so each open canvas re-imports the
+// one shared source. The pure target computation + per-store bump live in canvas-ops.
+const bumpSharedModuleAcrossCanvases = (module: string): number => bumpSharedModule(canvasSessions.built(), module);
 
 // Per-chat durable state (ADR 0004): server-owned { sessionId, model, effort, forkNext },
 // the single home that replaces browser localStorage. Persisted via blobStore (local disk
@@ -326,7 +333,7 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
   void (async () => {
     let finalSessionId = sessionId;
     try {
-      for await (const ev of runChat(defaultSession.store, message, sessionId, defaultSession.requestScreenshot, images, chatId, model, forkSession, ac, effort)) {
+      for await (const ev of runChat(defaultSession.store, message, sessionId, defaultSession.requestScreenshot, images, chatId, model, forkSession, ac, effort, defaultSession.canvasId, bumpSharedModuleAcrossCanvases)) {
         if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
         broadcastChat(chatId, ev satisfies ChatEvent);
       }
@@ -472,6 +479,31 @@ export async function handleRequest(req: Request): Promise<Response> {
       const screenurl = typeof body.url === 'string' ? body.url : null;
       session.resolveScreenshot(id, screenurl);
       return json({ ok: true });
+    }
+
+    // --- shared component library (#55): the UI action for promote / adopt. Mirrors the
+    // agent tools; each resolves the caller's canvas from the same x-canvas-id selection. ---
+    if (path === '/api/components/promote' && req.method === 'POST') {
+      const canvasId = canvasIdFrom(req, url);
+      const body = await readBody(req);
+      const module = typeof body.module === 'string' ? body.module : '';
+      try {
+        promoteComponent(canvasId, module);
+        return json({ ok: true, reloaded: bumpSharedModuleAcrossCanvases(module) });
+      } catch (e) {
+        return json({ error: (e as Error).message }, 400);
+      }
+    }
+    if (path === '/api/components/adopt' && req.method === 'POST') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const body = await readBody(req);
+      const module = typeof body.module === 'string' ? body.module : '';
+      try {
+        adoptSharedComponent(session.canvasId, module);
+        return json({ ok: true, reloaded: bumpAllComponents(session.store, nextComponentRev(session.store)) });
+      } catch (e) {
+        return json({ error: (e as Error).message }, 400);
+      }
     }
 
     // --- agent chat (multiplexed pub/sub) ---
