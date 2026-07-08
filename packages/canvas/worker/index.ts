@@ -144,15 +144,17 @@ export default {
     if (url.pathname === '/') return asset('/index.html');
     if (url.pathname.startsWith('/assets/')) return asset(url.pathname);
 
-    // Notebook SPA static build (ADR-0007, PRD #49 slice #58). Served HERE, behind the
-    // edge session gate above, from the Workers static-assets binding — no container,
-    // no dev vite. The SPA is built with base `/notebook/` into shell/dist/notebook, so
-    // its asset URLs (`/notebook/assets/*`) map straight onto file paths; only the bare
-    // surface URL needs pointing at the SPA's index.html. Its client then calls `/v1` +
-    // `/api/auth/*` on this same edge origin, already workspace-scoped by `cs_workspace` (#57).
-    if (url.pathname === '/notebook' || url.pathname.startsWith('/notebook/')) {
-      const notebookPath = url.pathname === '/notebook' || url.pathname === '/notebook/' ? '/notebook/index.html' : url.pathname;
-      return asset(notebookPath);
+    // Notebook is a Shell stage now (ADR-0007, PRD #103 slice #107), not its own SPA
+    // surface — the bare URL bounces to the shell with the stage selected, so a bookmark
+    // or link to `/notebook` still lands on Notebook, just inside the one chrome. Its
+    // assets still build into shell/dist/notebook (base `/notebook/`, PRD #49 slice #58)
+    // and share the shell's ASSETS binding, so `/notebook/assets/*` must keep resolving
+    // as a static asset — only the BARE surface redirects.
+    if (url.pathname === '/notebook' || url.pathname === '/notebook/') {
+      return new Response(null, { status: 302, headers: { location: '/?stage=notebook' } });
+    }
+    if (url.pathname.startsWith('/notebook/')) {
+      return asset(url.pathname);
     }
 
     // Edge Shell (ADR-0007, #46). The launcher + its registry API are served HERE — no

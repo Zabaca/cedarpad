@@ -14,12 +14,17 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 5_000, refetchOnWindowFocus: false } },
 });
 
-export function WebPocApp() {
+/**
+ * `workspaceId`: the host's active workspace (the Shell's rail selection). Notebook
+ * scopes its views to it rather than offering its own picker — the rail is the one
+ * place a workspace is chosen (PRD #103, slice #107). Omitted when standalone.
+ */
+export function WebPocApp({ workspaceId }: { workspaceId?: string }) {
   return (
     <MantineProvider defaultColorScheme="auto">
       <Notifications position="top-right" />
       <QueryClientProvider client={queryClient}>
-        <App />
+        <App workspaceId={workspaceId} />
       </QueryClientProvider>
     </MantineProvider>
   );
