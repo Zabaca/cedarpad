@@ -3,7 +3,11 @@
 // :4512 (the bridge proxies /api/custom/* -> it).
 export {};
 
-const BRIDGE = process.env.CANVAS_BRIDGE ?? 'http://localhost:4511';
+// Bridge listen port comes from env (with-worktree-port.sh derives it per
+// worktree); unset falls back to 4511. We derive the vite /api proxy target from
+// the same port so the browser always proxies to the bridge this stack started.
+const BRIDGE_PORT = process.env.CANVAS_BRIDGE_PORT ?? '4511';
+const BRIDGE = process.env.CANVAS_BRIDGE ?? `http://localhost:${BRIDGE_PORT}`;
 
 // --watch only in LOCAL dev (restart the bridge when we edit its code). In the
 // container (IS_SANDBOX) the bridge code only changes via a redeploy, so --watch
@@ -19,6 +23,8 @@ const bridge = Bun.spawn(bridgeArgs, {
 // not the `bunx` shim, so `bunx` ENOENTs and the dev stack dies on boot.
 const web = Bun.spawn(['bun', 'run', 'dev:web'], {
   stdio: ['inherit', 'inherit', 'inherit'],
+  // Point vite's /api proxy at the bridge port this stack is using.
+  env: { ...process.env, CANVAS_BRIDGE: BRIDGE },
 });
 
 // Extension server: isolated agent-authored backend handlers (ADR 0002). SUPERVISED,

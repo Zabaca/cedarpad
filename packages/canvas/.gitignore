@@ -5,6 +5,13 @@
 # local libSQL file backing the mounted web-poc in dev (prod uses remote Turso)
 .web-poc-dev.db
 .web-poc-dev.db-*
+# per-worktree dev DBs (with-worktree-db.sh)
+.web-poc-dev-*.db*
+
+# Playwright e2e artifacts
+/test-results/
+/playwright-report/
+/playwright/.cache/
 
 # build stamp written by scripts/deploy.sh right before the image build (the git
 # SHA the bridge reports at /api/status). Regenerated per deploy, never committed.
