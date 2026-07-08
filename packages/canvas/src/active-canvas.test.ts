@@ -1,29 +1,55 @@
-import { describe, expect, test } from 'bun:test';
+// Registers happy-dom globals first: activeCanvasId reads window.location, and the
+// stale-cookie test needs a document.cookie to prove it is NOT consulted.
+import './happydom-harness.ts';
 
-import { DEFAULT_CANVAS_ID, readCanvasCookie, withCanvasHeader, withCanvasParam } from './active-canvas';
+import { afterEach, describe, expect, test } from 'bun:test';
 
-// The client learns the active canvas from the NON-HttpOnly `cs_canvas` cookie the edge
-// sets on `/w/:ws/canvas/:id`. Absent ⇒ `default` — behavior-preserving with today.
-describe('readCanvasCookie — cookie ⇒ selected canvas, absent ⇒ null', () => {
-  test('reads cs_canvas among other cookies', () => {
-    expect(readCanvasCookie('cs_canvas=cv_1')).toBe('cv_1');
-    expect(readCanvasCookie('cs_workspace=ws_a; cs_canvas=cv_2')).toBe('cv_2');
+import { DEFAULT_CANVAS_ID, activeCanvasId, canvasIdFromPath, withCanvasHeader, withCanvasParam } from './active-canvas';
+
+const setPath = (pathname: string) => {
+  (globalThis as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL(
+    `https://poc.cedarpad.com${pathname}`,
+  );
+};
+
+afterEach(() => setPath('/'));
+
+// The client learns the active canvas from its OWN URL — the Render Pad is served at
+// `/w/:ws/canvas/:id/pad` (#105), so the iframe is self-describing and two tabs can hold
+// two canvases. Absent selection ⇒ `default` — behavior-preserving with today.
+describe('canvasIdFromPath — the pad URL carries the selection', () => {
+  test('extracts the canvas id from a pad path', () => {
+    expect(canvasIdFromPath('/w/abc/canvas/xyz/pad')).toBe('xyz');
+    expect(canvasIdFromPath('/w/default/canvas/cv_1/pad')).toBe('cv_1');
   });
 
-  test('absent ⇒ null (caller defaults)', () => {
-    expect(readCanvasCookie('cs_workspace=ws_a')).toBeNull();
-    expect(readCanvasCookie('')).toBeNull();
-    expect(readCanvasCookie(null)).toBeNull();
-  });
-
-  test('url-decodes the value', () => {
-    expect(readCanvasCookie('cs_canvas=cv%5Fx')).toBe('cv_x');
+  test('any non-pad path ⇒ null (caller defaults)', () => {
+    expect(canvasIdFromPath('/')).toBeNull();
+    expect(canvasIdFromPath('/w/abc/canvas/xyz')).toBeNull();
+    expect(canvasIdFromPath('/w/abc')).toBeNull();
   });
 });
 
-// activeCanvasId reads document.cookie; withCanvasHeader/withCanvasParam use it. In the
-// bun test env there is no document, so activeCanvasId falls back to the default — which
-// is exactly the "absent selection ⇒ default" contract we assert here.
+describe('activeCanvasId — reads the pad URL, never a cookie', () => {
+  test('/w/abc/canvas/xyz/pad ⇒ xyz', () => {
+    setPath('/w/abc/canvas/xyz/pad');
+    expect(activeCanvasId()).toBe('xyz');
+  });
+
+  test('/ ⇒ default', () => {
+    setPath('/');
+    expect(activeCanvasId()).toBe(DEFAULT_CANVAS_ID);
+  });
+
+  test('a stale cs_canvas cookie is ignored — the URL is the sole source', () => {
+    document.cookie = 'cs_canvas=stale_cv';
+    setPath('/');
+    expect(activeCanvasId()).toBe(DEFAULT_CANVAS_ID);
+    setPath('/w/abc/canvas/xyz/pad');
+    expect(activeCanvasId()).toBe('xyz');
+  });
+});
+
 describe('withCanvasHeader / withCanvasParam — stamp the selection (default when unset)', () => {
   test('header carries x-canvas-id and preserves existing headers', () => {
     const h = withCanvasHeader({ 'content-type': 'application/json' });
