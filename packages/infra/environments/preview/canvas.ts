@@ -50,9 +50,9 @@ export default cloudflareModule.instance({
       'TURSO_KEY',
       'VOYAGE_API_KEY',
       'BETTER_AUTH_SECRET',
-      // Dev-agent runner (PRD #51 / ADR-0007): GitHub token for the in-container repo
-      // worktree manager's push + PR. Add to preview/secrets.yaml (sops) before use.
-      'DEV_AGENT_GITHUB_TOKEN',
+      // Dev-agent GitHub auth is NOT a required secret yet — gated off (DEV_AGENT_ENABLED=false);
+      // repo-connection is a GitHub App (#96) that adds its own credentials here. Removed so
+      // `zbc apply` doesn't require an unprovisioned secret.
     ],
     // Single always-warm DO-bound container; roll immediately so a redeployed
     // image takes effect (see production canvas.ts).
