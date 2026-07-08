@@ -1,5 +1,9 @@
 # Context Map
 
+> **Workspace platform frame (target model, being designed):** [CONTEXT.md](./CONTEXT.md)
+> — the Workspace runtime, edge Shell, and App layer (Canvas / Notebook / Inbox) that
+> sit *above* the per-package contexts below.
+
 ## Contexts
 
 - [App](./packages/app/CONTEXT.md) — the cedarpad outliner + per-node Claude conversations

@@ -1,6 +1,6 @@
 # 0001 — Deploy agent-canvas as a self-modifying dev-mode container on Cloudflare, with R2 overlay persistence
 
-Status: accepted, but partially superseded by [ADR 0002](./0002-core-extension-split.md) — the container deploy, vite-as-compiler, R2 persistence, and workspace/canvas topology stand; the "everything mutable / no immutability boundary / whole-subtree overlay / self-modifying backend" stance below is replaced by the core/extension split (the core is image-only; only `src/canvas-components/` + custom handlers persist).
+Status: accepted, but partially superseded by [ADR 0002](./0002-core-extension-split.md) — the container deploy, vite-as-compiler, R2 persistence, and workspace/canvas topology stand; the "everything mutable / no immutability boundary / whole-subtree overlay / self-modifying backend" stance below is replaced by the core/extension split (the core is image-only; only `src/canvas-components/` + custom handlers persist). **Further amended by root [ADR-0007](../../../../docs/adr/0007-workspace-platform-topology.md)** — the "one workspace / one canvas", "shell served by the container", and "Cloudflare Access as the gate" stances are replaced by a static edge Shell over one container hosting many canvases, with Better Auth at the edge (`cs_gate` removed).
 
 ## Context
 
