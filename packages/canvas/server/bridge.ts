@@ -342,15 +342,21 @@ function chatStream(): Response {
 // (Esc / Stop in the UI). One turn per chat at a time, so one aborter per chat.
 const aborters = new Map<string, AbortController>();
 
-/** Run one turn for a chat and broadcast its events. Fire-and-forget (output is the SSE). */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string): void {
+/** Run one turn for a chat and broadcast its events. Fire-and-forget (output is the SSE).
+ * The turn runs against the session for `canvasId` (the request's active canvas, #79) so the
+ * agent reads/draws on the canvas the human is on; absent/unknown ⇒ the default, unchanged. */
+function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, canvasId: string = DEFAULT_CANVAS_ID): void {
   const ac = new AbortController();
   aborters.set(chatId, ac);
   void (async () => {
     let finalSessionId = sessionId;
     try {
+      // Resolve the ACTIVE canvas's session: the agent's reads, writes, tools, and screenshot
+      // round-trip all use THIS store, so shapes land on the human's canvas and broadcast to
+      // that canvas's SSE subscribers (per-canvas isolation, exactly how reads already resolve).
+      const session = await canvasSessions.get(canvasId);
       const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: WORKSPACE, notify };
-      for await (const ev of runChat(defaultSession.store, message, sessionId, defaultSession.requestScreenshot, images, chatId, model, forkSession, ac, effort, defaultSession.canvasId, bumpSharedModuleAcrossCanvases, inbox)) {
+      for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox)) {
         if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
         broadcastChat(chatId, ev satisfies ChatEvent);
       }
@@ -578,7 +584,9 @@ export async function handleRequest(req: Request): Promise<Response> {
       const forkSession = chatMeta.consumeFork(chatId); // one-shot; cleared in memory now
       if (forkSession) void chatMeta.save().catch((err) => console.error('[chatmeta] save failed:', err)); // persist the clear so a recycle can't re-fork
       const effort = meta.effort && meta.effort !== 'default' ? meta.effort : undefined; // 'default' = let the model decide
-      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort);
+      // Route the turn to the request's active canvas (#79): the agent draws on the canvas the
+      // human is on (x-canvas-id / ?canvas), exactly how the canvas reads/SSE already resolve.
+      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort, canvasIdFrom(req, url));
       return json({ ok: true }, 202);
     }
     // POST /api/chat/:id/config — update server-owned ChatMeta (model/effort/forkNext),
