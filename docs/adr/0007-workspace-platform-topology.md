@@ -1,7 +1,7 @@
 # Workspace platform: an edge Shell over one container of many canvases, apps as surfaces
 
-cedarpad becomes a multi-app platform: a **static edge Shell** (launcher + top nav +
-login + workspace switcher) fronts **per-workspace runtime containers** — James may have
+cedarpad becomes a multi-app platform: a **persistent edge Shell** (the app frame: rail +
+workspace switcher + canvas selector + login) fronts **per-workspace runtime containers** — James may have
 many workspaces (e.g. one per repo/project), each a container hosting **many canvases**
 (one vite serving per-canvas component dirs) plus the agent runtime — while **Notebook**
 runs as a pure **edge + Turso** app and **continuous dev workflows** run in a **separate
@@ -19,9 +19,12 @@ the root [CONTEXT.md](../../CONTEXT.md).
 
 ```
 Edge Worker
-├─ Shell        static launcher + top nav; runs Better Auth (→ Turso); the single gate
+├─ Shell SPA    served from ASSETS at `/`; the ONE chrome (rail + workspace switcher +
+│               canvas selector) that mounts Canvas/Notebook/Inbox as inline stages;
+│               runs Better Auth (→ Turso); the single gate; never wakes a container
 ├─ Notebook     Hono API → remote Turso + Voyage embeddings; static SPA (edge, no container)
-└─ proxy        /canvas/:id/* and dev-agent control → the container(s), only after auth
+└─ proxy        /w/:ws/canvas/:id/pad → the container(s), only after auth — the iframed
+                Render Pad is the SOLE container-wake trigger
 
 Product container  (one PER workspace; James switches workspaces in the Shell; sleeps @5m)
 ├─ one vite    serves per-canvas dirs canvas-<id>/components/ (isolated by path)
@@ -37,10 +40,29 @@ Inbox = coordinator over Sessions (agnostic to where a Session runs)
    Conversation: status open|closed · waiting-on human|agent|none · unread
 ```
 
-- **Shell at the edge, not in the container.** A launcher must be instant and must wake the
-  runtime on demand; serving it from the sleepy paid container would re-pin the very sleep
-  problem the container is tuned to avoid. The edge Shell serves login/UI and proxies to the
-  container **only after auth**.
+- **Shell at the edge, not in the container.** The Shell is the **persistent app frame** —
+  an edge-served SPA that owns the rail, the workspace switcher, and the canvas selector, and
+  mounts Canvas, Notebook, and Inbox as **inline stages** (`?stage=…`, `pushState`/`popstate`),
+  never as separate full-page loads. It must be instant and must wake the runtime on demand;
+  serving it from the sleepy paid container would re-pin the very sleep problem the container
+  is tuned to avoid. The edge Shell serves login/UI and proxies to the container **only after
+  auth**. _(Amended by PRD #103: the original "launcher + top nav that navigates away to
+  `/notebook` and `/inbox`" is now one persistent frame with inline stages; `/notebook` and
+  `/inbox` survive only as redirects into the matching stage.)_
+- **The canvas stage mounts the Render Pad in a same-origin iframe, and that is the ONLY
+  container-wake trigger.** The stage lists canvases (`/api/canvases`, served at the edge) and,
+  on selection, iframes `/w/:ws/canvas/:id/pad`. This *strengthens* the no-wake stance above:
+  browsing the rail — Notebook, Inbox, the canvas list — never touches the container; only
+  mounting the pad iframe does. **Same-origin** (`poc.cedarpad.com`) means the Better Auth
+  cookie flows into the frame with **no token handoff**, and a cold-booting or crashed
+  container degrades **inside the iframe frame** while the shell around it stays live.
+- **Chat stays inside the Pad — no `postMessage` protocol.** Chat is about the canvas, so it
+  lives in the pad alongside the canvas it acts on; the shell stays dumb navigation and v1
+  needs zero shell↔pad message protocol.
+- **The tldraw pages layer was removed** (PRD #103): the hierarchy is now `Workspace →
+  Canvases → Canvas → Render Pad`, with no `pageId` on shapes and no `pages` in canvas state.
+  Recorded here because it is hard to reverse and it settled the platform hierarchy this ADR
+  governs, though it began as a canvas-internal simplification.
 - **One container, many canvases.** The workspace runtime is a single container hosting a
   **single vite** that serves per-canvas component dirs (`canvas-<id>/components/`, isolated
   by import path) plus a workspace-level **shared component library** (`@shared`, live,
@@ -96,7 +118,7 @@ Inbox = coordinator over Sessions (agnostic to where a Session runs)
 
 - **One container per canvas** — multiplies the cold-boot/sleep/paid-instance problem per
   canvas; rejected in favor of one workspace runtime hosting many canvases.
-- **Shell served by the container** (PR #40's rail menu) — couples launcher availability to
+- **Shell served by the container** (PR #40's rail menu) — couples shell availability to
   the runtime's sleep state and keeps the `cs_gate` hole open.
 - **Run the continuous dev workflow in the product container** — its edits to the baked
   `/app` are non-git and evaporate on recycle, and it fights the product sleep timer.

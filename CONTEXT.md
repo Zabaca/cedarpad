@@ -52,16 +52,26 @@ data lives in its **own Turso DB** (idiomatic for Turso — db-per-tenant), so c
 _Avoid_: reintroducing a "Team" concept separate from Workspace, or treating the platform Workspace
 as a *sub*-thing inside a bigger tenant — the Workspace **is** the tenant/deployment.
 
-**Shell**: the top-level launcher + top nav, served **statically at the edge** (the
-Worker), NOT inside the container. Always instant; wakes the workspace runtime only
-when you open an app or canvas. **Owns login and is the single gate**: the edge Shell
+**Shell**: the **persistent edge app frame** — the only chrome, an edge-served SPA (the
+Worker's static ASSETS) that owns the rail, the workspace switcher, and stage selection;
+NOT inside the container. It mounts Canvas, Notebook, and Inbox as **inline stages**
+(`?stage=…`), never separate page loads. Always instant; wakes the workspace runtime only
+when the canvas stage mounts the Render Pad iframe (`/w/:ws/canvas/:id/pad`) — browsing the
+rail never does. **Owns login and is the single gate**: the edge Shell
 Worker runs **Better Auth** (against Turso) for the Shell, the container proxy, and
 Notebook's `/v1/*` — one auth system. Because the edge serves the login/Shell and only
 proxies to the container *after* auth, the old pre-auth source-disclosure hole closes
 structurally, so **`cs_gate` is removed** (Cloudflare Access becomes optional
 defense-in-depth, not a dependency). This word was formerly the name of the canvas
-frontend frame — that is renamed **Canvas Frame** to free it.
-_Avoid_: calling the canvas frontend frame "shell".
+frontend frame — that frame is now the **Render Pad** (below), which frees it.
+_Avoid_: calling the Render Pad "shell".
+
+**Render Pad**: the container-served vite surface that renders **one** Canvas (the tldraw
+canvas + chat + component loader), addressed at `/w/:ws/canvas/:id/pad` and mounted by the
+Shell's canvas stage in a **same-origin iframe** — the only thing that wakes the container.
+It was formerly the canvas "frontend frame". Platform containment is **Workspace → Canvases →
+Canvas → Render Pad** (the tldraw *pages* layer was removed; see
+[ADR-0007](./docs/adr/0007-workspace-platform-topology.md)).
 
 **App**: a launchable surface in the Shell's top nav. Three:
 1. **Canvas** — index of all canvases (see below).
@@ -105,9 +115,9 @@ OAuth user token (acts as one person, breaks on member changes, fights the team 
 
 ## Canvas as a shared surface (not owned by the Canvas app)
 
-**Canvas**: a workspace-owned drawing surface — its own pages and its own component
-dir (isolated by path, served by the workspace's single vite). It is NOT property of the Canvas app.
-It carries an optional **owner** edge:
+**Canvas**: a workspace-owned drawing surface — its own component dir (isolated by path,
+served by the workspace's single vite), rendered by its **Render Pad**. It is NOT property of
+the Canvas app. It carries an optional **owner** edge:
 
 - `none` — standalone.
 - a **Notebook** item (Observation/Problem).
@@ -145,7 +155,7 @@ canvas is a surface *on* a notebook item or session — an attachment edge, not 
   edit is isolated per-instance by the existing error boundary; a canvas that needs to
   diverge copies the component back into its own dir.
 
-(Canvas-internal model — pages, shapes, components, core/extension split — stays in
+(Canvas-internal model — shapes, components, core/extension split — stays in
 [canvas/CONTEXT.md](./packages/canvas/CONTEXT.md).)
 
 ## Apps — stubs (filled as we design)
