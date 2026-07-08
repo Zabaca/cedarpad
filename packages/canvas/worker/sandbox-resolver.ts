@@ -9,6 +9,11 @@ import { r2Prefix as deriveR2Prefix, sandboxId as deriveSandboxId } from '../web
 export interface SandboxCoords {
   sandboxId: string;
   r2Prefix: string;
+  // The value the container runs with as `CANVAS_WORKSPACE` — the key its bridge
+  // uses to scope R2 state. The legacy/default workspace MUST be `'default'` so the
+  // deployed prod container keeps restoring from `workspaces/default/`; a new
+  // workspace uses its own id, giving it an isolated R2 prefix. (ADR-0007, #46.)
+  canvasWorkspace: string;
 }
 
 /** A workspace as far as routing cares: its id and whether it's THE legacy default. */
@@ -32,8 +37,12 @@ export const DEFAULT_WORKSPACE: ResolvableWorkspace = { id: 'default', legacy: t
 
 /** Pure: a workspace record → its exact runtime coordinates. */
 export function resolve(workspace: ResolvableWorkspace): SandboxCoords {
-  if (workspace.legacy) return { sandboxId: LEGACY_SANDBOX_ID, r2Prefix: LEGACY_R2_PREFIX };
-  return { sandboxId: deriveSandboxId(workspace.id), r2Prefix: deriveR2Prefix(workspace.id) };
+  if (workspace.legacy) return { sandboxId: LEGACY_SANDBOX_ID, r2Prefix: LEGACY_R2_PREFIX, canvasWorkspace: 'default' };
+  return {
+    sandboxId: deriveSandboxId(workspace.id),
+    r2Prefix: deriveR2Prefix(workspace.id),
+    canvasWorkspace: workspace.id,
+  };
 }
 
 export type WarmDecision = 'serve' | 'cold-start';

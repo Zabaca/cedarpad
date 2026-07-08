@@ -1,7 +1,18 @@
 import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
+import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
+import type { Bindings } from '../web-poc/worker/context.ts';
+import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
+import { handleWorkspacesApi, renderShell } from './shell.ts';
+import {
+  DEFAULT_WORKSPACE_ID,
+  WORKSPACE_COOKIE,
+  decideWorkspaceRoute,
+  parseWorkspaceRoute,
+  readWorkspaceCookie,
+} from './shell-routing.ts';
 
 // One container = one workspace = one canvas (v1). The Worker is the gate (shared
 // secret cookie) and the proxy into the in-container vite dev server, which
@@ -75,14 +86,53 @@ export default {
     // container. Notebook's /v1/* verifies the SAME Better Auth session (same Turso,
     // same secret, same cookie) in-container, so one auth system spans the platform.
     const session = await authenticate(request, env);
-    if (decideGate(url.pathname, session).decision === 'deny') {
+    const gate = decideGate(url.pathname, session);
+    if (gate.decision === 'deny' || !gate.user) {
       return new Response(SIGN_IN, { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } });
     }
+    const user = gate.user;
 
-    // This slice selects a single default workspace; registry-derived, per-URL routing
-    // (/w/:workspaceId) lands in a later slice. The default resolves to the legacy
-    // coordinates the deployed container already uses, so behavior is unchanged.
-    const coords = resolve(DEFAULT_WORKSPACE);
+    // Edge Shell (ADR-0007, #46). The launcher + its registry API are served HERE — no
+    // container is proxied to for either — so listing/creating a workspace never wakes
+    // one. Only opening a workspace (/w/:id) routes to a container.
+
+    // Registry API the launcher calls (owner-scoped list/create).
+    if (url.pathname === '/api/workspaces') return handleWorkspacesApi(request, env, user);
+
+    // /w/:workspaceId — the app-surface URL. Enforce ownership via the registry (the
+    // `default` id is the legacy prod workspace and needs no row), then pin the
+    // selection in a cookie and land on the canvas. An unknown/non-owned id is 404 —
+    // never proxied. The cookie carries the selection because the canvas frontend loads
+    // absolute-path assets (/src, /api) that can't live under a /w/:id prefix.
+    const route = parseWorkspaceRoute(url.pathname);
+    if (route) {
+      const record =
+        route.workspaceId === DEFAULT_WORKSPACE_ID
+          ? null
+          : await getWorkspace(createDbForWorker(env as unknown as Bindings), route.workspaceId, user.id);
+      if (decideWorkspaceRoute(route.workspaceId, record).decision === 'not-found') {
+        return new Response('workspace not found', { status: 404 });
+      }
+      return new Response(null, {
+        status: 302,
+        headers: {
+          'set-cookie': `${WORKSPACE_COOKIE}=${route.workspaceId}; Path=/; HttpOnly; Secure; SameSite=Lax`,
+          location: '/',
+        },
+      });
+    }
+
+    // Which workspace to serve: the cookie set by /w/:id above (ownership already
+    // checked at set-time), defaulting to the legacy workspace when unset — so direct
+    // asset/API hits with no selection behave exactly as today.
+    const selected = readWorkspaceCookie(request.headers.get('cookie'));
+
+    // The launcher is the root when no workspace is selected yet — instant, no boot.
+    if (url.pathname === '/' && !selected) return renderShell();
+
+    const workspace =
+      !selected || selected === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: selected };
+    const coords = resolve(workspace);
 
     // Force the container to recycle so a freshly deployed image takes effect (CF
     // keeps the in-use instance on the old image until it idle-sleeps). The next

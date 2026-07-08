@@ -31,13 +31,15 @@ type SandboxStub = ReturnType<typeof getSandbox>;
 
 // Container env injected at process spawn (PRD: ANTHROPIC_API_KEY intentionally
 // absent so it can't override the OAuth token).
-const containerEnv = (env: Env): Record<string, string> => ({
+const containerEnv = (env: Env, coords: SandboxCoords): Record<string, string> => ({
   R2_BUCKET: env.R2_BUCKET,
   R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
   R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
   R2_ENDPOINT: env.R2_ENDPOINT,
   CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
-  CANVAS_WORKSPACE: 'default',
+  // Per-workspace R2 isolation (#46): the resolver derives this — `'default'` for the
+  // legacy/prod container (preserving `workspaces/default/`), the workspace id otherwise.
+  CANVAS_WORKSPACE: coords.canvasWorkspace,
   // web-poc mounted in the bridge: a real remote TURSO_URL makes it use Turso (not
   // the dev libSQL file); the origins line Better Auth up with poc.cedarpad.com.
   TURSO_URL: env.TURSO_URL ?? '',
@@ -66,8 +68,8 @@ async function writeEnvFile(sandbox: SandboxStub, ev: Record<string, string>): P
   await sandbox.writeFile('/app/agent-canvas/packages/canvas/.env', body).catch(() => {});
 }
 
-async function ensureStack(sandbox: SandboxStub, env: Env): Promise<void> {
-  const ev = containerEnv(env);
+async function ensureStack(sandbox: SandboxStub, env: Env, coords: SandboxCoords): Promise<void> {
+  const ev = containerEnv(env, coords);
   await sandbox.setEnvVars(ev).catch(() => {}); // kept as a secondary path
   const opts = { processId: 'canvas', envVars: ev } as const;
   let proc = await sandbox.getProcess('canvas').catch(() => null);
@@ -139,7 +141,7 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
   // cycle: watch for it under `wrangler tail` after an idle window.
   console.log(`[cold] boot — container asleep/gone, cold-starting ${sandboxId} for ${url.pathname}`);
   try {
-    await ensureStack(sandbox, env);
+    await ensureStack(sandbox, env, coords);
     await sandbox.exposePort(VITE_PORT, { hostname: 'localhost', token: PREVIEW_TOKEN });
     return await proxy(sandbox, retryReq, sandboxId);
   } catch (e: unknown) {
