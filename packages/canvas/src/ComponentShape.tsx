@@ -20,7 +20,7 @@ import type { ComponentStatus } from './shapes';
  * no data transform is needed. It is additive on tldraw's freeform `meta` record
  * (this app hydrates the editor from the simplified model, not a tldraw snapshot, so
  * there is no tldraw props-migration sequence to run). This optionality IS the
- * migration: the package's back-compat idiom for an added field (cf. `pageId`).
+ * migration: the package's back-compat idiom for an added field.
  */
 export interface ComponentShapeMeta {
   status?: ComponentStatus;

@@ -1,22 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type Editor, PageRecordType, type TLPageId, useValue } from 'tldraw';
 import type { AppView } from './App';
 import { activeCanvasId, DEFAULT_CANVAS_ID } from './active-canvas';
 
 // A custom left-hand nav, rendered as a SIBLING of <Tldraw> (outside tldraw's
-// React context), so it receives the live `editor` by prop rather than via
-// useEditor(). It owns the page list now that tldraw's built-in PageMenu is
-// hidden (see App.tsx `components={{ PageMenu: null }}`). Pages already sync as
-// CanvasPage records, so create/rename/delete here round-trip through the
-// existing sync with no extra wiring.
+// React context). It needs no editor: the hierarchy is Workspace > Canvases >
+// Canvas, and every canvas operation goes through /api/canvases at the edge.
 //
 // Layout follows the cedarpad CedarShell mock (see DESIGN.md): a thin icon rail
 // (workspace mark + Canvases section + operator avatar) beside the panel, which
-// drills Workspace > Canvas > Pages. The backend has only tldraw PAGES — there is
-// no workspace/canvas data tier — so the higher tiers are FRONTEND-ONLY and
-// honest: one real workspace (Zabaca) and one real canvas (this document). They
-// are the seam for a real multi-canvas model later; we don't fake sibling lists,
-// because extra canvases would share the single page set until the backend exists.
+// lists the workspace's canvases.
 
 const WORKSPACE_NAME = 'Zabaca';
 
@@ -44,27 +36,12 @@ function IconWebPoc() {
 }
 
 export function LeftPanel({
-  editor,
   activeApp,
   onSelectApp,
 }: {
-  editor: Editor;
   activeApp: AppView;
   onSelectApp: (app: AppView) => void;
 }) {
-  // Track pages + the current page live. useValue only needs the signal-reading
-  // function, so it works fine outside the editor's React context.
-  const pages = useValue('pages', () => editor.getPages(), [editor]);
-  const currentPageId = useValue('currentPageId', () => editor.getCurrentPageId(), [editor]);
-
-  // Which page (if any) is mid-rename, plus its draft text. Double-click a name
-  // to edit; commit on blur/Enter, cancel on Escape.
-  const [editingId, setEditingId] = useState<TLPageId | null>(null);
-  const [draft, setDraft] = useState('');
-
-  // Panel view: the Canvases section drills canvas-list <-> that canvas's pages.
-  const [view, setView] = useState<'canvases' | 'pages'>('pages');
-
   // The Canvas app index (ADR-0007, #54): the workspace's canvases from /api/canvases
   // (edge, scoped to the active workspace via cs_workspace). Switching navigates to
   // /w/:ws/canvas/:id, which pins cs_canvas and reloads onto that canvas. The active
@@ -89,19 +66,15 @@ export function LeftPanel({
     }
   }, []);
   useEffect(() => {
-    if (view === 'canvases') void loadCanvases();
-  }, [view, loadCanvases]);
+    void loadCanvases();
+  }, [loadCanvases]);
 
   // The full switch list always offers the legacy Default canvas (no registry row) so
   // you can return to it; registry canvases follow.
   const canvasList: CanvasEntry[] = [{ id: DEFAULT_CANVAS_ID, name: 'Default' }, ...canvases];
-  const activeCanvasName = canvasList.find((c) => c.id === activeCanvas)?.name ?? 'Canvas';
 
   const switchCanvas = (id: string) => {
-    if (id === activeCanvas) {
-      setView('pages');
-      return;
-    }
+    if (id === activeCanvas) return;
     setSwitching(id);
     window.location.href = `/w/${encodeURIComponent(wsId)}/canvas/${encodeURIComponent(id)}`;
   };
@@ -163,32 +136,6 @@ export function LeftPanel({
     };
   }, [wsOpen]);
 
-  const startRename = (id: TLPageId, name: string) => {
-    setEditingId(id);
-    setDraft(name);
-  };
-
-  const commitRename = () => {
-    if (!editingId) return;
-    const name = draft.trim();
-    // Empty names are meaningless; keep the old one rather than blanking the row.
-    if (name) editor.renamePage(editingId, name);
-    setEditingId(null);
-  };
-
-  const addPage = () => {
-    const id = PageRecordType.createId();
-    editor.createPage({ id, name: `Page ${pages.length + 1}` });
-    editor.setCurrentPage(id);
-  };
-
-  const deletePage = (id: TLPageId) => {
-    // tldraw requires at least one page, so never delete the last remaining one.
-    if (pages.length <= 1) return;
-    // Deleting the current page is safe: tldraw switches to another page itself.
-    editor.deletePage(id);
-  };
-
   return (
     <aside className="left-panel" ref={rootRef}>
       {/* Icon rail: workspace mark, active section, operator avatar pinned bottom. */}
@@ -208,10 +155,7 @@ export function LeftPanel({
           className={`lp-rail-btn${activeApp === 'canvas' ? ' active' : ''}`}
           title="Canvases"
           aria-current={activeApp === 'canvas' ? 'page' : undefined}
-          onClick={() => {
-            onSelectApp('canvas');
-            setView('canvases');
-          }}
+          onClick={() => onSelectApp('canvas')}
         >
           <IconCanvases />
         </button>
@@ -230,8 +174,8 @@ export function LeftPanel({
       </nav>
 
       {/* Panel body: hidden for web-poc (the rail alone — see .app--webpoc), else the
-          canvas list or the selected canvas's pages. */}
-      {activeApp === 'webpoc' ? null : view === 'canvases' ? (
+          workspace's canvas list. */}
+      {activeApp === 'webpoc' ? null : (
         <div className="lp-body">
           <div className="left-panel-head">
             <span className="left-panel-title">Canvases</span>
@@ -285,75 +229,6 @@ export function LeftPanel({
                       onClick={(e) => {
                         e.stopPropagation();
                         void deleteCanvas(c.id);
-                      }}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ) : (
-        <div className="lp-body">
-          <div className="lp-breadcrumb">
-            <button type="button" onClick={() => setView('canvases')} title="Canvases">
-              Canvases
-            </button>
-            <span className="lp-crumb-sep" aria-hidden="true">
-              ›
-            </span>
-            <span className="lp-crumb-cur">{activeCanvasName}</span>
-          </div>
-          <div className="left-panel-head">
-            <span className="left-panel-title">Pages</span>
-            <button type="button" className="left-panel-add" onClick={addPage} title="Create a new page">
-              +
-            </button>
-          </div>
-          <ul className="page-list">
-            {pages.map((page) => {
-              const active = page.id === currentPageId;
-              return (
-                <li
-                  key={page.id}
-                  className={`page-row${active ? ' active' : ''}`}
-                  onClick={() => editor.setCurrentPage(page.id)}
-                >
-                  {editingId === page.id ? (
-                    <input
-                      className="page-rename"
-                      value={draft}
-                      autoFocus
-                      // Stop the row's click-to-switch from firing while editing.
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onBlur={commitRename}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') commitRename();
-                        else if (e.key === 'Escape') setEditingId(null);
-                      }}
-                    />
-                  ) : (
-                    <span
-                      className="page-name"
-                      onDoubleClick={(e) => {
-                        e.stopPropagation();
-                        startRename(page.id, page.name);
-                      }}
-                    >
-                      {page.name}
-                    </span>
-                  )}
-                  {pages.length > 1 && (
-                    <button
-                      type="button"
-                      className="page-del"
-                      title="Delete page"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deletePage(page.id);
                       }}
                     >
                       ✕

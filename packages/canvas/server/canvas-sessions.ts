@@ -36,7 +36,7 @@ export interface CanvasSession {
   readonly clients: Set<ReadableStreamDefaultController>;
   readonly saveHealth: SaveHealth;
   /** Ask the browser (over this canvas's SSE) for a PNG; resolves null if nobody's connected. */
-  requestScreenshot(pageId?: string, timeoutMs?: number): Promise<string | null>;
+  requestScreenshot(timeoutMs?: number): Promise<string | null>;
   /** Resolve a pending screenshot (the browser POSTs the PNG back, correlated by id). */
   resolveScreenshot(id: string, url: string | null): void;
 }
@@ -86,7 +86,7 @@ export async function createCanvasSession(
       // debounced 1s so rapid edits coalesce into one R2 write.
       saveHealth.liveVersion = state.version;
       saveHealth.pending = true;
-      console.log(`[persist] ${canvasId} change → v${state.version} (${state.shapes.length} shapes, ${state.pages.length} pages); flush scheduled`);
+      console.log(`[persist] ${canvasId} change → v${state.version} (${state.shapes.length} shapes); flush scheduled`);
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
         saveTimer = null;
@@ -115,10 +115,7 @@ export async function createCanvasSession(
               console.warn(`[persist] ${canvasId} BLOCKED catastrophic shrink v${v}: ${from} → ${to} shapes (kept ${Math.round((100 * to) / from)}%). Disk preserved; reseeding live store from disk.`);
               try {
                 const good = await persist.load();
-                if (good) {
-                  store.upsertPages(good.pages);
-                  store.upsert(good.shapes);
-                }
+                if (good) store.upsert(good.shapes);
               } catch (err) {
                 console.error(`[persist] ${canvasId} reseed-from-disk failed; restart the bridge to recover the canvas:`, err);
               }
@@ -142,7 +139,6 @@ export async function createCanvasSession(
         }
       }
     },
-    restored?.pages ?? [],
   );
 
   // Screenshot round-trip: the agent's view_canvas tool asks the browser (over SSE)
@@ -150,10 +146,10 @@ export async function createCanvasSession(
   // correlated by id. Returns null if no browser is connected or it times out.
   let shotSeq = 0;
   const pendingShots = new Map<string, (url: string | null) => void>();
-  function requestScreenshot(pageId?: string, timeoutMs = 7000): Promise<string | null> {
+  function requestScreenshot(timeoutMs = 7000): Promise<string | null> {
     if (clients.size === 0) return Promise.resolve(null);
     const id = `shot${(shotSeq += 1)}`;
-    const frame = enc.encode(`event: screenshot\ndata: ${JSON.stringify({ id, pageId })}\n\n`);
+    const frame = enc.encode(`event: screenshot\ndata: ${JSON.stringify({ id })}\n\n`);
     for (const c of clients) {
       try {
         c.enqueue(frame);

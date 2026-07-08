@@ -63,9 +63,9 @@ const TUCK_GAP = 60;
 
 /**
  * Reposition a fresh batch into free space just to the LEFT of the originating chat,
- * preserving the batch's internal layout. POSITION ONLY: root-linking and page stamping
- * are the {@link attachBatchToChat} seam's job (it is the sole caller), so this returns
- * just the repositioned batch. If the chat isn't on the canvas (older client, cleared),
+ * preserving the batch's internal layout. POSITION ONLY: root-linking is the
+ * {@link attachBatchToChat} seam's job (it is the sole caller), so this returns just
+ * the repositioned batch. If the chat isn't on the canvas (older client, cleared),
  * returns the batch unchanged.
  */
 function tuckBesideChat(store: CanvasStore, made: CanvasShape[], chatId: string): CanvasShape[] {
@@ -138,13 +138,9 @@ function redactForRead(s: CanvasShape): CanvasShape | Record<string, unknown> {
   return { ...rest, src: `<image data (~${Math.round(src.length / 1024)}KB); call read_image("${s.id}") to view>` };
 }
 
-export function readOp(store: CanvasStore, originChatId?: string): OpResult {
-  const all = store.getState().shapes;
-  // Scope to the originating chat's page, so the agent reads the canvas it's on
-  // (not every page). Falls back to the whole canvas if the chat has no page yet.
-  const page = originChatId ? chatPageId(store, originChatId) : undefined;
-  const shapes = page ? all.filter((s) => s.pageId === page) : all;
-  if (shapes.length === 0) return { text: page ? 'This page is empty.' : 'The canvas is empty.' };
+export function readOp(store: CanvasStore): OpResult {
+  const shapes = store.getState().shapes;
+  if (shapes.length === 0) return { text: 'The canvas is empty.' };
   return { text: `${shapes.length} shape(s):\n${JSON.stringify(shapes.map(redactForRead), null, 2)}` };
 }
 
@@ -152,18 +148,6 @@ export function readOp(store: CanvasStore, originChatId?: string): OpResult {
 export function imageSrcOf(store: CanvasStore, id: string): string | null {
   const s = store.getState().shapes.find((x) => x.id === id);
   return s && s.type === 'image' && s.src ? s.src : null;
-}
-
-/** The page an originating chat lives on, so agent output lands on the chat's page. */
-function chatPageId(store: CanvasStore, chatId: string): string | undefined {
-  return store.getState().shapes.find((s) => s.id === chatId)?.pageId;
-}
-
-/** Put every shape that lacks a page onto `pageId` (the originating chat's page). */
-function stampPage(shapes: CanvasShape[], pageId: string | undefined): CanvasShape[] {
-  if (!pageId) return shapes;
-  for (const s of shapes) if (!s.pageId) s.pageId = pageId;
-  return shapes;
 }
 
 /** How a freshly attached batch is positioned: tuck it, or honor the agent's coords. */
@@ -174,20 +158,17 @@ export interface AttachOptions {
 
 /**
  * Attach a fresh batch of shapes to its originating chat — the single owner of the
- * three concerns callers used to scatter: position policy, root linking, and page
- * stamping, behind one chat-missing guard.
+ * two concerns callers used to scatter: position policy and root linking, behind one
+ * chat-missing guard.
  *
  * Orchestrates the existing composable internals (it inlines none of them):
  * - Position: `preservePosition: false` tucks the batch via {@link tuckBesideChat};
  *   `true` keeps the agent's coords. Position policy only.
  * - Root linking: either way the batch then gains one arrow per "root" (a non-arrow,
  *   non-draw shape no arrow in the batch points at) via {@link linkRootsToChat}.
- * - Page stamping: the chat's page is resolved once via {@link chatPageId} and every
- *   returned shape is stamped via {@link stampPage}; a legacy chat with no `pageId`
- *   stamps nothing (the one silent fallback, in one place).
  *
  * If the chat id resolves to nothing on the canvas, the batch is returned unchanged:
- * no arrows, no stamp.
+ * no arrows.
  */
 export function attachBatchToChat(
   store: CanvasStore,
@@ -197,8 +178,7 @@ export function attachBatchToChat(
 ): CanvasShape[] {
   if (!store.getState().shapes.some((s) => s.id === chatId)) return made;
   const positioned = opts.preservePosition ? made : tuckBesideChat(store, made, chatId);
-  const attached = [...positioned, ...linkRootsToChat(positioned, chatId)];
-  return stampPage(attached, chatPageId(store, chatId));
+  return [...positioned, ...linkRootsToChat(positioned, chatId)];
 }
 
 export function createShapesOp(store: CanvasStore, raw: Array<Record<string, unknown>>, originChatId?: string): OpResult {
@@ -333,9 +313,8 @@ export function placeComponentOp(store: CanvasStore, input: PlaceComponentInput,
     // unset (0,0) placeholder: unlike create_shapes primitives, place_component is how the
     // agent composes deliberate multi-card layouts (e.g. a row of landing pages), so an
     // auto-tuck would destroy that layout. The (0,0)===unset convention lives ONLY here, at
-    // the agent-input edge; tuck-or-not, root arrows, page stamp, and the chat-missing
-    // fallback are all the seam's job. Updating an existing instance by id leaves its
-    // position and links alone.
+    // the agent-input edge; tuck-or-not, root arrows, and the chat-missing fallback are all
+    // the seam's job. Updating an existing instance by id leaves its position and links alone.
     const isNew = !input.id;
     if (isNew && originChatId) {
       const preservePosition = input.x !== 0 || input.y !== 0;

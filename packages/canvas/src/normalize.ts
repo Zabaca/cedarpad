@@ -2,7 +2,7 @@
 // validated CanvasShape, filling sensible defaults and minting an id when absent.
 // Throws with an agent-legible message on bad input so the model can self-correct.
 
-import { type CanvasPage, type CanvasShape, type ShapeColor, isColor } from './shapes';
+import { type CanvasShape, type ShapeColor, isColor } from './shapes';
 
 let counter = 0;
 /** Mint a tldraw-compatible shape id. Not for seeds — runtime uniqueness only. */
@@ -58,28 +58,13 @@ function dataObject(v: unknown): Record<string, unknown> {
  * Validate + normalize a raw shape. `id` is preserved if given (so the agent can
  * update an existing shape) else minted.
  */
-/** The `page:`-prefixed page id a shape declares, if any (else undefined). */
-function pageIdOf(raw: Record<string, unknown>): string | undefined {
-  return typeof raw.pageId === 'string' && raw.pageId.startsWith('page:') ? raw.pageId : undefined;
-}
-
 export function normalizeShape(raw: Record<string, unknown>): CanvasShape {
   const id = typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : mintId();
-  // A shape parented to a frame carries the frame's shape id; page membership is
-  // carried separately as `pageId` (a top-level shape's tldraw parent).
+  // A shape parented to a frame carries the frame's shape id.
   const parentId = typeof raw.parentId === 'string' && raw.parentId.startsWith('shape:') ? raw.parentId : undefined;
-  const pageId = pageIdOf(raw);
   const shape = buildShape(raw, id, color(raw.color));
   if (parentId) shape.parentId = parentId;
-  if (pageId) shape.pageId = pageId;
   return shape;
-}
-
-/** Validate a page record coming from the browser. Ids/indices are real tldraw values. */
-export function normalizePage(raw: Record<string, unknown>): CanvasPage {
-  if (typeof raw.id !== 'string' || !raw.id.startsWith('page:')) throw new Error('page requires a "page:"-prefixed id');
-  if (typeof raw.index !== 'string' || raw.index.length === 0) throw new Error('page requires a non-empty "index" string');
-  return { id: raw.id, name: str(raw.name) || 'Page', index: raw.index };
 }
 
 function buildShape(raw: Record<string, unknown>, id: string, c: ShapeColor): CanvasShape {
@@ -188,10 +173,7 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
       if (!Array.isArray(p) || p.length < 2) throw new Error(`points[${i}] must be [x, y]`);
       return [num(p[0], `points[${i}][0]`), num(p[1], `points[${i}][1]`)] as [number, number];
     });
-    const shape: CanvasShape = { id: raw.id, type: 'draw', color: color(raw.color), points };
-    const pageId = pageIdOf(raw);
-    if (pageId) shape.pageId = pageId;
-    return shape;
+    return { id: raw.id, type: 'draw', color: color(raw.color), points };
   }
   if (raw.type === 'image') {
     // Human-authored only (paste/drop): keep the real tldraw shape id and the
@@ -199,7 +181,6 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
     // tick) — the node still appears; read_image just has nothing to show yet.
     if (typeof raw.id !== 'string' || raw.id.length === 0) throw new Error('image shape requires an id');
     const parentId = typeof raw.parentId === 'string' && raw.parentId.startsWith('shape:') ? raw.parentId : undefined;
-    const pageId = pageIdOf(raw);
     const shape: CanvasShape = {
       id: raw.id,
       type: 'image',
@@ -212,7 +193,6 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
       alt: str(raw.alt),
     };
     if (parentId) shape.parentId = parentId;
-    if (pageId) shape.pageId = pageId;
     return shape;
   }
   if (raw.type === 'embed') {
@@ -221,7 +201,6 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
     // ever enter through this browser path.
     if (typeof raw.id !== 'string' || raw.id.length === 0) throw new Error('embed shape requires an id');
     const parentId = typeof raw.parentId === 'string' && raw.parentId.startsWith('shape:') ? raw.parentId : undefined;
-    const pageId = pageIdOf(raw);
     const shape: CanvasShape = {
       id: raw.id,
       type: 'embed',
@@ -233,7 +212,6 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
       url: str(raw.url),
     };
     if (parentId) shape.parentId = parentId;
-    if (pageId) shape.pageId = pageId;
     return shape;
   }
   return normalizeShape(raw);

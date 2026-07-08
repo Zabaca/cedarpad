@@ -14,7 +14,7 @@ import {
   sessionsKey,
 } from './blob-store.ts';
 
-const sampleState = (): CanvasState => ({ version: 3, shapes: [], pages: [] });
+const sampleState = (): CanvasState => ({ version: 3, shapes: [] });
 
 describe('blob keys', () => {
   test('B1 canvasStateKey', () => {

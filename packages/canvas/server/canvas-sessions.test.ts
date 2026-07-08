@@ -6,7 +6,8 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import { createSessionRegistry } from './canvas-sessions.ts';
+import { createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
+import { BlobStore, memBackend } from './blob-store.ts';
 import { createStore } from '../src/store.ts';
 import type { CanvasShape } from '../src/shapes.ts';
 
@@ -23,6 +24,37 @@ function storeRegistry() {
   });
   return { reg, builds };
 }
+
+// A canvas persisted BEFORE the pages layer was removed. R2 holds these blobs right
+// now: a `pages` array beside the shapes, and a `pageId` on every shape. Nothing
+// migrates them, so `createCanvasSession` must simply ignore both and still restore
+// every shape.
+const legacyBlob = () => ({
+  version: 7,
+  pages: [
+    { id: 'page:home', name: 'Page 1', index: 'a1' },
+    { id: 'page:two', name: 'Notes', index: 'a2' },
+  ],
+  shapes: [
+    { id: 'shape:a', type: 'rectangle', x: 0, y: 0, w: 10, h: 10, color: 'black', text: 'A', pageId: 'page:home' },
+    { id: 'shape:b', type: 'note', x: 5, y: 5, color: 'blue', text: 'B', pageId: 'page:two' },
+    { id: 'shape:c', type: 'chat', x: 9, y: 9, w: 380, h: 460, color: 'black', title: 'Chat 1', pageId: 'page:two' },
+  ],
+});
+
+describe('back-compat: a canvas persisted with pages restores without them', () => {
+  test('every shape is restored and the state carries no pages', async () => {
+    const blobs = new BlobStore(memBackend());
+    await blobs.saveCanvasState('ws1', 'c1', legacyBlob() as never);
+
+    const session = await createCanvasSession(blobs, 'ws1', 'c1');
+    const state = session.store.getState();
+
+    expect(state.shapes.map((s) => s.id)).toEqual(['shape:a', 'shape:b', 'shape:c']);
+    expect(state.shapes.map((s) => s.type)).toEqual(['rectangle', 'note', 'chat']);
+    expect(Object.keys(state).sort()).toEqual(['shapes', 'version']);
+  });
+});
 
 describe('createSessionRegistry: per-canvas store keying', () => {
   test('same canvasId → same session (built once, reused)', async () => {

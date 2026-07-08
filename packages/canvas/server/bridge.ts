@@ -12,7 +12,7 @@ import { buildApp } from '../web-poc/worker/index.ts';
 import { conversations, makeDb } from '../web-poc/lib/db/index.ts';
 
 import type { CanvasState } from '../src/shapes.ts';
-import { normalizeIncomingShape, normalizePage } from '../src/normalize.ts';
+import { normalizeIncomingShape } from '../src/normalize.ts';
 import { bumpAllComponents, bumpSharedModule, nextComponentRev } from '../src/canvas-ops.ts';
 import { BlobStore, selectBackend } from './blob-store.ts';
 import { type CanvasSession, createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
@@ -462,7 +462,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         backend: process.env.R2_BUCKET ? 'r2' : 'fs',
         bucket: process.env.R2_BUCKET ?? null,
         degraded: persist.isDegraded,
-        live: { version: s.version, shapes: s.shapes.length, pages: s.pages.length },
+        live: { version: s.version, shapes: s.shapes.length },
         save: saveHealth,
         // ADR 0003: the three turn-completion artifacts (sessions/components/custom) now
         // report health too, so a silent save failure is visible for all four.
@@ -499,23 +499,6 @@ export async function handleRequest(req: Request): Promise<Response> {
       const body = await readBody(req);
       const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
       return json({ version: session.store.remove(ids) });
-    }
-    if (path === '/api/canvas/pages' && req.method === 'POST') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
-      const body = await readBody(req);
-      const raw = Array.isArray(body.pages) ? body.pages : [];
-      try {
-        const pages = raw.map((p) => normalizePage(p as Record<string, unknown>));
-        return json({ version: session.store.upsertPages(pages), count: pages.length });
-      } catch (e) {
-        return json({ error: (e as Error).message }, 400);
-      }
-    }
-    if (path === '/api/canvas/pages/delete' && req.method === 'POST') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
-      const body = await readBody(req);
-      const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
-      return json({ version: session.store.removePages(ids) });
     }
     if (path === '/api/canvas/clear' && req.method === 'POST') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));

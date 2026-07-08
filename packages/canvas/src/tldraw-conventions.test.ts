@@ -106,14 +106,15 @@ describe('toTldrawPartial', () => {
     expect((p as { parentId?: string }).parentId).toBe('shape:f');
   });
 
-  test('a top-level shape parents to its pageId (lands on its own page)', () => {
-    const p = partial({ id: 'shape:c', type: 'rectangle', x: 5, y: 6, w: 10, h: 10, color: 'black', text: '', pageId: 'page:two' });
-    expect((p as { parentId?: string }).parentId).toBe('page:two');
+  test('a top-level shape gets no parentId (tldraw parents it to the canvas)', () => {
+    const p = partial({ id: 'shape:c', type: 'rectangle', x: 5, y: 6, w: 10, h: 10, color: 'black', text: '' });
+    expect((p as { parentId?: string }).parentId).toBeUndefined();
   });
 
-  test('a frame child parents to its frame, not its page (frame wins)', () => {
-    const p = partial({ id: 'shape:c', type: 'rectangle', x: 5, y: 6, w: 10, h: 10, color: 'black', text: '', parentId: 'shape:f', pageId: 'page:two' });
-    expect((p as { parentId?: string }).parentId).toBe('shape:f');
+  test('a legacy shape still carrying a pageId round-trips without it (the field is ignored)', () => {
+    const legacy = { id: 'shape:c', type: 'rectangle', x: 5, y: 6, w: 10, h: 10, color: 'black', text: '', pageId: 'page:two' };
+    const p = partial(legacy as never);
+    expect((p as { parentId?: string }).parentId).toBeUndefined();
   });
 
   test('image -> image referencing a deterministic asset id (pixels not in the partial)', () => {
@@ -139,7 +140,7 @@ describe('toTldrawPartial', () => {
 // enough — no live Editor.
 const decode = (
   shape: Record<string, unknown>,
-  ctx: { plaintext: string; arrowBindings?: ArrowBindingsView; imageSrc?: string; pageId?: string },
+  ctx: { plaintext: string; arrowBindings?: ArrowBindingsView; imageSrc?: string },
 ): CanvasShape | null => fromTldrawShape(shape as unknown as TLShape, ctx);
 
 describe('fromTldrawShape', () => {
@@ -231,14 +232,6 @@ describe('fromTldrawShape', () => {
       { plaintext: 'ignored' },
     );
     expect(s).toEqual({ id: 'shape:f', type: 'frame', x: 1, y: 2, w: 320, h: 240, name: 'Group A', color: 'black' });
-  });
-
-  test('the owning pageId (resolved by the shell) is stamped onto the decoded shape', () => {
-    const s = decode(
-      { id: 'shape:r', type: 'geo', x: 0, y: 0, props: { geo: 'rectangle', w: 10, h: 10, color: 'blue' } },
-      { plaintext: '', pageId: 'page:two' },
-    );
-    expect((s as { pageId?: string }).pageId).toBe('page:two');
   });
 
   test('a shape parented to a frame keeps its parentId; a page parent is dropped', () => {

@@ -9,18 +9,16 @@ dev server as its compiler), so this is not a Vercel deploy. A Cloudflare-contai
 deploy that preserves the dev stack is **designed** in [ADR 0001](./docs/decisions/0001-cloudflare-container-deploy.md)
 (not yet built).
 
-## Workspace, canvas, page, chat — the containment hierarchy
+## Workspace, canvas, chat — the containment hierarchy
 
 **Workspace**: an isolated environment — one filesystem (the `src/canvas-components/`
 library + the app code) and one bridge process. In the deploy it maps 1:1 to a
 **container**; locally it is the single dev checkout. _Avoid_: "sandbox", "instance".
 
-**Canvas**: one drawing surface (one `CanvasStore`: its own shapes, pages, chats)
+**Canvas**: one drawing surface (one `CanvasStore`: its own shapes and chats)
 inside a workspace. Multiple canvases in a workspace share the same component
 library. Today the bridge hosts exactly **one** canvas; multi-canvas-per-workspace
 is a fast-follow (ADR 0001). _Avoid_: calling a canvas a "session".
-
-**Page**: a partition *within* a canvas (`pageId`); shapes appear only on their page.
 
 **Chat / session**: one conversation — a `chat` shape, its id is the chat id, with
 a Claude Agent SDK resume `sessionId`. **"session" means a chat, never a canvas.**
@@ -35,9 +33,10 @@ the durable home for a chat's resume pointer and config, and the only place the
 `chatId → sessionId` link lives (the JSONL carries no chat id). Replaces the old
 per-browser `localStorage`. _Avoid_: putting any of this on the `chat` shape.
 
-Containment: **workspace → canvas → page → shapes**, with **chat** shapes living on a
-page like any other shape; a chat's `ChatMeta` and transcript live *beside* the canvas,
-server-owned, not inside canvas state.
+Containment: **workspace → canvas → shapes**, with **chat** shapes living on the
+canvas like any other shape; a chat's `ChatMeta` and transcript live *beside* the canvas,
+server-owned, not inside canvas state. (The tldraw **pages** layer was removed — see
+[ADR 0007](../../docs/adr/0007-workspace-platform-topology.md).)
 
 ## Core vs extension — the modifiability boundary
 
@@ -114,21 +113,11 @@ A `CanvasShape` is one of:
   `orderByParent`). Re-parenting an existing shape into a frame on another client is
   not yet propagated over sync (the create path on reload is correct; live
   cross-client re-parent is deferred).
-- **Pages partition the canvas (`pageId`).** Every shape also carries an optional
-  **`pageId`** (a `page:` id); a shape appears only on its own page. A top-level
-  shape is created with its tldraw parent set to `pageId`; a frame child parents to
-  the frame (which itself carries the page). `pageId` is resolved on the way up via
-  `editor.getAncestorPageId`. Pages are first-class records (`CanvasPage = {id, name,
-  index}`) in `CanvasState.pages`, synced + persisted alongside shapes so a
-  multi-page canvas survives a reload. **The bootstrap (default) page is special:**
-  tldraw regenerates its id on every fresh load and our store is in-memory, so that
-  one page's *record* is never synced (syncing it would resurrect a phantom on
-  reload), and any shape whose `pageId` points at a missing page — a legacy
-  page-less shape, or one stamped with a prior load's default-page id — is pinned to
-  the session's home page on create (`sync.ts` `homePageId`). Explicitly-created
-  pages have stable ids and round-trip fully (name + order + their shapes).
-  **Agent-authored shapes inherit their originating chat's `pageId`** (so the agent
-  draws on its own chat's page); the agent's reads now carry each shape's `pageId`.
+- **A canvas has no pages.** A top-level shape carries no tldraw parent (tldraw
+  parents it to the canvas itself); only a frame child carries one. Canvases
+  persisted before the pages layer was removed still hold a `pages` array and a
+  per-shape `pageId`: both fields are simply **ignored** on load, so no R2 migration
+  is needed.
 - `id` is shared verbatim with the tldraw shape id (`shape:...`). Agent-created
   ids are minted `shape:agent_N`.
 - `color` ∈ `black, grey, blue, green, red, orange, yellow, violet` (a subset of
@@ -203,9 +192,7 @@ A `CanvasShape` is one of:
 | `/api/canvas/stream`      | GET    | SSE; primes with state, pushes on every change |
 | `/api/canvas/shapes`      | POST   | `{shapes}` upsert (browser → store; accepts `draw` + `image`) |
 | `/api/canvas/delete`      | POST   | `{ids}` delete |
-| `/api/canvas/pages`       | POST   | `{pages}` upsert (page records: id, name, index) |
-| `/api/canvas/pages/delete`| POST   | `{ids}` delete pages |
-| `/api/canvas/clear`       | POST   | clear all shapes (pages left intact) |
+| `/api/canvas/clear`       | POST   | clear all shapes |
 | `/api/chat/stream`        | GET    | SSE; **one stream for ALL chats**, each frame tagged with `chatId` |
 | `/api/chat/:id/send`      | POST   | `{message, sessionId?, images?}` → 202; events **broadcast** (tagged) to subscribers; **425** when no chat stream is subscribed |
 | `/api/health`             | GET    | `{ok, shapes}` |
@@ -366,13 +353,8 @@ The round-trip:
 - Viewport control, freehand-draw authoring by the agent, todo lists, and
   multiplayer (multiple humans). The tldraw **agent starter kit** is the reference
   for the fuller action set if we ever deepen this.
-- **Pages — known rough edges (v1).** Moving an *existing* shape to a different page
-  doesn't sync (only create places a shape on a page; updates stay in place). The
-  default page's name isn't persisted (it resets to tldraw's default on reload,
-  since its record is intentionally never synced). `view_canvas` screenshots the
-  human's *current* page, which may differ from the agent's chat page. **Workspace /
-  multi-canvas** (the layer above pages) now has a resolved vocabulary and deploy
-  grain (workspace=container, canvas=board; see the hierarchy section + [ADR 0001](./docs/decisions/0001-cloudflare-container-deploy.md)),
+- **Workspace / multi-canvas** now has a resolved vocabulary and deploy grain
+  (workspace=container, canvas=board; see the hierarchy section + [ADR 0001](./docs/decisions/0001-cloudflare-container-deploy.md)),
   but the bridge is still single-canvas — hosting multiple `CanvasStore`s per
   workspace is the fast-follow.
 - A tldraw **production license** (the canvas shows a non-commercial watermark).

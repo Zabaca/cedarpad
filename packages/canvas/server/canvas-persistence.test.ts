@@ -4,17 +4,15 @@ import type { CanvasShape, CanvasState } from '../src/shapes.ts';
 import { CanvasPersistence } from './canvas-persistence.ts';
 import { type BlobBackend, BlobStore, memBackend } from './blob-store.ts';
 
-const empty = (): CanvasState => ({ version: 1, shapes: [], pages: [] });
+const empty = (): CanvasState => ({ version: 1, shapes: [] });
 const nonEmpty = (): CanvasState => ({
   version: 2,
   shapes: [{ id: 'a' } as unknown as CanvasShape],
-  pages: [],
 });
 // A canvas of N shapes, for the destructive-shrink guard tests.
 const withShapes = (n: number, version = 2): CanvasState => ({
   version,
   shapes: Array.from({ length: n }, (_, i) => ({ id: `s${i}` }) as unknown as CanvasShape),
-  pages: [],
 });
 
 // A backend that throws on read and records every write, to prove the guard.

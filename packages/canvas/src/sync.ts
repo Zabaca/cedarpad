@@ -11,7 +11,6 @@ import {
   type Editor,
   type TLArrowShape,
   type TLAsset,
-  type TLPageId,
   type TLShape,
   type TLShapeId,
   type TLShapePartial,
@@ -19,7 +18,7 @@ import {
   toRichText,
 } from 'tldraw';
 
-import type { CanvasPage, CanvasShape, CanvasState } from './shapes';
+import type { CanvasShape, CanvasState } from './shapes';
 import { fromTldrawShape } from './tldraw-bridge';
 import { canon } from './tldraw-conventions';
 import { planReconcile, type ArrowBindingPair, type EditorSnapshot, type ReconcileOp } from './sync-plan';
@@ -70,10 +69,8 @@ function snapshotEditor(editor: Editor): EditorSnapshot {
 
   return {
     shapes,
-    pages: editor.getPages(),
     assets,
     arrowBindings,
-    currentPageId: editor.getCurrentPageId() as string,
     editingId,
     // While the human is pointing/dragging/text-editing, the shapes they touch are
     // mid-flight; the planner holds those (no update/delete) to avoid snap-back.
@@ -100,9 +97,6 @@ const encodeRichText = (partial: TLShapePartial): TLShapePartial => {
 function applyOps(editor: Editor, ops: ReconcileOp[]): void {
   for (const op of ops) {
     switch (op.kind) {
-      case 'pagePut':
-        editor.store.put(op.pages);
-        break;
       case 'assetCreate':
         editor.createAssets(op.assets);
         break;
@@ -124,9 +118,6 @@ function applyOps(editor: Editor, ops: ReconcileOp[]): void {
       case 'bindingCreate':
         editor.createBindings(op.bindings);
         break;
-      case 'pageRemove':
-        editor.store.remove(op.ids);
-        break;
     }
   }
 }
@@ -137,20 +128,10 @@ export function wireSync(editor: Editor): () => void {
   let lastVersion = -1;
   // Ids we've ever seen on the server. We only ever DELETE a local shape if the
   // server once had it and now dropped it, never a brand-new local shape that
-  // hasn't round-tripped yet. Same idea for pages. The delete guard itself lives in
-  // the planner; reconcile keeps these sets current by marking every id the server
-  // sends each accepted frame.
+  // hasn't round-tripped yet. The delete guard itself lives in the planner;
+  // reconcile keeps this set current by marking every id the server sends each
+  // accepted frame.
   const mirroredShapes = new Set<string>();
-  const mirroredPages = new Set<string>();
-
-  // The editor's bootstrap page, captured once at mount. tldraw always creates one
-  // default page with an id we don't control and that is regenerated on every fresh
-  // load (our store is in-memory; we don't use tldraw's own persistence). So we
-  // never sync THIS page's record (that would resurrect a phantom page on reload),
-  // and any shape whose `pageId` points at a page that doesn't exist locally — a
-  // legacy page-less shape, or one stamped with a previous load's default-page id —
-  // is pinned here. Explicitly-created pages have stable ids and round-trip normally.
-  const homePageId = editor.getCurrentPageId() as string;
 
   // --- remote -> editor ---
   function reconcile(state: CanvasState) {
@@ -160,30 +141,24 @@ export function wireSync(editor: Editor): () => void {
       lastVersion,
       snapshot,
       mirroredShapes,
-      mirroredPages,
-      homePageId,
     });
     // An ignored echo (version <= watermark) plans nothing and leaves the watermark
     // put: nothing to apply, nothing to mirror.
     if (ops.length === 0 && nextVersion === lastVersion) return;
     editor.store.mergeRemoteChanges(() => applyOps(editor, ops));
     lastVersion = nextVersion;
-    // Mark EVERY shape/page the server sent as mirrored, not just the ones created
-    // this frame: a shape/page authored locally and merely echoed back is already
-    // present here, so it never appears as a create, yet it must still be deletable
-    // when another client drops it. Only a mirrored id is ever deleted locally.
+    // Mark EVERY shape the server sent as mirrored, not just the ones created this
+    // frame: a shape authored locally and merely echoed back is already present here,
+    // so it never appears as a create, yet it must still be deletable when another
+    // client drops it. Only a mirrored id is ever deleted locally.
     for (const s of state.shapes) mirroredShapes.add(s.id);
-    for (const p of state.pages) mirroredPages.add(p.id);
   }
 
   // The agent's view_canvas tool asks for a PNG; render it via tldraw and post back.
   const onScreenshot = async (e: MessageEvent) => {
     let id: string;
-    let pageId: string | undefined;
     try {
-      const d = JSON.parse(e.data) as { id: string; pageId?: string };
-      id = d.id;
-      pageId = d.pageId;
+      id = (JSON.parse(e.data) as { id: string }).id;
     } catch {
       return;
     }
@@ -194,8 +169,7 @@ export function wireSync(editor: Editor): () => void {
         body: JSON.stringify({ id, url }),
       }).catch(() => {});
     try {
-      // Render the agent's page when one is requested, else the human's current page.
-      const ids = pageId ? [...editor.getPageShapeIds(pageId as TLPageId)] : [...editor.getCurrentPageShapeIds()];
+      const ids = [...editor.getCurrentPageShapeIds()];
       if (ids.length === 0) return void reply(null); // nothing to show
       const { url } = await editor.toImageDataUrl(ids, { format: 'png', background: true, padding: 24 });
       await reply(url);
@@ -238,17 +212,7 @@ export function wireSync(editor: Editor): () => void {
   // --- editor -> remote (debounced) ---
   const pendingUpsert = new Map<string, CanvasShape>();
   const pendingDelete = new Set<string>();
-  const pendingPageUpsert = new Map<string, CanvasPage>();
-  const pendingPageDelete = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
-
-  // A tldraw page record -> our simplified page. The home (bootstrap) page is never
-  // synced (see homePageId): it's regenerated each load, so persisting it would
-  // resurrect a phantom page on reload.
-  const pageOf = (rec: { id: string; name?: unknown; index?: unknown }): CanvasPage | null => {
-    if (rec.id === homePageId) return null;
-    return { id: rec.id, name: String(rec.name ?? 'Page'), index: String(rec.index ?? 'a1') };
-  };
 
   async function flush() {
     // Defer the whole send while the user is actively dragging/pointing. On a
@@ -284,21 +248,9 @@ export function wireSync(editor: Editor): () => void {
     }
     const ups = [...pendingUpsert.values()];
     const dels = [...pendingDelete];
-    const pageUps = [...pendingPageUpsert.values()];
-    const pageDels = [...pendingPageDelete];
     pendingUpsert.clear();
     pendingDelete.clear();
-    pendingPageUpsert.clear();
-    pendingPageDelete.clear();
     try {
-      // Pages before shapes (a shape references its page); page deletions last.
-      if (pageUps.length) {
-        await fetch(`${API}/canvas/pages`, {
-          method: 'POST',
-          headers: withCanvasHeader({ 'content-type': 'application/json' }),
-          body: JSON.stringify({ pages: pageUps }),
-        });
-      }
       if (ups.length) {
         await fetch(`${API}/canvas/shapes`, {
           method: 'POST',
@@ -311,13 +263,6 @@ export function wireSync(editor: Editor): () => void {
           method: 'POST',
           headers: withCanvasHeader({ 'content-type': 'application/json' }),
           body: JSON.stringify({ ids: dels }),
-        });
-      }
-      if (pageDels.length) {
-        await fetch(`${API}/canvas/pages/delete`, {
-          method: 'POST',
-          headers: withCanvasHeader({ 'content-type': 'application/json' }),
-          body: JSON.stringify({ ids: pageDels }),
         });
       }
     } catch {
@@ -378,19 +323,9 @@ export function wireSync(editor: Editor): () => void {
   const unlisten = editor.store.listen(
     (entry) => {
       const { added, updated, removed } = entry.changes;
-      const queuePageUpsert = (rec: { typeName: string; id: string }) => {
-        const p = pageOf(rec as { id: string });
-        if (!p) return;
-        pendingPageUpsert.set(p.id, p);
-        pendingPageDelete.delete(p.id);
-      };
       for (const rec of Object.values(added)) {
         if (rec.typeName === 'binding') {
           pushArrowFromBinding(rec);
-          continue;
-        }
-        if (rec.typeName === 'page') {
-          queuePageUpsert(rec);
           continue;
         }
         if (rec.typeName !== 'shape') continue;
@@ -401,10 +336,6 @@ export function wireSync(editor: Editor): () => void {
           pushArrowFromBinding(next);
           continue;
         }
-        if (next.typeName === 'page') {
-          queuePageUpsert(next);
-          continue;
-        }
         if (next.typeName !== 'shape') continue;
         queueShape(next);
       }
@@ -413,17 +344,11 @@ export function wireSync(editor: Editor): () => void {
           pushArrowFromBinding(rec);
           continue;
         }
-        if (rec.typeName === 'page') {
-          if (rec.id === homePageId) continue;
-          pendingPageDelete.add(rec.id);
-          pendingPageUpsert.delete(rec.id);
-          continue;
-        }
         if (rec.typeName !== 'shape') continue;
         pendingDelete.add(rec.id);
         pendingUpsert.delete(rec.id);
       }
-      if (pendingUpsert.size || pendingDelete.size || pendingPageUpsert.size || pendingPageDelete.size) schedule();
+      if (pendingUpsert.size || pendingDelete.size) schedule();
     },
     { source: 'user', scope: 'document' },
   );

@@ -68,10 +68,8 @@ export function toTldrawPartial<R>(s: CanvasShape, encodeText: (plain: string) =
   const partial = buildPartial(s, encodeText);
   // A shape's tldraw parent is its frame if it has one (recreated inside the frame,
   // coords already parent-relative — the frame must exist first, which the sync layer
-  // orders), else its page (so a top-level shape lands on its own page). A shape with
-  // neither falls back to tldraw's current page (legacy page-less shapes).
-  const parent = s.parentId ?? s.pageId;
-  if (partial && parent) (partial as { parentId?: string }).parentId = parent as TLShapeId;
+  // orders). A top-level shape has none, and tldraw parents it to the canvas itself.
+  if (partial && s.parentId) (partial as { parentId?: string }).parentId = s.parentId as TLShapeId;
   return partial;
 }
 
@@ -180,7 +178,7 @@ export type ArrowBindingsView = { start?: { toId: string }; end?: { toId: string
  */
 export function fromTldrawShape(
   shape: TLShape,
-  ctx: { plaintext: string; arrowBindings?: ArrowBindingsView; imageSrc?: string; pageId?: string },
+  ctx: { plaintext: string; arrowBindings?: ArrowBindingsView; imageSrc?: string },
 ): CanvasShape | null {
   const out = decodeFromTldraw(shape, ctx);
   if (out) {
@@ -188,16 +186,13 @@ export function fromTldrawShape(
     // that parent id so it round-trips back inside the frame.
     const pid = (shape as { parentId?: unknown }).parentId;
     if (typeof pid === 'string' && pid.startsWith('shape:')) out.parentId = pid;
-    // Page membership: the shell resolves the shape's owning page (walking up past
-    // any frame) and passes it in, so a shape round-trips back onto its own page.
-    if (ctx.pageId) out.pageId = ctx.pageId;
   }
   return out;
 }
 
 function decodeFromTldraw(
   shape: TLShape,
-  ctx: { plaintext: string; arrowBindings?: ArrowBindingsView; imageSrc?: string; pageId?: string },
+  ctx: { plaintext: string; arrowBindings?: ArrowBindingsView; imageSrc?: string },
 ): CanvasShape | null {
   const p = readProps(shape);
   const color = clampColor(p.color);
