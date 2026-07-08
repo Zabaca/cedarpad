@@ -2,7 +2,7 @@
 // the canvas app's tests — it preserves Bun's native fetch/Response, which we stub below).
 import '../../src/happydom-harness.ts';
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -28,6 +28,11 @@ class OriginAwareRequest extends RealRequest {
   }
 }
 globalThis.Request = OriginAwareRequest as unknown as typeof Request;
+// bun:test runs all files in one process — restore the native Request after this file's
+// tests finish so the patch can't leak into unrelated test files that run after it.
+afterAll(() => {
+  globalThis.Request = RealRequest;
+});
 
 const WORKSPACES = { workspaces: [{ id: 'default', name: 'Default' }, { id: 'ws_abc', name: 'Zabaca' }] };
 const CANVASES = { workspaceId: 'ws_abc', canvases: [{ id: 'cv_1', name: 'Roadmap' }] };
