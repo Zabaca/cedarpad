@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { GateUser } from './auth-gate.ts';
 import { DEV_AGENT_SANDBOX_ID } from './dev-agent.ts';
-import type { SandboxCoords } from './sandbox-resolver.ts';
+import { LEGACY_SANDBOX_ID, type SandboxCoords } from './sandbox-resolver.ts';
 
 // The edge chat proxy (`handleInboxBridge`) proxies a Conversation's chat traffic to its owning
 // runner bridge, and — since a reply is now a chat SEND, not the retired /api/inbox/:id/reply —
@@ -185,15 +185,17 @@ describe('handleInboxBridge: which runner bridge a Conversation is proxied to (c
     expect(served[0]?.sandboxId).not.toBe(DEV_AGENT_SANDBOX_ID);
   });
 
-  test('a dev-agent Conversation is proxied to the dev-agent sandbox, where its interactive bridge runs (ADR-0009 Tier 2 / #125)', async () => {
+  test('a dev-agent Conversation resumes on the WARM default container (ADR-0010: a role, not a container)', async () => {
     conv = row({ workspaceId: DEV_AGENT_SANDBOX_ID });
     await proxy('GET', '/api/chat/chat_home/transcript');
     await settle();
 
-    // Routed to the dev-agent's OWN sandbox id — NOT a derived `workspace-dev-agent` container
-    // (which would hold no bridge session). This is the coords the interactive bridge boots under.
+    // The dev-agent is a logical Conversation tag now — its chats resume on the SAME warm
+    // container product chats use (no perpetually-cold separate sandbox, no cold boot, no 425).
+    // NOT a derived `workspace-dev-agent` container either.
     expect(served).toHaveLength(1);
-    expect(served[0]?.sandboxId).toBe(DEV_AGENT_SANDBOX_ID);
-    expect(served[0]?.canvasWorkspace).toBe(DEV_AGENT_SANDBOX_ID);
+    expect(served[0]?.sandboxId).toBe(LEGACY_SANDBOX_ID);
+    expect(served[0]?.canvasWorkspace).toBe('default');
+    expect(served[0]?.r2Prefix).toBe('workspaces/default/');
   });
 });

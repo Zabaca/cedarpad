@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 
-import { DEV_AGENT_SANDBOX_ID } from './dev-agent.ts';
+import { LEGACY_SANDBOX_ID } from './sandbox-resolver.ts';
 
 // serveWorkspace is the ONE warm-proxy-first / cold-start-on-miss orchestration keyed by a
-// resolved sandbox id (ADR-0009 / #122). This test pins the Tier-2 (#125) fact that the dev-agent
-// sandbox — when woken for an INTERACTIVE request proxied to it by the edge chat proxy — boots the
-// SAME interactive stack the product container runs: it cold-starts via the product
-// `scripts/container-start.ts` START command (vite + bridge) on the vite port the proxy expects,
-// NOT the fire-and-forget batch workflow (`server/dev-agent-run.ts`).
+// resolved sandbox id (ADR-0009 / #122). This test pins that a Conversation's interactive
+// request — dev-agent included, since ADR-0010 routes every Conversation to the warm default
+// container — cold-starts the product interactive stack via the `scripts/container-start.ts`
+// START command (vite + bridge) on the vite port the proxy expects, NOT the fire-and-forget
+// batch workflow (`server/dev-agent-run.ts`).
 //
 // It runs through a SUBPROCESS probe (sandbox-runtime.boot-probe.ts): two sibling worker test files
 // wholesale-mock `./sandbox-runtime.ts` via bun's process-global mock registry, which leaks across
@@ -34,14 +34,14 @@ function runBootProbe(): BootProbe {
   return JSON.parse(line.slice('__BOOT_PROBE__'.length)) as BootProbe;
 }
 
-describe('serveWorkspace: the dev-agent sandbox boots the interactive bridge (ADR-0009 Tier 2 / #125)', () => {
-  test('a cold interactive request to the dev-agent runner boots the product interactive stack (container-start), keyed by the dev-agent sandbox id', () => {
+describe('serveWorkspace: an interactive request boots the product interactive stack (ADR-0010)', () => {
+  test('a cold interactive request boots the product interactive stack (container-start), keyed by the warm default container id', () => {
     const probe = runBootProbe();
 
     // The proxy served through after the cold boot.
     expect(probe.status).toBe(200);
-    // Keyed by the dev-agent's OWN sandbox id — not a derived `workspace-dev-agent` container.
-    expect(probe.getSandboxIds).toContain(DEV_AGENT_SANDBOX_ID);
+    // Keyed by the warm default container — the one every Conversation resumes on now.
+    expect(probe.getSandboxIds).toContain(LEGACY_SANDBOX_ID);
     // It booted the SAME interactive stack the product container runs — the container-start entry
     // that launches vite + bridge — NOT the batch workflow entry (dev-agent-run.ts).
     expect(probe.started).toHaveLength(1);

@@ -337,14 +337,14 @@ describe('GET /inbox/:convId/bridge/* — the edge chat proxy, conv → owning b
     expect(servedReqs).toEqual([{ path: '/api/chat/stream?canvas=c', method: 'GET' }]);
   });
 
-  test('a dev-agent conversation resolves to the dev-agent sandbox, not a workspace-<id> container', async () => {
+  test('a dev-agent conversation resumes on the WARM default container (ADR-0010)', async () => {
     conv = convRow({ workspaceId: 'dev-agent', userId: 'u_1' });
 
     await GET('/inbox/conv_1/bridge/api/chat/stream');
 
-    expect(served).toHaveLength(1);
-    expect(served[0].sandboxId).toBe('dev-agent');
-    // NOT the derived `workspace-dev-agent` — that container holds no bridge session.
+    // The dev-agent is a Conversation tag, not a container: its chats resume on the same
+    // warm product container. NOT a derived `workspace-dev-agent` container either.
+    expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
     expect(served[0].sandboxId).not.toBe(resolve({ id: 'dev-agent' }).sandboxId);
   });
 

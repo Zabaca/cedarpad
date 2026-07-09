@@ -56,12 +56,13 @@ plugin({
 
 const { serveWorkspace } = await import('./sandbox-runtime.ts');
 
-// The dev-agent coords the edge chat proxy hands serveWorkspace (matches inbox-bridge.ts
-// `coordsForWorkspace(DEV_AGENT_WORKSPACE_ID)`).
+// The warm default-container coords the edge chat proxy hands serveWorkspace for EVERY
+// Conversation — dev-agent included (ADR-0010: matches inbox-bridge.ts
+// `coordsForWorkspace('dev-agent')` ≡ `coordsForWorkspace('default')`).
 const res = await serveWorkspace(
   new Request('https://poc.cedarpad.com/api/chat/c1/transcript'),
   { R2_BUCKET: '', R2_ACCESS_KEY_ID: '', R2_SECRET_ACCESS_KEY: '', R2_ENDPOINT: '', CLAUDE_CODE_OAUTH_TOKEN: '', Sandbox: {} } as never,
-  { sandboxId: 'dev-agent', r2Prefix: 'workspaces/dev-agent/', canvasWorkspace: 'dev-agent' },
+  { sandboxId: 'canvas', r2Prefix: 'workspaces/default/', canvasWorkspace: 'default' },
 );
 
 console.log('__BOOT_PROBE__' + JSON.stringify({ status: res.status, ...calls }));

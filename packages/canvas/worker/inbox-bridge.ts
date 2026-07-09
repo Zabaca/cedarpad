@@ -22,17 +22,20 @@ const db = (env: Env) => createDbForWorker(env as unknown as Bindings);
 /**
  * Resolve a Conversation's workspace to its owning runner's coordinates:
  *   - the legacy `default` id → the legacy/prod container;
- *   - a dev-agent Conversation (`workspaceId === DEV_AGENT_WORKSPACE_ID`, which is
- *     `'dev-agent'` — disjoint-by-construction from every product workspace id, and equal to
- *     `DEV_AGENT_SANDBOX_ID`) → the dev-agent's OWN sandbox, where its interactive bridge
- *     runs (ADR-0009 Tier 2). It must NOT take the derived `workspace-<id>` scheme, which
- *     would point at a `workspace-dev-agent` container that holds no bridge session;
+ *   - a dev-agent Conversation (`workspaceId === DEV_AGENT_SANDBOX_ID`, `'dev-agent'` — a
+ *     LOGICAL tag, disjoint-by-construction from every product workspace id) → the SAME warm
+ *     default container product chats use (ADR-0010: the dev-agent is a role of the
+ *     Conversation, not a container — the separate perpetually-cold sandbox is gone). It must
+ *     NOT take the derived `workspace-<id>` scheme, which would point at a
+ *     `workspace-dev-agent` container that holds no bridge session;
  *   - any other id → its derived per-workspace container.
  */
 export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
-  workspaceId === DEV_AGENT_SANDBOX_ID
-    ? { sandboxId: DEV_AGENT_SANDBOX_ID, r2Prefix: `workspaces/${DEV_AGENT_SANDBOX_ID}/`, canvasWorkspace: DEV_AGENT_SANDBOX_ID }
-    : resolve(workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: workspaceId });
+  resolve(
+    workspaceId === DEFAULT_WORKSPACE_ID || workspaceId === DEV_AGENT_SANDBOX_ID
+      ? DEFAULT_WORKSPACE
+      : { id: workspaceId },
+  );
 
 /**
  * The edge chat proxy: `/inbox/:convId/bridge/*`. Resolve the Conversation (ownership-checked
