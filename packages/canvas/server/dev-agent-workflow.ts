@@ -155,10 +155,10 @@ export interface RepoWorktreeManager {
 
 export interface OpenPrDeps {
   /** The git manager, bound to the runner's workspace (#64 `createRepoWorktreeManager`). The
-   *  tool needs only commit + push/PR — it operates on the runner's LIVE worktree (the edits
-   *  the agent already made this conversation), not a freshly-prepared one. */
+   *  tool needs only commit + push/PR — it operates on the conversation's PREPARED worktree
+   *  (the tree the dev-agent turn ran in and edited, ADR-0010 slice 6). */
   git: Pick<RepoWorktreeManager, 'commit' | 'pushAndOpenPR'>;
-  /** The runner's own worktree — where the dev-agent edited during the chat. */
+  /** The conversation's prepared worktree — where the dev-agent edited during the chat. */
   worktree: Worktree;
 }
 
