@@ -1,6 +1,6 @@
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from './index.ts';
-import { containerEnv } from './container-env.ts';
+import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
 import { DEV_AGENT_SANDBOX_ID, DEV_AGENT_SLEEP_AFTER } from './dev-agent.ts';
 import { type SandboxCoords, decideWarm } from './sandbox-resolver.ts';
 
@@ -16,7 +16,7 @@ const PREVIEW_TOKEN = 'canvasproxy';
 // The image is the whole workspace at /app/agent-canvas (root context); the canvas
 // package — and its scripts/bridge/vite, plus the in-tree web-poc at
 // packages/canvas/web-poc — live under packages/canvas.
-const START = 'bash -lc "cd /app/agent-canvas/packages/canvas && exec bun run scripts/container-start.ts"';
+const START = `bash -lc "cd ${CANVAS_CONTAINER_CWD} && exec bun run scripts/container-start.ts"`;
 
 // keepAlive + sleepAfter persist in the DO's storage across deploys; if keepAlive is
 // ever stuck `true`, the container NEVER auto-sleeps and sleepAfter is ignored entirely
@@ -56,7 +56,7 @@ async function writeEnvFile(sandbox: SandboxStub, ev: Record<string, string>): P
       .join('\n') + '\n';
   // Written into the canvas package (the bridge's cwd) so bun auto-loads it for the
   // bridge and every child — including web-poc's mounted app (Turso/auth secrets).
-  await sandbox.writeFile('/app/agent-canvas/packages/canvas/.env', body).catch(() => {});
+  await sandbox.writeFile(`${CANVAS_CONTAINER_CWD}/.env`, body).catch(() => {});
 }
 
 async function ensureStack(sandbox: SandboxStub, env: Env, coords: SandboxCoords): Promise<void> {

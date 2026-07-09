@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
 import { LEGACY_SANDBOX_ID, resolve } from './sandbox-resolver.ts';
+import type { SandboxCoords } from './sandbox-resolver.ts';
 import { sandboxId as deriveSandboxId } from '../web-poc/lib/db/queries/workspaces.ts';
+import { containerEnv } from './container-env.ts';
+import { projectDirForCwd } from '../server/transcript-r2.ts';
 import {
   DEV_AGENT_SANDBOX_ID,
   DEV_AGENT_SLEEP_AFTER,
@@ -30,6 +33,29 @@ describe('dev-agent sandbox id is distinct from every workspace container', () =
 
   test('has its OWN sleep schedule, shorter than the product 5m', () => {
     expect(DEV_AGENT_SLEEP_AFTER).toBe('2m');
+  });
+});
+
+// #133: dev-agent session resume is correct only if the batch explore session and the
+// interactive bridge run under the SAME cwd — the Agent SDK encodes cwd into the on-disk
+// project-dir name (projectDirForCwd), so any drift orphans the JSONL by name ("No
+// conversation found on resume"). The two cwds come from two independently-defined
+// production sources; this pins that they can't drift apart:
+//   • explore-session cwd — DEV_AGENT_WORKFLOW_CMD's `cd` target (dev-agent-run.ts uses
+//     process.cwd() after that cd, DEV_AGENT_REPO_ROOT unset in prod).
+//   • bridge resume cwd — the CANVAS_CWD injected into the container env (bridge.ts reads
+//     process.env.CANVAS_CWD for `query({ resume, cwd })`).
+describe('#133 — explore cwd and bridge cwd resolve to the same SDK project dir', () => {
+  const coords: SandboxCoords = { sandboxId: 'dev-agent', r2Prefix: 'workspaces/dev-agent/', canvasWorkspace: 'dev-agent' };
+
+  test('DEV_AGENT_WORKFLOW_CMD cd == injected CANVAS_CWD == same projectDirForCwd', () => {
+    const exploreCwd = /^cd (\S+) &&/.exec(DEV_AGENT_WORKFLOW_CMD)?.[1];
+    const bridgeCwd = containerEnv({} as Env, coords).CANVAS_CWD;
+
+    expect(exploreCwd).toBeTruthy();
+    expect(bridgeCwd).toBeTruthy();
+    // The invariant the SDK actually cares about: identical on-disk project dir.
+    expect(projectDirForCwd(exploreCwd!)).toBe(projectDirForCwd(bridgeCwd));
   });
 });
 
