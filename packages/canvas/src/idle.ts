@@ -20,6 +20,11 @@ type Toggle = { open: () => void; close: () => void };
 
 const toggles = new Set<Toggle>();
 let busyCheck: () => boolean = () => false;
+// Which bridge(s) the heartbeat must reach. The beat is a single tab-wide singleton, but a
+// Shell-connected chat lives behind an edge proxy prefix, so the beat has to hit that bridge,
+// not same-origin. The chat store supplies the live prefix set (one per bridge holding a
+// session); default `['']` = same-origin, so a canvas with no store override is unchanged.
+let beatTargets: () => string[] = () => [''];
 
 const IDLE_MS = 120_000; // no pointer/keyboard for 2m -> close streams + stop beating
 const HIDDEN_GRACE_MS = 30_000; // tab hidden -> close sooner
@@ -35,8 +40,13 @@ let beatTimer: ReturnType<typeof setInterval> | null = null;
 let lastBump = 0;
 let closed = false;
 
+/** The heartbeat URL for a bridge prefix (`''` = same-origin → `/api/alive`). Pure. */
+export function aliveUrl(prefix: string): string {
+  return `${prefix}/api/alive`;
+}
 function beat(): void {
-  void fetch('/api/alive', { method: 'POST', keepalive: true }).catch(() => {});
+  const prefixes = beatTargets();
+  for (const p of prefixes.length ? new Set(prefixes) : ['']) void fetch(aliveUrl(p), { method: 'POST', keepalive: true }).catch(() => {});
 }
 function startBeats(): void {
   if (beatTimer) return;
@@ -59,6 +69,11 @@ export function registerStream(t: Toggle): () => void {
 /** Provide the "is an agent turn in flight?" predicate (set by the chat store). */
 export function setBusyCheck(fn: () => boolean): void {
   busyCheck = fn;
+}
+
+/** Provide the live set of bridge prefixes the beat must reach (set by the chat store). */
+export function setBeatTargets(fn: () => string[]): void {
+  beatTargets = fn;
 }
 
 function scheduleClose(ms: number): void {
