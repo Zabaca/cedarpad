@@ -6,8 +6,8 @@ import './happydom-harness.ts';
 import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { type ChatEvent, isChatFrame } from '../shared/chat-wire.ts';
-import type { ChatSnapshot } from './chat-store';
-import { ensureSession, forkSession, getSnapshot, isSubscribed, openStream, routeChatFrame, send, subscribe } from './chat-store';
+import type { ChatSnapshot } from '../shared/chat-store';
+import { ensureSession, forkSession, getSnapshot, isSubscribed, openStream, routeChatFrame, send, subscribe } from '../shared/chat-store';
 
 /** Serialize a wire frame the way the bridge does: a ChatEvent tagged with its chatId. */
 const frame = (chatId: string, ev: ChatEvent): string => JSON.stringify({ chatId, ...ev });

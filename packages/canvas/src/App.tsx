@@ -5,7 +5,7 @@ import 'tldraw/tldraw.css';
 import { activeCanvasId } from './active-canvas';
 import { getActiveChat, setForkHandler } from './agent-link';
 import { ChatShapeUtil } from './ChatShape';
-import { closeSession, forkSession } from './chat-store';
+import { closeSession, forkSession } from '../shared/chat-store';
 import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
 import { wireSync } from './sync';

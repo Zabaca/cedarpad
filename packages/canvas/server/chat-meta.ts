@@ -5,7 +5,7 @@
 // data-loss-critical like the canvas, so there's no degraded guard: a load error
 // propagates and the caller starts empty.
 
-import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../src/chat-store.ts';
+import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../shared/chat-store.ts';
 import type { BlobStore } from './blob-store.ts';
 
 export type ChatMeta = { sessionId: string | null; model: string; effort: string; forkNext: boolean };
