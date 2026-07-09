@@ -477,6 +477,24 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
   })();
 }
 
+// The dev-agent run's prompt — this IS the workflow now (ADR-0011: the harness dissolved
+// into the agent's own turn). First sentence deliberately doubles as the Conversation row's
+// title (row-at-start titles from the message). The declined-marker dedup and the quiet-run
+// contract are prompt-law; if discipline degrades, the designed fallback is a tool-side
+// filter inside ask_human — never a resurrected harness.
+const DEV_AGENT_RUN_PROMPT = [
+  'Architecture explore: survey this repo for deepening opportunities.',
+  'Run the Explore and Present-candidates phases of the /improve-codebase-architecture skill. Do NOT propose interfaces or make any edits.',
+  'Then read docs/adr/declined/ and DROP every candidate that matches a declined marker.',
+  'If candidates survive, call the ask_human tool ONCE — a short summary plus a question listing every surviving candidate (title, rationale, severity) so the human can grill and choose from the thread. Then end your turn.',
+  'If none survive, end your turn WITHOUT calling ask_human: a quiet run must not ping the human.',
+].join('\n\n');
+
+// The in-flight dev-agent run's chatId (ADR-0011): one run at a time, with JOIN semantics —
+// a kick while one runs returns the RUNNING run instead of piling up a second explore.
+// Liveness is derived from `aborters` (the turn registry), so settling clears it naturally.
+let devAgentRunChatId: string | null = null;
+
 // Test seam: the turn dispatcher is indirected so a test can substitute a spy and
 // assert that a turn was (or, on the 425 reject path, was NOT) dispatched without
 // invoking the real agent SDK. Production calls runChatTurn unchanged.
@@ -641,6 +659,25 @@ export async function handleRequest(req: Request): Promise<Response> {
     // POST /api/chat/:id/send  — run a turn in a chat; events broadcast (tagged) to subscribers
     if (path === '/api/chat/stream' && req.method === 'GET') {
       return chatStream();
+    }
+    // POST /api/dev-agent/run — kick one dev-agent run as a HEADLESS chat turn (ADR-0011).
+    // The edge Jobs/cron handler proxies here with the freshly-minted token header; the token
+    // makes it a full dev-agent turn (worktree cwd + open_pr + 'dev-agent' tag + explore
+    // skill — see turnFlavor/prepareDevAgentTurn). Deliberately NOT behind the 425
+    // subscribe-before-send guard: no subscriber exists by design — the session indexes at
+    // init (row-at-start) and the Inbox attaches to the live stream when opened. One run at
+    // a time with JOIN semantics: a kick during a run answers with the running run's chatId.
+    if (path === '/api/dev-agent/run' && req.method === 'POST') {
+      if (devAgentRunChatId && aborters.has(devAgentRunChatId)) {
+        return json({ chatId: devAgentRunChatId, joined: true }, 202);
+      }
+      const chatId = `dev-agent-run-${crypto.randomUUID()}`;
+      devAgentRunChatId = chatId;
+      const token = req.headers.get('x-dev-agent-git-token') ?? undefined;
+      // A fresh session every run (sessionId null); the run's later grill turns resume it
+      // through the normal conversation path.
+      dispatchChatTurn(chatId, DEV_AGENT_RUN_PROMPT, null, [], undefined, undefined, undefined, DEFAULT_CANVAS_ID, token);
+      return json({ chatId, joined: false }, 202);
     }
     const chatRoute = /^\/api\/chat\/([^/]+)\/send$/.exec(path);
     if (chatRoute && req.method === 'POST') {

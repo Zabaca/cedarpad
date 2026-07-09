@@ -236,6 +236,77 @@ describe('/api/chat/:id/send: 409 turn_in_flight while the chat’s turn runs', 
   });
 });
 
+// ADR-0011: the dev-agent run IS a chat turn, kicked headlessly by the edge (Jobs / cron).
+// Deliberately NOT behind the 425 subscribe-before-send guard (no subscriber exists by
+// design — the Inbox attaches mid-stream later), single-flighted with JOIN semantics.
+describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
+  let restore: () => void = () => {};
+  let dispatched: Array<{ chatId: string; message: string; sessionId: string | null; devAgentGitToken?: string }> = [];
+  const kicked: string[] = [];
+
+  const kick = async (token = 'ghs_run') => {
+    const res = await handleRequest(
+      new Request('http://localhost/api/dev-agent/run', { method: 'POST', headers: { 'x-dev-agent-git-token': token } }),
+    );
+    const body = (await res.json()) as { chatId: string; joined: boolean };
+    kicked.push(body.chatId);
+    return { status: res.status, body };
+  };
+
+  beforeEach(() => {
+    dispatched = [];
+    // NO chatClients subscriber — the kick is headless by design.
+    for (const c of [...chatClients]) chatClients.delete(c);
+    restore = setChatTurnDispatcher((chatId, message, sessionId, _images, _model, _fork, _effort, _canvasId, devAgentGitToken) => {
+      dispatched.push({ chatId, message, sessionId, devAgentGitToken });
+    });
+  });
+
+  afterEach(() => {
+    restore();
+    for (const id of kicked) aborters.delete(id);
+    kicked.length = 0;
+  });
+
+  test('kicks a fresh turn: 202, no subscriber needed, token forwarded, prompt titled first', async () => {
+    const { status, body } = await kick();
+
+    expect(status).toBe(202);
+    expect(body.joined).toBe(false);
+    expect(body.chatId).toMatch(/^dev-agent-run-/);
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]!.chatId).toBe(body.chatId);
+    expect(dispatched[0]!.sessionId).toBeNull(); // every run is a fresh session
+    // First sentence = the Conversation row's title (row-at-start slices the message).
+    expect(dispatched[0]!.message.startsWith('Architecture explore:')).toBe(true);
+    // The prompt carries the workflow the harness used to enforce in code (ADR-0011 2a).
+    expect(dispatched[0]!.message).toContain('docs/adr/declined/');
+    expect(dispatched[0]!.message).toContain('ask_human');
+    expect(dispatched[0]!.devAgentGitToken).toBe('ghs_run');
+  });
+
+  test('join semantics: a kick during a running run returns THAT run, dispatching nothing new', async () => {
+    const first = await kick();
+    aborters.set(first.body.chatId, new AbortController()); // the spy doesn't run a real turn — simulate in-flight
+
+    const second = await kick();
+
+    expect(second.status).toBe(202);
+    expect(second.body).toEqual({ chatId: first.body.chatId, joined: true });
+    expect(dispatched).toHaveLength(1); // no pile-up
+  });
+
+  test('after the run settles, the next kick starts a fresh run', async () => {
+    const first = await kick();
+    // No aborter registered ⇒ the run has settled.
+    const second = await kick();
+
+    expect(second.body.joined).toBe(false);
+    expect(second.body.chatId).not.toBe(first.body.chatId);
+    expect(dispatched).toHaveLength(2);
+  });
+});
+
 // ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
 // (the init event), not when the first turn settles — that's what makes a headless dev-agent
 // run (and any long first turn) visible live in the "All" view.
