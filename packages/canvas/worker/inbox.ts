@@ -2,7 +2,7 @@ import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
-import { orderInbox } from './inbox-view.ts';
+import { orderInbox, viewToListOpts } from './inbox-view.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
@@ -39,10 +39,10 @@ export async function handleInboxApi(
   // List.
   if (!id) {
     if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
-    const statusParam = url.searchParams.get('status');
-    const status = statusParam === 'open' || statusParam === 'closed' ? statusParam : undefined;
+    // Unified session index: `?view=needs-me|all|closed` (default needs-me = the attention subset).
+    const listOpts = viewToListOpts(url.searchParams.get('view'));
     const workspaceId = url.searchParams.get('workspace') ?? undefined;
-    const rows = await conversations.list(database, user.id, { status, workspaceId });
+    const rows = await conversations.list(database, user.id, { ...listOpts, workspaceId });
     return Response.json({ items: orderInbox(rows) });
   }
 

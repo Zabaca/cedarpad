@@ -124,6 +124,22 @@ describe("conversation store — list filtering, sort, scoping", () => {
     expect(listX.map((c) => c.id)).toContain(inA.id);
   });
 
+  it("filters by waiting_on: the 'needs me' view shows only promoted (waiting_on:human) rows", async () => {
+    const u = "user_waiting";
+    // A plain session (waiting_on defaults to 'none' — a session that exists, nothing pending).
+    const idle = await conversations.create(db, { sessionId: "s_idle", userId: u, workspaceId: "ws_a" });
+    // An ask_human promotion (waiting_on:human — needs attention).
+    const promoted = await conversations.create(db, { sessionId: "s_ask", userId: u, workspaceId: "ws_a" });
+    await conversations.promote(db, promoted.id);
+
+    const needsMe = await conversations.list(db, u, { waitingOn: "human" });
+    expect(needsMe.map((c) => c.id)).toEqual([promoted.id]);
+
+    // The unified index (no waitingOn filter) shows BOTH — every session, promoted or not.
+    const all = await conversations.list(db, u);
+    expect(all.map((c) => c.id)).toEqual(expect.arrayContaining([idle.id, promoted.id]));
+  });
+
   it("sorts by last_activity desc", async () => {
     const u = "user_sort";
     const first = await conversations.create(db, { sessionId: "s1", userId: u, workspaceId: "ws_a" });
