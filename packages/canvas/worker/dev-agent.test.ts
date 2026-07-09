@@ -7,7 +7,6 @@ import { containerEnv } from './container-env.ts';
 import { projectDirForCwd } from '../server/transcript-r2.ts';
 import {
   DEV_AGENT_SANDBOX_ID,
-  DEV_AGENT_SLEEP_AFTER,
   DEV_AGENT_WORKFLOW_CMD,
   type DevAgentRunner,
   type DevAgentSeam,
@@ -18,7 +17,10 @@ import {
 } from './dev-agent.ts';
 import type { Env } from './index.ts';
 
-describe('dev-agent sandbox id is distinct from every workspace container', () => {
+// ADR-0010: 'dev-agent' is a LOGICAL Conversation tag now, not a container key — but its
+// disjointness from every product workspace id is still load-bearing (the edge mint gate and
+// the routing predicate both compare against it), so pin that it can never collide.
+describe('the dev-agent tag is distinct from every product workspace id', () => {
   test('differs from the legacy/default product container', () => {
     expect(DEV_AGENT_SANDBOX_ID).not.toBe(LEGACY_SANDBOX_ID);
     expect(DEV_AGENT_SANDBOX_ID).not.toBe(resolve({ id: 'default', legacy: true }).sandboxId);
@@ -26,15 +28,11 @@ describe('dev-agent sandbox id is distinct from every workspace container', () =
 
   test('differs from any derived per-workspace container', () => {
     for (const wsId of ['default', 'ws_abc123', 'dev-agent', 'canvas']) {
-      // Derived ids are always `workspace-<id>`, so the flat `dev-agent` key can never
+      // Derived ids are always `workspace-<id>`, so the flat `dev-agent` tag can never
       // collide even if a workspace were literally named "dev-agent".
       expect(DEV_AGENT_SANDBOX_ID).not.toBe(deriveSandboxId(wsId));
       expect(DEV_AGENT_SANDBOX_ID).not.toBe(resolve({ id: wsId }).sandboxId);
     }
-  });
-
-  test('has its OWN sleep schedule, shorter than the product 5m', () => {
-    expect(DEV_AGENT_SLEEP_AFTER).toBe('2m');
   });
 });
 
@@ -48,7 +46,9 @@ describe('dev-agent sandbox id is distinct from every workspace container', () =
 //   • bridge resume cwd — the CANVAS_CWD injected into the container env (bridge.ts reads
 //     process.env.CANVAS_CWD for `query({ resume, cwd })`).
 describe('#133 — explore cwd and bridge cwd resolve to the same SDK project dir', () => {
-  const coords: SandboxCoords = { sandboxId: 'dev-agent', r2Prefix: 'workspaces/dev-agent/', canvasWorkspace: 'dev-agent' };
+  // The warm default container's coords — where BOTH the batch explore and the interactive
+  // resume run now (ADR-0010).
+  const coords: SandboxCoords = { sandboxId: 'canvas', r2Prefix: 'workspaces/default/', canvasWorkspace: 'default' };
 
   test('DEV_AGENT_WORKFLOW_CMD cd == injected CANVAS_CWD == same projectDirForCwd', () => {
     const exploreCwd = /^cd (\S+) &&/.exec(DEV_AGENT_WORKFLOW_CMD)?.[1];

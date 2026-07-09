@@ -16,11 +16,6 @@ import { singleFlight } from './single-flight.ts';
 // `workspace-<id>`), so `'dev-agent'` stays disjoint from every product id by construction.
 export const DEV_AGENT_SANDBOX_ID = 'dev-agent';
 
-// The retired separate instance's sleep timer — still consumed by `devAgentSandbox`
-// (sandbox-runtime.ts) until that stub is deleted with the rest of the separate-container
-// scaffolding (ADR-0010 cleanup slice).
-export const DEV_AGENT_SLEEP_AFTER = '2m';
-
 // Minimal seam over the sandbox stub so `runDevAgent` (and the scheduled dispatch) is
 // testable with a fake — the real `devAgentSandbox(env)` stub satisfies this structurally.
 // `setEnvVars` injects the batch run's env (below) BEFORE the exec; without it the exec
