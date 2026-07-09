@@ -11,6 +11,7 @@
 import { conversations } from '../web-poc/lib/db/index.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
+import type { CanvasImage } from './agent.ts';
 import { type BlobGetter, restore as restoreTranscript } from './transcript-r2.ts';
 
 /** Best-effort attention signal fired when a Conversation flips to waiting_on:human. A stub/log
@@ -84,8 +85,10 @@ export interface ResumeDeps {
   projectsDir: string;
   /** The cwd the session ran under (so restore lands the JSONL at the exact resume path). */
   cwd: string;
-  /** Drive one resumed turn: `query({ resume: sessionId, prompt: message })` + persist/stream. */
-  runTurn: (sessionId: string, message: string) => void | Promise<void>;
+  /** Drive one resumed turn: `query({ resume: sessionId, prompt: message })` + persist/stream.
+   *  `images` are the human's pasted attachments — the SAME `CanvasImage[]` a canvas `/send`
+   *  carries (one reply/send contract, ADR-0009 / #123), so a reply streams multimodal too. */
+  runTurn: (sessionId: string, message: string, images: CanvasImage[]) => void | Promise<void>;
   /** Override for tests; defaults to transcript-r2 restore. */
   restore?: typeof restoreTranscript;
 }
@@ -101,8 +104,9 @@ export async function resumeConversation(
   deps: ResumeDeps,
   conversation: ConversationRow,
   humanMessage: string,
+  images: CanvasImage[] = [],
 ): Promise<ConversationRow | null> {
   await (deps.restore ?? restoreTranscript)(deps.getter, deps.projectsDir, deps.cwd, conversation.sessionId);
-  await deps.runTurn(conversation.sessionId, humanMessage);
+  await deps.runTurn(conversation.sessionId, humanMessage, images);
   return conversations.reply(deps.db, conversation.id);
 }

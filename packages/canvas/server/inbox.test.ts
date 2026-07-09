@@ -148,4 +148,59 @@ describe('resumeConversation', () => {
       if (existsSync(projectsDir)) rmSync(projectsDir, { recursive: true, force: true });
     }
   });
+
+  test('forwards the reply images to runTurn (unified reply/send contract, #123)', async () => {
+    const db = await freshDb();
+    const sessionId = 'sess-resume-img';
+    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
+    await conversations.promote(db, conv.id);
+
+    const getter = memBackend();
+    await getter.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
+
+    const images = [{ media_type: 'image/png', data: 'AAAA' }];
+    const ran: Array<{ images: unknown }> = [];
+    await resumeConversation(
+      {
+        db,
+        getter,
+        projectsDir: join(tmpdir(), `Tmp_InboxImg_${process.pid}_${Math.random().toString(36).slice(2)}`),
+        cwd: '/workspace/app',
+        runTurn: (_sid, _msg, imgs) => void ran.push({ images: imgs }),
+      },
+      conv,
+      'look at this',
+      images,
+    );
+
+    // The human's pasted images reach the resumed turn — not dropped to [].
+    expect(ran).toHaveLength(1);
+    expect(ran[0]?.images).toEqual(images);
+  });
+
+  test('with no images, runTurn receives an empty array (back-compat)', async () => {
+    const db = await freshDb();
+    const sessionId = 'sess-resume-noimg';
+    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
+    await conversations.promote(db, conv.id);
+
+    const getter = memBackend();
+    await getter.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
+
+    const ran: Array<{ images: unknown }> = [];
+    await resumeConversation(
+      {
+        db,
+        getter,
+        projectsDir: join(tmpdir(), `Tmp_InboxNoImg_${process.pid}_${Math.random().toString(36).slice(2)}`),
+        cwd: '/workspace/app',
+        runTurn: (_sid, _msg, imgs) => void ran.push({ images: imgs }),
+      },
+      conv,
+      'text only',
+    );
+
+    expect(ran).toHaveLength(1);
+    expect(ran[0]?.images).toEqual([]);
+  });
 });

@@ -319,6 +319,19 @@ BOUNDARY (important): you may author ONLY under \`src/canvas-components/\` (fron
 export type CanvasImage = { media_type: string; data: string };
 
 /**
+ * Parse the `images` field of a chat-turn request body into validated {@link CanvasImage}s,
+ * dropping any malformed entry. The ONE parse both chat-turn entry points share — a canvas
+ * `/send` and an Inbox `/reply` speak the same reply/send contract (ADR-0009 / #123), so
+ * neither hand-rolls a second, narrower image schema.
+ */
+export function parseCanvasImages(body: { images?: unknown }): CanvasImage[] {
+  const raw = Array.isArray(body.images) ? body.images : [];
+  return raw
+    .filter((im): im is CanvasImage => !!im && typeof im.media_type === 'string' && typeof im.data === 'string')
+    .map((im) => ({ media_type: im.media_type, data: im.data }));
+}
+
+/**
  * Build the agent prompt. A plain string for the text-only case; a one-message
  * streaming input (text + image blocks) when the human pasted screenshots — the
  * SDK accepts `query({ prompt: AsyncIterable<SDKUserMessage> })` for multimodal
