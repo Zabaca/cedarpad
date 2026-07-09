@@ -2,6 +2,7 @@ import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from './index.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
 import { devAgentGitTokenEnv } from './github-app.ts';
+import { singleFlight } from './single-flight.ts';
 import { DEV_AGENT_SANDBOX_ID, DEV_AGENT_SLEEP_AFTER } from './dev-agent.ts';
 import { type SandboxCoords, decideWarm } from './sandbox-resolver.ts';
 
@@ -90,6 +91,11 @@ async function ensureStack(sandbox: SandboxStub, env: Env, coords: SandboxCoords
   await fresh.waitForPort(VITE_PORT, { timeout: 120000 });
 }
 
+// Concurrent cold requests for the same container share ONE boot (#138). Module-scoped so it
+// collapses the per-page-load stampede (~40 requests) within an isolate; keyed by sandbox id so a
+// product boot never blocks the dev-agent's. Cleared when the boot settles (see singleFlight).
+const inflightBoot = new Map<string, Promise<void>>();
+
 // Forward a request into the container's vite dev server (which proxies /api -> the
 // bridge) and stream the response back. The one round-trip that's actually needed.
 function proxy(sandbox: SandboxStub, request: Request, sandboxId: string): Promise<Response> {
@@ -137,8 +143,16 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
   // cycle: watch for it under `wrangler tail` after an idle window.
   console.log(`[cold] boot — container asleep/gone, cold-starting ${sandboxId} for ${url.pathname}`);
   try {
-    await ensureStack(sandbox, env, coords);
-    await sandbox.exposePort(VITE_PORT, { hostname: 'localhost', token: PREVIEW_TOKEN });
+    // Single-flight the boot: without this, every concurrent cold request ran its own
+    // ensureStack (kill+startProcess) and they canceled each other's vite process, so the
+    // container never came up (#138). Concurrent callers now await one boot; each still proxies
+    // its own request afterward. exposePort lives inside so it happens once per boot, not per
+    // request. (`sandbox` here is the first caller's stub, but it's just an RPC handle to the
+    // shared DO, so a later caller proxying with its own stub still hits the exposed port.)
+    await singleFlight(inflightBoot, sandboxId, async () => {
+      await ensureStack(sandbox, env, coords);
+      await sandbox.exposePort(VITE_PORT, { hostname: 'localhost', token: PREVIEW_TOKEN });
+    });
     return await proxy(sandbox, retryReq, sandboxId);
   } catch (e: unknown) {
     return new Response('canvas error:\n' + String((e as Error)?.stack ?? e), { status: 500 });
