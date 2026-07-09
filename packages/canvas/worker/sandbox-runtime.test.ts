@@ -52,3 +52,32 @@ describe('serveWorkspace: the dev-agent sandbox boots the interactive bridge (AD
     expect(probe.exposed).toContain(4510);
   });
 });
+
+// #138: a page load fires ~40 requests at a sleeping container at once. Before single-flighting the
+// cold path, each ran its own ensureStack (kill+startProcess) and they canceled each other's vite
+// process, so the container never came up. This pins that N concurrent cold requests boot the
+// container exactly ONCE.
+interface StampedeProbe {
+  statuses: number[];
+  started: number;
+  exposed: number;
+}
+
+function runStampedeProbe(): StampedeProbe {
+  const res = Bun.spawnSync(['bun', 'run', join(import.meta.dir, 'sandbox-runtime.stampede-probe.ts')], { stderr: 'inherit' });
+  const out = res.stdout.toString();
+  const line = out.split('\n').find((l) => l.startsWith('__STAMPEDE_PROBE__'));
+  if (!line) throw new Error(`stampede probe produced no result:\n${out}`);
+  return JSON.parse(line.slice('__STAMPEDE_PROBE__'.length)) as StampedeProbe;
+}
+
+describe('serveWorkspace: concurrent cold requests single-flight one boot (#138)', () => {
+  test('8 concurrent cold requests start the container once and all serve', () => {
+    const probe = runStampedeProbe();
+    // The whole point: one boot, not one-per-request — no more mutual cancellation.
+    expect(probe.started).toBe(1);
+    expect(probe.exposed).toBe(1);
+    // Every concurrent request still gets served through the shared boot.
+    expect(probe.statuses).toEqual([200, 200, 200, 200, 200, 200, 200, 200]);
+  });
+});
