@@ -2,8 +2,10 @@
 
 Status: accepted (design). Amends [ADR-0007](./0007-workspace-platform-topology.md) (the
 dev-agent's place in the topology) and revises [ADR-0009](./0009-one-chat-system-live-bridge-view.md)
-Tier 2 ("the dev-agent sandbox must run the interactive bridge"). Vocabulary: root
-[CONTEXT.md](../../CONTEXT.md) ("Runners" section).
+Tier 2 ("the dev-agent sandbox must run the interactive bridge"). The batch-exec half of this
+ADR is itself revised by [ADR-0011](./0011-a-dev-agent-run-is-a-chat-turn.md) — the run is a
+bridge chat turn now, not an `exec`. Vocabulary: root [CONTEXT.md](../../CONTEXT.md)
+("Runners" section).
 
 The dev-agent was built (ADR-0007, PRD #51) as a **separate sandbox instance** of the product
 image with its own short (2m) sleep schedule. This ADR deletes that instance: **"dev-agent-ness"
