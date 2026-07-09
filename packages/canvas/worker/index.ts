@@ -9,6 +9,7 @@ import { dispatchDevAgentRun, runDevAgent } from './dev-agent.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { devAgentSandbox, sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts';
+import { handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
 import {
   DEFAULT_CANVAS_ID,
@@ -195,6 +196,19 @@ export default {
     const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen))?)?$/.exec(url.pathname);
     if (inboxApiMatch) {
       return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
+    }
+
+    // Edge chat proxy (ADR-0009, PRD #119 slice #122): a Shell-mounted <ChatView> targets
+    // `/inbox/:convId/bridge/*` so its live stream + send + interrupt + transcript + alive
+    // reach the Conversation's OWNING runner bridge. BELOW the gate above (dispatch order is
+    // security-load-bearing) — an unauthenticated request got `renderLogin()` already and can
+    // never reach a bridge. `handleInboxBridge` ownership-checks the Conversation against
+    // `user`, resolves `conv.workspaceId → coords`, strips this prefix, and proxies the raw
+    // sub-path (`/api/...`, captured query-free) unrewritten via `serveWorkspace`. The Inbox
+    // LIST (`/api/inbox`, above) stays edge-only and never wakes a runner.
+    const inboxBridgeMatch = /^\/inbox\/([^/]+)\/bridge(\/.*)?$/.exec(url.pathname);
+    if (inboxBridgeMatch) {
+      return handleInboxBridge(request, env, user, inboxBridgeMatch[1], inboxBridgeMatch[2] ?? '/');
     }
 
     // The Inbox is a Shell stage now (#108) — no standalone page. The legacy edge route
