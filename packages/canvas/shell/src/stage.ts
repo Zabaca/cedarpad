@@ -5,9 +5,9 @@
 // The stage rides in the query string because the shell is served from ASSETS at `/` alone;
 // `/notebook` and `/inbox` are still distinct edge routes today (slices #107/#108 re-home them).
 
-export type Stage = 'canvas' | 'notebook' | 'inbox';
+export type Stage = 'canvas' | 'notebook' | 'inbox' | 'jobs';
 
-export const STAGES = ['canvas', 'notebook', 'inbox'] as const satisfies readonly Stage[];
+export const STAGES = ['canvas', 'notebook', 'inbox', 'jobs'] as const satisfies readonly Stage[];
 
 const isStage = (v: string | null): v is Stage => STAGES.includes(v as Stage);
 

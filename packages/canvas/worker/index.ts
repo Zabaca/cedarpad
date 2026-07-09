@@ -5,7 +5,7 @@ import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
-import { dispatchDevAgentRun, runDevAgent } from './dev-agent.ts';
+import { dispatchDevAgentRun, runDevAgent, runDevAgentNow } from './dev-agent.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { devAgentSandbox, sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts';
@@ -97,7 +97,7 @@ export default {
     ctx.waitUntil(dispatchDevAgentRun(event, env, { sandbox: devAgentSandbox, run: runDevAgent }));
   },
 
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
 
@@ -204,6 +204,21 @@ export default {
     const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen))?)?$/.exec(url.pathname);
     if (inboxApiMatch) {
       return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
+    }
+
+    // Jobs trigger: run the dev-agent NOW on demand (Jobs stage "Run now" / API). Auth-gated (we're
+    // below the session gate, so `user` is signed in) but NOT DEV_AGENT_ENABLED-gated — that flag
+    // only kills the daily CRON; a manual trigger is an explicit user action. Fire-and-forget via
+    // waitUntil (the run wakes the dev-agent container + execs the workflow, minutes); the run then
+    // surfaces in the unified Inbox as a session. 202 Accepted immediately.
+    if (url.pathname === '/api/jobs/dev-agent/run') {
+      if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+      ctx.waitUntil(
+        runDevAgentNow(env, { sandbox: devAgentSandbox, run: runDevAgent }).catch((e) =>
+          console.error('[dev-agent] manual run failed:', e),
+        ),
+      );
+      return Response.json({ started: true }, { status: 202 });
     }
 
     // Edge chat proxy (ADR-0009, PRD #119 slice #122): a Shell-mounted <ChatView> targets

@@ -499,3 +499,73 @@ body,
   padding: 40px;
   font-size: 13px;
 }
+
+/* Jobs stage (trigger background-agent runs; observation lives in the Inbox). */
+.stage-jobs {
+  display: flex;
+  color: var(--text);
+  font-size: 14px;
+}
+.jobs-list {
+  width: 520px;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 28px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.jobs-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.jobs-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.jobs-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.jobs-card-sub {
+  color: var(--muted, #9aa);
+  font-size: 12.5px;
+}
+.jobs-run {
+  flex: none;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.jobs-run:hover {
+  background: var(--accent-hi);
+}
+.jobs-run:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.jobs-note {
+  padding: 10px 14px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.jobs-note.jobs-error {
+  border-color: var(--accent);
+  color: var(--accent);
+}

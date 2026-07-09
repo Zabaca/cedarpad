@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 
 import { InboxStage } from './inbox/Inbox';
+import { JobsStage } from './jobs/Jobs';
 import { type Stage, stageFromUrl, urlForStage } from './stage';
 
 // Notebook mounts lazily (PRD #103, slice #107) — the same lazy chunk the container app
@@ -59,6 +60,17 @@ function IconInbox() {
   );
 }
 
+// A play-in-a-square glyph for Jobs (trigger a background-agent run).
+function IconJobs() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="3" />
+      <path d="M10 8.5v7l5-3.5z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 /** Close `onClose` on outside-click or Escape, for the rail's two popovers. */
 function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, onClose: () => void) {
   useEffect(() => {
@@ -111,6 +123,7 @@ export function Shell() {
         </div>
       )}
       {stage === 'inbox' && <InboxStage />}
+      {stage === 'jobs' && <JobsStage />}
     </div>
   );
 }
@@ -170,6 +183,7 @@ function Rail({
       {railBtn('canvas', 'Canvases', <IconCanvases />)}
       {railBtn('notebook', 'Notebook', <IconNotebook />)}
       {railBtn('inbox', 'Inbox', <IconInbox />)}
+      {railBtn('jobs', 'Jobs', <IconJobs />)}
       <div className="lp-rail-bottom">
         <button
           type="button"

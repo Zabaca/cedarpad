@@ -11,8 +11,10 @@ import {
   DEV_AGENT_WORKFLOW_CMD,
   type DevAgentRunner,
   type DevAgentSeam,
+  devAgentBatchEnv,
   dispatchDevAgentRun,
   runDevAgent,
+  runDevAgentNow,
 } from './dev-agent.ts';
 import type { Env } from './index.ts';
 
@@ -59,71 +61,105 @@ describe('#133 — explore cwd and bridge cwd resolve to the same SDK project di
   });
 });
 
+describe('devAgentBatchEnv — the env the batch exec needs', () => {
+  test('injects DEV_AGENT_USER_ID (=CANVAS_USER) + OAuth/Turso so dev-agent-run.ts does not throw', () => {
+    const ev = devAgentBatchEnv({ CANVAS_USER: 'user_owner', CLAUDE_CODE_OAUTH_TOKEN: 'tok', TURSO_URL: 'u', TURSO_KEY: 'k' } as Env);
+    expect(ev.DEV_AGENT_USER_ID).toBe('user_owner'); // the owner the promoted Conversation is filed under
+    expect(ev.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok'); // the SDK query needs it
+    expect(ev.CANVAS_WORKSPACE).toBe('dev-agent'); // filed under the dev-agent workspace, not 'default'
+    expect(ev.TURSO_URL).toBe('u'); // promotions reach the real remote Turso, not an ephemeral file
+  });
+});
+
 describe('runDevAgent — #66 workflow kick', () => {
-  test('execs the container workflow entrypoint', async () => {
-    const calls: string[] = [];
+  const env = { CANVAS_USER: 'user_owner', CLAUDE_CODE_OAUTH_TOKEN: 'tok' } as Env;
+
+  test('injects the batch env BEFORE it execs the workflow entrypoint', async () => {
+    const order: string[] = [];
+    let injected: Record<string, string> | null = null;
     const sandbox: DevAgentRunner = {
+      setEnvVars: async (e) => {
+        injected = e;
+        order.push('setEnvVars');
+      },
       exec: async (command) => {
-        calls.push(command);
+        order.push(`exec:${command}`);
         return { exitCode: 0, stdout: 'ok\n' };
       },
     };
-    await runDevAgent(sandbox);
-    expect(calls).toEqual([DEV_AGENT_WORKFLOW_CMD]);
+    await runDevAgent(sandbox, env);
+    expect(order).toEqual(['setEnvVars', `exec:${DEV_AGENT_WORKFLOW_CMD}`]); // env in place first
+    expect(injected!.DEV_AGENT_USER_ID).toBe('user_owner');
   });
 
   test('a non-zero workflow exit is surfaced (thrown)', async () => {
     const sandbox: DevAgentRunner = {
+      setEnvVars: async () => {},
       exec: async () => ({ exitCode: 1, stdout: 'boom' }),
     };
-    await expect(runDevAgent(sandbox)).rejects.toThrow('dev-agent workflow exited 1');
+    await expect(runDevAgent(sandbox, env)).rejects.toThrow('dev-agent workflow exited 1');
   });
 });
 
-describe('dispatchDevAgentRun — the scheduled dispatch', () => {
-  const event = { cron: '0 9 * * *', scheduledTime: Date.UTC(2026, 6, 7, 9, 0, 0) };
-  const env = { DEV_AGENT_ENABLED: 'true' } as Env;
+const okRunner = (): DevAgentRunner => ({ setEnvVars: async () => {}, exec: async () => ({ exitCode: 0, stdout: '' }) });
 
-  test('skips entirely when DEV_AGENT_ENABLED is not "true" (kill-switch)', async () => {
+describe('runDevAgentNow — the shared core (manual trigger + cron), NO enable-gate', () => {
+  const env = { CANVAS_USER: 'u' } as Env;
+
+  test('runs regardless of DEV_AGENT_ENABLED — a manual trigger is an explicit action', async () => {
+    const order: string[] = [];
+    const seam: DevAgentSeam = {
+      sandbox: (e) => {
+        expect(e).toBe(env);
+        order.push('sandbox');
+        return okRunner();
+      },
+      run: async (_s, e) => {
+        expect(e).toBe(env);
+        order.push('run');
+      },
+    };
+    await runDevAgentNow(env, seam); // no flag set at all
+    expect(order).toEqual(['sandbox', 'run']);
+  });
+
+  test('a run that errors surfaces (rethrows) — not silently swallowed', async () => {
+    const seam: DevAgentSeam = { sandbox: okRunner, run: async () => { throw new Error('workflow blew up'); } };
+    await expect(runDevAgentNow(env, seam)).rejects.toThrow('workflow blew up');
+  });
+});
+
+describe('dispatchDevAgentRun — the scheduled dispatch (cron gate)', () => {
+  const event = { cron: '0 9 * * *', scheduledTime: Date.UTC(2026, 6, 7, 9, 0, 0) };
+  const env = { DEV_AGENT_ENABLED: 'true', CANVAS_USER: 'u' } as Env;
+
+  test('skips entirely when DEV_AGENT_ENABLED is not "true" (cron kill-switch)', async () => {
     let touched = false;
     const seam: DevAgentSeam = {
       sandbox: () => {
         touched = true;
-        return { exec: async () => ({ exitCode: 0, stdout: '' }) };
+        return okRunner();
       },
       run: async () => {
         touched = true;
       },
     };
-    await dispatchDevAgentRun(event, {} as Env, seam); // flag unset ⇒ disabled
+    await dispatchDevAgentRun(event, { CANVAS_USER: 'u' } as Env, seam); // flag unset ⇒ cron disabled
     expect(touched).toBe(false);
   });
 
-  test('resolves the dev-agent sandbox and kicks the run through the seam', async () => {
+  test('when enabled, runs through the shared core', async () => {
     const order: string[] = [];
-    const fakeSandbox: DevAgentRunner = { exec: async () => ({ exitCode: 0, stdout: '' }) };
     const seam: DevAgentSeam = {
-      sandbox: (e) => {
-        expect(e).toBe(env);
+      sandbox: () => {
         order.push('sandbox');
-        return fakeSandbox;
+        return okRunner();
       },
-      run: async (s) => {
-        expect(s).toBe(fakeSandbox);
+      run: async () => {
         order.push('run');
       },
     };
     await dispatchDevAgentRun(event, env, seam);
     expect(order).toEqual(['sandbox', 'run']);
-  });
-
-  test('a run that errors surfaces (rethrows) — not silently swallowed', async () => {
-    const seam: DevAgentSeam = {
-      sandbox: () => ({ exec: async () => ({ exitCode: 0, stdout: '' }) }),
-      run: async () => {
-        throw new Error('workflow blew up');
-      },
-    };
-    await expect(dispatchDevAgentRun(event, env, seam)).rejects.toThrow('workflow blew up');
   });
 });
