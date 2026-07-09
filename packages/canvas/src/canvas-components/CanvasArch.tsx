@@ -271,7 +271,7 @@ export default function CanvasArch() {
       </Box>
 
       {/* Agent */}
-      <Box x={agentBox.x} y={agentBox.y} w={agentBox.w} h={agentBox.h} color={COLORS.pink} label="Claude Agent (SDK)" sublabel="claude-sonnet-4-6">
+      <Box x={agentBox.x} y={agentBox.y} w={agentBox.w} h={agentBox.h} color={COLORS.pink} label="Claude Agent (SDK)" sublabel="claude-sonnet-5">
         <div style={{
           background: COLORS.panel,
           border: `1px solid ${COLORS.border}`,
