@@ -1,22 +1,24 @@
 import type { Env } from './index.ts';
-import type { SandboxCoords } from './sandbox-resolver.ts';
+import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
+import { singleFlight } from './single-flight.ts';
 
-// The dev-agent runner (ADR-0007, PRD #51 slice #63) — PURE core. A SEPARATE sandbox
-// instance of the SAME product image, on its OWN sleep schedule, driving continuous dev
-// workflows off the product runtime so it never fights a workspace container's sleep
-// timer. Kept free of any `@cloudflare/sandbox` / `cloudflare:workers` import so it's
-// unit-testable off the edge runtime — the stub that wakes the real container
-// (`devAgentSandbox`) lives in `sandbox-runtime.ts` alongside the other sandbox plumbing.
+// The dev-agent runner (ADR-0007 PRD #51, re-shaped by ADR-0010) — PURE core. The dev-agent
+// is a ROLE the warm default container plays, not a separate container: a batch run wakes
+// THAT container and execs the workflow on it, and the promoted Conversation (tagged
+// 'dev-agent') resumes there like any product chat. Kept free of any `@cloudflare/sandbox` /
+// `cloudflare:workers` import so it's unit-testable off the edge runtime.
 
-// Distinctly keyed so it can NEVER collide with a workspace container. Product ids are
-// `'canvas'` (legacy/default) and `'workspace-<id>'` (derived) — see sandbox-resolver.ts
-// — so `'dev-agent'` is disjoint from every workspace id by construction.
+// The LOGICAL dev-agent tag (=== DEV_AGENT_WORKSPACE_ID in server/dev-agent-workflow.ts):
+// the Conversation.workspaceId a dev-agent run files under. NOT a container key anymore
+// (ADR-0010) — dev-agent Conversations resume on the warm default container. Product
+// workspace ids are `'default'` and registry `cs_…` ids (derived containers are
+// `workspace-<id>`), so `'dev-agent'` stays disjoint from every product id by construction.
 export const DEV_AGENT_SANDBOX_ID = 'dev-agent';
 
-// Its OWN sleep timer, independent of the product's 5m. Short on purpose: the dev-agent
-// wakes on a cron, does one run, then should sleep promptly — it serves no interactive
-// traffic, so there is no idle-tab window to keep warm.
+// The retired separate instance's sleep timer — still consumed by `devAgentSandbox`
+// (sandbox-runtime.ts) until that stub is deleted with the rest of the separate-container
+// scaffolding (ADR-0010 cleanup slice).
 export const DEV_AGENT_SLEEP_AFTER = '2m';
 
 // Minimal seam over the sandbox stub so `runDevAgent` (and the scheduled dispatch) is
@@ -28,41 +30,29 @@ export interface DevAgentRunner {
   exec(command: string): Promise<{ exitCode: number; stdout: string }>;
 }
 
-// The dev-agent container's coords for the batch env (its own R2 prefix + workspace id). Mirrors
-// the interactive path's coordsForWorkspace('dev-agent') without importing it (that pulls the
-// @cloudflare/sandbox layer, which this pure module must not).
-const DEV_AGENT_COORDS: SandboxCoords = {
-  sandboxId: DEV_AGENT_SANDBOX_ID,
-  r2Prefix: 'workspaces/dev-agent/',
-  canvasWorkspace: 'dev-agent',
-};
-
-// The env the batch exec needs. containerEnv supplies OAuth/Turso/R2/CANVAS_WORKSPACE(=dev-agent)/
-// CANVAS_USER; DEV_AGENT_USER_ID (the owner the promoted Conversation is filed under — the
-// single-tenant CANVAS_USER) is the one var dev-agent-run.ts reads that containerEnv doesn't set.
-// The GitHub App token is NOT here: the batch (Explore → ask_human) opens no PR — that's the
-// interactive open_pr path (#96), which mints its own on the interactive boot.
+// The env the batch exec needs. The batch runs ON the warm default container (ADR-0010), so
+// containerEnv is built from the DEFAULT workspace coords — CANVAS_WORKSPACE='default', matching
+// the container it execs on — plus DEV_AGENT_USER_ID (the owner the promoted Conversation is
+// filed under — the single-tenant CANVAS_USER), the one var dev-agent-run.ts reads that
+// containerEnv doesn't set. The GitHub App token is NOT here: the batch (Explore → ask_human)
+// opens no PR — that's the interactive open_pr path, token-armed per send (ADR-0010).
 export function devAgentBatchEnv(env: Env): Record<string, string> {
-  return { ...containerEnv(env, DEV_AGENT_COORDS), DEV_AGENT_USER_ID: env.CANVAS_USER ?? '' };
+  return { ...containerEnv(env, resolve(DEFAULT_WORKSPACE)), DEV_AGENT_USER_ID: env.CANVAS_USER ?? '' };
 }
 
-// Coexistence, not replacement (ADR-0009 Tier 2 / #125). The dev-agent sandbox has TWO boot
-// paths on the SAME image, and they COEXIST as separate processes on the one instance:
-//   • scheduled batch — the cron `exec`s this workflow command (a transient one-shot run that
-//     Explores, gates, promotes a Conversation, then lets the instance idle-sleep on its 2m timer);
-//   • interactive bridge — an INTERACTIVE chat proxied to the dev-agent (edge chat proxy →
-//     coordsForWorkspace('dev-agent') → serveWorkspace) cold-starts the SAME product interactive
-//     stack every workspace container runs (`scripts/container-start.ts` → vite + bridge), booted
-//     LAZILY on the first interactive request — never eagerly.
-// We deliberately do NOT "always boot the interactive stack": off-hours the batch run stays cheap
-// (wake, run, sleep), and the two are synergistic — the explore session the batch writes to
-// ~/.claude/projects is exactly what the interactive bridge later restores + resumes as a chat
-// turn. Both processes share the container's process.cwd() (the canvas package dir), so a resumed
-// dev-agent session's JSONL is restored to the path the bridge's `query({ resume })` reads.
+// Coexistence on the ONE warm container (ADR-0010). The batch exec and the interactive stack
+// are separate processes on the SAME default container:
+//   • scheduled/manual batch — `exec`s this workflow command (a transient one-shot run that
+//     Explores, gates, promotes a Conversation) alongside whatever the container is serving;
+//   • interactive resume — the promoted dev-agent Conversation resumes through the edge chat
+//     proxy on the same container's bridge, exactly like any product chat.
+// The two are synergistic: the explore session the batch writes to ~/.claude/projects is exactly
+// what the bridge later restores + resumes as a chat turn. Both run under CANVAS_CONTAINER_CWD,
+// so a resumed dev-agent session's JSONL sits at the path the bridge's `query({ resume })` reads.
 //
 // The command the container runs for one scheduled workflow. The Explore→gate→ask_human
 // harness (#66) is CONTAINER-side (it needs the SDK/Turso/git) — the edge only wakes the
-// sandbox and execs this entrypoint (`server/dev-agent-run.ts`), which assembles the real
+// container and execs this entrypoint (`server/dev-agent-run.ts`), which assembles the real
 // seams and calls `runDevAgentWorkflow`. Kept as a string command so the edge worker never
 // imports the container-only harness (bundle stays clean).
 export const DEV_AGENT_WORKFLOW_CMD =
@@ -86,25 +76,31 @@ export interface DevAgentSeam {
   run: (sandbox: DevAgentRunner, env: Env) => Promise<void>;
 }
 
-// The shared run core (cron AND manual trigger): wake the dev-agent sandbox, inject env, exec the
-// workflow. NO DEV_AGENT_ENABLED gate — that kill-switch is only about the daily CRON auto-firing
-// (see dispatchDevAgentRun). A manual trigger (Jobs UI / API) is an explicit user action, so it
-// runs regardless of the flag. A run that throws is surfaced (logged + rethrown), never swallowed,
-// and touches ONLY the dev-agent instance.
-export async function runDevAgentNow(env: Env, seam: DevAgentSeam): Promise<void> {
-  const sandbox = seam.sandbox(env);
-  try {
-    await seam.run(sandbox, env);
-  } catch (e: unknown) {
-    console.error(`[dev-agent] run failed: ${String((e as Error)?.stack ?? e)}`);
-    throw e;
-  }
+// Single-flight for the batch run (ADR-0010): cron + repeated "Run now" clicks collapse onto
+// ONE in-flight exec instead of piling up concurrent workflows on the shared container.
+// Module-scoped like the cold-boot map (#138); cleared when the run settles.
+const inflightRun = new Map<string, Promise<void>>();
+
+// The shared run core (cron AND manual trigger): wake the warm default container, inject env,
+// exec the workflow. NO DEV_AGENT_ENABLED gate — that kill-switch is only about the daily CRON
+// auto-firing (see dispatchDevAgentRun). A manual trigger (Jobs UI / API) is an explicit user
+// action, so it runs regardless of the flag. A run that throws is surfaced (logged + rethrown),
+// never swallowed. Concurrent triggers await the SAME run (single-flight) — no pile-up.
+export function runDevAgentNow(env: Env, seam: DevAgentSeam): Promise<void> {
+  return singleFlight(inflightRun, 'dev-agent', async () => {
+    const sandbox = seam.sandbox(env);
+    try {
+      await seam.run(sandbox, env);
+    } catch (e: unknown) {
+      console.error(`[dev-agent] run failed: ${String((e as Error)?.stack ?? e)}`);
+      throw e;
+    }
+  });
 }
 
 // The cron handler's core, extracted so it's unit-testable without a live cron or
-// container. Wakes the dev-agent sandbox and kicks one run; it then idle-sleeps on its
-// own `DEV_AGENT_SLEEP_AFTER`. A run that throws is surfaced (logged + rethrown) — never
-// silently swallowed — and touches ONLY the dev-agent instance, never a workspace one.
+// container. Wakes the warm default container and kicks one run (ADR-0010). A run that
+// throws is surfaced (logged + rethrown) — never silently swallowed.
 export async function dispatchDevAgentRun(
   event: { cron: string; scheduledTime: number },
   env: Env,

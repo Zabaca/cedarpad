@@ -6,8 +6,8 @@ import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
 import { dispatchDevAgentRun, runDevAgent, runDevAgentNow } from './dev-agent.ts';
-import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
-import { devAgentSandbox, sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
+import { DEFAULT_WORKSPACE, LEGACY_SANDBOX_ID, resolve } from './sandbox-resolver.ts';
+import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 import { handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
@@ -88,13 +88,12 @@ export interface Env {
 const notebookApi = buildApp();
 
 export default {
-  // Cron trigger (ADR-0007, PRD #51 slice #63). Off-hours the edge wakes the dev-agent
-  // sandbox — a SEPARATE instance on its own sleep schedule — and kicks one run, which
-  // then idle-sleeps on its own timer. This path touches ONLY the dev-agent instance:
-  // no workspace container is woken or reaped by a scheduled run. `waitUntil` keeps the
-  // isolate alive for the async run past the handler return.
+  // Cron trigger (ADR-0007 PRD #51, re-shaped by ADR-0010). The scheduled dev-agent run wakes
+  // the WARM default container — the dev-agent is a role that container plays, not a separate
+  // instance — and execs one batch workflow on it. `waitUntil` keeps the isolate alive for the
+  // async run past the handler return.
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(dispatchDevAgentRun(event, env, { sandbox: devAgentSandbox, run: runDevAgent }));
+    ctx.waitUntil(dispatchDevAgentRun(event, env, { sandbox: (e) => sandboxFor(e, LEGACY_SANDBOX_ID), run: runDevAgent }));
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -209,12 +208,13 @@ export default {
     // Jobs trigger: run the dev-agent NOW on demand (Jobs stage "Run now" / API). Auth-gated (we're
     // below the session gate, so `user` is signed in) but NOT DEV_AGENT_ENABLED-gated — that flag
     // only kills the daily CRON; a manual trigger is an explicit user action. Fire-and-forget via
-    // waitUntil (the run wakes the dev-agent container + execs the workflow, minutes); the run then
-    // surfaces in the unified Inbox as a session. 202 Accepted immediately.
+    // waitUntil (the run wakes the warm default container + execs the workflow, minutes); the run
+    // then surfaces in the unified Inbox as a session. Repeated clicks collapse onto the one
+    // in-flight run (runDevAgentNow single-flights). 202 Accepted immediately.
     if (url.pathname === '/api/jobs/dev-agent/run') {
       if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
       ctx.waitUntil(
-        runDevAgentNow(env, { sandbox: devAgentSandbox, run: runDevAgent }).catch((e) =>
+        runDevAgentNow(env, { sandbox: (e) => sandboxFor(e, LEGACY_SANDBOX_ID), run: runDevAgent }).catch((e) =>
           console.error('[dev-agent] manual run failed:', e),
         ),
       );

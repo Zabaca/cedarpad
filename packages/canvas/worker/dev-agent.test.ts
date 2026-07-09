@@ -66,8 +66,53 @@ describe('devAgentBatchEnv — the env the batch exec needs', () => {
     const ev = devAgentBatchEnv({ CANVAS_USER: 'user_owner', CLAUDE_CODE_OAUTH_TOKEN: 'tok', TURSO_URL: 'u', TURSO_KEY: 'k' } as Env);
     expect(ev.DEV_AGENT_USER_ID).toBe('user_owner'); // the owner the promoted Conversation is filed under
     expect(ev.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok'); // the SDK query needs it
-    expect(ev.CANVAS_WORKSPACE).toBe('dev-agent'); // filed under the dev-agent workspace, not 'default'
+    // ADR-0010: the batch runs ON the warm default container now, so its env matches that
+    // container's coords — NOT a separate 'dev-agent' workspace (the Conversation keeps the
+    // 'dev-agent' tag via DEV_AGENT_USER_ID/the workflow, not via container coords).
+    expect(ev.CANVAS_WORKSPACE).toBe('default');
     expect(ev.TURSO_URL).toBe('u'); // promotions reach the real remote Turso, not an ephemeral file
+  });
+});
+
+describe('runDevAgentNow — single-flight: concurrent triggers collapse to ONE run (ADR-0010)', () => {
+  const env = { CANVAS_USER: 'u' } as Env;
+
+  test('two concurrent triggers share one in-flight run; a later trigger runs fresh', async () => {
+    let runs = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const seam: DevAgentSeam = {
+      sandbox: okRunner,
+      run: async () => {
+        runs += 1;
+        await gate;
+      },
+    };
+
+    const p1 = runDevAgentNow(env, seam);
+    const p2 = runDevAgentNow(env, seam); // cron + "Run now" clicks while one is in flight
+    expect(runs).toBe(1); // collapsed — no pile-up of concurrent batch execs
+    release();
+    await Promise.all([p1, p2]);
+
+    await runDevAgentNow(env, seam); // after settle, the NEXT trigger starts a fresh run
+    expect(runs).toBe(2);
+  });
+
+  test('a failed run clears the flight — the next trigger is not stuck on a rejected promise', async () => {
+    let calls = 0;
+    const seam: DevAgentSeam = {
+      sandbox: okRunner,
+      run: async () => {
+        calls += 1;
+        throw new Error('boom');
+      },
+    };
+    await expect(runDevAgentNow(env, seam)).rejects.toThrow('boom');
+    await expect(runDevAgentNow(env, seam)).rejects.toThrow('boom');
+    expect(calls).toBe(2);
   });
 });
 

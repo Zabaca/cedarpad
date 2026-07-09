@@ -19,6 +19,7 @@ let workspaceRecord: { id: string } | null = null;
 let canvasRecord: { workspaceId: string } | null = null;
 let served: SandboxCoords[] = [];
 let servedReqs: Array<{ path: string; method: string }> = [];
+let sandboxForIds: string[] = [];
 let assets: string[] = [];
 let inboxCalls: Array<{ id?: string; action?: string }> = [];
 let conv: ConversationRow | null = null;
@@ -31,8 +32,10 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedReqs.push({ path: u.pathname + u.search, method: req.method });
     return new Response('pad-html');
   },
-  sandboxFor: () => ({}),
-  devAgentSandbox: () => ({}),
+  sandboxFor: (_env: unknown, id: string) => {
+    sandboxForIds.push(id);
+    return {};
+  },
 }));
 mock.module('./auth-gate.ts', () => ({
   ...realAuthGate,
@@ -63,7 +66,7 @@ mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
 }));
 
 const worker = (await import('./index.ts')).default;
-const { resolve, DEFAULT_WORKSPACE } = await import('./sandbox-resolver.ts');
+const { resolve, DEFAULT_WORKSPACE, LEGACY_SANDBOX_ID } = await import('./sandbox-resolver.ts');
 
 // The Workers static-assets binding, recorded by file path so we can assert WHICH file
 // the Shell SPA routes serve — and, crucially, that they never touch `serveWorkspace`.
@@ -101,11 +104,27 @@ describe('POST /api/jobs/dev-agent/run — manual Jobs trigger', () => {
     );
     expect(res.status).toBe(202);
     expect(waited).toBe(true);
+    // ADR-0010: the batch runs ON the warm default container — no separate dev-agent sandbox.
+    expect(sandboxForIds).toEqual([LEGACY_SANDBOX_ID]);
   });
 
   test('rejects a non-POST (405)', async () => {
     const res = await GET('/api/jobs/dev-agent/run');
     expect(res.status).toBe(405);
+  });
+});
+
+describe('scheduled — the cron seam wakes the warm default container (ADR-0010)', () => {
+  test('an enabled scheduled run wakes LEGACY_SANDBOX_ID, never a dev-agent instance', async () => {
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => void (p as Promise<unknown>).catch(() => {}), // stubbed sandbox rejects; swallow
+    } as unknown as ExecutionContext;
+    await worker.scheduled(
+      { cron: '0 9 * * *', scheduledTime: 0 } as ScheduledController,
+      { ...(env as object), DEV_AGENT_ENABLED: 'true' } as Parameters<typeof worker.fetch>[1],
+      ctx,
+    );
+    expect(sandboxForIds).toEqual([LEGACY_SANDBOX_ID]);
   });
 });
 
@@ -115,6 +134,7 @@ beforeEach(() => {
   canvasRecord = null;
   served = [];
   servedReqs = [];
+  sandboxForIds = [];
   assets = [];
   inboxCalls = [];
   conv = null;
