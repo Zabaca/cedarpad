@@ -1,4 +1,5 @@
 import type { Env } from './index.ts';
+import { CANVAS_CONTAINER_CWD } from './container-env.ts';
 
 // The dev-agent runner (ADR-0007, PRD #51 slice #63) — PURE core. A SEPARATE sandbox
 // instance of the SAME product image, on its OWN sleep schedule, driving continuous dev
@@ -43,7 +44,7 @@ export interface DevAgentRunner {
 // seams and calls `runDevAgentWorkflow`. Kept as a string command so the edge worker never
 // imports the container-only harness (bundle stays clean).
 export const DEV_AGENT_WORKFLOW_CMD =
-  'cd /app/agent-canvas/packages/canvas && bun run server/dev-agent-run.ts';
+  `cd ${CANVAS_CONTAINER_CWD} && bun run server/dev-agent-run.ts`;
 
 // #66 run: kick ONE scheduled workflow inside the container. The edge wakes the dev-agent
 // sandbox (dispatchDevAgentRun) then calls this; a non-zero exit is surfaced (thrown) so the

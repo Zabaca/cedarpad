@@ -1,6 +1,20 @@
 import type { Env } from './index.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
+// The canvas package's absolute path inside the container image — the SINGLE SOURCE OF
+// TRUTH for the container runtime cwd (#133). The Agent SDK encodes the cwd into the
+// on-disk project-dir name (projectDirForCwd), so a dev-agent session written under one
+// cwd but resumed under another is orphaned by name ("No conversation found") — exactly
+// the failure that hit the product path when CANVAS_CWD moved in 5f53d3e. Three things
+// must resolve to this same path or dev-agent resume silently breaks:
+//   • DEV_AGENT_WORKFLOW_CMD's `cd` (dev-agent.ts) → the batch explore session's cwd
+//   • START's `cd` (sandbox-runtime.ts) → the interactive bridge's process.cwd()
+//   • CANVAS_CWD injected below → the bridge's `query({ resume })` cwd
+// All three derive from this constant, so they can't drift independently. The Dockerfile
+// `ENV CANVAS_CWD` is a matching image default; injecting it here makes this TS constant
+// authoritative at runtime.
+export const CANVAS_CONTAINER_CWD = '/app/agent-canvas/packages/canvas';
+
 // Pure — no @cloudflare/sandbox dependency, unlike sandbox-runtime.ts (which imports
 // this). That split matters for testability: sandbox-runtime.ts needs `cloudflare:workers`
 // (only present in the real Workers runtime), so a plain `bun test` importing it must
@@ -32,4 +46,9 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
   // 'default', which never matches the Inbox UI's query by the real Better Auth user.id,
   // so promoted items silently never appear. See the Env.CANVAS_USER doc comment.
   CANVAS_USER: env.CANVAS_USER ?? '',
+  // Single source of truth for the runtime cwd (#133): the bridge resumes dev-agent
+  // sessions with `cwd: CANVAS_CWD`, and the batch explore session runs under the same
+  // path (DEV_AGENT_WORKFLOW_CMD's cd) — both derive from CANVAS_CONTAINER_CWD so they
+  // encode to the same SDK project dir and can't drift to orphan a session's JSONL.
+  CANVAS_CWD: CANVAS_CONTAINER_CWD,
 });

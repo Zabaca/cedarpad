@@ -27,7 +27,10 @@ COPY packages/infra packages/infra
 RUN bun install --frozen-lockfile || bun install
 
 # The canvas package is the app root at runtime (vite + bridge + the agent's authored
-# components); the overlay watcher and vite read from here.
+# components); the overlay watcher and vite read from here. This is a matching image
+# default — the runtime authority is CANVAS_CONTAINER_CWD (worker/container-env.ts),
+# injected into the container env at spawn so the value can't drift (#133). Keep the two
+# in sync if this path ever moves.
 ENV CANVAS_CWD=/app/agent-canvas/packages/canvas
 
 # The canvas chat is a full Claude Code agent run with bypassPermissions (which
