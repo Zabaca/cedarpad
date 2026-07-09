@@ -1,5 +1,6 @@
 import type { Env } from './index.ts';
-import { CANVAS_CONTAINER_CWD } from './container-env.ts';
+import type { SandboxCoords } from './sandbox-resolver.ts';
+import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
 
 // The dev-agent runner (ADR-0007, PRD #51 slice #63) — PURE core. A SEPARATE sandbox
 // instance of the SAME product image, on its OWN sleep schedule, driving continuous dev
@@ -20,8 +21,29 @@ export const DEV_AGENT_SLEEP_AFTER = '2m';
 
 // Minimal seam over the sandbox stub so `runDevAgent` (and the scheduled dispatch) is
 // testable with a fake — the real `devAgentSandbox(env)` stub satisfies this structurally.
+// `setEnvVars` injects the batch run's env (below) BEFORE the exec; without it the exec
+// inherits only the Dockerfile ENV and dev-agent-run.ts throws (no DEV_AGENT_USER_ID/OAuth/Turso).
 export interface DevAgentRunner {
+  setEnvVars(env: Record<string, string>): Promise<void>;
   exec(command: string): Promise<{ exitCode: number; stdout: string }>;
+}
+
+// The dev-agent container's coords for the batch env (its own R2 prefix + workspace id). Mirrors
+// the interactive path's coordsForWorkspace('dev-agent') without importing it (that pulls the
+// @cloudflare/sandbox layer, which this pure module must not).
+const DEV_AGENT_COORDS: SandboxCoords = {
+  sandboxId: DEV_AGENT_SANDBOX_ID,
+  r2Prefix: 'workspaces/dev-agent/',
+  canvasWorkspace: 'dev-agent',
+};
+
+// The env the batch exec needs. containerEnv supplies OAuth/Turso/R2/CANVAS_WORKSPACE(=dev-agent)/
+// CANVAS_USER; DEV_AGENT_USER_ID (the owner the promoted Conversation is filed under — the
+// single-tenant CANVAS_USER) is the one var dev-agent-run.ts reads that containerEnv doesn't set.
+// The GitHub App token is NOT here: the batch (Explore → ask_human) opens no PR — that's the
+// interactive open_pr path (#96), which mints its own on the interactive boot.
+export function devAgentBatchEnv(env: Env): Record<string, string> {
+  return { ...containerEnv(env, DEV_AGENT_COORDS), DEV_AGENT_USER_ID: env.CANVAS_USER ?? '' };
 }
 
 // Coexistence, not replacement (ADR-0009 Tier 2 / #125). The dev-agent sandbox has TWO boot
@@ -46,10 +68,11 @@ export interface DevAgentRunner {
 export const DEV_AGENT_WORKFLOW_CMD =
   `cd ${CANVAS_CONTAINER_CWD} && bun run server/dev-agent-run.ts`;
 
-// #66 run: kick ONE scheduled workflow inside the container. The edge wakes the dev-agent
-// sandbox (dispatchDevAgentRun) then calls this; a non-zero exit is surfaced (thrown) so the
-// dispatcher rethrows it rather than silently swallowing a failed run.
-export async function runDevAgent(sandbox: DevAgentRunner): Promise<void> {
+// #66 run: kick ONE workflow inside the container. Injects the batch env (so dev-agent-run.ts sees
+// DEV_AGENT_USER_ID/OAuth/Turso) THEN execs. A non-zero exit is surfaced (thrown) so the caller
+// rethrows it rather than silently swallowing a failed run.
+export async function runDevAgent(sandbox: DevAgentRunner, env: Env): Promise<void> {
+  await sandbox.setEnvVars(devAgentBatchEnv(env));
   const res = await sandbox.exec(DEV_AGENT_WORKFLOW_CMD);
   console.log(`[dev-agent] workflow exit=${res.exitCode} out=${res.stdout.trim()}`);
   if (res.exitCode !== 0) throw new Error(`dev-agent workflow exited ${res.exitCode}: ${res.stdout.trim()}`);
@@ -60,7 +83,22 @@ export async function runDevAgent(sandbox: DevAgentRunner): Promise<void> {
 // index.ts so this pure module stays import-clean; tests pass a fake.
 export interface DevAgentSeam {
   sandbox: (env: Env) => DevAgentRunner;
-  run: (sandbox: DevAgentRunner) => Promise<void>;
+  run: (sandbox: DevAgentRunner, env: Env) => Promise<void>;
+}
+
+// The shared run core (cron AND manual trigger): wake the dev-agent sandbox, inject env, exec the
+// workflow. NO DEV_AGENT_ENABLED gate — that kill-switch is only about the daily CRON auto-firing
+// (see dispatchDevAgentRun). A manual trigger (Jobs UI / API) is an explicit user action, so it
+// runs regardless of the flag. A run that throws is surfaced (logged + rethrown), never swallowed,
+// and touches ONLY the dev-agent instance.
+export async function runDevAgentNow(env: Env, seam: DevAgentSeam): Promise<void> {
+  const sandbox = seam.sandbox(env);
+  try {
+    await seam.run(sandbox, env);
+  } catch (e: unknown) {
+    console.error(`[dev-agent] run failed: ${String((e as Error)?.stack ?? e)}`);
+    throw e;
+  }
 }
 
 // The cron handler's core, extracted so it's unit-testable without a live cron or
@@ -81,11 +119,5 @@ export async function dispatchDevAgentRun(
     return;
   }
   console.log(`[dev-agent] scheduled run — cron=${event.cron} at=${new Date(event.scheduledTime).toISOString()}`);
-  const sandbox = seam.sandbox(env);
-  try {
-    await seam.run(sandbox);
-  } catch (e: unknown) {
-    console.error(`[dev-agent] run failed: ${String((e as Error)?.stack ?? e)}`);
-    throw e;
-  }
+  await runDevAgentNow(env, seam);
 }

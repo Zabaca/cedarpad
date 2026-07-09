@@ -85,6 +85,30 @@ const env = {
 } as unknown as Parameters<typeof worker.fetch>[1];
 const GET = (path: string) => worker.fetch(new Request(`https://poc.cedarpad.com${path}`), env);
 
+describe('POST /api/jobs/dev-agent/run — manual Jobs trigger', () => {
+  test('accepts (202) and dispatches the run via waitUntil, without the DEV_AGENT_ENABLED gate', async () => {
+    let waited = false;
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => {
+        waited = true;
+        void (p as Promise<unknown>).catch(() => {}); // the mocked sandbox rejects; swallow it
+      },
+    } as unknown as ExecutionContext;
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', { method: 'POST' }),
+      env, // no DEV_AGENT_ENABLED set — a manual trigger runs anyway
+      ctx,
+    );
+    expect(res.status).toBe(202);
+    expect(waited).toBe(true);
+  });
+
+  test('rejects a non-POST (405)', async () => {
+    const res = await GET('/api/jobs/dev-agent/run');
+    expect(res.status).toBe(405);
+  });
+});
+
 beforeEach(() => {
   session = { user: { id: 'u_1' } };
   workspaceRecord = null;
