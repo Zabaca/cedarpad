@@ -77,7 +77,12 @@ export type BumpShared = (module: string) => number;
  * gets an `ask_human` tool; absent (canvas-only contexts, tests) ⇒ the tool is omitted, unchanged. */
 export type AskHuman = (input: { summary: string; question: string }) => Promise<string>;
 
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, askHuman?: AskHuman) {
+/** The `open_pr` tool body (bridge binds it on the dev-agent runner to `openDevAgentPr`). Present ⇒
+ * the agent gets an `open_pr` tool that commits its worktree + opens a PR; absent (every product
+ * chat, tests) ⇒ the tool is omitted, unchanged. ADR-0009 Tier 2 / #126. */
+export type OpenPr = (input: { title: string; body: string; commitMessage: string }) => Promise<string>;
+
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, askHuman?: AskHuman, openPr?: OpenPr) {
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -297,6 +302,25 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
             ),
           ]
         : []),
+      // Dev-agent PR (ADR-0009 Tier 2 / #126): present only when the bridge injected the open_pr
+      // seam (the dev-agent runner's chat context). The agent makes its edits during the chat,
+      // then calls this when aligned with the human — it commits the runner's worktree and opens
+      // the PR. Supplies title/body/commit message from the thread it is in; the git auth/branch
+      // are the runner's (dark until #96). Every product chat omits this tool, unchanged.
+      ...(openPr
+        ? [
+            tool(
+              'open_pr',
+              'Open a pull request for the changes you have made in this worktree during this conversation. Call it ONCE you and the human are aligned on the change: it stages + commits your edits and opens the PR. Supply the PR title, body (markdown), and commit message from this thread; branching, push, and auth are handled for you. Returns the PR url (or tells you the tree was clean — make your edits first, then call it).',
+              {
+                title: z.string().describe('PR title.'),
+                body: z.string().describe('PR description (markdown).'),
+                commitMessage: z.string().describe('Git commit message for your staged changes.'),
+              },
+              async ({ title, body, commitMessage }) => result({ text: await openPr({ title, body, commitMessage }) }),
+            ),
+          ]
+        : []),
     ],
   });
 }
@@ -367,6 +391,7 @@ export async function* runChat(
   canvasId: string = 'default',
   bumpShared?: BumpShared,
   inbox?: Omit<AskHumanDeps, 'getSessionId'>,
+  openPr?: OpenPr,
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn; ask_human reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
@@ -374,7 +399,7 @@ export async function* runChat(
   const askHumanSeam = inbox
     ? (input: { summary: string; question: string }) => askHuman({ ...inbox, getSessionId: () => acc.sessionId }, input)
     : undefined;
-  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, askHumanSeam);
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, askHumanSeam, openPr);
 
   // The canvas chat is a full Claude Code agent: all built-in tools (Bash, Read, Write,
   // Edit, Web*, Task, ...) plus the canvas MCP server, auto-approved.

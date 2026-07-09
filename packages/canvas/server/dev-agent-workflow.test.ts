@@ -4,11 +4,11 @@ import type { Candidate } from './dev-agent-gate.ts';
 import type { PrRequest, Worktree } from './repo-worktree.ts';
 import {
   DEV_AGENT_WORKSPACE_ID,
-  type ApprovalDeps,
+  type OpenPrDeps,
   type WorkflowDeps,
   isDevAgentConversation,
+  openDevAgentPr,
   parseCandidates,
-  runDevAgentApproval,
   runDevAgentWorkflow,
   summarizeCandidates,
 } from './dev-agent-workflow.ts';
@@ -125,88 +125,72 @@ describe('parseCandidates — explore boundary contract', () => {
   });
 });
 
-// ── resume half: approval → PR ────────────────────────────────────────────────────────
+// ── PR half: the `open_pr` tool ────────────────────────────────────────────────────────
 
 function makeFakeGit() {
   const calls: string[] = [];
   const wt: Worktree = { path: '/fake/wt', branch: 'dev-agent/improve-arch-run1', hub: '/fake/hub' };
-  let opened: { req: PrRequest } | null = null;
+  let opened: { wt: Worktree; req: PrRequest } | null = null;
+  let committedMessage: string | null = null;
   const git = {
-    prepareWorktree: async (branch: string) => {
-      calls.push('prepareWorktree');
-      return { ...wt, branch };
-    },
-    commit: async (_wt: Worktree, _message: string) => {
+    commit: async (_wt: Worktree, message: string) => {
       calls.push('commit');
+      committedMessage = message;
       return true;
     },
-    pushAndOpenPR: async (_wt: Worktree, req: PrRequest) => {
+    pushAndOpenPR: async (w: Worktree, req: PrRequest) => {
       calls.push('pushAndOpenPR');
-      opened = { req };
+      opened = { wt: w, req };
       return 'https://github.com/Zabaca/cedarpad/pull/999';
     },
-    cleanup: async (_wt: Worktree) => {
-      calls.push('cleanup');
+  };
+  return {
+    git,
+    wt,
+    calls,
+    get opened() {
+      return opened;
+    },
+    get committedMessage() {
+      return committedMessage;
     },
   };
-  return { git, calls, get opened() { return opened; } };
 }
 
-describe('runDevAgentApproval — approval drives a PR open', () => {
-  test('drives prepare → commit → pushAndOpenPR exactly once, then cleanup', async () => {
+describe('openDevAgentPr — the open_pr tool drives commit → PR on the runner worktree', () => {
+  test('commits the runner worktree, then pushes+opens the PR with the agent-supplied fields', async () => {
     const fake = makeFakeGit();
-    const deps: ApprovalDeps = {
-      git: fake.git,
-      branch: 'dev-agent/improve-arch-run1',
-      applyRefactor: async (_path, _msg) => ({
-        commitMessage: 'refactor: deepen the Inbox promote protocol',
-        pr: { title: 'Deepen the Inbox promote protocol', body: 'as discussed' },
-      }),
-    };
+    const deps: OpenPrDeps = { git: fake.git, worktree: fake.wt };
 
-    const url = await runDevAgentApproval(deps, 'go with #1');
+    const url = await openDevAgentPr(deps, {
+      title: 'Deepen the Inbox promote protocol',
+      body: 'as discussed in the thread',
+      commitMessage: 'refactor: deepen the Inbox promote protocol',
+    });
 
     expect(url).toBe('https://github.com/Zabaca/cedarpad/pull/999');
-    expect(fake.calls).toEqual(['prepareWorktree', 'commit', 'pushAndOpenPR', 'cleanup']);
-    expect(fake.calls.filter((c) => c === 'pushAndOpenPR')).toHaveLength(1);
-    expect(fake.opened!.req.title).toBe('Deepen the Inbox promote protocol');
+    // No prepare/cleanup: the tool acts on the runner's OWN live worktree, in order.
+    expect(fake.calls).toEqual(['commit', 'pushAndOpenPR']);
+    expect(fake.committedMessage).toBe('refactor: deepen the Inbox promote protocol');
+    expect(fake.opened!.wt).toBe(fake.wt);
+    expect(fake.opened!.req).toEqual({ title: 'Deepen the Inbox promote protocol', body: 'as discussed in the thread' });
   });
 
-  test('no changes (clean tree) → no PR, still cleans up', async () => {
+  test('clean tree (nothing to commit) → no PR, returns null', async () => {
     const fake = makeFakeGit();
     fake.git.commit = async () => false; // nothing to commit
-    const deps: ApprovalDeps = {
-      git: fake.git,
-      branch: 'dev-agent/x-run1',
-      applyRefactor: async () => ({ commitMessage: 'noop', pr: { title: 't', body: 'b' } }),
-    };
+    const deps: OpenPrDeps = { git: fake.git, worktree: fake.wt };
 
-    const url = await runDevAgentApproval(deps, 'never mind');
+    const url = await openDevAgentPr(deps, { title: 't', body: 'b', commitMessage: 'noop' });
 
     expect(url).toBeNull();
-    expect(fake.calls).toContain('cleanup');
     expect(fake.calls).not.toContain('pushAndOpenPR');
-  });
-
-  test('cleanup runs even if the PR open throws', async () => {
-    const fake = makeFakeGit();
-    fake.git.pushAndOpenPR = async () => {
-      throw new Error('gh exploded');
-    };
-    const deps: ApprovalDeps = {
-      git: fake.git,
-      branch: 'dev-agent/x-run1',
-      applyRefactor: async () => ({ commitMessage: 'm', pr: { title: 't', body: 'b' } }),
-    };
-
-    await expect(runDevAgentApproval(deps, 'go')).rejects.toThrow('gh exploded');
-    expect(fake.calls).toContain('cleanup');
   });
 });
 
 // ── routing ───────────────────────────────────────────────────────────────────────────
 
-describe('isDevAgentConversation — resume routing', () => {
+describe('isDevAgentConversation — dev-agent routing predicate', () => {
   test('true for a dev-agent-tagged Conversation, false otherwise', () => {
     expect(isDevAgentConversation({ workspaceId: DEV_AGENT_WORKSPACE_ID })).toBe(true);
     expect(isDevAgentConversation({ workspaceId: 'cs_workspace_abc' })).toBe(false);
