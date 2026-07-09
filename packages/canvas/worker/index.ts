@@ -62,6 +62,14 @@ export interface Env {
   // Kill-switch for the scheduled dev-agent run (#63/#66). Default off ("false"); the cron
   // fires but no-ops until repo-connection (#96) lands. Flip to "true" to enable.
   DEV_AGENT_ENABLED?: string;
+  // GitHub App auth for the dev-agent (#96). The edge mints short-lived, repo-scoped
+  // installation tokens from these (worker/github-app.ts) for clone/push/PR; the private key
+  // stays at the edge and is NEVER forwarded into the container (the RCE boundary, ADR-0008).
+  // From workerSecrets (provisioned in secrets.yaml). Unset ⇒ the dev-agent boots without a
+  // git token and the push/PR path surfaces its own clear error.
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_INSTALLATION_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
   // The single-tenant owner of everything the bridge files under a user id (Inbox
   // Conversations via `ask_human`, the dev-agent's promoted items): must be this
   // deployment's Better Auth user.id, NOT an email or display name — the Inbox query

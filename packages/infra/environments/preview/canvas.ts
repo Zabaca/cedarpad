@@ -50,9 +50,13 @@ export default cloudflareModule.instance({
       'TURSO_KEY',
       'VOYAGE_API_KEY',
       'BETTER_AUTH_SECRET',
-      // Dev-agent GitHub auth is NOT a required secret yet — gated off (DEV_AGENT_ENABLED=false);
-      // repo-connection is a GitHub App (#96) that adds its own credentials here. Removed so
-      // `zbc apply` doesn't require an unprovisioned secret.
+      // Dev-agent GitHub App auth (#96). The edge mints short-lived, repo-scoped
+      // installation tokens from these; the private key stays at the edge and is NEVER
+      // forwarded into the container (the RCE boundary, ADR-0008). Provisioned in
+      // preview/secrets.yaml.
+      'GITHUB_APP_ID',
+      'GITHUB_APP_INSTALLATION_ID',
+      'GITHUB_APP_PRIVATE_KEY',
     ],
     // Single always-warm DO-bound container; roll immediately so a redeployed
     // image takes effect (see production canvas.ts).
