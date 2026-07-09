@@ -17,7 +17,7 @@ import { singleFlight } from './single-flight.ts';
 export const DEV_AGENT_SANDBOX_ID = 'dev-agent';
 
 // Minimal seam over the sandbox stub so `runDevAgent` (and the scheduled dispatch) is
-// testable with a fake — the real `devAgentSandbox(env)` stub satisfies this structurally.
+// testable with a fake — the real `sandboxFor(env, …)` stub satisfies this structurally.
 // `setEnvVars` injects the batch run's env (below) BEFORE the exec; without it the exec
 // inherits only the Dockerfile ENV and dev-agent-run.ts throws (no DEV_AGENT_USER_ID/OAuth/Turso).
 export interface DevAgentRunner {
@@ -64,7 +64,7 @@ export async function runDevAgent(sandbox: DevAgentRunner, env: Env): Promise<vo
 }
 
 // The dispatch seam: which sandbox to wake, and what run to kick. The default seam
-// (wiring the real `devAgentSandbox` + `runDevAgent`) is applied at the call site in
+// (wiring the real warm-container stub + `runDevAgent`) is applied at the call site in
 // index.ts so this pure module stays import-clean; tests pass a fake.
 export interface DevAgentSeam {
   sandbox: (env: Env) => DevAgentRunner;

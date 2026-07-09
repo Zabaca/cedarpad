@@ -88,7 +88,7 @@ export async function handleInboxBridge(
 
   // ADR-0010: a dev-agent Conversation's SEND — and only a send — carries a freshly-minted,
   // ~1h, cedarpad-scoped git token as a request header; the bridge arms `open_pr` for exactly
-  // that turn (server/bridge.ts buildDevAgentOpenPr). The App private key never leaves the
+  // that turn (server/bridge.ts prepareDevAgentTurn). The App private key never leaves the
   // edge (ADR-0008); the token is per-turn, never env-injected, never persisted. Best-effort:
   // a failed mint (null) proxies the send token-less rather than blocking the reply.
   if (isChatSend && conv.workspaceId === DEV_AGENT_SANDBOX_ID) {

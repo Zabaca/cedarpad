@@ -388,7 +388,7 @@ export async function prepareDevAgentTurn(
  * The turn runs against the session for `canvasId` (the request's active canvas, #79) so the
  * agent reads/draws on the canvas the human is on; absent/unknown ⇒ the default, unchanged.
  * `devAgentGitToken` (edge-minted, per dev-agent send) arms the `open_pr` tool for THIS turn
- * only — see buildDevAgentOpenPr. */
+ * only — see prepareDevAgentTurn. */
 function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, canvasId: string = DEFAULT_CANVAS_ID, devAgentGitToken?: string): void {
   const ac = new AbortController();
   aborters.set(chatId, ac);
