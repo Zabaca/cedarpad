@@ -7,7 +7,6 @@ import { containerEnv } from './container-env.ts';
 import { projectDirForCwd } from '../server/transcript-r2.ts';
 import {
   DEV_AGENT_SANDBOX_ID,
-  DEV_AGENT_SLEEP_AFTER,
   DEV_AGENT_WORKFLOW_CMD,
   type DevAgentRunner,
   type DevAgentSeam,
@@ -18,7 +17,10 @@ import {
 } from './dev-agent.ts';
 import type { Env } from './index.ts';
 
-describe('dev-agent sandbox id is distinct from every workspace container', () => {
+// ADR-0010: 'dev-agent' is a LOGICAL Conversation tag now, not a container key — but its
+// disjointness from every product workspace id is still load-bearing (the edge mint gate and
+// the routing predicate both compare against it), so pin that it can never collide.
+describe('the dev-agent tag is distinct from every product workspace id', () => {
   test('differs from the legacy/default product container', () => {
     expect(DEV_AGENT_SANDBOX_ID).not.toBe(LEGACY_SANDBOX_ID);
     expect(DEV_AGENT_SANDBOX_ID).not.toBe(resolve({ id: 'default', legacy: true }).sandboxId);
@@ -26,15 +28,11 @@ describe('dev-agent sandbox id is distinct from every workspace container', () =
 
   test('differs from any derived per-workspace container', () => {
     for (const wsId of ['default', 'ws_abc123', 'dev-agent', 'canvas']) {
-      // Derived ids are always `workspace-<id>`, so the flat `dev-agent` key can never
+      // Derived ids are always `workspace-<id>`, so the flat `dev-agent` tag can never
       // collide even if a workspace were literally named "dev-agent".
       expect(DEV_AGENT_SANDBOX_ID).not.toBe(deriveSandboxId(wsId));
       expect(DEV_AGENT_SANDBOX_ID).not.toBe(resolve({ id: wsId }).sandboxId);
     }
-  });
-
-  test('has its OWN sleep schedule, shorter than the product 5m', () => {
-    expect(DEV_AGENT_SLEEP_AFTER).toBe('2m');
   });
 });
 
@@ -48,7 +46,9 @@ describe('dev-agent sandbox id is distinct from every workspace container', () =
 //   • bridge resume cwd — the CANVAS_CWD injected into the container env (bridge.ts reads
 //     process.env.CANVAS_CWD for `query({ resume, cwd })`).
 describe('#133 — explore cwd and bridge cwd resolve to the same SDK project dir', () => {
-  const coords: SandboxCoords = { sandboxId: 'dev-agent', r2Prefix: 'workspaces/dev-agent/', canvasWorkspace: 'dev-agent' };
+  // The warm default container's coords — where BOTH the batch explore and the interactive
+  // resume run now (ADR-0010).
+  const coords: SandboxCoords = { sandboxId: 'canvas', r2Prefix: 'workspaces/default/', canvasWorkspace: 'default' };
 
   test('DEV_AGENT_WORKFLOW_CMD cd == injected CANVAS_CWD == same projectDirForCwd', () => {
     const exploreCwd = /^cd (\S+) &&/.exec(DEV_AGENT_WORKFLOW_CMD)?.[1];
@@ -66,8 +66,53 @@ describe('devAgentBatchEnv — the env the batch exec needs', () => {
     const ev = devAgentBatchEnv({ CANVAS_USER: 'user_owner', CLAUDE_CODE_OAUTH_TOKEN: 'tok', TURSO_URL: 'u', TURSO_KEY: 'k' } as Env);
     expect(ev.DEV_AGENT_USER_ID).toBe('user_owner'); // the owner the promoted Conversation is filed under
     expect(ev.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok'); // the SDK query needs it
-    expect(ev.CANVAS_WORKSPACE).toBe('dev-agent'); // filed under the dev-agent workspace, not 'default'
+    // ADR-0010: the batch runs ON the warm default container now, so its env matches that
+    // container's coords — NOT a separate 'dev-agent' workspace (the Conversation keeps the
+    // 'dev-agent' tag via DEV_AGENT_USER_ID/the workflow, not via container coords).
+    expect(ev.CANVAS_WORKSPACE).toBe('default');
     expect(ev.TURSO_URL).toBe('u'); // promotions reach the real remote Turso, not an ephemeral file
+  });
+});
+
+describe('runDevAgentNow — single-flight: concurrent triggers collapse to ONE run (ADR-0010)', () => {
+  const env = { CANVAS_USER: 'u' } as Env;
+
+  test('two concurrent triggers share one in-flight run; a later trigger runs fresh', async () => {
+    let runs = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const seam: DevAgentSeam = {
+      sandbox: okRunner,
+      run: async () => {
+        runs += 1;
+        await gate;
+      },
+    };
+
+    const p1 = runDevAgentNow(env, seam);
+    const p2 = runDevAgentNow(env, seam); // cron + "Run now" clicks while one is in flight
+    expect(runs).toBe(1); // collapsed — no pile-up of concurrent batch execs
+    release();
+    await Promise.all([p1, p2]);
+
+    await runDevAgentNow(env, seam); // after settle, the NEXT trigger starts a fresh run
+    expect(runs).toBe(2);
+  });
+
+  test('a failed run clears the flight — the next trigger is not stuck on a rejected promise', async () => {
+    let calls = 0;
+    const seam: DevAgentSeam = {
+      sandbox: okRunner,
+      run: async () => {
+        calls += 1;
+        throw new Error('boom');
+      },
+    };
+    await expect(runDevAgentNow(env, seam)).rejects.toThrow('boom');
+    await expect(runDevAgentNow(env, seam)).rejects.toThrow('boom');
+    expect(calls).toBe(2);
   });
 });
 

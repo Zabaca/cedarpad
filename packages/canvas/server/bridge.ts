@@ -23,8 +23,8 @@ import { loadSessionTranscript } from './session-transcript.ts';
 import { type Notify, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { DEV_AGENT_WORKSPACE_ID, openDevAgentPr } from './dev-agent-workflow.ts';
-import { backup as backupTranscript } from './transcript-r2.ts';
-import { type CanvasImage, type ChatEvent, parseCanvasImages, runChat } from './agent.ts';
+import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
+import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
 import { adoptSharedComponent, promoteComponent } from './components.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
@@ -113,12 +113,6 @@ const sse = (data: unknown) => enc.encode(`data: ${JSON.stringify(data)}\n\n`);
 // canvasId in the registry below. Sessions are built lazily on first access; the
 // data-loss guard refuses to overwrite a saved canvas with empty if its read failed.
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
-// This bridge IS the dev-agent runner iff it serves the dev-agent workspace (ADR-0009 Tier 2 /
-// #126). Only then does a chat turn get the `open_pr` tool — every product bridge omits it. The
-// dev-agent's interactive bridge boots with CANVAS_WORKSPACE=dev-agent (worker/inbox-bridge.ts
-// coordsForWorkspace → container-env), so this string compare is the same disjointness the edge
-// proxy routes on.
-const IS_DEV_AGENT_BRIDGE = WORKSPACE === DEV_AGENT_WORKSPACE_ID;
 const DEFAULT_CANVAS_ID = process.env.CANVAS_ID ?? 'default';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
 // Capture the raw backend too: the Inbox transcript backup/restore (#60/#61) keys blobs by
@@ -349,10 +343,53 @@ function chatStream(): Response {
 // (Esc / Stop in the UI). One turn per chat at a time, so one aborter per chat.
 const aborters = new Map<string, AbortController>();
 
+/** The dev-agent turn context (ADR-0010): armed iff the edge minted a git token for this
+ * send — which it does only for a dev-agent Conversation. The token rides the request
+ * (never env, never persisted), so "dev-agent-ness" is a property of the Conversation, not
+ * of the container this bridge runs in. No token ⇒ undefined — every product turn stays
+ * exactly as it was.
+ *
+ * The turn runs against a PREPARED worktree, never the live tree (slice 6): the baked image
+ * is not even a git repo, and CANVAS_CWD is the vite-watched app tree a commit must never
+ * touch. `ensureWorktree` clones the hub under `${CANVAS_CWD}/.dev-agent` and adds (or, on a
+ * later turn of the same chat, reuses — edits intact) a worktree off origin/main on a branch
+ * keyed by the dev-agent tag + chatId. The SDK turn gets `cwd = worktree.path`, so the
+ * agent's edits land in the checkout `open_pr` commits; and since the SDK's resume is
+ * cwd-scoped (#133), the session's JSONL is adopted (moved) into the worktree's project dir
+ * first. The manager gets the token via config so nothing reads process.env. */
+export interface DevAgentTurn {
+  openPr: OpenPr;
+  cwd: string;
+}
+export async function prepareDevAgentTurn(
+  token: string | undefined,
+  chatId: string,
+  sessionId: string | null,
+  // Default-parameter test seam: production always uses the real git manager + adopt.
+  deps: { manager: typeof createRepoWorktreeManager; adopt: typeof adoptSession } = {
+    manager: createRepoWorktreeManager,
+    adopt: adoptSession,
+  },
+): Promise<DevAgentTurn | undefined> {
+  if (!token) return undefined;
+  const git = deps.manager({ repo: DEFAULT_REPO, workspaceRoot: `${CANVAS_CWD}/.dev-agent`, token });
+  const worktree = await git.ensureWorktree(branchName(DEV_AGENT_WORKSPACE_ID, chatId));
+  if (sessionId) await deps.adopt(SESSIONS_DIR, sessionId, worktree.path);
+  const openPr: OpenPr = async (input) => {
+    const url = await openDevAgentPr({ git, worktree }, input);
+    return url
+      ? `Opened PR: ${url}`
+      : 'Nothing to commit — the worktree is clean. Make your edits first, then call open_pr again.';
+  };
+  return { openPr, cwd: worktree.path };
+}
+
 /** Run one turn for a chat and broadcast its events. Fire-and-forget (output is the SSE).
  * The turn runs against the session for `canvasId` (the request's active canvas, #79) so the
- * agent reads/draws on the canvas the human is on; absent/unknown ⇒ the default, unchanged. */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, canvasId: string = DEFAULT_CANVAS_ID): void {
+ * agent reads/draws on the canvas the human is on; absent/unknown ⇒ the default, unchanged.
+ * `devAgentGitToken` (edge-minted, per dev-agent send) arms the `open_pr` tool for THIS turn
+ * only — see prepareDevAgentTurn. */
+function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, canvasId: string = DEFAULT_CANVAS_ID, devAgentGitToken?: string): void {
   const ac = new AbortController();
   aborters.set(chatId, ac);
   void (async () => {
@@ -363,22 +400,11 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
       // that canvas's SSE subscribers (per-canvas isolation, exactly how reads already resolve).
       const session = await canvasSessions.get(canvasId);
       const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: WORKSPACE, notify };
-      // The dev-agent runner's chat context gets an `open_pr` tool (#126): the agent edits its
-      // worktree during the chat, then calls open_pr when aligned with the human — it commits
-      // the runner's OWN checkout (CANVAS_CWD) + opens the PR, reusing the #64 git internals.
-      // git auth + branch are the runner's; createRepoWorktreeManager throws without the token
-      // so it can never silently no-op — exercisable end-to-end only once #96 provisions them.
-      const openPr = IS_DEV_AGENT_BRIDGE
-        ? async (input: { title: string; body: string; commitMessage: string }) => {
-            const git = createRepoWorktreeManager({ repo: DEFAULT_REPO, workspaceRoot: `${CANVAS_CWD}/.dev-agent` });
-            const worktree = { path: CANVAS_CWD, branch: branchName(WORKSPACE, chatId), hub: `${CANVAS_CWD}/.dev-agent/hub` };
-            const url = await openDevAgentPr({ git, worktree }, input);
-            return url
-              ? `Opened PR: ${url}`
-              : 'Nothing to commit — the worktree is clean. Make your edits first, then call open_pr again.';
-          }
-        : undefined;
-      for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox, openPr)) {
+      // A dev-agent send (token present) runs in its prepared worktree with open_pr armed; a
+      // prepare failure (clone/auth) surfaces through the catch below as the turn's error —
+      // better a visible failure than an agent silently editing the live app tree.
+      const devAgent = await prepareDevAgentTurn(devAgentGitToken, chatId, sessionId);
+      for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox, devAgent?.openPr, devAgent?.cwd)) {
         if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
         broadcastChat(chatId, ev satisfies ChatEvent);
       }
@@ -599,7 +625,10 @@ export async function handleRequest(req: Request): Promise<Response> {
       const effort = meta.effort && meta.effort !== 'default' ? meta.effort : undefined; // 'default' = let the model decide
       // Route the turn to the request's active canvas (#79): the agent draws on the canvas the
       // human is on (x-canvas-id / ?canvas), exactly how the canvas reads/SSE already resolve.
-      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort, canvasIdFrom(req, url));
+      // The edge-minted dev-agent git token (ADR-0010) rides a request header — set by the edge
+      // chat proxy on a dev-agent Conversation's send only — and arms open_pr for this turn.
+      const devAgentGitToken = req.headers.get('x-dev-agent-git-token') ?? undefined;
+      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort, canvasIdFrom(req, url), devAgentGitToken);
       return json({ ok: true }, 202);
     }
     // POST /api/chat/:id/config — update server-owned ChatMeta (model/effort/forkNext),

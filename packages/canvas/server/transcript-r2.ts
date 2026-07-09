@@ -10,7 +10,8 @@
 // so both sides agree: the container passes its Bun-S3 `BlobBackend`; the edge worker (#62)
 // implements `BlobGetter` against its own R2 access and reads with just the sessionId.
 
-import { join } from 'node:path';
+import { mkdir, rename, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 import type { ChatEvent } from '../shared/chat-wire.ts';
 import { projectJsonl } from './session-transcript.ts';
@@ -58,6 +59,31 @@ export async function backup(putter: BlobPutter, projectsDir: string, sessionId:
   if (bytes === null) return false;
   await putter.put(transcriptKey(sessionId), bytes);
   return true;
+}
+
+/** ADR-0010 slice 6: MOVE a session's JSONL into the project dir for `cwd`, so
+ * `query({ resume, cwd })` finds it once the dev-agent turn's cwd moves to its prepared
+ * worktree (the SDK resume is cwd-scoped, #133 — the batch explore session was written under
+ * CANVAS_CWD, and a cold-boot restore re-lands it there). A move, never a copy: the
+ * transcript loader concatenates every glob match, so a duplicate would double history.
+ * Idempotent, dest-wins: once turns run under the worktree the SDK appends at dest, so any
+ * copy elsewhere is a stale restore artifact (⊆ dest at its last backup) and is culled.
+ * Returns the dest path, or null when the session has no JSONL anywhere (a fresh session). */
+export async function adoptSession(projectsDir: string, sessionId: string, cwd: string): Promise<string | null> {
+  const dest = join(projectsDir, projectDirForCwd(cwd), `${sessionId}.jsonl`);
+  const found: string[] = [];
+  const glob = new Bun.Glob(`**/${sessionId}.jsonl`);
+  for await (const path of glob.scan({ cwd: projectsDir, absolute: true })) found.push(path);
+  if (found.length === 0) return null;
+
+  const others = found.filter((p) => p !== dest);
+  if (others.length === found.length) {
+    // Not home yet: move the (single, in practice) copy to dest.
+    await mkdir(dirname(dest), { recursive: true });
+    await rename(others.shift()!, dest);
+  }
+  for (const stale of others) await rm(stale, { force: true });
+  return dest;
 }
 
 /** Container-side: pull a session's JSONL from R2 back onto the runner FS at the exact path

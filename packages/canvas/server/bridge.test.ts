@@ -11,10 +11,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { chatClients, handleRequest, setChatTurnDispatcher, webPocDb } from './bridge.ts';
+import { chatClients, handleRequest, prepareDevAgentTurn, setChatTurnDispatcher, webPocDb } from './bridge.ts';
 import { resumeConversation } from './inbox.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { DEV_AGENT_WORKSPACE_ID } from './dev-agent-workflow.ts';
+import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 
 const sendReq = (chatId: string, body: unknown = { message: 'hi' }): Request =>
   new Request(`http://localhost/api/chat/${encodeURIComponent(chatId)}/send`, {
@@ -77,6 +78,102 @@ describe('/api/chat/:id/send: subscribe-before-send (425)', () => {
 
     expect(res.status).toBe(202);
     expect(dispatched).toEqual([{ chatId: 'chat_img', message: 'see this', images }]);
+  });
+});
+
+// The per-conversation open_pr gate (ADR-0010): "dev-agent-ness" is a property of the
+// Conversation, not the container. The edge mints a short-lived repo-scoped token per
+// dev-agent send and attaches it as a request header; the bridge threads it into the turn
+// so ONLY that turn gets the open_pr tool. No header ⇒ no token ⇒ no open_pr — the exact
+// per-container IS_DEV_AGENT_BRIDGE gate this replaces.
+describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispatched turn', () => {
+  let restore: () => void = () => {};
+  let dispatched: Array<{ chatId: string; devAgentGitToken?: string }> = [];
+
+  beforeEach(() => {
+    dispatched = [];
+    chatClients.add(fakeSubscriber());
+    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, devAgentGitToken) => {
+      dispatched.push({ chatId, devAgentGitToken });
+    });
+  });
+
+  afterEach(() => {
+    restore();
+    for (const c of [...chatClients]) chatClients.delete(c);
+  });
+
+  test('a send WITH the header dispatches the turn carrying the token', async () => {
+    const req = new Request('http://localhost/api/chat/chat_da/send', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-dev-agent-git-token': 'ghs_minted' },
+      body: JSON.stringify({ message: 'grill me' }),
+    });
+
+    const res = await handleRequest(req);
+
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'chat_da', devAgentGitToken: 'ghs_minted' }]);
+  });
+
+  test('a send WITHOUT the header dispatches with undefined (product sends never see a token)', async () => {
+    const res = await handleRequest(sendReq('chat_plain'));
+
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'chat_plain', devAgentGitToken: undefined }]);
+  });
+});
+
+describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-worktree cwd (ADR-0010 slice 6)', () => {
+  test('no token ⇒ undefined — the turn gets NO open_pr tool and keeps the default cwd', async () => {
+    expect(await prepareDevAgentTurn(undefined, 'chat_1', 'sess_1')).toBeUndefined();
+  });
+
+  test('a token ⇒ the per-chat worktree is ensured, the session JSONL adopted to it, and cwd = the worktree', async () => {
+    const ensured: string[] = [];
+    const adopted: Array<{ sessionId: string; cwd: string }> = [];
+    const worktree = { path: '/wt/dev-agent-chat-1', branch: branchName(DEV_AGENT_WORKSPACE_ID, 'chat_1'), hub: '/wt/hub' };
+    const fakeManager = (() => ({
+      ensureWorktree: async (branch: string) => {
+        ensured.push(branch);
+        return worktree;
+      },
+    })) as unknown as typeof createRepoWorktreeManager;
+
+    const turn = await prepareDevAgentTurn('ghs_minted', 'chat_1', 'sess_1', {
+      manager: fakeManager,
+      adopt: async (_dir, sessionId, cwd) => {
+        adopted.push({ sessionId, cwd });
+        return null;
+      },
+    });
+
+    // The worktree is keyed by the dev-agent tag + chatId — deterministic per conversation,
+    // so every turn of one grill flow lands in the same tree.
+    expect(ensured).toEqual([branchName(DEV_AGENT_WORKSPACE_ID, 'chat_1')]);
+    // The SDK resume is cwd-scoped (#133): the session JSONL must move to the worktree's dir.
+    expect(adopted).toEqual([{ sessionId: 'sess_1', cwd: worktree.path }]);
+    // The SDK turn runs IN the worktree — edits land there, never in the live app tree.
+    expect(turn!.cwd).toBe(worktree.path);
+    expect(typeof turn!.openPr).toBe('function');
+  });
+
+  test('a fresh session (null) adopts nothing — there is no JSONL yet', async () => {
+    const adopted: string[] = [];
+    const fakeManager = (() => ({
+      ensureWorktree: async (branch: string) => ({ path: '/wt/x', branch, hub: '/wt/hub' }),
+    })) as unknown as typeof createRepoWorktreeManager;
+
+    const turn = await prepareDevAgentTurn('ghs_minted', 'chat_2', null, {
+      manager: fakeManager,
+      adopt: async (_dir, sessionId) => {
+        adopted.push(sessionId);
+        return null;
+      },
+    });
+
+    expect(adopted).toEqual([]);
+    expect(turn!.cwd).toBe('/wt/x');
   });
 });
 

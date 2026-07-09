@@ -3,8 +3,9 @@
 Status: accepted. Amends the Inbox transport described in root [CONTEXT.md](../../CONTEXT.md)
 (supersedes the "Inbox UI renders history from the R2 JSONL while runners sleep" storage
 note) and the dev-agent reply path in `packages/canvas/server/bridge.ts`. Target model;
-Tier 1 built now, Tier 2 (dev-agent interactive bridge) built alongside but dark until the
-dev-agent is enabled (#96).
+Tier 1 built now. Tier 2 (a dev-agent-sandbox interactive bridge) is revised by
+[ADR-0010](./0010-dev-agent-is-a-role-not-a-container.md): the warm workspace container
+serves dev-agent Conversations, so no separate bridge exists.
 
 ## Decision
 
@@ -66,9 +67,10 @@ then a faithful-but-limited React port in PRD #103 slice #108).
 - **Opening an Inbox Conversation incurs container cold-boot latency** (seconds, up to ~a
   minute after a long sleep). Accepted: fidelity over instant-but-fake. The list's last-message
   preview covers "what did it say" without a wake.
-- **The dev-agent sandbox must run the interactive bridge** (SSE multiplexer + resume), not just
-  the batch workflow — a real infra lift, and it can only be exercised end-to-end once the
-  dev-agent is enabled (**#96**). Built now, dark until then.
+- ~~**The dev-agent sandbox must run the interactive bridge** (SSE multiplexer + resume), not just
+  the batch workflow.~~ Revised by [ADR-0010](./0010-dev-agent-is-a-role-not-a-container.md): there
+  is no dev-agent sandbox — the **warm workspace container's bridge serves dev-agent
+  Conversations** like any other, so Tier 2 needs no separate interactive-bridge lift.
 - **A session homed as both a canvas chat and an Inbox Conversation** becomes two live views of
   one bridge stream (same `chatId`) — auto-consistent by construction, not by syncing.
 - `worker/inbox.ts`'s edge R2 read (`GET /api/inbox/:id` via `edgeBlobGetter`) stops being the

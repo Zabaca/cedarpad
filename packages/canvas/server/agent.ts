@@ -401,6 +401,7 @@ export async function* runChat(
   bumpShared?: BumpShared,
   inbox?: Omit<AskHumanDeps, 'getSessionId'>,
   openPr?: OpenPr,
+  cwd?: string,
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn; ask_human reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
@@ -421,7 +422,9 @@ export async function* runChat(
     // (Discovery and enable are two separate stages: project source finds them, skills picks.)
     settingSources: ['user', 'project'] as Array<'user' | 'project' | 'local'>,
     skills: ['impeccable'],
-    cwd: process.env.CANVAS_CWD ?? process.cwd(),
+    // A dev-agent turn runs in its prepared worktree (ADR-0010 slice 6) — the caller passes
+    // that path so edits + resume both scope to it; every product turn keeps the default.
+    cwd: cwd ?? process.env.CANVAS_CWD ?? process.cwd(),
     maxTurns: 50,
   };
 

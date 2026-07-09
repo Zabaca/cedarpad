@@ -5,12 +5,10 @@ import {
   DEV_AGENT_GITHUB_TOKEN_ENV,
   appConfigFromEnv,
   buildAppJwt,
-  devAgentGitTokenEnv,
+  mintDevAgentGitToken,
   mintInstallationToken,
 } from './github-app.ts';
 import { GITHUB_TOKEN_ENV } from '../server/repo-worktree.ts';
-import { DEV_AGENT_SANDBOX_ID } from './dev-agent.ts';
-import type { SandboxCoords } from './sandbox-resolver.ts';
 import type { Env } from './index.ts';
 
 // A throwaway RSA keypair so the JWT is really signed and really verifiable — GitHub issues a
@@ -91,46 +89,48 @@ describe('appConfigFromEnv', () => {
   });
 });
 
-describe('devAgentGitTokenEnv — only the dev-agent, private key never forwarded', () => {
-  const devAgentCoords: SandboxCoords = {
-    sandboxId: DEV_AGENT_SANDBOX_ID,
-    r2Prefix: 'workspaces/dev-agent/',
-    canvasWorkspace: 'dev-agent',
-  };
-  const productCoords: SandboxCoords = { sandboxId: 'canvas', r2Prefix: 'workspaces/default/', canvasWorkspace: 'default' };
+describe('mintDevAgentGitToken — the coords-free mint core (ADR-0010)', () => {
   const env = { GITHUB_APP_ID: '4257337', GITHUB_APP_INSTALLATION_ID: '145473731', GITHUB_APP_PRIVATE_KEY: privateKey } as Env;
-  const okFetch = (async () =>
-    new Response(JSON.stringify({ token: 'ghs_minted', expires_at: 'x' }), { status: 201 })) as unknown as typeof fetch;
 
-  test('a PRODUCT workspace never mints (returns {} and does not call GitHub)', async () => {
-    let called = false;
-    const spyFetch = (async () => {
-      called = true;
-      return new Response('{}', { status: 201 });
+  test('mints a cedarpad-scoped token (contents/PRs/workflows write) via the injected fetch', async () => {
+    let captured: { url: string; body: unknown } | null = null;
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      captured = { url: String(url), body: JSON.parse((init?.body as string) ?? 'null') };
+      return new Response(JSON.stringify({ token: 'ghs_minted', expires_at: 'x' }), { status: 201 });
     }) as unknown as typeof fetch;
-    expect(await devAgentGitTokenEnv(env, productCoords, { nowSec: 1, fetchImpl: spyFetch })).toEqual({});
-    expect(called).toBe(false);
+
+    const token = await mintDevAgentGitToken(env, { nowSec: 1_700_000_000, fetchImpl: fakeFetch });
+
+    expect(token).toBe('ghs_minted');
+    expect(captured!.url).toBe('https://api.github.com/app/installations/145473731/access_tokens');
+    expect(captured!.body).toEqual({
+      repositories: ['cedarpad'],
+      permissions: { contents: 'write', pull_requests: 'write', workflows: 'write' },
+    });
   });
 
-  test('the dev-agent gets ONLY the minted token — the private key is never in the env fragment', async () => {
-    const frag = await devAgentGitTokenEnv(env, devAgentCoords, { nowSec: 1, fetchImpl: okFetch });
-    expect(frag).toEqual({ [DEV_AGENT_GITHUB_TOKEN_ENV]: 'ghs_minted' });
-    expect(JSON.stringify(frag)).not.toContain('PRIVATE KEY');
+  test('best-effort: unconfigured App ⇒ null (a send proxies token-less, never throws)', async () => {
+    expect(await mintDevAgentGitToken({} as Env, { nowSec: 1 })).toBeNull();
   });
 
-  test('best-effort: unconfigured App ⇒ {} (boot proceeds without a token)', async () => {
-    expect(await devAgentGitTokenEnv({} as Env, devAgentCoords, { nowSec: 1, fetchImpl: okFetch })).toEqual({});
-  });
-
-  test('best-effort: a mint failure ⇒ {} (never throws into the boot path)', async () => {
+  test('best-effort: a mint failure ⇒ null (never throws into the proxy path)', async () => {
     const boom = (async () => new Response('nope', { status: 500 })) as unknown as typeof fetch;
-    expect(await devAgentGitTokenEnv(env, devAgentCoords, { nowSec: 1, fetchImpl: boom })).toEqual({});
+    expect(await mintDevAgentGitToken(env, { nowSec: 1, fetchImpl: boom })).toBeNull();
+  });
+
+  test('the token is the ONLY credential produced — the private key never leaves the mint', async () => {
+    const okFetch = (async () =>
+      new Response(JSON.stringify({ token: 'ghs_minted', expires_at: 'x' }), { status: 201 })) as unknown as typeof fetch;
+    const token = await mintDevAgentGitToken(env, { nowSec: 1, fetchImpl: okFetch });
+    expect(token).toBe('ghs_minted');
+    expect(token).not.toContain('PRIVATE KEY');
   });
 });
 
-// The edge produces the token under this var; the container's git layer reads GITHUB_TOKEN_ENV.
-// They're defined in separate modules across the edge/container boundary — pin them equal so a
-// rename on either side can't silently break clone/push/PR.
+// The env-var NAME contract across the edge/container boundary: the per-turn token now rides a
+// request header into the git manager's config (ADR-0010), but repo-worktree.ts still falls back
+// to process.env[GITHUB_TOKEN_ENV] — pin the names equal so a rename on either side can't
+// silently break an operator-provisioned static token.
 test('producer/consumer env-var name contract holds', () => {
   expect(DEV_AGENT_GITHUB_TOKEN_ENV).toBe(GITHUB_TOKEN_ENV);
 });

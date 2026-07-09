@@ -1,9 +1,7 @@
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from './index.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
-import { devAgentGitTokenEnv } from './github-app.ts';
 import { singleFlight } from './single-flight.ts';
-import { DEV_AGENT_SANDBOX_ID, DEV_AGENT_SLEEP_AFTER } from './dev-agent.ts';
 import { type SandboxCoords, decideWarm } from './sandbox-resolver.ts';
 
 // The Sandbox resolver's runtime half: the wake/expose/proxy orchestration that used
@@ -31,16 +29,6 @@ const SLEEP_AFTER = '5m';
 export const sandboxFor = (env: Env, sandboxId: string) =>
   getSandbox(env.Sandbox, sandboxId, { normalizeId: true, keepAlive: false, sleepAfter: SLEEP_AFTER });
 
-// The dev-agent's own container stub (ADR-0007, #63): a distinctly-keyed instance of the
-// same image on its OWN, shorter sleep schedule — separate from every `sandboxFor`
-// workspace container so a scheduled run never pins or reaps a product container.
-export const devAgentSandbox = (env: Env) =>
-  getSandbox(env.Sandbox, DEV_AGENT_SANDBOX_ID, {
-    normalizeId: true,
-    keepAlive: false,
-    sleepAfter: DEV_AGENT_SLEEP_AFTER,
-  });
-
 type SandboxStub = ReturnType<typeof getSandbox>;
 
 // Start (or recover) the dev stack and wait for vite. Mirrors the spike's warm/
@@ -62,11 +50,9 @@ async function writeEnvFile(sandbox: SandboxStub, ev: Record<string, string>): P
 }
 
 async function ensureStack(sandbox: SandboxStub, env: Env, coords: SandboxCoords): Promise<void> {
-  // For the dev-agent container only, mint a fresh, cedarpad-scoped GitHub App installation
-  // token and inject it here (#96) — the private key never leaves the edge. Returns `{}` for
-  // every product workspace and, best-effort, if the App is unconfigured or the mint fails, so
-  // this can't block a cold boot. Merged AFTER containerEnv so it can't clobber base env.
-  const ev = { ...containerEnv(env, coords), ...(await devAgentGitTokenEnv(env, coords, { nowSec: Math.floor(Date.now() / 1000) })) };
+  // No git token is minted at boot (ADR-0010): the dev-agent's token is per-turn, minted by the
+  // edge chat proxy onto each dev-agent send (worker/inbox-bridge.ts) — never container env.
+  const ev = containerEnv(env, coords);
   await sandbox.setEnvVars(ev).catch(() => {}); // kept as a secondary path
   const opts = { processId: 'canvas', envVars: ev } as const;
   let proc = await sandbox.getProcess('canvas').catch(() => null);

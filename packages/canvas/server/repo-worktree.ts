@@ -149,6 +149,16 @@ export function createRepoWorktreeManager(config: RepoWorktreeConfig) {
     return { path, branch, hub };
   }
 
+  // Reuse-or-create (ADR-0010 slice 6): a dev-agent grill flow spans turns — a later turn
+  // must see an earlier turn's (possibly uncommitted) edits — so an existing worktree for
+  // the branch is returned AS-IS, never reset. Only a missing one is freshly prepared off
+  // origin/main. (A worktree's `.git` is a FILE pointing at the hub, so existsSync covers it.)
+  async function ensureWorktree(branch: string): Promise<Worktree> {
+    const path = join(config.workspaceRoot, 'worktrees', worktreeDirName(branch));
+    if (existsSync(join(path, '.git'))) return { path, branch, hub };
+    return prepareWorktree(branch);
+  }
+
   // Stage everything the agent touched + commit. Returns false if the tree was clean
   // (nothing to commit) so callers can skip an empty push/PR.
   async function commit(wt: Worktree, message: string): Promise<boolean> {
@@ -210,5 +220,5 @@ export function createRepoWorktreeManager(config: RepoWorktreeConfig) {
     }
   }
 
-  return { prepareWorktree, commit, pushAndOpenPR, cleanup };
+  return { prepareWorktree, ensureWorktree, commit, pushAndOpenPR, cleanup };
 }

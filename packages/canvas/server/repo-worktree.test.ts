@@ -121,6 +121,54 @@ describe('prepareWorktree/commit/cleanup against a local scratch remote', () => 
   });
 });
 
+// ── Integration: ensureWorktree — the dev-agent turn's reuse-or-create (ADR-0010 slice 6) ─
+//
+// A dev-agent conversation spans turns: turn 2 must see turn 1's (uncommitted) edits, so an
+// existing worktree for the branch is returned AS-IS — never reset to origin/main. And the
+// turn's edits/commits land in the PREPARED worktree, never the caller's live tree (the
+// baked image isn't even a git repo; committing CANVAS_CWD could never work).
+describe('ensureWorktree — reuse-or-create for the multi-turn dev-agent grill flow', () => {
+  test('creates when missing; a second call reuses the SAME tree, uncommitted edits intact', async () => {
+    const root = join(tmpdir(), `EnsureWorktreeIT_${process.pid}_${Date.now()}`);
+    const remote = join(root, 'remote.git');
+    const seed = join(root, 'seed');
+    const workspace = join(root, 'ws');
+    try {
+      mkdirSync(root, { recursive: true });
+      await runGit(root, ['init', '--bare', '-b', 'main', remote]);
+      await runGit(root, ['clone', remote, seed]);
+      await Bun.write(join(seed, 'README.md'), '# seed\n');
+      await runGit(seed, ['add', '-A']);
+      await runGit(seed, ['commit', '-m', 'seed']);
+      await runGit(seed, ['push', 'origin', 'main']);
+
+      const mgr = createRepoWorktreeManager({ repo: 'Zabaca/cedarpad', workspaceRoot: workspace, remoteUrl: remote });
+      const branch = branchName('dev-agent', 'chat_1');
+
+      // Turn 1: no worktree yet → created off origin/main.
+      const wt1 = await mgr.ensureWorktree(branch);
+      expect(existsSync(join(wt1.path, 'README.md'))).toBe(true);
+      expect(await runGit(wt1.path, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe(branch);
+
+      // The agent edits during turn 1 (uncommitted — open_pr not called yet).
+      await Bun.write(join(wt1.path, 'EDIT.txt'), 'turn-1 edit');
+
+      // Turn 2: the SAME worktree comes back, edit intact — NOT a reset to origin/main.
+      const wt2 = await mgr.ensureWorktree(branch);
+      expect(wt2.path).toBe(wt1.path);
+      expect(wt2.branch).toBe(branch);
+      expect(await Bun.file(join(wt2.path, 'EDIT.txt')).text()).toBe('turn-1 edit');
+
+      // The edits land in (and commit from) the prepared worktree, not the caller's cwd.
+      expect(wt1.path.startsWith(workspace)).toBe(true);
+      expect(await mgr.commit(wt2, 'feat: turn-1 edit')).toBe(true);
+      expect(await runGit(wt2.path, ['log', '-1', '--pretty=%s'])).toBe('feat: turn-1 edit');
+    } finally {
+      if (existsSync(root)) rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // ── Guard: real push+PR requires the token; unit suite must never hit GitHub ───────────
 
 describe('pushAndOpenPR is gated on the GitHub token', () => {
