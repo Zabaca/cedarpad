@@ -1,6 +1,7 @@
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from './index.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
+import { devAgentGitTokenEnv } from './github-app.ts';
 import { DEV_AGENT_SANDBOX_ID, DEV_AGENT_SLEEP_AFTER } from './dev-agent.ts';
 import { type SandboxCoords, decideWarm } from './sandbox-resolver.ts';
 
@@ -60,7 +61,11 @@ async function writeEnvFile(sandbox: SandboxStub, ev: Record<string, string>): P
 }
 
 async function ensureStack(sandbox: SandboxStub, env: Env, coords: SandboxCoords): Promise<void> {
-  const ev = containerEnv(env, coords);
+  // For the dev-agent container only, mint a fresh, cedarpad-scoped GitHub App installation
+  // token and inject it here (#96) — the private key never leaves the edge. Returns `{}` for
+  // every product workspace and, best-effort, if the App is unconfigured or the mint fails, so
+  // this can't block a cold boot. Merged AFTER containerEnv so it can't clobber base env.
+  const ev = { ...containerEnv(env, coords), ...(await devAgentGitTokenEnv(env, coords, { nowSec: Math.floor(Date.now() / 1000) })) };
   await sandbox.setEnvVars(ev).catch(() => {}); // kept as a secondary path
   const opts = { processId: 'canvas', envVars: ev } as const;
   let proc = await sandbox.getProcess('canvas').catch(() => null);
