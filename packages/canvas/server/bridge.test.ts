@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { chatClients, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, webPocDb } from './bridge.ts';
+import { aborters, chatClients, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, webPocDb } from './bridge.ts';
 import { resumeConversation } from './inbox.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { DEV_AGENT_WORKSPACE_ID } from './dev-agent-workflow.ts';
@@ -174,6 +174,48 @@ describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-work
 
     expect(adopted).toEqual([]);
     expect(turn!.cwd).toBe('/wt/x');
+  });
+});
+
+// ADR-0011: one turn per chat, enforced at the wire. The client queue only protects the tab
+// that started the turn; a headless dev-agent run (or another tab) needs the server to say no.
+describe('/api/chat/:id/send: 409 turn_in_flight while the chat’s turn runs', () => {
+  let restore: () => void = () => {};
+  let dispatched: string[] = [];
+
+  beforeEach(() => {
+    dispatched = [];
+    chatClients.add(fakeSubscriber());
+    restore = setChatTurnDispatcher((chatId) => {
+      dispatched.push(chatId);
+    });
+  });
+
+  afterEach(() => {
+    restore();
+    for (const c of [...chatClients]) chatClients.delete(c);
+    aborters.delete('chat_busy');
+    aborters.delete('chat_running');
+  });
+
+  test('a send while a turn is in flight → 409 {turn_in_flight}, nothing dispatched', async () => {
+    aborters.set('chat_busy', new AbortController()); // a live turn holds the chat
+
+    const res = await handleRequest(sendReq('chat_busy'));
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'turn_in_flight', chatId: 'chat_busy' });
+    expect(dispatched).toEqual([]);
+  });
+
+  test('the transcript GET reports in-flight state, so a mid-run opener rehydrates busy', async () => {
+    aborters.set('chat_running', new AbortController());
+
+    const running = await handleRequest(new Request('http://localhost/api/chat/chat_running/transcript'));
+    const idle = await handleRequest(new Request('http://localhost/api/chat/chat_idle/transcript'));
+
+    expect(((await running.json()) as { busy?: boolean }).busy).toBe(true);
+    expect(((await idle.json()) as { busy?: boolean }).busy).toBe(false);
   });
 });
 

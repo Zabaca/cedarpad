@@ -340,8 +340,11 @@ function chatStream(): Response {
 }
 
 // Live turns, keyed by chatId, so POST /interrupt can abort the in-flight query
-// (Esc / Stop in the UI). One turn per chat at a time, so one aborter per chat.
-const aborters = new Map<string, AbortController>();
+// (Esc / Stop in the UI). One turn per chat at a time — ENFORCED at /send (409
+// turn_in_flight, ADR-0011): the client-side queue only protects the tab that started
+// the turn; a headless dev-agent run or a second tab needs the wire to say no. Exported
+// as a test seam (like chatClients) so the guard is testable without a live SDK turn.
+export const aborters = new Map<string, AbortController>();
 
 /** ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
  * (the turn's `init` event), landing in waiting_on:none — visible live in "All", never
@@ -635,6 +638,11 @@ export async function handleRequest(req: Request): Promise<Response> {
       // replay), so reject early with 425 Too Early and dispatch nothing. Only a
       // race-losing / misbehaving client reaches here; the client gates on `subscribed`.
       if (chatClients.size === 0) return json({ error: 'no_subscribers', chatId }, 425);
+      // One turn per chat, enforced at the wire (ADR-0011): a send while this chat's turn
+      // runs would resume the SAME session concurrently (two SDK queries, one JSONL). The
+      // client re-queues on 409 and drains on the turn's done frame; Stop-then-send is the
+      // explicit way to talk over a running turn.
+      if (aborters.has(chatId)) return json({ error: 'turn_in_flight', chatId }, 409);
       const body = await readBody(req);
       const message = typeof body.message === 'string' ? body.message.trim() : '';
       // Pasted screenshots: [{ media_type, data(base64) }]. Allow an image-only turn.
@@ -688,7 +696,9 @@ export async function handleRequest(req: Request): Promise<Response> {
       const chatId = decodeURIComponent(transcriptRoute[1] as string);
       const meta = chatMeta.get(chatId);
       const events = meta.sessionId ? await loadSessionTranscript(SESSIONS_DIR, meta.sessionId) : [];
-      return json({ config: { model: meta.model, effort: meta.effort, forkNext: meta.forkNext }, events });
+      // `busy`: is a turn in flight for this chat RIGHT NOW (ADR-0011)? A mid-run opener
+      // missed the init frame, so rehydrate is how it learns to queue sends instead of 409ing.
+      return json({ config: { model: meta.model, effort: meta.effort, forkNext: meta.forkNext }, events, busy: aborters.has(chatId) });
     }
     // POST /api/chat/:id/interrupt — abort the in-flight turn (Esc / Stop).
     const interruptRoute = /^\/api\/chat\/([^/]+)\/interrupt$/.exec(path);

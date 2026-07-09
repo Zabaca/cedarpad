@@ -168,7 +168,7 @@ async function rehydrate(chatId: string): Promise<void> {
   try {
     const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/transcript`), { headers: withCanvasHeader() });
     if (!res.ok) return;
-    const { config, events } = (await res.json()) as { config?: { model?: string; effort?: string; forkNext?: boolean }; events?: ChatEvent[] };
+    const { config, events, busy } = (await res.json()) as { config?: { model?: string; effort?: string; forkNext?: boolean }; events?: ChatEvent[]; busy?: boolean };
     clearBubbles(chatId);
     update(chatId, (s) => ({
       ...s,
@@ -176,6 +176,10 @@ async function rehydrate(chatId: string): Promise<void> {
       ...(config?.model ? { model: config.model } : {}),
       ...(config?.effort ? { effort: config.effort } : {}),
       ...(typeof config?.forkNext === 'boolean' ? { forkNext: config.forkNext } : {}),
+      // A turn is in flight server-side (ADR-0011): a mid-run opener missed the init frame,
+      // so this is how it learns to queue sends. Only ever raises busy — a rehydrate racing
+      // a just-settled turn must not clear a busy this tab's own dispatch set.
+      ...(busy ? { busy: true, status: s.status || 'working' } : {}),
     }));
     for (const ev of events ?? []) applyEvent(chatId, ev);
   } catch {
@@ -449,6 +453,14 @@ async function dispatchSend(chatId: string, message: string, images: PendingImag
     // this branch the card stays stuck on busy:true forever and the turn is silently
     // dropped (no `done` ever arrives to clear it). Clear busy and surface why.
     if (!res.ok) {
+      // 409 turn_in_flight (ADR-0011): a turn IS running server-side (this tab raced the
+      // guard — a headless run or another tab's turn). Not an error: park the message on
+      // the queue (it drains on the turn's done frame) and stay busy, mirroring the local
+      // queue path exactly.
+      if (res.status === 409) {
+        update(chatId, (cur) => ({ ...cur, busy: true, status: cur.status || 'working', queue: [...cur.queue, { message, images }] }));
+        return;
+      }
       const why = res.status === 425 ? 'chat connection not ready, resend in a moment' : `send failed (${res.status})`;
       update(chatId, (cur) => ({ ...cur, busy: false, status: '', items: [...cur.items, { id: nextItemId(), kind: 'msg', role: 'agent', text: `⚠ ${why}` }] }));
     }

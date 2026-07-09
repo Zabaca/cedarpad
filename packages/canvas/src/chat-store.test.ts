@@ -423,3 +423,100 @@ describe('aliveUrl: the heartbeat URL under a connection-target prefix (slice #1
     expect(aliveUrl('/inbox/conv1/bridge')).toBe('/inbox/conv1/bridge/api/alive');
   });
 });
+
+// ADR-0011: the wire's 409 turn_in_flight means "a turn is running — wait". The client
+// re-queues the send (it drains on the turn's done frame) instead of erroring, and a
+// mid-run opener learns busy from the transcript rehydrate (it missed the init frame).
+describe('409 turn_in_flight → re-queue; rehydrate carries busy', () => {
+  // Shared harness: a fake EventSource (so openStream can subscribe) + a fetch stub whose
+  // /send answers 409 until released; everything else answers a transcript body.
+  const harness = (id: string, transcript: Record<string, unknown> = { config: {}, events: [] }) => {
+    const realFetch = globalThis.fetch;
+    const realES = (globalThis as Record<string, unknown>).EventSource;
+    let esInstance: { onopen: (() => void) | null } | null = null;
+    (globalThis as Record<string, unknown>).EventSource = class {
+      onopen: (() => void) | null = null;
+      onerror: unknown = null;
+      onmessage: unknown = null;
+      constructor(_url: string) {
+        esInstance = this;
+      }
+      close() {}
+    };
+    const sends: string[] = [];
+    const state = { reject409: true };
+    globalThis.fetch = (async (url: unknown, init?: { body?: string }) => {
+      if (String(url).includes('/send')) {
+        sends.push(JSON.parse(init!.body!).message);
+        return state.reject409
+          ? new Response('{"error":"turn_in_flight"}', { status: 409 })
+          : new Response('{"ok":true}', { status: 202 });
+      }
+      return new Response(JSON.stringify(transcript), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    openStream(id);
+    if (!isSubscribed(id)) esInstance!.onopen!();
+    return {
+      sends,
+      state,
+      restore() {
+        globalThis.fetch = realFetch;
+        (globalThis as Record<string, unknown>).EventSource = realES;
+      },
+    };
+  };
+
+  test('a send while busy (foreign init seen) queues locally and fires on done', async () => {
+    const id = 'chat_409_requeue';
+    const h = harness(id);
+    try {
+      await new Promise((r) => setTimeout(r, 0)); // let openStream's rehydrate settle
+      routeChatFrame(frame(id, { kind: 'init', sessionId: 'sess_409' })); // a foreign turn is running
+
+      await send(id, 'my steer', []);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(h.sends).toEqual([]); // queued locally — never hit the wire
+
+      h.state.reject409 = false;
+      routeChatFrame(frame(id, { kind: 'done', sessionId: 'sess_409', costUsd: 0 }));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(h.sends).toEqual(['my steer']); // drained on settle
+    } finally {
+      h.restore();
+    }
+  });
+
+  test('a send that RACES the guard (no local busy, wire says 409) is re-queued, not errored', async () => {
+    const id = 'chat_409_race';
+    const h = harness(id);
+    try {
+      await new Promise((r) => setTimeout(r, 0));
+
+      await send(id, 'raced send', []); // fires — server answers 409
+      await new Promise((r) => setTimeout(r, 0));
+      expect(h.sends).toEqual(['raced send']); // hit the wire once
+      const s = getSnapshot(id);
+      expect(s.busy).toBe(true); // a turn IS in flight server-side
+      expect(s.queue.map((q) => q.message)).toEqual(['raced send']); // parked for the drain
+      expect(s.items.filter((it) => it.kind === 'msg' && it.text.startsWith('⚠'))).toEqual([]); // no error chip
+
+      h.state.reject409 = false;
+      routeChatFrame(frame(id, { kind: 'done', sessionId: 'sess_race', costUsd: 0 }));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(h.sends).toEqual(['raced send', 'raced send']); // drained for real
+    } finally {
+      h.restore();
+    }
+  });
+
+  test('rehydrate applies the transcript’s busy (a mid-run opener missed the init frame)', async () => {
+    const id = 'chat_midrun_open';
+    const h = harness(id, { config: {}, events: [], busy: true });
+    try {
+      await new Promise((r) => setTimeout(r, 0)); // openStream → rehydrate
+      expect(getSnapshot(id).busy).toBe(true);
+    } finally {
+      h.restore();
+    }
+  });
+});
