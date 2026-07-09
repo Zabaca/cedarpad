@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../src/chat-store.ts';
+import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../shared/chat-store.ts';
 import { type BlobBackend, BlobStore, chatMetaKey, memBackend } from './blob-store.ts';
 import { ChatMetaStore } from './chat-meta.ts';
 

@@ -8,9 +8,9 @@
 // closeSession() runs only when the chat shape is actually deleted (App watches
 // the editor for removed chat shapes).
 
-import { type ChatEvent, type ChatFrame, type TaskStatus, type TodoStatus, isChatFrame } from '../shared/chat-wire.ts';
-import { registerStream, setBusyCheck } from './idle.ts';
-import { withCanvasHeader, withCanvasParam } from './active-canvas.ts';
+import { type ChatEvent, type ChatFrame, type TaskStatus, type TodoStatus, isChatFrame } from './chat-wire.ts';
+import { registerStream, setBusyCheck } from '../src/idle.ts';
+import { withCanvasHeader, withCanvasParam } from '../src/active-canvas.ts';
 
 // `parentId` (set on subagent items) is the spawning Task chip's tool_use id, so the
 // view can indent them under it. Tool items carry their own `toolUseId` so a `task`
