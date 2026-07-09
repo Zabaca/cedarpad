@@ -3,10 +3,9 @@ import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { type BlobGetter, read as readTranscript } from '../server/transcript-r2.ts';
+import { coordsForWorkspace } from './inbox-bridge.ts';
 import { orderInbox } from './inbox-view.ts';
-import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
-import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
 
@@ -42,10 +41,6 @@ export function edgeBlobGetter(env: Env): BlobGetter {
     },
   };
 }
-
-/** Resolve a Conversation's workspace to its container coordinates (default = legacy). */
-const coordsForWorkspace = (workspaceId: string) =>
-  resolve(workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: workspaceId });
 
 /**
  * The edge Inbox API, user-scoped from the authenticated session:

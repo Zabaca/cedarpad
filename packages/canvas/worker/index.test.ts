@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import * as realAuthGate from './auth-gate.ts';
 import * as realCanvases from '../web-poc/lib/db/queries/canvases.ts';
 import * as realWorkspaces from '../web-poc/lib/db/queries/workspaces.ts';
+import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
 // The Worker's DISPATCH ORDER is security-load-bearing: `/health` and `/api/buildrev` are
@@ -17,13 +18,17 @@ let session: realAuthGate.ResolvedSession = { user: { id: 'u_1' } };
 let workspaceRecord: { id: string } | null = null;
 let canvasRecord: { workspaceId: string } | null = null;
 let served: SandboxCoords[] = [];
+let servedReqs: Array<{ path: string; method: string }> = [];
 let assets: string[] = [];
 let inboxCalls: Array<{ id?: string; action?: string }> = [];
+let conv: ConversationRow | null = null;
 
 mock.module('@cloudflare/sandbox', () => ({ Sandbox: class {} }));
 mock.module('./sandbox-runtime.ts', () => ({
-  serveWorkspace: (_req: Request, _env: unknown, coords: SandboxCoords) => {
+  serveWorkspace: (req: Request, _env: unknown, coords: SandboxCoords) => {
     served.push(coords);
+    const u = new URL(req.url);
+    servedReqs.push({ path: u.pathname + u.search, method: req.method });
     return new Response('pad-html');
   },
   sandboxFor: () => ({}),
@@ -42,13 +47,19 @@ mock.module('../web-poc/lib/db/queries/canvases.ts', () => ({
   ...realCanvases,
   get: () => Promise.resolve(canvasRecord),
 }));
-// The edge Inbox API handler is out of scope for this slice — stub it so we can assert the
+// The edge Inbox LIST/detail API is out of scope for this slice — stub it so we can assert the
 // Worker still ROUTES `/api/inbox*` to it (unchanged) without exercising Turso/R2.
 mock.module('./inbox.ts', () => ({
   handleInboxApi: (_req: Request, _env: unknown, _user: unknown, id?: string, action?: string) => {
     inboxCalls.push({ id, action });
     return new Response('inbox-api');
   },
+}));
+// The #122 chat proxy (`./inbox-bridge.ts`) is kept REAL — it's what this slice adds — so its
+// ownership check + `conv.workspaceId → coords` resolution run for real against a stubbed
+// Conversation lookup and the stubbed serveWorkspace above.
+mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
+  get: () => Promise.resolve(conv),
 }));
 
 const worker = (await import('./index.ts')).default;
@@ -79,9 +90,28 @@ beforeEach(() => {
   workspaceRecord = null;
   canvasRecord = null;
   served = [];
+  servedReqs = [];
   assets = [];
   inboxCalls = [];
+  conv = null;
 });
+
+const convRow = (o: Partial<ConversationRow>): ConversationRow =>
+  ({
+    id: o.id ?? 'conv_1',
+    sessionId: 'sess_1',
+    status: 'open',
+    waitingOn: 'human',
+    unread: false,
+    lastActivity: new Date(0),
+    ownerRef: null,
+    workspaceId: o.workspaceId ?? 'default',
+    userId: o.userId ?? 'u_1',
+    summary: null,
+    lastMessagePreview: null,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  }) as ConversationRow;
 
 // THE invariant of PRD #103: browsing the Shell must never wake (or bill) a container.
 // The whole point of the pad iframe is that mounting it is the ONLY thing that does.
@@ -255,6 +285,75 @@ describe('GET /inbox — redirect to the Shell inbox stage, no standalone page',
       { id: 'c_1', action: 'close' },
       { id: 'c_1', action: undefined },
     ]);
+  });
+
+  // REGRESSION: browsing the Inbox list must never wake a runner. The list stays edge-only
+  // and never calls serveWorkspace — only opening a Conversation's chat bridge does.
+  test('the inbox LIST never calls serveWorkspace (no runner woken by browsing)', async () => {
+    await GET('/api/inbox?status=open');
+
+    expect(served).toEqual([]);
+  });
+});
+
+// The edge chat proxy (ADR-0009, #122). `/inbox/:convId/bridge/*` is a live view of the
+// Conversation's OWNING bridge, so it sits BELOW the auth gate: an anon request gets the
+// login and never reaches a bridge (never cold-boots a container). The real handler runs
+// here (spread above) with only serveWorkspace + conversations.get stubbed.
+describe('GET /inbox/:convId/bridge/* — the edge chat proxy, conv → owning bridge, gated', () => {
+  test('an owned product-workspace conversation proxies to its container, sub-path unrewritten', async () => {
+    conv = convRow({ workspaceId: 'ws_abc', userId: 'u_1' });
+
+    const res = await GET('/inbox/conv_1/bridge/api/chat/stream?canvas=c');
+
+    expect(res.status).toBe(200);
+    expect(served).toEqual([resolve({ id: 'ws_abc' })]);
+    // The `/inbox/:id/bridge` prefix is stripped; only the bridge sub-path (query preserved)
+    // reaches the container — the same unbuffered proxy the pad uses, so SSE streams through.
+    expect(servedReqs).toEqual([{ path: '/api/chat/stream?canvas=c', method: 'GET' }]);
+  });
+
+  test('a dev-agent conversation resolves to the dev-agent sandbox, not a workspace-<id> container', async () => {
+    conv = convRow({ workspaceId: 'dev-agent', userId: 'u_1' });
+
+    await GET('/inbox/conv_1/bridge/api/chat/stream');
+
+    expect(served).toHaveLength(1);
+    expect(served[0].sandboxId).toBe('dev-agent');
+    // NOT the derived `workspace-dev-agent` — that container holds no bridge session.
+    expect(served[0].sandboxId).not.toBe(resolve({ id: 'dev-agent' }).sandboxId);
+  });
+
+  test('a POST (send) is forwarded with its method + stripped sub-path to the owning container', async () => {
+    conv = convRow({ workspaceId: 'ws_abc', userId: 'u_1' });
+
+    await worker.fetch(
+      new Request('https://poc.cedarpad.com/inbox/conv_1/bridge/api/chat/conv_1/send', { method: 'POST', body: '{}' }),
+      env,
+    );
+
+    expect(served).toEqual([resolve({ id: 'ws_abc' })]);
+    expect(servedReqs).toEqual([{ path: '/api/chat/conv_1/send', method: 'POST' }]);
+  });
+
+  test('a conversation owned by someone else ⇒ 404, never proxied (no bridge woken)', async () => {
+    conv = convRow({ workspaceId: 'ws_abc', userId: 'someone_else' });
+
+    const res = await GET('/inbox/conv_1/bridge/api/chat/stream');
+
+    expect(res.status).toBe(404);
+    expect(served).toEqual([]);
+  });
+
+  test('UNAUTHENTICATED ⇒ the login page, never the bridge (no container reached)', async () => {
+    session = null;
+    conv = convRow({ workspaceId: 'ws_abc', userId: 'u_1' });
+
+    const res = await GET('/inbox/conv_1/bridge/api/chat/stream');
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get('content-type')).toContain('text/html');
+    expect(served).toEqual([]);
   });
 });
 
