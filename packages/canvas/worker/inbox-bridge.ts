@@ -46,6 +46,10 @@ export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
  * security-load-bearing): an unauthenticated request got `renderLogin()` already and never
  * reaches a bridge; the Inbox LIST (`inbox.ts`) stays edge-only and never wakes a runner.
  */
+// A proxied chat SEND (`POST /api/chat/:chatId/send`) — the human answering. The proxy is the
+// inbox-aware home for the triage flip; `<ChatView>` / the generic `/send` stay unaware of it.
+const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
+
 export async function handleInboxBridge(
   request: Request,
   env: Env,
@@ -53,8 +57,19 @@ export async function handleInboxBridge(
   convId: string,
   subPath: string,
 ): Promise<Response> {
-  const conv = await conversations.get(db(env), convId);
+  const database = db(env);
+  const conv = await conversations.get(database, convId);
   if (!conv || conv.userId !== user.id) return Response.json({ error: 'conversation not found' }, { status: 404 });
+
+  // Inbox triage side-effect (ADR-0009 / #124): a reply is a chat SEND now (not the retired
+  // /api/inbox/:id/reply), so flip the Conversation waiting_on:human → agent here — the same
+  // transition (and unread-clear) `conversations.reply` always did — so answering un-pins it
+  // from the attention list. ONLY on a send (not the transcript GET, the /chat id lookup, the
+  // alive beat, or interrupt). Fire-and-forget + best-effort: a flip failure must never block
+  // or break the proxied (SSE) send.
+  if (request.method === 'POST' && IS_CHAT_SEND.test(subPath)) {
+    void conversations.reply(database, convId).catch(() => {});
+  }
 
   // Strip the routing prefix so only the bridge sub-path (query preserved) reaches the
   // container. `new Request(url, request)` is the CF-idiomatic URL rewrite — it carries the
