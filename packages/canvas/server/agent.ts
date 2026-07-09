@@ -40,6 +40,15 @@ const MODEL = process.env.CANVAS_MODEL ?? 'sonnet';
 const FREE_1M_MODELS = new Set(['opus', 'claude-opus-4-8']);
 const withContext = (m: string): string => (FREE_1M_MODELS.has(m) ? `${m}[1m]` : m);
 
+// The chat sends friendly family aliases (sonnet/opus/haiku). The SDK's bundled `sonnet` alias
+// still resolves to claude-sonnet-4-6, so pin it to the explicit Sonnet 5 id to run the canvas
+// agent on Sonnet 5. `opus`/`haiku` aliases already track the latest, and any explicit id (or a
+// `[1m]` suffix) isn't in the map and passes through untouched.
+const ALIAS_TO_ID: Record<string, string> = { sonnet: 'claude-sonnet-5' };
+// The SDK model string for a selected alias: pin the alias to an explicit id, then apply the 1M
+// context suffix (opus-only, free). Exported for the model-resolution test.
+export const resolveModelForSdk = (m: string): string => withContext(ALIAS_TO_ID[m] ?? m);
+
 // One permissive shape schema; normalizeShape() (inside the ops) enforces
 // per-type required fields and throws agent-legible errors so the model can
 // self-correct on the next turn.
@@ -420,7 +429,7 @@ export async function* runChat(
     const q = query({
       prompt: buildPrompt(message, images),
       options: {
-        model: withContext(model ?? MODEL),
+        model: resolveModelForSdk(model ?? MODEL),
         ...(effort ? { effort: effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}), // guide thinking depth; omitted = adaptive default
         mcpServers: { canvas },
         permissionMode: 'bypassPermissions',
