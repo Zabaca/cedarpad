@@ -178,16 +178,23 @@ to be re-homed.)
   canvas glossary's `session = chat` collision.
 - **Conversation** = Session + inbox state (open/closed, read/unread, needs-attention,
   last-activity). May own a Canvas (the owner edge above).
-- Inbox membership is **explicit**: a canvas chat does NOT auto-appear in the Inbox — it
-  shows up only if I start it there or an agent promotes it. So background-agent items
-  aren't drowned by every little canvas chat.
+- The Inbox is a **unified session index**: EVERY Session gets a Conversation row (created on
+  its first turn, idempotent by `sessionId`), so the one surface lists all sessions — canvas
+  chats and background-agent runs alike. `ask_human` no longer *creates* the row; it just
+  **promotes** an existing one (waiting-on→human). Noise is handled by the default filter, not
+  by withholding rows.
 - **State model** (two axes):
-  - `status`: `open | closed` — closed = archived, filtered out of the default inbox.
-  - `waiting-on`: `human | agent | none` — `human` = needs my attention.
+  - `status`: `open | closed` — closed = archived.
+  - `waiting-on`: `human | agent | none` — `human` = needs my attention; a fresh session lands
+    in `none` (exists, nothing pending).
   - `unread`: new agent activity since I last looked.
-  - Default inbox view = `status:open`, sorted by last-activity; `waiting-on:human`
-    pinned at top. Agent can promote (open + waiting-on=human + notify), post activity
-    (unread), and self-close. I can read, reply (waiting-on→agent), close, reopen.
+  - **Views** (the list filter), each sorted by last-activity with `waiting-on:human` pinned:
+    - **Needs me** (default) = `status:open` + `waiting-on:human` — the attention subset (this
+      is the pre-unification "inbox"). Keeps background-agent items from drowning in canvas chats.
+    - **All sessions** = `status:open` — the whole index, promoted or not.
+    - **Closed** = the archive.
+  - Agent can promote (open + waiting-on=human + notify), post activity (unread), and self-close.
+    I can read, reply (waiting-on→agent), close, reopen.
 - Populated by sessions I start there and by **background agents that promote their
   session when they need my attention** (first such agent: an always-running
   `/improve-codebase-architecture`).

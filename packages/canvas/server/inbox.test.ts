@@ -101,6 +101,16 @@ describe('findOrCreateConversation', () => {
     const a = await findOrCreateConversation(db, { sessionId: 's-idem', userId: 'u', workspaceId: 'w', summary: 'x' });
     const b = await findOrCreateConversation(db, { sessionId: 's-idem', userId: 'u', workspaceId: 'w', summary: 'y' });
     expect(b.id).toBe(a.id);
+    expect(b.summary).toBe('x'); // create-only: the first title sticks, later turns don't overwrite it
+  });
+
+  test('a plain session lands in waiting_on:none — it shows in "All" but NOT in the "Needs me" view', async () => {
+    // The unified session index (every session gets a row) must not pollute the default attention
+    // view: a session that never called ask_human stays waiting_on:none until (if) it promotes.
+    const db = await freshDb();
+    await findOrCreateConversation(db, { sessionId: 's-plain', userId: 'u', workspaceId: 'w', summary: 'hello' });
+    expect((await conversations.list(db, 'u', { waitingOn: 'human' })).length).toBe(0);
+    expect((await conversations.list(db, 'u')).map((c) => c.sessionId)).toContain('s-plain');
   });
 });
 

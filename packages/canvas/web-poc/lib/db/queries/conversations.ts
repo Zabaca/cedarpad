@@ -71,11 +71,18 @@ export async function getBySessionId(db: Database, sessionId: string): Promise<C
 export async function list(
   db: Database,
   userId: string,
-  opts: { status?: (typeof conversations.status.enumValues)[number]; workspaceId?: string } = {},
+  opts: {
+    status?: (typeof conversations.status.enumValues)[number];
+    workspaceId?: string;
+    waitingOn?: (typeof conversations.waitingOn.enumValues)[number];
+  } = {},
 ): Promise<ConversationRow[]> {
   const filters = [eq(conversations.userId, userId)];
   if (opts.status) filters.push(eq(conversations.status, opts.status));
   if (opts.workspaceId) filters.push(eq(conversations.workspaceId, opts.workspaceId));
+  // The "needs me" view filters to waiting_on:human (the attention subset); "All" omits it so
+  // every session — canvas chats, dev-agent runs — shows in the unified index (#unified-index).
+  if (opts.waitingOn) filters.push(eq(conversations.waitingOn, opts.waitingOn));
   return db
     .select()
     .from(conversations)

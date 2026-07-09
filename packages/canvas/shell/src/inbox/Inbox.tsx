@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ChatView } from '../../../shared/ChatView';
 import { setConnectionTarget } from '../../../shared/chat-store';
-import type { InboxChatResponse, InboxItem, InboxListResponse, StatusFilter } from './contract';
+import type { InboxChatResponse, InboxItem, InboxListResponse, InboxView } from './contract';
 
 // The Inbox stage (ADR-0009 / #124): the `stage === 'inbox'` case of the Shell, under the ONE
 // chrome (the rail). Two panes over the edge API: a left LIST of the user's Conversations
@@ -18,7 +18,9 @@ const bridgePrefix = (convId: string): string => `/inbox/${encodeURIComponent(co
 const preview = (it: InboxItem): string => it.lastMessagePreview ?? it.summary ?? '';
 
 export function InboxStage() {
-  const [status, setStatus] = useState<StatusFilter>('open');
+  // The unified session index: "Needs me" (default) = the attention subset (ask_human promotions);
+  // "All" = every session (canvas chats, dev-agent runs); "Closed" = the archive.
+  const [view, setView] = useState<InboxView>('needs-me');
   const [workspace, setWorkspace] = useState('');
   const [items, setItems] = useState<InboxItem[]>([]);
   const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading');
@@ -27,13 +29,12 @@ export function InboxStage() {
   const [current, setCurrent] = useState<InboxItem | null>(null);
 
   // The list is a pure function of the two filters, so re-query whenever either changes —
-  // this is what makes a status change re-fetch `/api/inbox?status=…`.
+  // this is what makes a view change re-fetch `/api/inbox?view=…`.
   const loadList = useCallback(async () => {
     const qs = new URLSearchParams();
-    if (status) qs.set('status', status);
+    qs.set('view', view);
     if (workspace) qs.set('workspace', workspace);
-    const q = qs.toString();
-    const r = await fetch(`/api/inbox${q ? `?${q}` : ''}`, { credentials: 'same-origin' }).catch(() => null);
+    const r = await fetch(`/api/inbox?${qs.toString()}`, { credentials: 'same-origin' }).catch(() => null);
     if (!r?.ok) {
       setItems([]);
       setState('error');
@@ -42,7 +43,7 @@ export function InboxStage() {
     const d = (await r.json()) as InboxListResponse;
     setItems(d.items);
     setState('ready');
-  }, [status, workspace]);
+  }, [view, workspace]);
 
   useEffect(() => {
     void loadList();
@@ -61,13 +62,13 @@ export function InboxStage() {
       <div className="inbox-list">
         <div className="inbox-filters">
           <select
-            aria-label="Status filter"
-            value={status}
-            onChange={(e) => setStatus(e.target.value as StatusFilter)}
+            aria-label="View filter"
+            value={view}
+            onChange={(e) => setView(e.target.value as InboxView)}
           >
-            <option value="open">Open</option>
+            <option value="needs-me">Needs me</option>
+            <option value="all">All sessions</option>
             <option value="closed">Closed</option>
-            <option value="">All</option>
           </select>
           <select aria-label="Workspace filter" value={workspace} onChange={(e) => setWorkspace(e.target.value)}>
             <option value="">All workspaces</option>

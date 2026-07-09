@@ -20,7 +20,7 @@ import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeMs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import { type Notify, openConversation, resumeConversation } from './inbox.ts';
+import { type Notify, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { DEV_AGENT_WORKSPACE_ID, openDevAgentPr } from './dev-agent-workflow.ts';
 import { backup as backupTranscript } from './transcript-r2.ts';
@@ -390,9 +390,20 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
       if (finalSessionId && finalSessionId !== sessionId) chatMeta.set(chatId, { sessionId: finalSessionId });
       // ADR 0003: persist sessions/components/custom now that the turn settled.
       await onTurnComplete();
-      // Inbox (#60/#61): mirror THIS session's transcript to R2 keyed by sessionId, so the Inbox
-      // can render history and resume can restore it while the runner sleeps. Best-effort.
       if (finalSessionId) {
+        // Unified session index: every session gets a Conversation row so it appears in the Inbox's
+        // "All" view — not just ask_human promotions. Idempotent by sessionId (find-or-create), so a
+        // session that later calls ask_human is the SAME row, just promoted. Lands in waiting_on:none
+        // (nothing pending) → the default "Needs me" view is unaffected. Title = the first message
+        // (create-only; later turns/replies don't overwrite it). Best-effort — never fails a turn.
+        await findOrCreateConversation(webPocDb, {
+          sessionId: finalSessionId,
+          userId: INBOX_USER,
+          workspaceId: WORKSPACE,
+          summary: message.slice(0, 200),
+        }).catch((err) => console.error('[inbox] session-row upsert failed:', err));
+        // Inbox (#60/#61): mirror THIS session's transcript to R2 keyed by sessionId, so the Inbox
+        // can render history and resume can restore it while the runner sleeps. Best-effort.
         await backupTranscript(blobBackend, SESSIONS_DIR, finalSessionId).catch((err) =>
           console.error('[inbox] transcript backup failed:', err),
         );

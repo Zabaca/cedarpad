@@ -40,6 +40,22 @@ export function orderInbox(rows: ConversationRow[]): InboxItem[] {
   return items.sort((a, b) => rank(a) - rank(b) || b.lastActivity - a.lastActivity);
 }
 
+/** The three Inbox views the Shell can request. `needs-me` (default) is the attention subset —
+ *  ask_human promotions; `all` is the unified session index (every session, promoted or not);
+ *  `closed` is the archive. */
+export type InboxView = 'needs-me' | 'all' | 'closed';
+
+/** Pure: map a requested view to a `conversations.list` filter. Unknown/absent → `needs-me`, so the
+ *  default (and any caller that omits the param) gets the attention inbox, never the full firehose. */
+export function viewToListOpts(view: string | null): {
+  status?: 'open' | 'closed';
+  waitingOn?: 'human' | 'agent' | 'none';
+} {
+  if (view === 'closed') return { status: 'closed' };
+  if (view === 'all') return { status: 'open' };
+  return { status: 'open', waitingOn: 'human' };
+}
+
 /** Pure, stable R2 object URL for a session's transcript blob (S3 path-style). */
 export function transcriptObjectUrl(endpoint: string, bucket: string, sessionId: string): string {
   return `${endpoint.replace(/\/$/, '')}/${bucket}/${transcriptKey(sessionId)}`;

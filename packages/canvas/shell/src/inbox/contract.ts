@@ -4,11 +4,11 @@
 // never pulls the edge/container code in — it exists purely to keep sender and receiver in
 // lockstep. The transcript is NO LONGER an edge shape: the thread is a live <ChatView> over the
 // owning bridge (ADR-0009 / #124), so the runner streams it, not an R2 photograph.
-import type { InboxItem } from '../../../worker/inbox-view';
+import type { InboxItem, InboxView } from '../../../worker/inbox-view';
 
-export type { InboxItem };
+export type { InboxItem, InboxView };
 
-/** `GET /api/inbox?status=&workspace=` → the ordered list (waiting_on:human pinned). */
+/** `GET /api/inbox?view=&workspace=` → the ordered list (waiting_on:human pinned). */
 export type InboxListResponse = { items: InboxItem[] };
 
 /** The thread head reads only these fields off the detail's Conversation row. */
@@ -26,5 +26,3 @@ export type InboxDetailResponse = { conversation: InboxConversation };
  *  `chatIdForSession(sessionId) ?? conv.id` — so a double-homed canvas chat shares its id. */
 export type InboxChatResponse = { chatId: string };
 
-/** The status filter: the two store statuses, or '' for "All". */
-export type StatusFilter = 'open' | 'closed' | '';

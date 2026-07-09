@@ -56,13 +56,20 @@ function stubInbox() {
     calls.push(`${method} ${url}`);
     const u = new URL(url, 'https://poc.cedarpad.com');
 
-    // GET /api/inbox?status=&workspace=  — the edge list (Turso, no wake)
+    // GET /api/inbox?view=&workspace=  — the edge list (Turso, no wake). view maps to the same
+    // (status, waiting_on) filter the edge's viewToListOpts applies.
     if (u.pathname === '/api/inbox' && method === 'GET') {
-      const status = u.searchParams.get('status');
+      const view = u.searchParams.get('view') ?? 'needs-me';
       const workspace = u.searchParams.get('workspace');
-      const items = store.filter(
-        (it) => (!status || it.status === status) && (!workspace || it.workspaceId === workspace),
-      );
+      const items = store.filter((it) => {
+        const matchesView =
+          view === 'closed'
+            ? it.status === 'closed'
+            : view === 'all'
+              ? it.status === 'open'
+              : it.status === 'open' && it.waitingOn === 'human'; // needs-me (default)
+        return matchesView && (!workspace || it.workspaceId === workspace);
+      });
       return Response.json({ items });
     }
 
@@ -140,7 +147,7 @@ const changeSelect = async (el: Element | null, value: string) => {
 };
 
 const items = () => [...container.querySelectorAll('.inbox-item')];
-const statusFilter = () => container.querySelector('[aria-label="Status filter"]');
+const viewFilter = () => container.querySelector('[aria-label="View filter"]');
 
 beforeEach(() => {
   calls = [];
@@ -158,30 +165,36 @@ afterEach(async () => {
 
 // The list is the ported left pane: it renders the edge list and re-queries on filter change.
 describe('the inbox list', () => {
-  test('lists the items from GET /api/inbox, defaulting to the open filter', async () => {
-    store = [item({ id: 'c1', summary: 'Ship it' }), item({ id: 'c2', summary: 'Review PR' })];
+  test('defaults to the "Needs me" view — GET /api/inbox?view=needs-me, showing waiting_on:human items', async () => {
+    store = [
+      item({ id: 'c1', summary: 'Ship it', waitingOn: 'human' }),
+      item({ id: 'c2', summary: 'Review PR', waitingOn: 'human' }),
+      item({ id: 'c3', summary: 'idle chat', waitingOn: 'none' }), // a plain session — hidden by default
+    ];
     await mount();
 
-    expect(calls).toContain('GET /api/inbox?status=open');
+    expect(calls).toContain('GET /api/inbox?view=needs-me');
     expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['Ship it', 'Review PR']);
   });
 
-  test('changing the status filter re-queries with the new ?status=', async () => {
-    store = [item({ id: 'c1', status: 'open' })];
+  test('"All sessions" shows every session — including non-promoted ones the default hides', async () => {
+    store = [item({ id: 'c1', summary: 'ask', waitingOn: 'human' }), item({ id: 'c2', summary: 'idle chat', waitingOn: 'none' })];
     await mount();
     calls = [];
 
-    await changeSelect(statusFilter(), 'closed');
-    expect(calls).toContain('GET /api/inbox?status=closed');
+    await changeSelect(viewFilter(), 'all');
+    expect(calls).toContain('GET /api/inbox?view=all');
+    // the idle (waiting_on:none) session now appears — the unified index
+    expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['ask', 'idle chat']);
 
-    await changeSelect(statusFilter(), '');
-    expect(calls).toContain('GET /api/inbox'); // "All" ⇒ no status param
+    await changeSelect(viewFilter(), 'closed');
+    expect(calls).toContain('GET /api/inbox?view=closed');
   });
 
   test('browsing the list never wakes a runner — it touches ONLY /api/inbox*', async () => {
-    store = [item({ id: 'c1' }), item({ id: 'c2' })];
+    store = [item({ id: 'c1', waitingOn: 'human' }), item({ id: 'c2', waitingOn: 'human' })];
     await mount();
-    await changeSelect(statusFilter(), 'closed'); // filter around, still no open
+    await changeSelect(viewFilter(), 'all'); // filter around
 
     // No /inbox/:id/bridge/* call (that is the only wake path); the list is Turso-only.
     expect(calls.some((c) => c.includes('/bridge'))).toBe(false);
@@ -200,7 +213,7 @@ describe('the item row badges and dot', () => {
   });
 
   test('an unread item renders the dot', async () => {
-    store = [item({ id: 'c1', unread: true })];
+    store = [item({ id: 'c1', unread: true, waitingOn: 'human' })];
     await mount();
     expect(container.querySelector('.inbox-dot')).not.toBeNull();
   });
@@ -208,7 +221,7 @@ describe('the item row badges and dot', () => {
   test('a closed item (not waiting) renders the closed badge', async () => {
     store = [item({ id: 'c1', status: 'closed', waitingOn: 'none' })];
     await mount();
-    await changeSelect(statusFilter(), 'closed');
+    await changeSelect(viewFilter(), 'closed');
     const badge = container.querySelector('.inbox-badge');
     expect(badge?.textContent).toBe('closed');
     expect(badge?.className).toContain('closed');
@@ -218,7 +231,7 @@ describe('the item row badges and dot', () => {
 // The right pane is now the shared <ChatView>, connected to the owning bridge via the proxy.
 describe('opening a conversation', () => {
   test('resolves the chatId from the bridge and mounts <ChatView> pointed at the proxy', async () => {
-    store = [item({ id: 'c1', summary: 'Thread' })];
+    store = [item({ id: 'c1', summary: 'Thread', waitingOn: 'human' })];
     await mount();
     await click(items()[0] ?? null);
 
@@ -233,7 +246,7 @@ describe('opening a conversation', () => {
   });
 
   test('the transcript rehydrate and stream open UNDER the proxy prefix (not same-origin)', async () => {
-    store = [item({ id: 'c2', summary: 'Live' })];
+    store = [item({ id: 'c2', summary: 'Live', waitingOn: 'human' })];
     await mount();
     await click(items()[0] ?? null);
 
@@ -245,14 +258,14 @@ describe('opening a conversation', () => {
 // Close/reopen still hit the edge store routes and refresh the list (no wake, no transcript read).
 describe('thread actions', () => {
   test('Close posts /api/inbox/:id/close and the row leaves the open view', async () => {
-    store = [item({ id: 'c1', summary: 'Close me', status: 'open' })];
+    store = [item({ id: 'c1', summary: 'Close me', status: 'open', waitingOn: 'human' })];
     await mount();
     await click(items()[0] ?? null);
 
     await click(container.querySelector('.inbox-threadhead button'));
 
     expect(calls).toContain('POST /api/inbox/c1/close');
-    // The default filter is still `open`; c1 is now closed, so it's gone from the list.
+    // The default "Needs me" view requires status:open; c1 is now closed, so it's gone from the list.
     expect(items()).toHaveLength(0);
   });
 });

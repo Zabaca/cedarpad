@@ -1,9 +1,24 @@
 import { describe, expect, test } from 'bun:test';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
-import { orderInbox, transcriptObjectUrl } from './inbox-view.ts';
+import { orderInbox, transcriptObjectUrl, viewToListOpts } from './inbox-view.ts';
 
 // Pure decisions the edge Inbox makes: list ordering (waiting_on:human pinned) and the R2
 // object-URL derivation. Both are runtime-free so they test without the edge or a container.
+
+describe('viewToListOpts — the unified-index views', () => {
+  test('needs-me (default) filters to the attention subset: open + waiting_on:human', () => {
+    expect(viewToListOpts('needs-me')).toEqual({ status: 'open', waitingOn: 'human' });
+    // absent/unknown falls back to needs-me — no caller ever gets the full firehose by accident
+    expect(viewToListOpts(null)).toEqual({ status: 'open', waitingOn: 'human' });
+    expect(viewToListOpts('bogus')).toEqual({ status: 'open', waitingOn: 'human' });
+  });
+  test('all shows every open session (no waiting_on filter)', () => {
+    expect(viewToListOpts('all')).toEqual({ status: 'open' });
+  });
+  test('closed shows the archive', () => {
+    expect(viewToListOpts('closed')).toEqual({ status: 'closed' });
+  });
+});
 
 const row = (o: Partial<ConversationRow>): ConversationRow =>
   ({
