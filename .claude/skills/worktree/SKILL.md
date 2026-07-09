@@ -1,6 +1,6 @@
 ---
 name: worktree
-description: How parallel-safe git-worktree development works in cedarpad — per-worktree dev DB, per-worktree dev/e2e ports, the E2E_MODE shim convention, and the Playwright authoring loop for the canvas app. Use when running the dev server / tests / e2e from a worktree, authoring an e2e spec, adding an E2E_MODE shim, or debugging a "port already in use" / shared-DB collision.
+description: How parallel-safe git-worktree development works in cedarpad — agent hygiene (stay in your worktree, don't write to the main checkout), per-worktree dev DB, per-worktree dev/e2e ports, the E2E_MODE shim convention, and the Playwright authoring loop for the canvas app. Use when working as an agent inside a git worktree, running the dev server / tests / e2e from a worktree, authoring an e2e spec, adding an E2E_MODE shim, or debugging a "port already in use" / shared-DB collision.
 user-invocable: true
 ---
 
@@ -11,6 +11,56 @@ This repo follows CLAUDE.md §6 (worktree-safe by default) and ADR-0003
 unit tests, and Playwright e2e at the same time without colliding on ports or
 dev databases. Everything below lives under `packages/canvas` (the deployable
 app).
+
+---
+
+## Agent hygiene — STAY IN YOUR WORKTREE
+
+If you are an agent working in a git worktree (path under `.claude/worktrees/…`),
+read this first. It is separate from the port/DB isolation below: that keeps
+parallel *processes* from colliding; this keeps you from writing to the wrong
+*checkout*.
+
+**The failure mode:** an agent in a worktree runs a command like
+`cd /Users/uptown/Projects/zabaca/cedarpad && …` (the *main* checkout) and edits
+or commits there instead of in its worktree. It has happened repeatedly. It's
+dangerous because the main checkout may hold the human's own uncommitted work, or
+another agent's — a stray write there can block a `git pull`, collide, or get lost.
+Nothing in the port/DB scaffolding prevents it, because it's a wrong-directory
+problem, not a port problem.
+
+**Why the pull toward main exists — and how to resist each:**
+
+1. **Your environment says the project is at the main path.** The system context
+   advertises the repo's *main* working directory (`/Users/uptown/Projects/zabaca/cedarpad`).
+   That is NOT where you are. Do not trust it as your cwd. **Run
+   `git rev-parse --show-toplevel` first and treat *that* as your root** — it will be
+   a `.claude/worktrees/agent-…` path.
+
+2. **Your worktree has no `node_modules`.** A worktree shares `.git` but not
+   untracked files, so tools may fail until deps exist. **`bun install` inside your
+   own worktree** (it won't change `bun.lock`). Do NOT `cd` to main to borrow its
+   `node_modules`.
+
+3. **Habit.** "cd to the project and run the command" is reflex, and the path you
+   memorized is main.
+
+**Rules:**
+
+- **Never put an absolute path to the main checkout in any command** — not in a bare
+  `cd`, and *especially* not inside a compound `cd /main/path && …` or a
+  `cat >> /main/path/file` heredoc. Each Bash call is a fresh shell, so a `cd` inside
+  one command silently retargets just that command; that is exactly how the escapes
+  happened.
+- **Prefer paths relative to your worktree**, or absolute paths *under* your
+  `git rev-parse --show-toplevel`. Run `pwd` before any write if unsure.
+- **`git status` / `git add` / `git commit` operate on your worktree** as long as you
+  don't `cd` out of it. If a git command reports files you didn't touch, STOP — you're
+  in the wrong checkout.
+
+The harder structural fixes (not advertising the main path to worktree agents,
+pre-seeding `node_modules`, hard-sandboxing the filesystem) are harness-level and out
+of scope here — until they land, this discipline is the guard.
 
 ---
 
