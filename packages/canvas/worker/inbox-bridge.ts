@@ -3,6 +3,7 @@ import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import type { GateUser } from './auth-gate.ts';
 import { DEV_AGENT_SANDBOX_ID } from './dev-agent.ts';
+import { mintDevAgentGitToken } from './github-app.ts';
 import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolver.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
@@ -56,10 +57,14 @@ export async function handleInboxBridge(
   user: GateUser,
   convId: string,
   subPath: string,
+  // Default-parameter test seam: production always mints for real; tests inject a recorder.
+  mint: typeof mintDevAgentGitToken = mintDevAgentGitToken,
 ): Promise<Response> {
   const database = db(env);
   const conv = await conversations.get(database, convId);
   if (!conv || conv.userId !== user.id) return Response.json({ error: 'conversation not found' }, { status: 404 });
+
+  const isChatSend = request.method === 'POST' && IS_CHAT_SEND.test(subPath);
 
   // Inbox triage side-effect (ADR-0009 / #124): a reply is a chat SEND now (not the retired
   // /api/inbox/:id/reply), so flip the Conversation waiting_on:human → agent here — the same
@@ -67,7 +72,7 @@ export async function handleInboxBridge(
   // from the attention list. ONLY on a send (not the transcript GET, the /chat id lookup, the
   // alive beat, or interrupt). Fire-and-forget + best-effort: a flip failure must never block
   // or break the proxied (SSE) send.
-  if (request.method === 'POST' && IS_CHAT_SEND.test(subPath)) {
+  if (isChatSend) {
     void conversations.reply(database, convId).catch(() => {});
   }
 
@@ -76,5 +81,17 @@ export async function handleInboxBridge(
   // method, headers, and the (streaming) body through unbuffered.
   const target = new URL(request.url);
   target.pathname = subPath;
-  return serveWorkspace(new Request(target, request), env, coordsForWorkspace(conv.workspaceId));
+  const proxied = new Request(target, request);
+
+  // ADR-0010: a dev-agent Conversation's SEND — and only a send — carries a freshly-minted,
+  // ~1h, cedarpad-scoped git token as a request header; the bridge arms `open_pr` for exactly
+  // that turn (server/bridge.ts buildDevAgentOpenPr). The App private key never leaves the
+  // edge (ADR-0008); the token is per-turn, never env-injected, never persisted. Best-effort:
+  // a failed mint (null) proxies the send token-less rather than blocking the reply.
+  if (isChatSend && conv.workspaceId === DEV_AGENT_SANDBOX_ID) {
+    const token = await mint(env, { nowSec: Math.floor(Date.now() / 1000) });
+    if (token) proxied.headers.set('x-dev-agent-git-token', token);
+  }
+
+  return serveWorkspace(proxied, env, coordsForWorkspace(conv.workspaceId));
 }

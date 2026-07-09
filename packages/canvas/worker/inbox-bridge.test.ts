@@ -16,13 +16,17 @@ import type { SandboxCoords } from './sandbox-resolver.ts';
 
 let conv: ConversationRow | null = null;
 let served: SandboxCoords[] = [];
+let servedTokens: Array<string | null> = [];
 let replyCalls: string[] = [];
+let mintCalls = 0;
+let mintResult: string | null = 'ghs_minted';
 
 mock.module('@cloudflare/sandbox', () => ({ Sandbox: class {} }));
 mock.module('../web-poc/worker/runtime.ts', () => ({ createDbForWorker: () => ({}) }));
 mock.module('./sandbox-runtime.ts', () => ({
-  serveWorkspace: (_req: Request, _env: unknown, coords: SandboxCoords) => {
+  serveWorkspace: (req: Request, _env: unknown, coords: SandboxCoords) => {
     served.push(coords);
+    servedTokens.push(req.headers.get('x-dev-agent-git-token'));
     return new Response('proxied');
   },
 }));
@@ -56,7 +60,13 @@ const row = (o: Partial<ConversationRow> = {}): ConversationRow =>
     ...o,
   }) as ConversationRow;
 
-// Drive the proxy exactly as worker/index.ts does: the routing prefix already stripped to `subPath`.
+// Drive the proxy exactly as worker/index.ts does: the routing prefix already stripped to
+// `subPath`. The token mint is a default-parameter seam (production binds the real
+// `mintDevAgentGitToken`); the fake records calls so a test can assert mint-vs-no-mint.
+const mint = () => {
+  mintCalls += 1;
+  return Promise.resolve(mintResult);
+};
 const proxy = (method: string, subPath: string, convId = 'conv_1') =>
   handleInboxBridge(
     new Request(`https://poc.cedarpad.com/inbox/${convId}/bridge${subPath}`, { method }),
@@ -64,6 +74,7 @@ const proxy = (method: string, subPath: string, convId = 'conv_1') =>
     user,
     convId,
     subPath,
+    mint,
   );
 
 // Let the fire-and-forget flip (a microtask) settle before asserting.
@@ -72,7 +83,10 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 beforeEach(() => {
   conv = row();
   served = [];
+  servedTokens = [];
   replyCalls = [];
+  mintCalls = 0;
+  mintResult = 'ghs_minted';
 });
 
 describe('handleInboxBridge: the inbox triage flip on a proxied send', () => {
@@ -117,6 +131,47 @@ describe('handleInboxBridge: the inbox triage flip on a proxied send', () => {
     expect(res.status).toBe(404);
     expect(served).toHaveLength(0);
     expect(replyCalls).toEqual([]);
+  });
+});
+
+// ADR-0010: the edge mints a short-lived, repo-scoped git token PER dev-agent send and rides
+// it on the proxied request as `x-dev-agent-git-token` — the bridge arms `open_pr` for exactly
+// that turn. Product sends never mint; reads (GET/alive/interrupt) never mint; a failed mint
+// degrades to a token-less send (the turn just has no open_pr), never a blocked reply.
+describe('handleInboxBridge: the dev-agent git token is minted onto a proxied send (ADR-0010)', () => {
+  test('a dev-agent send carries x-dev-agent-git-token to the owning bridge', async () => {
+    conv = row({ workspaceId: DEV_AGENT_SANDBOX_ID });
+    await proxy('POST', '/api/chat/chat_home/send');
+
+    expect(mintCalls).toBe(1);
+    expect(servedTokens).toEqual(['ghs_minted']);
+  });
+
+  test('a PRODUCT send never mints — no token header reaches the bridge', async () => {
+    conv = row({ workspaceId: 'default' });
+    await proxy('POST', '/api/chat/chat_home/send');
+
+    expect(mintCalls).toBe(0);
+    expect(servedTokens).toEqual([null]);
+  });
+
+  test('a dev-agent transcript GET / alive beat never mints (only a send arms open_pr)', async () => {
+    conv = row({ workspaceId: DEV_AGENT_SANDBOX_ID });
+    await proxy('GET', '/api/chat/chat_home/transcript');
+    await proxy('POST', '/api/alive');
+
+    expect(mintCalls).toBe(0);
+    expect(servedTokens).toEqual([null, null]);
+  });
+
+  test('a failed mint (null) still proxies the send — token-less, never blocked', async () => {
+    conv = row({ workspaceId: DEV_AGENT_SANDBOX_ID });
+    mintResult = null;
+    const res = await proxy('POST', '/api/chat/chat_home/send');
+
+    expect(res.status).toBe(200);
+    expect(mintCalls).toBe(1);
+    expect(servedTokens).toEqual([null]);
   });
 });
 

@@ -6,6 +6,7 @@ import {
   appConfigFromEnv,
   buildAppJwt,
   devAgentGitTokenEnv,
+  mintDevAgentGitToken,
   mintInstallationToken,
 } from './github-app.ts';
 import { GITHUB_TOKEN_ENV } from '../server/repo-worktree.ts';
@@ -88,6 +89,36 @@ describe('appConfigFromEnv', () => {
   test('returns null (not throws) when any one is missing', () => {
     expect(appConfigFromEnv({ GITHUB_APP_ID: 'a', GITHUB_APP_INSTALLATION_ID: 'b' } as Env)).toBeNull();
     expect(appConfigFromEnv({} as Env)).toBeNull();
+  });
+});
+
+describe('mintDevAgentGitToken — the coords-free mint core (ADR-0010)', () => {
+  const env = { GITHUB_APP_ID: '4257337', GITHUB_APP_INSTALLATION_ID: '145473731', GITHUB_APP_PRIVATE_KEY: privateKey } as Env;
+
+  test('mints a cedarpad-scoped token (contents/PRs/workflows write) via the injected fetch', async () => {
+    let captured: { url: string; body: unknown } | null = null;
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      captured = { url: String(url), body: JSON.parse((init?.body as string) ?? 'null') };
+      return new Response(JSON.stringify({ token: 'ghs_minted', expires_at: 'x' }), { status: 201 });
+    }) as unknown as typeof fetch;
+
+    const token = await mintDevAgentGitToken(env, { nowSec: 1_700_000_000, fetchImpl: fakeFetch });
+
+    expect(token).toBe('ghs_minted');
+    expect(captured!.url).toBe('https://api.github.com/app/installations/145473731/access_tokens');
+    expect(captured!.body).toEqual({
+      repositories: ['cedarpad'],
+      permissions: { contents: 'write', pull_requests: 'write', workflows: 'write' },
+    });
+  });
+
+  test('best-effort: unconfigured App ⇒ null (a send proxies token-less, never throws)', async () => {
+    expect(await mintDevAgentGitToken({} as Env, { nowSec: 1 })).toBeNull();
+  });
+
+  test('best-effort: a mint failure ⇒ null (never throws into the proxy path)', async () => {
+    const boom = (async () => new Response('nope', { status: 500 })) as unknown as typeof fetch;
+    expect(await mintDevAgentGitToken(env, { nowSec: 1, fetchImpl: boom })).toBeNull();
   });
 });
 

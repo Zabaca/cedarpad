@@ -101,6 +101,34 @@ export function appConfigFromEnv(env: Env): GithubAppConfig | null {
   return { appId, installationId, privateKey };
 }
 
+// The coords-free mint core (ADR-0010): a freshly-minted, cedarpad-scoped installation token
+// for ONE dev-agent turn — the edge mints it per dev-agent send and rides it on the proxied
+// request as a header (worker/inbox-bridge.ts). Best-effort: returns `null` (logging, never
+// throwing) when the App is unconfigured or the mint fails, so a send still proxies — the
+// turn just runs without `open_pr` and the push/PR path surfaces its own clear error.
+export async function mintDevAgentGitToken(
+  env: Env,
+  opts: { nowSec: number; fetchImpl?: typeof fetch },
+): Promise<string | null> {
+  const cfg = appConfigFromEnv(env);
+  if (!cfg) {
+    console.log('[dev-agent] GitHub App not configured (GITHUB_APP_* unset) — no git token minted');
+    return null;
+  }
+  try {
+    const { token } = await mintInstallationToken(cfg, {
+      repositories: [DEV_AGENT_REPO_NAME],
+      permissions: { ...DEV_AGENT_PERMISSIONS },
+      nowSec: opts.nowSec,
+      fetchImpl: opts.fetchImpl,
+    });
+    return token;
+  } catch (e: unknown) {
+    console.error(`[dev-agent] installation-token mint failed — no git token minted: ${String(e)}`);
+    return null;
+  }
+}
+
 // The env fragment the DEV-AGENT container gets, and only it: a freshly-minted, cedarpad-scoped
 // installation token under the var repo-worktree.ts reads. Returns `{}` for every non-dev-agent
 // coords (so no product workspace mints a token) and — best-effort — `{}` if the App isn't
@@ -111,21 +139,6 @@ export async function devAgentGitTokenEnv(
   opts: { nowSec: number; fetchImpl?: typeof fetch },
 ): Promise<Record<string, string>> {
   if (coords.sandboxId !== DEV_AGENT_SANDBOX_ID) return {};
-  const cfg = appConfigFromEnv(env);
-  if (!cfg) {
-    console.log('[dev-agent] GitHub App not configured (GITHUB_APP_* unset) — booting without a git token');
-    return {};
-  }
-  try {
-    const { token } = await mintInstallationToken(cfg, {
-      repositories: [DEV_AGENT_REPO_NAME],
-      permissions: { ...DEV_AGENT_PERMISSIONS },
-      nowSec: opts.nowSec,
-      fetchImpl: opts.fetchImpl,
-    });
-    return { [DEV_AGENT_GITHUB_TOKEN_ENV]: token };
-  } catch (e: unknown) {
-    console.error(`[dev-agent] installation-token mint failed — booting without a git token: ${String(e)}`);
-    return {};
-  }
+  const token = await mintDevAgentGitToken(env, opts);
+  return token ? { [DEV_AGENT_GITHUB_TOKEN_ENV]: token } : {};
 }
