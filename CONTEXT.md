@@ -237,12 +237,17 @@ owning runner's bridge**, streaming back like a canvas chat. There is **no** sep
 action the agent takes mid-conversation**, not a hardcoded consequence of the reply.
 - **Product runtime**: the workspace container (canvas/notebook chats + inbox chats I
   start about my content). Sleeps aggressively (5m) to bound cost.
-- **Dev-agent runner**: a **separate sandbox instance of the same image**, with its own
-  sleep schedule, for continuous dev workflows. On wake it clones/worktrees
-  `Zabaca/cedarpad`, does its work, and **pushes a branch → PR** (durable artifact; a
-  non-git baked `/app` edit would evaporate). Own lifecycle so it never pins or gets
-  reaped by the product container's sleep timer. **Worktree per concurrent workflow**
-  (ADR-0003). Analysis/candidates live as the Inbox Conversation; code changes land as
-  a PR. First workflow: scheduled `/improve-codebase-architecture` → promotes a
-  Conversation (`waiting-on: human`) with its candidates; I **grill it through that
-  thread** (a real chat on the dev-agent bridge), and it opens the PR when we align.
+- **Dev-agent**: a **role the warm workspace container plays**, not a separate container
+  (ADR-0010) — "dev-agent" is a **logical Conversation tag** (`workspaceId: 'dev-agent'`,
+  disjoint from every product workspace id by construction). The batch run (Explore →
+  gate → `ask_human`) execs on the warm default container, single-flighted; the promoted
+  Conversation resumes on that container's bridge like any product chat. A dev-agent send
+  is armed per turn by an **edge-minted git-token header** (the App private key never
+  leaves the edge), and the turn runs in a **prepared `Zabaca/cedarpad` worktree** (hub
+  clone + worktree off `origin/main`, per-chat branch, reused across turns) — never the
+  live app tree — with **`open_pr` committing that tree → PR** (durable artifact; a
+  non-git baked `/app` edit would evaporate). **Worktree per conversation** (ADR-0003).
+  Analysis/candidates live as the Inbox Conversation; code changes land as a PR. First
+  workflow: scheduled `/improve-codebase-architecture` → promotes a Conversation
+  (`waiting-on: human`) with its candidates; I **grill it through that thread** (a real
+  chat), and it opens the PR when we align.
