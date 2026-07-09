@@ -20,7 +20,7 @@ import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeMs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import { type Notify, resumeConversation } from './inbox.ts';
+import { type Notify, openConversation, resumeConversation } from './inbox.ts';
 import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { isDevAgentConversation, runDevAgentApproval } from './dev-agent-workflow.ts';
 import { query } from '@anthropic-ai/claude-agent-sdk';
@@ -612,6 +612,33 @@ export async function handleRequest(req: Request): Promise<Response> {
       const chatId = decodeURIComponent(interruptRoute[1] as string);
       aborters.get(chatId)?.abort();
       return json({ ok: true });
+    }
+
+    // GET /api/inbox/:id/chat — resolve a Conversation to the chatId a Shell-mounted <ChatView>
+    // subscribes to (ADR-0009 / #124). Reached ONLY through the edge proxy (/inbox/:id/bridge/*),
+    // which already ownership-checked the Conversation against the gated user. Wakes THIS bridge:
+    // restores the session JSONL from R2 if the container cold-booted, resolves
+    // `chatIdForSession(sessionId) ?? conv.id` (a double-homed canvas chat shares its id — two live
+    // views of one stream), and seeds that chatId's ChatMeta so its transcript + send resume this
+    // session. The Shell then points its connection target here and renders <ChatView chatId>.
+    const openConvRoute = /^\/api\/inbox\/([^/]+)\/chat$/.exec(path);
+    if (openConvRoute && req.method === 'GET') {
+      const id = decodeURIComponent(openConvRoute[1] as string);
+      const conv = await conversations.get(webPocDb, id);
+      if (!conv) return json({ error: `conversation not found: ${id}` }, 404);
+      const { chatId } = await openConversation(
+        {
+          getter: blobBackend,
+          projectsDir: SESSIONS_DIR,
+          cwd: CANVAS_CWD,
+          chatIdForSession,
+          seedChatMeta: (cid, sid) => {
+            if (chatMeta.get(cid).sessionId !== sid) chatMeta.set(cid, { sessionId: sid });
+          },
+        },
+        conv,
+      );
+      return json({ chatId });
     }
 
     // POST /api/inbox/:id/reply — the human answers an ask_human item (#61). Restore the session's

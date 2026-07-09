@@ -8,14 +8,17 @@ import { createRoot, type Root } from 'react-dom/client';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-import type { ChatEvent } from '../../../shared/chat-wire';
+import { connectionTarget } from '../../../shared/chat-store';
 import { InboxStage } from './Inbox';
 
-// A minimal in-memory edge Inbox: a mutable list of items + per-id transcripts, served the
-// same way the real `/api/inbox*` endpoints shape their JSON. The list filters by the
-// `status`/`workspace` query params (like conversations.list), so a close really does drop a
-// row from the open view. Every request is recorded so we can assert what the UI called —
-// and, crucially, that it ONLY ever talks to `/api/inbox*` (browsing never wakes anything).
+// A minimal in-memory edge for the Inbox stage. The LIST is Turso-only (`/api/inbox*`) and must
+// never wake a runner. OPENING a Conversation is now a live <ChatView> over the owning bridge via
+// the edge proxy (ADR-0009 / #124): the Shell first resolves the chatId from
+// `GET /inbox/:id/bridge/api/inbox/:id/chat` (the ONLY wake), sets the chat-store connection
+// target to that proxy prefix, and mounts <ChatView> — which then talks to the bridge under the
+// prefix (transcript/stream/send). Every request is recorded so we can assert (a) that browsing
+// the list touches ONLY `/api/inbox*` (no `/bridge` wake) and (b) that opening points <ChatView>
+// at the proxy.
 
 type Item = {
   id: string;
@@ -31,7 +34,6 @@ type Item = {
 const realFetch = globalThis.fetch;
 let calls: string[] = [];
 let store: Item[] = [];
-let transcripts: Record<string, ChatEvent[]> = {};
 
 const item = (o: Partial<Item> & { id: string }): Item => ({
   status: 'open',
@@ -44,6 +46,9 @@ const item = (o: Partial<Item> & { id: string }): Item => ({
   ...o,
 });
 
+/** The chatId the bridge resolves a Conversation to (`chatIdForSession(sessionId) ?? conv.id`). */
+const chatIdFor = (convId: string) => `chat_${convId}`;
+
 function stubInbox() {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -51,7 +56,7 @@ function stubInbox() {
     calls.push(`${method} ${url}`);
     const u = new URL(url, 'https://poc.cedarpad.com');
 
-    // GET /api/inbox?status=&workspace=
+    // GET /api/inbox?status=&workspace=  — the edge list (Turso, no wake)
     if (u.pathname === '/api/inbox' && method === 'GET') {
       const status = u.searchParams.get('status');
       const workspace = u.searchParams.get('workspace');
@@ -61,25 +66,43 @@ function stubInbox() {
       return Response.json({ items });
     }
 
-    const m = /^\/api\/inbox\/([^/]+)(?:\/(reply|close|reopen))?$/.exec(u.pathname);
+    // Edge chat proxy: /inbox/:id/bridge/*  — the owning runner bridge.
+    const bridge = /^\/inbox\/([^/]+)\/bridge(\/.*)$/.exec(u.pathname);
+    if (bridge) {
+      const convId = bridge[1] as string;
+      const sub = bridge[2] as string;
+      // The chatId resolve (the wake): restore + `chatIdForSession(sessionId) ?? conv.id`.
+      if (sub === `/api/inbox/${convId}/chat`) return Response.json({ chatId: chatIdFor(convId) });
+      // <ChatView>'s rehydrate on connect (JSONL-derived transcript under the proxy prefix).
+      if (sub.endsWith('/transcript')) return Response.json({ config: {}, events: [] });
+      return Response.json({ ok: true });
+    }
+
+    // Close / reopen — edge store transitions (no transcript, no wake).
+    const m = /^\/api\/inbox\/([^/]+)\/(close|reopen)$/.exec(u.pathname);
     if (m) {
       const id = m[1] as string;
       const action = m[2];
       const row = store.find((it) => it.id === id);
-      if (action === 'close' || action === 'reopen') {
-        if (row) row.status = action === 'close' ? 'closed' : 'open';
-        return Response.json({ conversation: row });
-      }
-      if (action === 'reply') return Response.json({ ok: true });
-      // detail
-      return Response.json({
-        conversation: { sessionId: `sess_${id}`, status: row?.status ?? 'open', summary: row?.summary ?? null },
-        events: transcripts[id] ?? [],
-      });
+      if (row) row.status = action === 'close' ? 'closed' : 'open';
+      return Response.json({ conversation: row });
     }
     return new Response('not found', { status: 404 });
   }) as typeof fetch;
 }
+
+// <ChatView> opens ONE shared SSE stream (chat-store) on mount; happy-dom has no EventSource, so
+// stub a no-op that reports "open" (which flips the chat's `subscribed` gate) without a socket.
+class StubEventSource {
+  onopen: (() => void) | null = null;
+  onmessage: ((e: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(public url: string) {
+    setTimeout(() => this.onopen?.(), 0);
+  }
+  close() {}
+}
+const realEventSource = (globalThis as { EventSource?: unknown }).EventSource;
 
 let container: HTMLDivElement;
 let root: Root;
@@ -95,7 +118,7 @@ async function mount() {
 
 const flush = async () => {
   await act(async () => {
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
   });
 };
 
@@ -107,7 +130,6 @@ const click = async (el: Element | null) => {
   await flush();
 };
 
-/** Set a <select>'s value and fire the change React listens for. */
 const changeSelect = async (el: Element | null, value: string) => {
   expect(el).not.toBeNull();
   await act(async () => {
@@ -117,27 +139,21 @@ const changeSelect = async (el: Element | null, value: string) => {
   await flush();
 };
 
-// The reply box is uncontrolled (read from the DOM on send), so a plain value assignment is
-// all it takes — no React change event to coax through happy-dom's value tracker.
-const typeInto = (el: Element | null, value: string) => {
-  expect(el).not.toBeNull();
-  (el as HTMLTextAreaElement).value = value;
-};
-
 const items = () => [...container.querySelectorAll('.inbox-item')];
 const statusFilter = () => container.querySelector('[aria-label="Status filter"]');
 
 beforeEach(() => {
   calls = [];
   store = [];
-  transcripts = {};
   stubInbox();
+  (globalThis as { EventSource?: unknown }).EventSource = StubEventSource as unknown;
 });
 
 afterEach(async () => {
   if (root) await act(async () => root.unmount());
   container?.remove();
   globalThis.fetch = realFetch;
+  (globalThis as { EventSource?: unknown }).EventSource = realEventSource;
 });
 
 // The list is the ported left pane: it renders the edge list and re-queries on filter change.
@@ -162,11 +178,13 @@ describe('the inbox list', () => {
     expect(calls).toContain('GET /api/inbox'); // "All" ⇒ no status param
   });
 
-  test('the whole stage only ever talks to /api/inbox* — browsing never wakes a container', async () => {
-    store = [item({ id: 'c1' })];
+  test('browsing the list never wakes a runner — it touches ONLY /api/inbox*', async () => {
+    store = [item({ id: 'c1' }), item({ id: 'c2' })];
     await mount();
-    await click(items()[0] ?? null); // open the conversation too
+    await changeSelect(statusFilter(), 'closed'); // filter around, still no open
 
+    // No /inbox/:id/bridge/* call (that is the only wake path); the list is Turso-only.
+    expect(calls.some((c) => c.includes('/bridge'))).toBe(false);
     expect(calls.every((c) => c.includes('/api/inbox'))).toBe(true);
   });
 });
@@ -190,7 +208,6 @@ describe('the item row badges and dot', () => {
   test('a closed item (not waiting) renders the closed badge', async () => {
     store = [item({ id: 'c1', status: 'closed', waitingOn: 'none' })];
     await mount();
-    // The closed filter surfaces it.
     await changeSelect(statusFilter(), 'closed');
     const badge = container.querySelector('.inbox-badge');
     expect(badge?.textContent).toBe('closed');
@@ -198,35 +215,34 @@ describe('the item row badges and dot', () => {
   });
 });
 
-// The right pane: the transcript rendered from the R2-backed detail (no container woken).
+// The right pane is now the shared <ChatView>, connected to the owning bridge via the proxy.
 describe('opening a conversation', () => {
-  test('renders delta / tool / thinking events distinctly', async () => {
+  test('resolves the chatId from the bridge and mounts <ChatView> pointed at the proxy', async () => {
     store = [item({ id: 'c1', summary: 'Thread' })];
-    transcripts.c1 = [
-      { kind: 'delta', text: 'hello from the human', role: 'user' },
-      { kind: 'delta', text: 'hi from the agent' },
-      { kind: 'tool', name: 'Bash', input: {} },
-      { kind: 'thinking', thinkingTokens: 12 },
-    ];
     await mount();
     await click(items()[0] ?? null);
 
-    expect(calls).toContain('GET /api/inbox/c1');
+    // The wake: it resolved the chatId through the proxy (never the retired R2 detail read).
+    expect(calls).toContain('GET /inbox/c1/bridge/api/inbox/c1/chat');
+    expect(calls).not.toContain('GET /api/inbox/c1'); // no edge transcript/detail read
 
-    const evs = [...container.querySelectorAll('.inbox-ev')];
-    // A user delta and an assistant delta, each a bubble.
-    const userEv = evs.find((e) => e.className.includes('user'));
-    const asstEv = evs.find((e) => e.className.includes('assistant'));
-    expect(userEv?.querySelector('.inbox-bubble')?.textContent).toBe('hello from the human');
-    expect(asstEv?.querySelector('.inbox-bubble')?.textContent).toBe('hi from the agent');
-    // Tool + thinking are meta lines with no bubble.
-    const metas = evs.filter((e) => e.className.includes('meta')).map((e) => e.textContent);
-    expect(metas).toContain('→ Bash');
-    expect(metas).toContain('thinking…');
+    // <ChatView> is mounted (its card chrome), and its chat-store connection target for THIS
+    // chatId is the proxy prefix — so its stream/send/transcript all address the owning bridge.
+    expect(container.querySelector('.chat-card')).not.toBeNull();
+    expect(connectionTarget(chatIdFor('c1'))).toBe('/inbox/c1/bridge');
+  });
+
+  test('the transcript rehydrate and stream open UNDER the proxy prefix (not same-origin)', async () => {
+    store = [item({ id: 'c2', summary: 'Live' })];
+    await mount();
+    await click(items()[0] ?? null);
+
+    // <ChatView>/chat-store pulled its transcript through the proxy, not from same-origin.
+    expect(calls.some((c) => c.startsWith('GET /inbox/c2/bridge/api/chat/') && c.endsWith('/transcript'))).toBe(true);
   });
 });
 
-// Close/reopen + reply hit the exact edge routes and refresh the list.
+// Close/reopen still hit the edge store routes and refresh the list (no wake, no transcript read).
 describe('thread actions', () => {
   test('Close posts /api/inbox/:id/close and the row leaves the open view', async () => {
     store = [item({ id: 'c1', summary: 'Close me', status: 'open' })];
@@ -238,18 +254,5 @@ describe('thread actions', () => {
     expect(calls).toContain('POST /api/inbox/c1/close');
     // The default filter is still `open`; c1 is now closed, so it's gone from the list.
     expect(items()).toHaveLength(0);
-  });
-
-  test('Reply posts the message to /api/inbox/:id/reply and clears the box', async () => {
-    store = [item({ id: 'c1', summary: 'Reply thread' })];
-    await mount();
-    await click(items()[0] ?? null);
-
-    const box = container.querySelector('[aria-label="Reply"]');
-    typeInto(box, 'on it');
-    await click(container.querySelector('.inbox-reply button'));
-
-    expect(calls).toContain('POST /api/inbox/c1/reply');
-    expect((box as HTMLTextAreaElement).value).toBe('');
   });
 });

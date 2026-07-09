@@ -1,20 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type {
-  ChatEvent,
-  InboxConversation,
-  InboxDetailResponse,
-  InboxItem,
-  InboxListResponse,
-  StatusFilter,
-} from './contract';
+import { ChatView } from '../../../shared/ChatView';
+import { setConnectionTarget } from '../../../shared/chat-store';
+import type { InboxChatResponse, InboxItem, InboxListResponse, StatusFilter } from './contract';
 
-// The Inbox stage: a React port of the retired edge-rendered `INBOX_HTML` (worker/shell.ts),
-// now the `stage === 'inbox'` case of the Shell so it lives under the ONE chrome (the rail)
-// instead of drawing its own header. Same two panes and same edge API (`/api/inbox*`,
-// unchanged): a left list of the user's Conversations (waiting_on:human badged, unread dot,
-// status + workspace filters) and a right thread rendered from the R2 transcript — so
-// browsing never wakes the container; only a reply does (that's the edge's job, not ours).
+// The Inbox stage (ADR-0009 / #124): the `stage === 'inbox'` case of the Shell, under the ONE
+// chrome (the rail). Two panes over the edge API: a left LIST of the user's Conversations
+// (Turso only — waiting_on:human badged, unread dot, status + workspace filters, never wakes a
+// runner) and a right THREAD that is now a LIVE <ChatView> over the Conversation's OWNING bridge
+// (through the /inbox/:id/bridge proxy) — streaming transcript + reply + image paste, the SAME
+// component the canvas renders. Only OPENING a conversation wakes its runner; browsing does not.
+
+/** The edge chat proxy prefix a Conversation's <ChatView> addresses its owning bridge through. */
+const bridgePrefix = (convId: string): string => `/inbox/${encodeURIComponent(convId)}/bridge`;
 
 /** The list preview mirrors the old page: last message, else the summary. */
 const preview = (it: InboxItem): string => it.lastMessagePreview ?? it.summary ?? '';
@@ -24,7 +22,9 @@ export function InboxStage() {
   const [workspace, setWorkspace] = useState('');
   const [items, setItems] = useState<InboxItem[]>([]);
   const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading');
-  const [current, setCurrent] = useState<string | null>(null);
+  // The opened Conversation (the whole item, so the thread keeps its summary/status even after a
+  // close drops it from the filtered list). null = nothing open.
+  const [current, setCurrent] = useState<InboxItem | null>(null);
 
   // The list is a pure function of the two filters, so re-query whenever either changes —
   // this is what makes a status change re-fetch `/api/inbox?status=…`.
@@ -87,14 +87,14 @@ export function InboxStage() {
             <div className="inbox-empty">No conversations.</div>
           ) : (
             items.map((it) => (
-              <ItemRow key={it.id} item={it} selected={current === it.id} onOpen={() => setCurrent(it.id)} />
+              <ItemRow key={it.id} item={it} selected={current?.id === it.id} onOpen={() => setCurrent(it)} />
             ))
           )}
         </div>
       </div>
       <div className="inbox-thread">
         {current ? (
-          <Thread key={current} id={current} onListReload={loadList} />
+          <Thread key={current.id} item={current} onListReload={loadList} />
         ) : (
           <div className="inbox-empty">Select a conversation.</div>
         )}
@@ -123,105 +123,72 @@ function ItemRow({ item, selected, onOpen }: { item: InboxItem; selected: boolea
   );
 }
 
-// One open Conversation: its transcript (read from R2 by the edge, so it renders while the
-// runner sleeps), a Close/Reopen toggle, and a reply box. Keyed by conversation id in the
-// parent so switching conversations remounts it (fresh fetch + cleared draft).
-function Thread({ id, onListReload }: { id: string; onListReload: () => Promise<void> }) {
-  const [conversation, setConversation] = useState<InboxConversation | null>(null);
-  const [events, setEvents] = useState<ChatEvent[]>([]);
-  const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading');
-  const [sending, setSending] = useState(false);
-  // The reply box is uncontrolled (read on send, cleared on success), mirroring the old page
-  // which read `msg.value` straight off the DOM — no per-keystroke re-render of the thread.
-  const replyRef = useRef<HTMLTextAreaElement>(null);
+// One open Conversation, now a LIVE <ChatView> over its owning bridge (ADR-0009 / #124), plus a
+// Close/Reopen toggle. Opening resolves the chatId from the bridge (`GET .../api/inbox/:id/chat`
+// through the proxy) — which WAKES the runner and restores its JSONL if cold — then points the
+// chat-store connection target at the proxy and mounts <ChatView>. That one component streams the
+// transcript + reply and handles image paste, the SAME as the canvas. Keyed by conversation id in
+// the parent, so switching conversations remounts (fresh resolve). The transcript is no longer an
+// edge R2 read; browsing the list never reaches here (only opening does).
+function Thread({ item, onListReload }: { item: InboxItem; onListReload: () => Promise<void> }) {
+  const id = item.id;
+  const prefix = bridgePrefix(id);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [phase, setPhase] = useState<'waking' | 'error' | 'ready'>('waking');
+  const [status, setStatus] = useState<'open' | 'closed'>(item.status);
 
-  const load = useCallback(async () => {
-    const r = await fetch(`/api/inbox/${encodeURIComponent(id)}`, { credentials: 'same-origin' }).catch(() => null);
-    if (!r?.ok) {
-      setState('error');
-      return;
-    }
-    const d = (await r.json()) as InboxDetailResponse;
-    setConversation(d.conversation);
-    setEvents(d.events ?? []);
-    setState('ready');
-  }, [id]);
-
+  // Resolve the chatId from the owning bridge (through the proxy). This is the cold-boot wake:
+  // the bridge restores the session JSONL from R2 if needed and returns the chatId to subscribe
+  // to. Set the connection target BEFORE mounting <ChatView> so its stream opens under the proxy.
   useEffect(() => {
-    void load();
-  }, [load]);
+    let live = true;
+    setPhase('waking');
+    (async () => {
+      const r = await fetch(`${prefix}/api/inbox/${encodeURIComponent(id)}/chat`, {
+        credentials: 'same-origin',
+      }).catch(() => null);
+      if (!live) return;
+      if (!r?.ok) {
+        setPhase('error');
+        return;
+      }
+      const d = (await r.json()) as InboxChatResponse;
+      setConnectionTarget(d.chatId, prefix);
+      setChatId(d.chatId);
+      setPhase('ready');
+    })();
+    return () => {
+      live = false;
+    };
+  }, [id, prefix]);
 
   const toggle = async () => {
-    if (!conversation) return;
-    const action = conversation.status === 'closed' ? 'reopen' : 'close';
-    await fetch(`/api/inbox/${encodeURIComponent(id)}/${action}`, { method: 'POST', credentials: 'same-origin' }).catch(
-      () => {},
-    );
-    await onListReload();
-    await load();
-  };
-
-  const send = async () => {
-    const el = replyRef.current;
-    const text = el?.value.trim() ?? '';
-    if (!text) return;
-    setSending(true);
-    const r = await fetch(`/api/inbox/${encodeURIComponent(id)}/reply`, {
+    const action = status === 'closed' ? 'reopen' : 'close';
+    const r = await fetch(`/api/inbox/${encodeURIComponent(id)}/${action}`, {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message: text }),
     }).catch(() => null);
-    setSending(false);
-    if (r?.ok) {
-      if (el) el.value = '';
-      await onListReload();
-      await load();
-    }
+    if (r?.ok) setStatus(action === 'close' ? 'closed' : 'open');
+    await onListReload();
   };
 
-  if (state === 'loading') return <div className="inbox-empty">Loading…</div>;
-  if (state === 'error' || !conversation) return <div className="inbox-empty">Failed to load conversation.</div>;
-
-  const closed = conversation.status === 'closed';
   return (
     <>
       <div className="inbox-threadhead">
-        <b>{conversation.summary || conversation.sessionId}</b>
+        <b>{item.summary || id}</b>
         <button type="button" onClick={() => void toggle()}>
-          {closed ? 'Reopen' : 'Close'}
+          {status === 'closed' ? 'Reopen' : 'Close'}
         </button>
       </div>
-      <div className="inbox-events">
-        {events.length === 0 ? (
-          <div className="inbox-empty">No history yet.</div>
-        ) : (
-          events.map((ev, i) => <EventRow key={i} event={ev} />)
-        )}
-      </div>
-      <div className="inbox-reply">
-        <textarea ref={replyRef} aria-label="Reply" placeholder="Reply to the agent…" />
-        <button type="button" disabled={sending} onClick={() => void send()}>
-          Send
-        </button>
-      </div>
+      {phase === 'error' ? (
+        <div className="inbox-empty">Failed to open conversation.</div>
+      ) : phase === 'waking' || !chatId ? (
+        <div className="inbox-empty">Waking the conversation…</div>
+      ) : (
+        <div className="inbox-chatview">
+          <ChatView chatId={chatId} title={item.summary || id} />
+        </div>
+      )}
     </>
   );
-}
-
-// The three transcript event kinds the old page rendered, distinctly: a `delta` is a chat
-// bubble (right-aligned for the human's own replay, left for the agent); a `tool` and a
-// `thinking` are quiet meta lines. Every other kind is transcript noise the list omits.
-function EventRow({ event }: { event: ChatEvent }) {
-  if (event.kind === 'delta' && event.text) {
-    const role = event.role === 'user' ? 'user' : 'assistant';
-    return (
-      <div className={`inbox-ev ${role}`}>
-        <div className="inbox-bubble">{event.text}</div>
-      </div>
-    );
-  }
-  if (event.kind === 'tool') return <div className="inbox-ev meta">→ {event.name}</div>;
-  if (event.kind === 'thinking') return <div className="inbox-ev meta">thinking…</div>;
-  return null;
 }
