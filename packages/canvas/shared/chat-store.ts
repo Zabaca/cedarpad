@@ -9,7 +9,7 @@
 // the editor for removed chat shapes).
 
 import { type ChatEvent, type ChatFrame, type TaskStatus, type TodoStatus, isChatFrame } from './chat-wire.ts';
-import { registerStream, setBusyCheck } from '../src/idle.ts';
+import { registerStream, setBeatTargets, setBusyCheck } from '../src/idle.ts';
 import { withCanvasHeader, withCanvasParam } from '../src/active-canvas.ts';
 
 // `parentId` (set on subagent items) is the spawning Task chip's tool_use id, so the
@@ -74,6 +74,38 @@ const EMPTY: ChatSnapshot = { items: [], sdk: null, busy: false, status: '', sub
 const sessions = new Map<string, ChatSnapshot>();
 const listeners = new Map<string, Set<() => void>>();
 
+// Connection target (ADR-0009): a base prefix prepended to every bridge URL for a chat,
+// keyed by chatId. `''` (unset) = same-origin, so a canvas chat is byte-for-byte today's
+// behavior. A Shell-opened Conversation sets a proxy prefix (e.g. `/inbox/:id/bridge`) so
+// its stream/send/interrupt/alive reach the owning runner's bridge through the edge proxy
+// instead of same-origin. Per-chatId, never a global — two chats can target two bridges.
+const targets = new Map<string, string>();
+
+/** Point a chat at a bridge through `prefix` (a base path prepended to its bridge URLs).
+ *  `''` = same-origin. Set before openStream so the chat's stream opens under the prefix. */
+export function setConnectionTarget(chatId: string, prefix: string): void {
+  targets.set(chatId, prefix);
+}
+
+/** The connection-target prefix for a chat (`''` = same-origin, the default). */
+export function connectionTarget(chatId: string): string {
+  return targets.get(chatId) ?? '';
+}
+
+/** Build a bridge URL for a chat: its connection-target prefix + the same-origin path. */
+function bridgeUrl(chatId: string, path: string): string {
+  return `${connectionTarget(chatId)}${path}`;
+}
+
+/** The distinct set of bridge prefixes the idle beat must reach — one per bridge that
+ *  currently holds a live chat session. Same-origin canvas chats collapse to `['']`.
+ *  Fed to the idle gate so a Shell-connected chat beats its own bridge, not same-origin. */
+export function beatTargets(): string[] {
+  const set = new Set<string>();
+  for (const id of sessions.keys()) set.add(connectionTarget(id));
+  return [...set];
+}
+
 // One shared SSE connection for ALL chats (each frame arrives tagged with its
 // chatId), so a tab holds a single chat connection regardless of how many chat
 // cards are open. One EventSource per chat instead would, with the canvas stream,
@@ -81,6 +113,10 @@ const listeners = new Map<string, Set<() => void>>();
 // (send / shape upserts) stuck pending. See the bridge's chatStream().
 let sharedStream: EventSource | null = null;
 let streamReady = false;
+// The prefix the shared stream was opened under, so an idle-driven reopen re-targets the
+// same bridge. One EventSource serves all chats in a tab; a tab is single-target in practice
+// (a canvas tab is same-origin; a Shell tab proxies its Conversation), so this holds.
+let sharedStreamTarget = '';
 // In-progress agent bubble id, keyed by chat AND parent (subagent text streams in its
 // own bubble, never merged into the main agent's). `''` parent = the main agent.
 const openBubble = new Map<string, string | null>();
@@ -130,7 +166,7 @@ export function ensureSession(chatId: string): void {
  *  any tab/device and survives a recycle. Best-effort: a failed fetch leaves state as-is. */
 async function rehydrate(chatId: string): Promise<void> {
   try {
-    const res = await fetch(`/api/chat/${chatId}/transcript`, { headers: withCanvasHeader() });
+    const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/transcript`), { headers: withCanvasHeader() });
     if (!res.ok) return;
     const { config, events } = (await res.json()) as { config?: { model?: string; effort?: string; forkNext?: boolean }; events?: ChatEvent[] };
     clearBubbles(chatId);
@@ -147,10 +183,12 @@ async function rehydrate(chatId: string): Promise<void> {
   }
 }
 
-/** Ensure the single shared chat SSE stream is open; route tagged frames per chat. */
-function ensureSharedStream(): void {
+/** Ensure the single shared chat SSE stream is open; route tagged frames per chat.
+ *  Opens under `target` (the connecting chat's prefix; `''` = same-origin). */
+function ensureSharedStream(target = ''): void {
   if (sharedStream) return;
-  const es = new EventSource(withCanvasParam('/api/chat/stream'));
+  sharedStreamTarget = target;
+  const es = new EventSource(withCanvasParam(`${target}/api/chat/stream`));
   es.onopen = () => {
     streamReady = true;
     // Unblock send() on every known session (send is gated on `subscribed`).
@@ -177,7 +215,7 @@ function closeSharedStream(): void {
   for (const id of sessions.keys()) update(id, { subscribed: false });
 }
 function reopenSharedStream(): void {
-  ensureSharedStream();
+  ensureSharedStream(sharedStreamTarget);
   for (const id of sessions.keys()) void rehydrate(id);
 }
 registerStream({ open: reopenSharedStream, close: closeSharedStream });
@@ -185,12 +223,15 @@ setBusyCheck(() => {
   for (const s of sessions.values()) if (s.busy) return true;
   return false;
 });
+// Beat the bridge(s) behind our live sessions — same-origin for the canvas, or a Shell
+// chat's proxy prefix. No sessions ⇒ `[]`; idle then falls back to same-origin (unchanged).
+setBeatTargets(beatTargets);
 
 /** Attach a chat to the shared stream (idempotent). Never closed on view unmount.
  *  Pulls the server transcript on attach so a reload / fresh device rehydrates. */
 export function openStream(chatId: string): void {
   ensureSession(chatId);
-  ensureSharedStream();
+  ensureSharedStream(connectionTarget(chatId));
   void rehydrate(chatId);
   // If the stream is already live, this freshly-attached session can send right away.
   if (streamReady) update(chatId, { subscribed: true });
@@ -244,7 +285,7 @@ export function setEffort(chatId: string, effort: string): void {
 }
 
 function postConfig(chatId: string, patch: { model?: string; effort?: string; forkNext?: boolean }): Promise<unknown> {
-  return fetch(`/api/chat/${chatId}/config`, { method: 'POST', headers: withCanvasHeader({ 'content-type': 'application/json' }), body: JSON.stringify(patch) }).catch(() => {});
+  return fetch(bridgeUrl(chatId, `/api/chat/${chatId}/config`), { method: 'POST', headers: withCanvasHeader({ 'content-type': 'application/json' }), body: JSON.stringify(patch) }).catch(() => {});
 }
 
 /** Seed `newId` as a fork of `parentId` on the SERVER (its ChatMeta resumes the parent's
@@ -252,7 +293,7 @@ function postConfig(chatId: string, patch: { model?: string; effort?: string; fo
  *  JSONL transcript until the fork diverges. The parent session is untouched (ADR 0004). */
 export function forkSession(parentId: string, newId: string): void {
   ensureSession(newId);
-  void fetch(`/api/chat/${newId}/fork`, { method: 'POST', headers: withCanvasHeader({ 'content-type': 'application/json' }), body: JSON.stringify({ from: parentId }) })
+  void fetch(bridgeUrl(newId, `/api/chat/${newId}/fork`), { method: 'POST', headers: withCanvasHeader({ 'content-type': 'application/json' }), body: JSON.stringify({ from: parentId }) })
     .then(() => rehydrate(newId))
     .catch(() => {});
 }
@@ -390,7 +431,7 @@ async function dispatchSend(chatId: string, message: string, images: PendingImag
   try {
     // ADR 0004: sessionId / model / effort / fork are server-owned (ChatMeta); the body
     // carries only the turn's content.
-    const res = await fetch(`/api/chat/${chatId}/send`, {
+    const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/send`), {
       method: 'POST',
       headers: withCanvasHeader({ 'content-type': 'application/json' }),
       body: JSON.stringify({ message, images: images.map(({ media_type, data }) => ({ media_type, data })) }),
@@ -415,7 +456,7 @@ export async function interrupt(chatId: string): Promise<void> {
   if (!s || !s.busy) return;
   if (s.queue.length) update(chatId, { queue: [] });
   try {
-    await fetch(`/api/chat/${chatId}/interrupt`, { method: 'POST', headers: withCanvasHeader() });
+    await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/interrupt`), { method: 'POST', headers: withCanvasHeader() });
   } catch {
     /* ignore */
   }
