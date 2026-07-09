@@ -20,12 +20,15 @@ let root: Root;
 let calls: string[] = [];
 let nextStatus = 202;
 
+let nextBody: Record<string, unknown> = { chatId: 'dev-agent-run-1', joined: false };
+
 beforeEach(() => {
   calls = [];
   nextStatus = 202;
+  nextBody = { chatId: 'dev-agent-run-1', joined: false };
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push(`${init?.method ?? 'GET'} ${String(input)}`);
-    return new Response(null, { status: nextStatus });
+    return new Response(JSON.stringify(nextBody), { status: nextStatus, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -62,5 +65,16 @@ describe('JobsStage', () => {
     await clickRun();
 
     expect(container.querySelector('.jobs-error')).not.toBeNull();
+  });
+
+  // ADR-0011 join semantics: a kick during a running run answers with THAT run (joined:true) —
+  // "Run now" while running means "it's already going", not a second explore.
+  test('joined:true reads as "already running", not as a fresh start', async () => {
+    nextBody = { chatId: 'dev-agent-run-live', joined: true };
+    await mount();
+    await clickRun();
+
+    expect(container.querySelector('.jobs-note')?.textContent).toContain('Already running');
+    expect(container.querySelector('.jobs-error')).toBeNull();
   });
 });
