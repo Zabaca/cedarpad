@@ -25,7 +25,7 @@ import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-work
 import { isDevAgentConversation, runDevAgentApproval } from './dev-agent-workflow.ts';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { backup as backupTranscript } from './transcript-r2.ts';
-import { type CanvasImage, type ChatEvent, runChat } from './agent.ts';
+import { type CanvasImage, type ChatEvent, parseCanvasImages, runChat } from './agent.ts';
 import { adoptSharedComponent, promoteComponent } from './components.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
@@ -557,10 +557,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const body = await readBody(req);
       const message = typeof body.message === 'string' ? body.message.trim() : '';
       // Pasted screenshots: [{ media_type, data(base64) }]. Allow an image-only turn.
-      const rawImages = Array.isArray(body.images) ? body.images : [];
-      const images: CanvasImage[] = rawImages
-        .filter((im): im is CanvasImage => !!im && typeof im.media_type === 'string' && typeof im.data === 'string')
-        .map((im) => ({ media_type: im.media_type, data: im.data }));
+      const images = parseCanvasImages(body);
       if (!message && images.length === 0) return json({ error: 'message or image required' }, 400);
       // ADR 0004: sessionId/model/effort/fork are server-owned (ChatMeta), not in the body.
       const meta = chatMeta.get(chatId);
@@ -627,6 +624,9 @@ export async function handleRequest(req: Request): Promise<Response> {
       const body = await readBody(req);
       const message = typeof body.message === 'string' ? body.message.trim() : '';
       if (!message) return json({ error: 'message required' }, 400);
+      // A reply carries pasted images exactly like a canvas /send (one reply/send contract,
+      // ADR-0009 / #123) — SAME parse, threaded through resumeConversation to the resumed turn.
+      const images = parseCanvasImages(body);
       const conv = await conversations.get(webPocDb, id);
       if (!conv) return json({ error: `conversation not found: ${id}` }, 404);
 
@@ -682,12 +682,13 @@ export async function handleRequest(req: Request): Promise<Response> {
           projectsDir: SESSIONS_DIR,
           cwd: CANVAS_CWD,
           // Reuse the chat-turn machinery: resume streams + persists + backs up like any turn.
-          runTurn: (sessionId, msg) => {
-            dispatchChatTurn(chatIdForSession(sessionId) ?? conv.id, msg, sessionId, []);
+          runTurn: (sessionId, msg, imgs) => {
+            dispatchChatTurn(chatIdForSession(sessionId) ?? conv.id, msg, sessionId, imgs);
           },
         },
         conv,
         message,
+        images,
       );
       return json({ ok: true, conversation: updated });
     }
