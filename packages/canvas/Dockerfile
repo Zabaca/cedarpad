@@ -21,10 +21,21 @@ WORKDIR /app/agent-canvas
 # Root tsconfig.json is required at runtime too: web-poc/tsconfig.json extends it
 # (../../../tsconfig.json), and vite/esbuild resolves that per-file when it transforms
 # web-poc/src/*.tsx. Without it the dev server errors "failed to resolve extends".
+#
+# LAYER CACHING (deploy speed): copy ONLY the manifests bun install reads, install, THEN copy the
+# source. `bun install` reads package.json/bun.lock — never the .ts source — so the (slow) install
+# layer is cached across code-only deploys and only re-runs when a manifest or the lockfile changes.
+# Copy just the canvas + infra member manifests (NOT packages/app — kept out to keep the image lean,
+# which is why frozen falls back to a plain install). web-poc isn't a workspace member; its deps
+# live in packages/canvas/package.json, so that one manifest is enough for the install graph.
 COPY package.json bun.lock tsconfig.json ./
+COPY packages/canvas/package.json packages/canvas/
+COPY packages/infra/package.json packages/infra/
+RUN bun install --frozen-lockfile || bun install
+# Source AFTER install — a change here can't bust the cached install layer above. .dockerignore
+# strips **/node_modules from the context, so this can't clobber the install layer's node_modules.
 COPY packages/canvas packages/canvas
 COPY packages/infra packages/infra
-RUN bun install --frozen-lockfile || bun install
 
 # The canvas package is the app root at runtime (vite + bridge + the agent's authored
 # components); the overlay watcher and vite read from here. This is a matching image
