@@ -402,6 +402,7 @@ export async function* runChat(
   inbox?: Omit<AskHumanDeps, 'getSessionId'>,
   openPr?: OpenPr,
   cwd?: string,
+  skills?: string[],
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn; ask_human reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
@@ -421,7 +422,9 @@ export async function* runChat(
     // impeccable to the model — every other discovered skill is hidden from its Skill listing.
     // (Discovery and enable are two separate stages: project source finds them, skills picks.)
     settingSources: ['user', 'project'] as Array<'user' | 'project' | 'local'>,
-    skills: ['impeccable'],
+    // The allowlist is per-turn (ADR-0011): a dev-agent turn also sees the explore skill;
+    // every product turn stays impeccable-only. Discovery is separate (project source).
+    skills: skills ?? ['impeccable'],
     // A dev-agent turn runs in its prepared worktree (ADR-0010 slice 6) — the caller passes
     // that path so edits + resume both scope to it; every product turn keeps the default.
     cwd: cwd ?? process.env.CANVAS_CWD ?? process.cwd(),

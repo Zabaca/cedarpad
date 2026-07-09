@@ -346,6 +346,19 @@ function chatStream(): Response {
 // as a test seam (like chatClients) so the guard is testable without a live SDK turn.
 export const aborters = new Map<string, AbortController>();
 
+/** ADR-0011 / ADR-0010 6a: the edge-minted token header is the COMPLETE definition of a
+ * dev-agent turn. Beyond the worktree + open_pr (prepareDevAgentTurn), it decides:
+ *   - the workspace tag the turn files under — 'dev-agent', so the row-at-start upsert and
+ *     any ask_human land as dev-agent Conversations (which is exactly what the edge's
+ *     routing and per-send token mint key on; a 'default'-tagged row would never re-arm);
+ *   - the skill allowlist — the explore skill is visible ONLY to dev-agent turns, so a
+ *     canvas chat can't wander into a repo-wide refactor exploration. */
+export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId: string; skills: string[] } {
+  return devAgentGitToken
+    ? { workspaceId: DEV_AGENT_WORKSPACE_ID, skills: ['impeccable', 'improve-codebase-architecture'] }
+    : { workspaceId: WORKSPACE, skills: ['impeccable'] };
+}
+
 /** ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
  * (the turn's `init` event), landing in waiting_on:none — visible live in "All", never
  * cluttering "Needs me". Also seeds ChatMeta right away so `chatIdForSession` resolves this
@@ -411,6 +424,7 @@ export async function prepareDevAgentTurn(
 function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, canvasId: string = DEFAULT_CANVAS_ID, devAgentGitToken?: string): void {
   const ac = new AbortController();
   aborters.set(chatId, ac);
+  const flavor = turnFlavor(devAgentGitToken);
   void (async () => {
     let finalSessionId = sessionId;
     try {
@@ -418,12 +432,12 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
       // round-trip all use THIS store, so shapes land on the human's canvas and broadcast to
       // that canvas's SSE subscribers (per-canvas isolation, exactly how reads already resolve).
       const session = await canvasSessions.get(canvasId);
-      const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: WORKSPACE, notify };
+      const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: flavor.workspaceId, notify };
       // A dev-agent send (token present) runs in its prepared worktree with open_pr armed; a
       // prepare failure (clone/auth) surfaces through the catch below as the turn's error —
       // better a visible failure than an agent silently editing the live app tree.
       const devAgent = await prepareDevAgentTurn(devAgentGitToken, chatId, sessionId);
-      for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox, devAgent?.openPr, devAgent?.cwd)) {
+      for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox, devAgent?.openPr, devAgent?.cwd, flavor.skills)) {
         if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
         // ADR-0011 row-at-start: index the session the moment its id is known (fire-and-
         // forget; the finally-block upsert below stays as the settle-time backstop).
@@ -450,7 +464,7 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
         await findOrCreateConversation(webPocDb, {
           sessionId: finalSessionId,
           userId: INBOX_USER,
-          workspaceId: WORKSPACE,
+          workspaceId: flavor.workspaceId,
           summary: message.slice(0, 200),
         }).catch((err) => console.error('[inbox] session-row upsert failed:', err));
         // Inbox (#60/#61): mirror THIS session's transcript to R2 keyed by sessionId, so the Inbox

@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { aborters, chatClients, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, webPocDb } from './bridge.ts';
+import { aborters, chatClients, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, turnFlavor, webPocDb } from './bridge.ts';
 import { resumeConversation } from './inbox.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { DEV_AGENT_WORKSPACE_ID } from './dev-agent-workflow.ts';
@@ -121,6 +121,23 @@ describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispa
 
     expect(res.status).toBe(202);
     expect(dispatched).toEqual([{ chatId: 'chat_plain', devAgentGitToken: undefined }]);
+  });
+});
+
+// ADR-0011 / 6a: the token header is the COMPLETE definition of a dev-agent turn — it also
+// drives the workspace tag (so the row + ask_human file under 'dev-agent', which is what the
+// edge's routing and per-send token mint key on) and the widened skill allowlist.
+describe('turnFlavor: the token decides the turn’s workspace tag + skill allowlist', () => {
+  test('a token-armed turn files under the dev-agent tag and can see the explore skill', () => {
+    const f = turnFlavor('ghs_minted');
+    expect(f.workspaceId).toBe(DEV_AGENT_WORKSPACE_ID);
+    expect(f.skills).toEqual(['impeccable', 'improve-codebase-architecture']);
+  });
+
+  test('a product turn keeps the bridge workspace and ONLY impeccable (no repo-refactor skill leaks)', () => {
+    const f = turnFlavor(undefined);
+    expect(f.workspaceId).toBe('default');
+    expect(f.skills).toEqual(['impeccable']);
   });
 });
 
