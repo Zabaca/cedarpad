@@ -214,14 +214,11 @@ describe('resumeConversation', () => {
     expect(ran[0]?.images).toEqual([]);
   });
 
-  // ADR-0009 Tier 2 / #125: a dev-agent Conversation resumes on the DEV-AGENT runner's own
-  // interactive bridge. resumeConversation is runner-agnostic (the caller supplies cwd + runTurn),
-  // so the only dev-agent-specific requirement is that restore lands the explore-session JSONL at
-  // the cwd the resume reads. On the dev-agent runner both the explore session (dev-agent-run.ts,
-  // `cwd: repoRoot`) and the interactive bridge (bridge.ts, CANVAS_CWD) default to the container's
-  // process.cwd() — the canvas package dir — so they encode to the SAME SDK project dir. That
-  // shared cwd is the invariant this test pins: restore reconstructs exactly the path resume reads.
-  test('resumes on the dev-agent runner: restore lands the explore-session JSONL at the runner cwd resume path', async () => {
+  // resumeConversation is runner-agnostic (the caller supplies cwd + runTurn); the invariant
+  // this test pins is that restore lands the session JSONL at exactly the path a resume under
+  // that cwd reads (projectDirForCwd). (Dev-agent turns move the JSONL onward to their
+  // prepared worktree's project dir via adoptSession — ADR-0010 slice 6 / ADR-0011.)
+  test('restore lands the session JSONL at the cwd resume path', async () => {
     const db = await freshDb();
     const sessionId = 'sess-dev-agent-explore';
     // The dev-agent container cwd shared by its explore session and its interactive bridge.

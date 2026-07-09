@@ -1,129 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { Candidate } from './dev-agent-gate.ts';
 import type { PrRequest, Worktree } from './repo-worktree.ts';
 import {
   DEV_AGENT_WORKSPACE_ID,
   type OpenPrDeps,
-  type WorkflowDeps,
   isDevAgentConversation,
   openDevAgentPr,
-  parseCandidates,
-  runDevAgentWorkflow,
-  summarizeCandidates,
 } from './dev-agent-workflow.ts';
-
-// ── fakes ─────────────────────────────────────────────────────────────────────────────
-
-const cand = (over: Partial<Candidate> = {}): Candidate => ({
-  title: 'Consolidate the transcript restore module',
-  rationale: 'restore + read are two adapters of one seam split across files',
-  severity: 'high',
-  ...over,
-});
-
-/** A workflow deps with an in-memory askHuman spy; explore + gate injected. */
-function makeWorkflow(candidates: Candidate[], opts: { declined?: string[] } = {}) {
-  const promotions: Array<{ summary: string; question: string }> = [];
-  const deps: WorkflowDeps = {
-    repoRoot: '/fake/repo',
-    explore: async () => candidates,
-    readDeclined: () => opts.declined ?? [],
-    // real filter (compose with #65) unless a test overrides
-    askHuman: async (input) => {
-      promotions.push(input);
-      return 'posted';
-    },
-  };
-  return { deps, promotions };
-}
-
-// ── scheduled half: Explore → gate → promote ──────────────────────────────────────────
-
-describe('runDevAgentWorkflow — Explore → gate → ask_human', () => {
-  test('survivors → exactly one ask_human promotion, candidates in the summary', async () => {
-    const survivor = cand({ title: 'Deepen the Inbox promote protocol' });
-    const { deps, promotions } = makeWorkflow([survivor]);
-
-    const promoted = await runDevAgentWorkflow(deps);
-
-    expect(promotions).toHaveLength(1);
-    expect(promoted).toHaveLength(1);
-    // the candidate title + rationale ride in the promotion the human sees
-    expect(promotions[0]!.question).toContain('Deepen the Inbox promote protocol');
-    expect(promotions[0]!.question).toContain(survivor.rationale);
-    expect(promotions[0]!.summary).toContain('1');
-  });
-
-  test('zero survivors → zero promotions (quiet run)', async () => {
-    // below the bar → gated out → nothing survives
-    const { deps, promotions } = makeWorkflow([cand({ severity: 'low' })]);
-
-    const promoted = await runDevAgentWorkflow(deps);
-
-    expect(promotions).toHaveLength(0);
-    expect(promoted).toHaveLength(0);
-  });
-
-  test('an empty explore result promotes nothing', async () => {
-    const { deps, promotions } = makeWorkflow([]);
-    await runDevAgentWorkflow(deps);
-    expect(promotions).toHaveLength(0);
-  });
-
-  test('declined candidates are filtered before promotion (composes with #65)', async () => {
-    const keep = cand({ title: 'Keep me', slug: 'keep-me' });
-    const declined = cand({ title: 'Already declined', slug: 'already-declined' });
-    const { deps, promotions } = makeWorkflow([keep, declined], { declined: ['already-declined'] });
-
-    const promoted = await runDevAgentWorkflow(deps);
-
-    // exactly one promotion, and it carries ONLY the surviving (non-declined) candidate
-    expect(promotions).toHaveLength(1);
-    expect(promoted.map((c) => c.title)).toEqual(['Keep me']);
-    expect(promotions[0]!.question).toContain('Keep me');
-    expect(promotions[0]!.question).not.toContain('Already declined');
-  });
-
-  test('all candidates declined → quiet run', async () => {
-    const declined = cand({ title: 'Already declined', slug: 'already-declined' });
-    const { deps, promotions } = makeWorkflow([declined], { declined: ['already-declined'] });
-    await runDevAgentWorkflow(deps);
-    expect(promotions).toHaveLength(0);
-  });
-});
-
-describe('summarizeCandidates', () => {
-  test('numbers every candidate with severity + rationale', () => {
-    const { summary, question } = summarizeCandidates([
-      cand({ title: 'A', rationale: 'ra', severity: 'high' }),
-      cand({ title: 'B', rationale: 'rb', severity: 'medium' }),
-    ]);
-    expect(summary).toContain('2');
-    expect(question).toContain('1. [high] A');
-    expect(question).toContain('ra');
-    expect(question).toContain('2. [medium] B');
-    expect(question).toContain('rb');
-  });
-});
-
-describe('parseCandidates — explore boundary contract', () => {
-  test('extracts + validates the last json fenced block', () => {
-    const text = [
-      'Here are the deepening opportunities:',
-      '```json',
-      JSON.stringify([{ title: 'A', rationale: 'ra', severity: 'high' }]),
-      '```',
-    ].join('\n');
-    expect(parseCandidates(text)).toEqual([{ title: 'A', rationale: 'ra', severity: 'high' }]);
-  });
-
-  test('no block / malformed / schema miss → [] (quiet)', () => {
-    expect(parseCandidates('just prose, no candidates')).toEqual([]);
-    expect(parseCandidates('```json\nnot json\n```')).toEqual([]);
-    expect(parseCandidates('```json\n[{"title":"A"}]\n```')).toEqual([]); // missing required fields
-  });
-});
 
 // ── PR half: the `open_pr` tool ────────────────────────────────────────────────────────
 

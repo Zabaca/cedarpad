@@ -5,10 +5,10 @@ import { LEGACY_SANDBOX_ID } from './sandbox-resolver.ts';
 
 // serveWorkspace is the ONE warm-proxy-first / cold-start-on-miss orchestration keyed by a
 // resolved sandbox id (ADR-0009 / #122). This test pins that a Conversation's interactive
-// request — dev-agent included, since ADR-0010 routes every Conversation to the warm default
-// container — cold-starts the product interactive stack via the `scripts/container-start.ts`
-// START command (vite + bridge) on the vite port the proxy expects, NOT the fire-and-forget
-// batch workflow (`server/dev-agent-run.ts`).
+// request — dev-agent included, since ADR-0010/0011 route every Conversation (and the
+// dev-agent run itself) to the warm default container — cold-starts the product interactive
+// stack via the `scripts/container-start.ts` START command (vite + bridge) on the vite port
+// the proxy expects.
 //
 // It runs through a SUBPROCESS probe (sandbox-runtime.boot-probe.ts): two sibling worker test files
 // wholesale-mock `./sandbox-runtime.ts` via bun's process-global mock registry, which leaks across
@@ -42,11 +42,10 @@ describe('serveWorkspace: an interactive request boots the product interactive s
     expect(probe.status).toBe(200);
     // Keyed by the warm default container — the one every Conversation resumes on now.
     expect(probe.getSandboxIds).toContain(LEGACY_SANDBOX_ID);
-    // It booted the SAME interactive stack the product container runs — the container-start entry
-    // that launches vite + bridge — NOT the batch workflow entry (dev-agent-run.ts).
+    // It booted the SAME interactive stack the product container runs — the container-start
+    // entry that launches vite + bridge.
     expect(probe.started).toHaveLength(1);
     expect(probe.started[0]).toContain('scripts/container-start.ts');
-    expect(probe.started[0]).not.toContain('dev-agent-run.ts');
     // …reachable on the vite/bridge port the edge proxy forwards to (4510).
     expect(probe.waited).toContain(4510);
     expect(probe.exposed).toContain(4510);
