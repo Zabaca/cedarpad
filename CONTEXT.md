@@ -192,13 +192,27 @@ to be re-homed.)
   session when they need my attention** (first such agent: an always-running
   `/improve-codebase-architecture`).
 
+**A chat interface is a live bridge view** (normative): every interactive chat surface —
+a canvas `chat` shape, an opened Inbox Conversation, any future one — connects to **the
+bridge that owns the session**, because the bridge hosts the full Claude Agent SDK session
+*with its environment* (the runner's filesystem, authored components, cwd, tools). A chat
+rendered from anywhere else (e.g. an R2 transcript at the edge) is a **photograph of a
+different environment**, not the session. Consequences: (1) opening a Conversation
+**connects to its runner's bridge — waking it** (cold-boot latency is the honest cost of
+"I'm opening this session," same as opening a canvas); history and live stream come from
+that one source, never half-from-R2. (2) The inbox **list** is *not* a chat interface — it
+is triage metadata (Turso), so it never wakes a runner. (3) One shared chat component backs
+every surface; they differ only in *which bridge* they address, never in data source.
+
 **Storage**: **Turso** holds Conversation metadata (status, waiting-on, unread,
 last-activity, owner edge, `sessionId`, summary, user) + a denormalized last-message
-preview so the inbox list is fast. The **transcript is the SDK session JSONL**
+preview so the inbox **list** is fast. The **transcript is the SDK session JSONL**
 (`~/.claude/projects/<sessionId>/`, the authoritative copy) **backed up live to R2 blobs
 and restored on wake** — same R2-as-runtime-delta pattern as ADR-0001's code overlay /
-canvas-state. Two consumers: the Inbox UI renders history from the R2 JSONL while runners
-sleep; **resume** restores R2 → runner FS → `query({ resume: sessionId })`.
+canvas-state. R2's **only** consumer is **resume-restore** (R2 → runner FS →
+`query({ resume: sessionId })` on wake); it is the durability substrate, **not** a read
+path for display. The inbox **list** renders from Turso metadata while runners sleep; a
+**chat interface never renders from R2** (see "A chat interface is a live bridge view").
 
 **Promote protocol** (checkpoint-and-resume, async): the agent has an `ask_human` tool.
 Calling it sets the Conversation `waiting-on: human` + unread + notifies, then the agent
@@ -208,7 +222,12 @@ commits its branch and **ends its turn** (its runner may sleep). My reply in the
 resume-by-`sessionId` pattern. A session enters the Inbox only when it first promotes, so
 in-progress agent work doesn't clutter it. Agent done without me → it closes the Conversation.
 
-**Runners** (where sessions execute — the Inbox is agnostic, it only coordinates):
+**Runners** (where sessions execute — the Inbox is agnostic, it only coordinates). **Every
+runner runs the interactive bridge** (the SDK chat multiplexer), so every Session is a
+*chat* regardless of runner — a reply always **resumes the Session as a chat turn on its
+owning runner's bridge**, streaming back like a canvas chat. There is **no** separate
+"approval" interaction: a dev-agent Conversation is a chat too, and the **PR is a tool
+action the agent takes mid-conversation**, not a hardcoded consequence of the reply.
 - **Product runtime**: the workspace container (canvas/notebook chats + inbox chats I
   start about my content). Sleeps aggressively (5m) to bound cost.
 - **Dev-agent runner**: a **separate sandbox instance of the same image**, with its own
@@ -218,4 +237,5 @@ in-progress agent work doesn't clutter it. Agent done without me → it closes t
   reaped by the product container's sleep timer. **Worktree per concurrent workflow**
   (ADR-0003). Analysis/candidates live as the Inbox Conversation; code changes land as
   a PR. First workflow: scheduled `/improve-codebase-architecture` → promotes a
-  Conversation (`waiting-on: human`) with its candidates, grills through that thread.
+  Conversation (`waiting-on: human`) with its candidates; I **grill it through that
+  thread** (a real chat on the dev-agent bridge), and it opens the PR when we align.
