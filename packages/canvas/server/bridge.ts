@@ -343,6 +343,22 @@ function chatStream(): Response {
 // (Esc / Stop in the UI). One turn per chat at a time, so one aborter per chat.
 const aborters = new Map<string, AbortController>();
 
+/** ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
+ * (the turn's `init` event), landing in waiting_on:none — visible live in "All", never
+ * cluttering "Needs me". Also seeds ChatMeta right away so `chatIdForSession` resolves this
+ * chat MID-turn (opening the running Conversation attaches to this chat's live stream).
+ * Idempotent (find-or-create by sessionId; a resumed turn re-inits harmlessly) and
+ * best-effort — an index failure never fails the turn. */
+export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE): Promise<void> {
+  if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
+  await findOrCreateConversation(webPocDb, {
+    sessionId,
+    userId: INBOX_USER,
+    workspaceId,
+    summary: message.slice(0, 200),
+  }).catch((err) => console.error('[inbox] session-start row upsert failed:', err));
+}
+
 /** The dev-agent turn context (ADR-0010): armed iff the edge minted a git token for this
  * send — which it does only for a dev-agent Conversation. The token rides the request
  * (never env, never persisted), so "dev-agent-ness" is a property of the Conversation, not
@@ -406,6 +422,12 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
       const devAgent = await prepareDevAgentTurn(devAgentGitToken, chatId, sessionId);
       for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox, devAgent?.openPr, devAgent?.cwd)) {
         if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
+        // ADR-0011 row-at-start: index the session the moment its id is known (fire-and-
+        // forget; the finally-block upsert below stays as the settle-time backstop).
+        if (ev.kind === 'init') {
+          finalSessionId = ev.sessionId;
+          void indexSessionStart(chatId, ev.sessionId, message, inbox.workspaceId);
+        }
         broadcastChat(chatId, ev satisfies ChatEvent);
       }
     } catch (e) {

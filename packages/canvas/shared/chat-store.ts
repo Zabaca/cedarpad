@@ -319,6 +319,14 @@ export function routeChatFrame(raw: string): void {
 }
 
 function applyEvent(chatId: string, ev: ChatEvent) {
+  if (ev.kind === 'init') {
+    // A turn started (ADR-0011). Capture the session id early, and — if this tab didn't
+    // start the turn (busy would already be true from its own dispatchSend) — mark busy so
+    // send() queues instead of firing into the in-flight turn (a headless dev-agent run, or
+    // another tab's send). The wire's 409 turn_in_flight remains the race backstop.
+    update(chatId, (s) => ({ ...s, sdk: ev.sessionId, busy: true, status: s.busy ? s.status : 'working' }));
+    return;
+  }
   if (ev.kind === 'delta' && ev.text) {
     const key = bubbleKey(chatId, ev.parentId);
     if (ev.role === 'user') {

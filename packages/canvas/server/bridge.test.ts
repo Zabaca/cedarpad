@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { chatClients, handleRequest, prepareDevAgentTurn, setChatTurnDispatcher, webPocDb } from './bridge.ts';
+import { chatClients, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, webPocDb } from './bridge.ts';
 import { resumeConversation } from './inbox.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { DEV_AGENT_WORKSPACE_ID } from './dev-agent-workflow.ts';
@@ -174,6 +174,34 @@ describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-work
 
     expect(adopted).toEqual([]);
     expect(turn!.cwd).toBe('/wt/x');
+  });
+});
+
+// ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
+// (the init event), not when the first turn settles — that's what makes a headless dev-agent
+// run (and any long first turn) visible live in the "All" view.
+describe('indexSessionStart: a session enters the index when it starts (ADR-0011)', () => {
+  test('creates the Conversation row at init — waiting_on none, titled from the message', async () => {
+    const sessionId = `sess_start_${crypto.randomUUID()}`;
+
+    await indexSessionStart('chat_start', sessionId, 'Architecture explore: survey this repo for deepening opportunities. (long instructions follow)');
+
+    const row = await conversations.getBySessionId(webPocDb, sessionId);
+    expect(row).not.toBeNull();
+    expect(row!.waitingOn).toBe('none'); // visible in "All", never clutters "Needs me"
+    expect(row!.summary).toContain('Architecture explore');
+  });
+
+  test('idempotent: a resumed turn re-inits the same session without duplicating or retitling', async () => {
+    const sessionId = `sess_reinit_${crypto.randomUUID()}`;
+
+    await indexSessionStart('chat_a', sessionId, 'the original first message');
+    const first = await conversations.getBySessionId(webPocDb, sessionId);
+    await indexSessionStart('chat_a', sessionId, 'a later reply that must not retitle');
+    const second = await conversations.getBySessionId(webPocDb, sessionId);
+
+    expect(second!.id).toBe(first!.id); // one row per session
+    expect(second!.summary).toBe('the original first message');
   });
 });
 

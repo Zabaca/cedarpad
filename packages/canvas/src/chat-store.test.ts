@@ -13,6 +13,29 @@ import { aliveUrl } from './idle.ts';
 /** Serialize a wire frame the way the bridge does: a ChatEvent tagged with its chatId. */
 const frame = (chatId: string, ev: ChatEvent): string => JSON.stringify({ chatId, ...ev });
 
+// ADR-0011: the `init` frame marks a turn's start. A tab that DIDN'T start the turn (a
+// headless dev-agent run, another tab's send) learns the chat is busy from it — so its own
+// send() queues instead of firing a concurrent turn — and captures the session id early.
+describe('init frame (a turn started, possibly not by this tab)', () => {
+  test('foreign init on a held chat → busy:true + sdk captured, so a send queues instead of firing', () => {
+    ensureSession('chat_foreign_run'); // frames only apply to chats this client holds
+    routeChatFrame(frame('chat_foreign_run', { kind: 'init', sessionId: 'sess_run_1' }));
+
+    const s = getSnapshot('chat_foreign_run');
+    expect(s.busy).toBe(true); // send() will queue while the foreign turn runs
+    expect(s.sdk).toBe('sess_run_1');
+  });
+
+  test('done clears the init-driven busy (normal turn settle)', () => {
+    ensureSession('chat_foreign_run2');
+    routeChatFrame(frame('chat_foreign_run2', { kind: 'init', sessionId: 'sess_run_2' }));
+    expect(getSnapshot('chat_foreign_run2').busy).toBe(true);
+    routeChatFrame(frame('chat_foreign_run2', { kind: 'done', sessionId: 'sess_run_2', costUsd: 0 }));
+
+    expect(getSnapshot('chat_foreign_run2').busy).toBe(false);
+  });
+});
+
 // Fork is now SERVER-driven (ADR 0004): the child's ChatMeta is seeded server-side (it can
 // resume the parent's session with a one-shot fork), then the child rehydrates from the
 // JSONL-derived transcript. The client no longer copies transcript/sdk from localStorage.

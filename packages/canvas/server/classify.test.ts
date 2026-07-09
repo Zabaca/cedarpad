@@ -118,9 +118,41 @@ describe('classifySdkMessage', () => {
 
   test('unknown SDK type → events empty, acc unchanged (deep equal)', () => {
     const before = fresh();
-    const { events, acc } = classifySdkMessage({ type: 'system', subtype: 'init' } as unknown as SDKMessage, before);
+    const { events, acc } = classifySdkMessage({ type: 'system', subtype: 'compact_boundary' } as unknown as SDKMessage, before);
     expect(events).toEqual([]);
     expect(acc).toEqual(before);
+  });
+
+  // ADR-0011 row-at-start: the SDK's system/init message is where a turn's session id is
+  // first known — surfacing it as an event is what lets the bridge index the session the
+  // moment it STARTS (not when the turn settles) and lets other tabs learn a turn began.
+  describe('system/init → init event (ADR-0011 row-at-start)', () => {
+    const initMsg = (session_id?: string): SDKMessage =>
+      ({ type: 'system', subtype: 'init', ...(session_id ? { session_id } : {}) }) as unknown as SDKMessage;
+
+    test('live: init with session_id → one init event, acc captures the id', () => {
+      const { events, acc } = classifySdkMessage(initMsg('sess_new'), fresh());
+      expect(events).toEqual([{ kind: 'init', sessionId: 'sess_new' }]);
+      expect(acc.sessionId).toBe('sess_new');
+    });
+
+    test('live: a RESUMED turn re-emits init (every turn start is signalled, not just the first)', () => {
+      const { events } = classifySdkMessage(initMsg('sess_same'), { sessionId: 'sess_same', costUsd: 0 });
+      expect(events).toEqual([{ kind: 'init', sessionId: 'sess_same' }]);
+    });
+
+    test('replay: init is suppressed (no event) but acc still captures the id', () => {
+      const { events, acc } = classifySdkMessage(initMsg('sess_new'), fresh(), { replay: true });
+      expect(events).toEqual([]);
+      expect(acc.sessionId).toBe('sess_new');
+    });
+
+    test('init without a session_id → no event, acc unchanged', () => {
+      const before = fresh();
+      const { events, acc } = classifySdkMessage(initMsg(), before);
+      expect(events).toEqual([]);
+      expect(acc).toEqual(before);
+    });
   });
 
   test('unknown stream_event subtype → events empty, acc unchanged', () => {
