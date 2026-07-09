@@ -8,7 +8,7 @@ import { createClient } from '@libsql/client';
 import { makeDb, conversations } from '../web-poc/lib/db/index.ts';
 import { memBackend } from './blob-store.ts';
 import { projectDirForCwd, transcriptKey } from './transcript-r2.ts';
-import { askHuman, findOrCreateConversation, resumeConversation } from './inbox.ts';
+import { askHuman, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 
 // In-memory DB built from the real Drizzle migrations (mirrors conversations.test.ts, bun:test).
 const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
@@ -202,5 +202,104 @@ describe('resumeConversation', () => {
 
     expect(ran).toHaveLength(1);
     expect(ran[0]?.images).toEqual([]);
+  });
+});
+
+// Opening an Inbox Conversation as a live <ChatView> on its owning bridge (ADR-0009, #124):
+// ensure the session JSONL is on the runner FS (restore from R2 iff the container cold-booted,
+// never clobbering a warm/live copy), then resolve the chatId the Shell subscribes to —
+// `chatIdForSession(sessionId) ?? conv.id` — and seed that chatId's ChatMeta so its transcript
+// + send resume THIS session.
+describe('openConversation', () => {
+  const mkDir = () => join(tmpdir(), `Tmp_Open_${process.pid}_${Math.random().toString(36).slice(2)}`);
+
+  test('cold container: restores the JSONL from R2 and resolves the homing canvas chat id (one stream, two views)', async () => {
+    const db = await freshDb();
+    const sessionId = 'sess-open-1';
+    const cwd = '/workspace/app';
+    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
+
+    const getter = memBackend();
+    await getter.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
+
+    const projectsDir = mkDir();
+    const seeded: Array<[string, string]> = [];
+    try {
+      const { chatId } = await openConversation(
+        {
+          getter,
+          projectsDir,
+          cwd,
+          chatIdForSession: (sid) => (sid === sessionId ? 'shape:chat_home' : undefined),
+          seedChatMeta: (cid, sid) => void seeded.push([cid, sid]),
+        },
+        conv,
+      );
+
+      // The chatId is the CANVAS chat's id, so the canvas card and this Inbox view are two live
+      // views of one bridge stream (same chatId), auto-consistent.
+      expect(chatId).toBe('shape:chat_home');
+      // The cold container had no local JSONL, so restore landed it on disk (resume + transcript read).
+      expect(existsSync(join(projectsDir, projectDirForCwd(cwd), `${sessionId}.jsonl`))).toBe(true);
+      expect(seeded).toEqual([['shape:chat_home', sessionId]]);
+    } finally {
+      if (existsSync(projectsDir)) rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
+
+  test('headless session (no canvas chat home): falls back to conv.id and seeds its ChatMeta', async () => {
+    const db = await freshDb();
+    const sessionId = 'sess-open-2';
+    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
+
+    const getter = memBackend();
+    await getter.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
+
+    const projectsDir = mkDir();
+    const seeded: Array<[string, string]> = [];
+    try {
+      const { chatId } = await openConversation(
+        {
+          getter,
+          projectsDir,
+          cwd: '/workspace/app',
+          chatIdForSession: () => undefined,
+          seedChatMeta: (cid, sid) => void seeded.push([cid, sid]),
+        },
+        conv,
+      );
+
+      expect(chatId).toBe(conv.id);
+      // The fallback chatId has no ChatMeta yet, so it MUST be seeded to conv.sessionId or its
+      // transcript + send would resolve the wrong (empty) session.
+      expect(seeded).toEqual([[conv.id, sessionId]]);
+    } finally {
+      if (existsSync(projectsDir)) rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
+
+  test('warm container: a live on-disk JSONL is NOT clobbered by a stale R2 restore', async () => {
+    const db = await freshDb();
+    const sessionId = 'sess-open-3';
+    const cwd = '/workspace/app';
+    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
+
+    const projectsDir = mkDir();
+    const diskPath = join(projectsDir, projectDirForCwd(cwd), `${sessionId}.jsonl`);
+    await Bun.write(diskPath, 'LIVE');
+
+    const getter = memBackend();
+    await getter.put(transcriptKey(sessionId), new TextEncoder().encode('STALE'));
+
+    try {
+      await openConversation(
+        { getter, projectsDir, cwd, chatIdForSession: () => undefined, seedChatMeta: () => {} },
+        conv,
+      );
+      // The on-disk copy is authoritative for a warm/live session; restore must be skipped.
+      expect(readFileSync(diskPath, 'utf8')).toBe('LIVE');
+    } finally {
+      if (existsSync(projectsDir)) rmSync(projectsDir, { recursive: true, force: true });
+    }
   });
 });

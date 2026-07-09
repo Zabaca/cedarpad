@@ -12,6 +12,13 @@
   --muted: oklch(0.69 0.014 65);
   --faint: oklch(0.6 0.014 60);
   --accent: oklch(0.68 0.145 45);
+  --accent-hi: oklch(0.75 0.14 45);
+  --on-accent: oklch(0.18 0.012 60);
+  /* status — never decorative (used by the shared <ChatView>) */
+  --danger: oklch(0.62 0.18 25);
+  --success: oklch(0.65 0.12 150);
+  --warning: oklch(0.8 0.12 85);
+  --shadow-float: 0 1px 2px oklch(0.1 0.01 60 / 0.5);
   --shadow-lift: 0 8px 24px oklch(0.07 0.01 60 / 0.55);
   --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
   --nav-w: 244px;
@@ -470,6 +477,20 @@ body,
 .inbox-threadhead button:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+/* The live <ChatView> fills the thread below the head. The card's own chrome (border ring,
+   radius) is redundant against the flush pane, so drop it and let the card fill edge-to-edge. */
+.inbox-chatview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.inbox-chatview .chat-card {
+  border-radius: 0;
+  box-shadow: none;
+}
+.inbox-chatview .chat-card-head {
+  cursor: default; /* no drag handle outside the canvas */
 }
 .inbox-events {
   overflow-y: auto;

@@ -1,12 +1,12 @@
 // The wire shapes the Inbox stage reads from the edge Inbox API (worker/inbox.ts), reused
 // from their source of truth rather than re-declared (CLAUDE.md §7): the list projects a
-// Conversation to `InboxItem` (worker/inbox-view.ts) and the transcript is a `ChatEvent[]`
-// (shared/chat-wire.ts). Both are TYPE-only imports, so the shell bundle never pulls the
-// edge/container code in — they exist purely to keep sender and receiver in lockstep.
-import type { ChatEvent } from '../../../shared/chat-wire';
+// Conversation to `InboxItem` (worker/inbox-view.ts). A TYPE-only import, so the shell bundle
+// never pulls the edge/container code in — it exists purely to keep sender and receiver in
+// lockstep. The transcript is NO LONGER an edge shape: the thread is a live <ChatView> over the
+// owning bridge (ADR-0009 / #124), so the runner streams it, not an R2 photograph.
 import type { InboxItem } from '../../../worker/inbox-view';
 
-export type { ChatEvent, InboxItem };
+export type { InboxItem };
 
 /** `GET /api/inbox?status=&workspace=` → the ordered list (waiting_on:human pinned). */
 export type InboxListResponse = { items: InboxItem[] };
@@ -18,8 +18,13 @@ export type InboxConversation = {
   summary: string | null;
 };
 
-/** `GET /api/inbox/:id` → the Conversation + its transcript, read from R2 (runner may sleep). */
-export type InboxDetailResponse = { conversation: InboxConversation; events: ChatEvent[] };
+/** `GET /api/inbox/:id` → the Conversation metadata only (Turso; no transcript, no wake). */
+export type InboxDetailResponse = { conversation: InboxConversation };
+
+/** `GET /inbox/:id/bridge/api/inbox/:id/chat` (through the edge proxy) → the chatId the Shell
+ *  subscribes to. The bridge wakes, restores the JSONL if cold, and resolves
+ *  `chatIdForSession(sessionId) ?? conv.id` — so a double-homed canvas chat shares its id. */
+export type InboxChatResponse = { chatId: string };
 
 /** The status filter: the two store statuses, or '' for "All". */
 export type StatusFilter = 'open' | 'closed' | '';

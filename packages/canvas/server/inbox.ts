@@ -12,7 +12,7 @@ import { conversations } from '../web-poc/lib/db/index.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { CanvasImage } from './agent.ts';
-import { type BlobGetter, restore as restoreTranscript } from './transcript-r2.ts';
+import { type BlobGetter, readRawTranscript, restore as restoreTranscript } from './transcript-r2.ts';
 
 /** Best-effort attention signal fired when a Conversation flips to waiting_on:human. A stub/log
  * this slice; wire a real PushNotification later. Never throws into the tool path. */
@@ -109,4 +109,56 @@ export async function resumeConversation(
   await (deps.restore ?? restoreTranscript)(deps.getter, deps.projectsDir, deps.cwd, conversation.sessionId);
   await deps.runTurn(conversation.sessionId, humanMessage, images);
   return conversations.reply(deps.db, conversation.id);
+}
+
+export interface OpenConversationDeps {
+  /** R2 read seam — the runner's blob backend. */
+  getter: BlobGetter;
+  /** `~/.claude/projects` on the runner (where resume reads the JSONL). */
+  projectsDir: string;
+  /** The cwd the session ran under (so a restore lands the JSONL at the exact resume path). */
+  cwd: string;
+  /** Reverse ChatMeta: the chatId homing this session as a live canvas chat, or undefined.
+   *  A double-homed session returns its canvas chat id so the two surfaces share ONE stream. */
+  chatIdForSession: (sessionId: string) => string | undefined;
+  /** Bind the resolved chatId's ChatMeta to this session, so `/api/chat/:chatId/transcript`
+   *  + `/send` resolve THIS session (a no-op when the chatId already homes it). */
+  seedChatMeta: (chatId: string, sessionId: string) => void;
+  /** Test seam: is the session's JSONL already on the runner FS? Default globs `projectsDir`. */
+  hasLocalTranscript?: (sessionId: string) => Promise<boolean>;
+  /** Override for tests; defaults to transcript-r2 restore. */
+  restore?: typeof restoreTranscript;
+}
+
+/**
+ * Prepare a Conversation to be OPENED as a live `<ChatView>` on its owning bridge (ADR-0009,
+ * #124). Two steps, both idempotent:
+ *   1. Ensure the session JSONL is on the runner FS. If the container cold-booted (no local
+ *      copy), restore it from R2 — the durability/resume-restore substrate. A warm/live copy is
+ *      left untouched (never clobber an in-flight canvas chat with a stale backup).
+ *   2. Resolve the chatId the Shell subscribes to: `chatIdForSession(sessionId) ?? conv.id`. A
+ *      session also homed as a canvas chat shares that chat's id (two live views, one stream); a
+ *      headless session falls back to a stable per-conversation id. Seed that chatId's ChatMeta
+ *      so the bridge's transcript + send resolve this session.
+ * The R2 read here is a RESTORE (onto the runner), not the retired edge display read.
+ */
+export async function openConversation(
+  deps: OpenConversationDeps,
+  conversation: ConversationRow,
+): Promise<{ chatId: string }> {
+  const present = await (deps.hasLocalTranscript ??
+    (async (sid: string) => {
+      // A missing projectsDir (fresh cold container) means "not present" — glob throws on it.
+      try {
+        return (await readRawTranscript(deps.projectsDir, sid)) !== null;
+      } catch {
+        return false;
+      }
+    }))(conversation.sessionId);
+  if (!present) {
+    await (deps.restore ?? restoreTranscript)(deps.getter, deps.projectsDir, deps.cwd, conversation.sessionId);
+  }
+  const chatId = deps.chatIdForSession(conversation.sessionId) ?? conversation.id;
+  deps.seedChatMeta(chatId, conversation.sessionId);
+  return { chatId };
 }
