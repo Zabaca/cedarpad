@@ -23,6 +23,20 @@ export interface DevAgentRunner {
   exec(command: string): Promise<{ exitCode: number; stdout: string }>;
 }
 
+// Coexistence, not replacement (ADR-0009 Tier 2 / #125). The dev-agent sandbox has TWO boot
+// paths on the SAME image, and they COEXIST as separate processes on the one instance:
+//   • scheduled batch — the cron `exec`s this workflow command (a transient one-shot run that
+//     Explores, gates, promotes a Conversation, then lets the instance idle-sleep on its 2m timer);
+//   • interactive bridge — an INTERACTIVE chat proxied to the dev-agent (edge chat proxy →
+//     coordsForWorkspace('dev-agent') → serveWorkspace) cold-starts the SAME product interactive
+//     stack every workspace container runs (`scripts/container-start.ts` → vite + bridge), booted
+//     LAZILY on the first interactive request — never eagerly.
+// We deliberately do NOT "always boot the interactive stack": off-hours the batch run stays cheap
+// (wake, run, sleep), and the two are synergistic — the explore session the batch writes to
+// ~/.claude/projects is exactly what the interactive bridge later restores + resumes as a chat
+// turn. Both processes share the container's process.cwd() (the canvas package dir), so a resumed
+// dev-agent session's JSONL is restored to the path the bridge's `query({ resume })` reads.
+//
 // The command the container runs for one scheduled workflow. The Explore→gate→ask_human
 // harness (#66) is CONTAINER-side (it needs the SDK/Turso/git) — the edge only wakes the
 // sandbox and execs this entrypoint (`server/dev-agent-run.ts`), which assembles the real

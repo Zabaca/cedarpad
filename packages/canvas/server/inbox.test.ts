@@ -203,6 +203,51 @@ describe('resumeConversation', () => {
     expect(ran).toHaveLength(1);
     expect(ran[0]?.images).toEqual([]);
   });
+
+  // ADR-0009 Tier 2 / #125: a dev-agent Conversation resumes on the DEV-AGENT runner's own
+  // interactive bridge. resumeConversation is runner-agnostic (the caller supplies cwd + runTurn),
+  // so the only dev-agent-specific requirement is that restore lands the explore-session JSONL at
+  // the cwd the resume reads. On the dev-agent runner both the explore session (dev-agent-run.ts,
+  // `cwd: repoRoot`) and the interactive bridge (bridge.ts, CANVAS_CWD) default to the container's
+  // process.cwd() — the canvas package dir — so they encode to the SAME SDK project dir. That
+  // shared cwd is the invariant this test pins: restore reconstructs exactly the path resume reads.
+  test('resumes on the dev-agent runner: restore lands the explore-session JSONL at the runner cwd resume path', async () => {
+    const db = await freshDb();
+    const sessionId = 'sess-dev-agent-explore';
+    // The dev-agent container cwd shared by its explore session and its interactive bridge.
+    const devAgentRunnerCwd = '/app/agent-canvas/packages/canvas';
+
+    // A dev-agent Conversation (workspaceId = dev-agent) whose explore transcript sits in R2.
+    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'dev-agent' });
+    await conversations.promote(db, conv.id);
+
+    const getter = memBackend();
+    const jsonl = '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"explore"}]}}\n';
+    await getter.put(transcriptKey(sessionId), new TextEncoder().encode(jsonl));
+
+    const projectsDir = join(tmpdir(), `Tmp_DevAgentResume_${process.pid}_${Math.random().toString(36).slice(2)}`);
+    const resumePath = join(projectsDir, projectDirForCwd(devAgentRunnerCwd), `${sessionId}.jsonl`);
+    let onDiskAtResume = false;
+    try {
+      const updated = await resumeConversation(
+        {
+          db,
+          getter,
+          projectsDir,
+          cwd: devAgentRunnerCwd,
+          // The resumed turn (query({ resume })) reads exactly this path — assert it's present.
+          runTurn: () => void (onDiskAtResume = existsSync(resumePath)),
+        },
+        conv,
+        'approve candidate 1',
+      );
+
+      expect(onDiskAtResume).toBe(true); // restore reconstructed the exact SDK resume path
+      expect(updated?.waitingOn).toBe('agent'); // reply flips it off the attention list
+    } finally {
+      if (existsSync(projectsDir)) rmSync(projectsDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // Opening an Inbox Conversation as a live <ChatView> on its owning bridge (ADR-0009, #124):

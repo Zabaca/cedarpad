@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { GateUser } from './auth-gate.ts';
+import { DEV_AGENT_SANDBOX_ID } from './dev-agent.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
 // The edge chat proxy (`handleInboxBridge`) proxies a Conversation's chat traffic to its owning
@@ -116,5 +117,28 @@ describe('handleInboxBridge: the inbox triage flip on a proxied send', () => {
     expect(res.status).toBe(404);
     expect(served).toHaveLength(0);
     expect(replyCalls).toEqual([]);
+  });
+});
+
+describe('handleInboxBridge: which runner bridge a Conversation is proxied to (coordsForWorkspace)', () => {
+  test('a product Conversation (workspaceId `default`) proxies to the legacy/prod container', async () => {
+    conv = row({ workspaceId: 'default' });
+    await proxy('GET', '/api/chat/chat_home/transcript');
+    await settle();
+
+    expect(served).toHaveLength(1);
+    expect(served[0]?.sandboxId).not.toBe(DEV_AGENT_SANDBOX_ID);
+  });
+
+  test('a dev-agent Conversation is proxied to the dev-agent sandbox, where its interactive bridge runs (ADR-0009 Tier 2 / #125)', async () => {
+    conv = row({ workspaceId: DEV_AGENT_SANDBOX_ID });
+    await proxy('GET', '/api/chat/chat_home/transcript');
+    await settle();
+
+    // Routed to the dev-agent's OWN sandbox id — NOT a derived `workspace-dev-agent` container
+    // (which would hold no bridge session). This is the coords the interactive bridge boots under.
+    expect(served).toHaveLength(1);
+    expect(served[0]?.sandboxId).toBe(DEV_AGENT_SANDBOX_ID);
+    expect(served[0]?.canvasWorkspace).toBe(DEV_AGENT_SANDBOX_ID);
   });
 });
