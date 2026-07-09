@@ -1,7 +1,7 @@
 // The dev-agent workflow harness (ADR-0007, PRD #51 slice #66) — the FINAL wiring that
 // drives one scheduled `/improve-codebase-architecture` run end-to-end through the Inbox:
 //
-//   Explore → gate → ask_human (promote a Conversation) → [human approves] → PR.
+//   Explore → gate → ask_human (promote a Conversation) → [grill in-thread] → open_pr tool.
 //
 // This is the CONTAINER-side core (Bun): it runs INSIDE the dev-agent sandbox where the
 // SDK, git, and `gh` live — the edge only wakes the sandbox and kicks this (worker/dev-agent.ts).
@@ -13,10 +13,13 @@
 //   runDevAgentWorkflow(...)  — the scheduled half. Explore, apply the quality gate (#65),
 //                               and on survivors promote EXACTLY ONE Conversation via
 //                               askHuman (#61). Zero survivors → promote NOTHING (quiet run).
-//   runDevAgentApproval(...)  — the resume half. When James replies to a dev-agent
-//                               Conversation, this drives the chosen refactor in a fresh
-//                               worktree and opens the PR (#64): prepareWorktree → commit →
-//                               pushAndOpenPR → cleanup. The PR is the durable code artifact.
+//   openDevAgentPr(...)       — the PR half, now an IN-CONVERSATION TOOL (ADR-0009 Tier 2,
+//                               #126). A dev-agent reply is a normal chat turn (no approval
+//                               special-case); when the agent is aligned with James it invokes
+//                               the `open_pr` tool, which commits the runner's OWN worktree and
+//                               opens the PR (#64): commit → pushAndOpenPR. The PR is the durable
+//                               code artifact — the agent supplies its title/body/commit message
+//                               from the thread it is in, so nothing is reconstructed.
 
 import { z } from 'zod';
 
@@ -61,14 +64,16 @@ export function parseCandidates(text: string): Candidate[] {
 
 // ── Routing: which Conversations are dev-agent workflows ──────────────────────────────
 //
-// A dev-agent Conversation is tagged with THIS workspace id so the Inbox reply path can
-// route its resume to the PR half (runDevAgentApproval) instead of the canvas chat path.
-// Disjoint from every product workspace id (which are registry ids like `cs_...` / the
-// default) by construction — the same disjointness the sandbox id relies on.
+// A dev-agent Conversation is tagged with THIS workspace id: it homes on the dev-agent's OWN
+// sandbox (equal to `DEV_AGENT_SANDBOX_ID`), whose interactive bridge exposes the `open_pr`
+// tool. Disjoint from every product workspace id (which are registry ids like `cs_...` / the
+// default) by construction — the same disjointness the sandbox id relies on. Under ADR-0009
+// a dev-agent reply is a normal chat turn (no reply special-case); this id is how the edge
+// proxy routes to the right bridge and how that bridge decides to offer `open_pr`.
 export const DEV_AGENT_WORKSPACE_ID = 'dev-agent';
 
-/** True iff this Conversation was promoted by the dev-agent (so its resume drives a PR,
- *  not a canvas chat turn). Sole routing signal — checked in the bridge reply path. */
+/** True iff this Conversation was promoted by the dev-agent (so it is grilled as a chat and
+ *  opens its PR via the `open_pr` tool). The dev-agent routing predicate. */
 export function isDevAgentConversation(conv: Pick<ConversationRow, 'workspaceId'>): boolean {
   return conv.workspaceId === DEV_AGENT_WORKSPACE_ID;
 }
@@ -136,10 +141,11 @@ export async function runDevAgentWorkflow(deps: WorkflowDeps): Promise<Candidate
   return survivors;
 }
 
-// ── The resume half: approval → PR ────────────────────────────────────────────────────
+// ── The PR half: the `open_pr` tool ───────────────────────────────────────────────────
 
-/** The git seam the approval half drives — structurally satisfied by the #64 manager
- *  (`createRepoWorktreeManager`); tests inject a fake. */
+/** The git seam — structurally satisfied by the #64 manager (`createRepoWorktreeManager`);
+ *  tests inject a fake. `prepareWorktree`/`cleanup` are the batch-run lifecycle; the in-
+ *  conversation `open_pr` tool only ever `commit`s + `pushAndOpenPR`s the runner's own tree. */
 export interface RepoWorktreeManager {
   prepareWorktree: (branch: string) => Promise<Worktree>;
   commit: (wt: Worktree, message: string) => Promise<boolean>;
@@ -147,36 +153,33 @@ export interface RepoWorktreeManager {
   cleanup: (wt: Worktree) => Promise<void>;
 }
 
-export interface ApprovalDeps {
-  git: RepoWorktreeManager;
-  /** The branch this run's PR lands on (from #64 `branchName(workflowId, runId)`). */
-  branch: string;
-  /** Seam over the agent that actually makes the chosen refactor in the worktree. Given the
-   *  worktree path + James's reply, it edits the tree and returns the commit message + PR
-   *  fields. The default runs the SDK against the worktree cwd; tests inject a fake. */
-  applyRefactor: (worktreePath: string, humanMessage: string) => Promise<{ commitMessage: string; pr: PrRequest }>;
+export interface OpenPrDeps {
+  /** The git manager, bound to the runner's workspace (#64 `createRepoWorktreeManager`). The
+   *  tool needs only commit + push/PR — it operates on the runner's LIVE worktree (the edits
+   *  the agent already made this conversation), not a freshly-prepared one. */
+  git: Pick<RepoWorktreeManager, 'commit' | 'pushAndOpenPR'>;
+  /** The runner's own worktree — where the dev-agent edited during the chat. */
+  worktree: Worktree;
 }
 
 /**
- * Drive the PR half on approval: prepare a fresh worktree, let the agent apply the chosen
- * refactor, commit + push + open the PR (#64), then ALWAYS clean up the worktree. Returns
- * the PR url, or null if the refactor left the tree clean (nothing to open a PR for).
- * `pushAndOpenPR` is invoked at most once. This is what a dev-agent Conversation's resume
- * runs (routed by `isDevAgentConversation`) — NOT the canvas chat-turn path.
+ * The `open_pr` tool body (ADR-0009 Tier 2, #126): commit the runner's worktree with the
+ * agent-supplied message and open the PR (#64). Returns the PR url, or null if the tree was
+ * clean (nothing to open a PR for). The agent — grilling James in-thread — supplies the PR
+ * title/body + commit message from the conversation it is in, so no summary+reply bundle is
+ * reconstructed. This replaces the old reply-time approval special-case: a dev-agent reply is
+ * now a plain chat turn, and THIS is a tool the agent chooses to call when aligned.
  */
-export async function runDevAgentApproval(deps: ApprovalDeps, humanMessage: string): Promise<string | null> {
-  const wt = await deps.git.prepareWorktree(deps.branch);
-  try {
-    const { commitMessage, pr } = await deps.applyRefactor(wt.path, humanMessage);
-    const committed = await deps.git.commit(wt, commitMessage);
-    if (!committed) {
-      console.log('[dev-agent] approval produced no changes — no PR opened');
-      return null;
-    }
-    const url = await deps.git.pushAndOpenPR(wt, pr);
-    console.log(`[dev-agent] opened PR ${url}`);
-    return url;
-  } finally {
-    await deps.git.cleanup(wt);
+export async function openDevAgentPr(
+  deps: OpenPrDeps,
+  input: { title: string; body: string; commitMessage: string },
+): Promise<string | null> {
+  const committed = await deps.git.commit(deps.worktree, input.commitMessage);
+  if (!committed) {
+    console.log('[dev-agent] open_pr: worktree clean — no PR opened');
+    return null;
   }
+  const url = await deps.git.pushAndOpenPR(deps.worktree, { title: input.title, body: input.body });
+  console.log(`[dev-agent] open_pr: opened PR ${url}`);
+  return url;
 }

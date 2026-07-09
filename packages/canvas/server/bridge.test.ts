@@ -11,8 +11,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { chatClients, handleRequest, setChatTurnDispatcher } from './bridge.ts';
+import { chatClients, handleRequest, setChatTurnDispatcher, webPocDb } from './bridge.ts';
 import { resumeConversation } from './inbox.ts';
+import { conversations } from '../web-poc/lib/db/index.ts';
+import { DEV_AGENT_WORKSPACE_ID } from './dev-agent-workflow.ts';
 
 const sendReq = (chatId: string, body: unknown = { message: 'hi' }): Request =>
   new Request(`http://localhost/api/chat/${encodeURIComponent(chatId)}/send`, {
@@ -92,6 +94,64 @@ describe('reply/send share ONE image contract (#123)', () => {
     const runTurn: Parameters<typeof resumeConversation>[3] = parsed;
     expect(toSend).toBe(parsed);
     expect(runTurn).toBe(parsed);
+  });
+});
+
+describe('POST /api/inbox/:id/reply routes EVERY conversation through the chat turn (#126)', () => {
+  let restore: () => void = () => {};
+  let dispatched: Array<{ chatId: string; message: string; sessionId: string | null }> = [];
+
+  beforeEach(() => {
+    dispatched = [];
+    // The chat-turn dispatcher is the SIGNAL: resumeConversation → runTurn → dispatchChatTurn.
+    // Before #126 a dev-agent reply bypassed this entirely (it ran runDevAgentApproval → a fresh
+    // worktree + PR), so `dispatched` would stay empty — this test is the mutation check.
+    restore = setChatTurnDispatcher((chatId, message, sessionId) => {
+      dispatched.push({ chatId, message, sessionId });
+    });
+  });
+
+  afterEach(() => restore());
+
+  const replyReq = (id: string, message: string): Request =>
+    new Request(`http://localhost/api/inbox/${encodeURIComponent(id)}/reply`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message }),
+    });
+
+  test('a dev-agent Conversation reply resumes as a chat turn (NOT the old approval→PR path)', async () => {
+    const conv = await conversations.create(webPocDb, {
+      sessionId: `sess_devagent_${crypto.randomUUID()}`,
+      userId: 'default',
+      workspaceId: DEV_AGENT_WORKSPACE_ID,
+      summary: 'architecture deepening candidates',
+    });
+
+    const res = await handleRequest(replyReq(conv.id, 'go with candidate #1'));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true });
+    // The reply drove a chat turn — the same machinery every conversation uses.
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]!.message).toBe('go with candidate #1');
+    expect(dispatched[0]!.sessionId).toBe(conv.sessionId);
+  });
+
+  test('a product Conversation reply resumes as a chat turn too (regression: unaffected)', async () => {
+    const conv = await conversations.create(webPocDb, {
+      sessionId: `sess_product_${crypto.randomUUID()}`,
+      userId: 'default',
+      workspaceId: 'cs_workspace_abc',
+      summary: 'a normal product session',
+    });
+
+    const res = await handleRequest(replyReq(conv.id, 'here is my answer'));
+
+    expect(res.status).toBe(200);
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]!.message).toBe('here is my answer');
+    expect(dispatched[0]!.sessionId).toBe(conv.sessionId);
   });
 });
 

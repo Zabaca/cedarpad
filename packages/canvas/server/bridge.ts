@@ -22,8 +22,7 @@ import { maxMtimeMs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
 import { type Notify, openConversation, resumeConversation } from './inbox.ts';
 import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-worktree.ts';
-import { isDevAgentConversation, runDevAgentApproval } from './dev-agent-workflow.ts';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { DEV_AGENT_WORKSPACE_ID, openDevAgentPr } from './dev-agent-workflow.ts';
 import { backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, parseCanvasImages, runChat } from './agent.ts';
 import { adoptSharedComponent, promoteComponent } from './components.ts';
@@ -93,7 +92,9 @@ if (!webPocRemoteTurso) {
     migrationsFolder: fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url)),
   });
 }
-const webPocDb = makeDb(webPocClient);
+// Exported as a test seam: the reply-routing test seeds a Conversation here to drive
+// POST /api/inbox/:id/reply through handleRequest (bridge.test.ts).
+export const webPocDb = makeDb(webPocClient);
 const webPocApp = buildApp({ db: webPocDb });
 
 // Inbox (#61): the promote protocol runs against the same web-poc Turso db. The bridge is a
@@ -112,6 +113,12 @@ const sse = (data: unknown) => enc.encode(`data: ${JSON.stringify(data)}\n\n`);
 // canvasId in the registry below. Sessions are built lazily on first access; the
 // data-loss guard refuses to overwrite a saved canvas with empty if its read failed.
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
+// This bridge IS the dev-agent runner iff it serves the dev-agent workspace (ADR-0009 Tier 2 /
+// #126). Only then does a chat turn get the `open_pr` tool — every product bridge omits it. The
+// dev-agent's interactive bridge boots with CANVAS_WORKSPACE=dev-agent (worker/inbox-bridge.ts
+// coordsForWorkspace → container-env), so this string compare is the same disjointness the edge
+// proxy routes on.
+const IS_DEV_AGENT_BRIDGE = WORKSPACE === DEV_AGENT_WORKSPACE_ID;
 const DEFAULT_CANVAS_ID = process.env.CANVAS_ID ?? 'default';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
 // Capture the raw backend too: the Inbox transcript backup/restore (#60/#61) keys blobs by
@@ -356,7 +363,22 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
       // that canvas's SSE subscribers (per-canvas isolation, exactly how reads already resolve).
       const session = await canvasSessions.get(canvasId);
       const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: WORKSPACE, notify };
-      for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox)) {
+      // The dev-agent runner's chat context gets an `open_pr` tool (#126): the agent edits its
+      // worktree during the chat, then calls open_pr when aligned with the human — it commits
+      // the runner's OWN checkout (CANVAS_CWD) + opens the PR, reusing the #64 git internals.
+      // git auth + branch are the runner's; createRepoWorktreeManager throws without the token
+      // so it can never silently no-op — exercisable end-to-end only once #96 provisions them.
+      const openPr = IS_DEV_AGENT_BRIDGE
+        ? async (input: { title: string; body: string; commitMessage: string }) => {
+            const git = createRepoWorktreeManager({ repo: DEFAULT_REPO, workspaceRoot: `${CANVAS_CWD}/.dev-agent` });
+            const worktree = { path: CANVAS_CWD, branch: branchName(WORKSPACE, chatId), hub: `${CANVAS_CWD}/.dev-agent/hub` };
+            const url = await openDevAgentPr({ git, worktree }, input);
+            return url
+              ? `Opened PR: ${url}`
+              : 'Nothing to commit — the worktree is clean. Make your edits first, then call open_pr again.';
+          }
+        : undefined;
+      for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox, openPr)) {
         if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
         broadcastChat(chatId, ev satisfies ChatEvent);
       }
@@ -657,51 +679,11 @@ export async function handleRequest(req: Request): Promise<Response> {
       const conv = await conversations.get(webPocDb, id);
       if (!conv) return json({ error: `conversation not found: ${id}` }, 404);
 
-      // Dev-agent Conversations (#51/#66) resume down the PR path, NOT the canvas chat path:
-      // James's reply approves a candidate, so we drive the chosen refactor in a fresh
-      // worktree and open a PR (#64) — the durable code artifact. Routed solely by the
-      // Conversation's dev-agent workspace tag. Simplification (noted on #66): the refactor
-      // runs a fresh SDK turn in the worktree seeded with the thread summary + reply rather
-      // than resuming the explore session's JSONL into the worktree cwd; the PR fields are
-      // derived from the summary. The PR — not a resumed transcript — is the durable output.
-      if (isDevAgentConversation(conv)) {
-        const git = createRepoWorktreeManager({
-          repo: DEFAULT_REPO,
-          workspaceRoot: `${CANVAS_CWD}/.dev-agent/${conv.id}`,
-        });
-        const url = await runDevAgentApproval(
-          {
-            git,
-            branch: branchName(conv.id, String(Date.now())),
-            applyRefactor: async (worktreePath, humanMessage) => {
-              const prompt = [
-                `Architecture review thread: ${conv.summary ?? '(no summary)'}`,
-                '',
-                `The human approved with: ${humanMessage}`,
-                '',
-                'Implement the approved deepening in this worktree. Make the edits only — do not commit or push.',
-              ].join('\n');
-              for await (const _m of query({
-                prompt,
-                options: { cwd: worktreePath, permissionMode: 'bypassPermissions', maxTurns: 50 },
-              })) {
-                // drain the stream; the edits land on disk, which commit() then stages.
-              }
-              return {
-                commitMessage: `refactor: ${conv.summary ?? 'dev-agent deepening'}`,
-                pr: {
-                  title: conv.summary ?? 'Dev-agent architecture deepening',
-                  body: `Approved from the Inbox thread.\n\n> ${humanMessage}`,
-                },
-              };
-            },
-          },
-          message,
-        );
-        const flipped = await conversations.reply(webPocDb, conv.id);
-        return json({ ok: true, conversation: flipped, pr: url });
-      }
-
+      // Under "one chat system" (ADR-0009) EVERY reply — dev-agent included — resumes the
+      // session as a chat turn on its owning bridge. There is no dev-agent approval special-
+      // case: a dev-agent Conversation is grilled in-thread like any other, and it opens its
+      // PR via the `open_pr` tool (wired into runChatTurn on the dev-agent bridge) when the
+      // agent decides to, not as the hardcoded outcome of this reply (#126).
       const updated = await resumeConversation(
         {
           db: webPocDb,
