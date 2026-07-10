@@ -43,6 +43,13 @@
       "when": 1783482271909,
       "tag": "0005_sad_microchip",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1783716176713,
+      "tag": "0006_awesome_drax",
+      "breakpoints": true
     }
   ]
 }

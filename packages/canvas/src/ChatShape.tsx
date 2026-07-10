@@ -10,21 +10,26 @@ import { ChatView } from '../shared/ChatView';
 import { type EventGuards, InteractiveBoxShapeUtil } from './InteractiveBoxShapeUtil';
 import { inChatBody, inChatLog, isInteractiveControl } from './predicates';
 
-export type ChatShapeTl = TLBaseShape<'chat', { w: number; h: number; title: string }>;
+// `chatId` overrides which chat the card fronts (the attach flow places a card for a chat
+// born elsewhere); '' — the default — means "the shape id IS the chat id", as always.
+export type ChatShapeTl = TLBaseShape<'chat', { w: number; h: number; title: string; chatId: string }>;
 
 // Register `chat` as a first-class tldraw shape type (joins the TLShape union).
 declare module '@tldraw/tlschema' {
   interface TLGlobalShapePropsMap {
-    chat: { w: number; h: number; title: string };
+    chat: { w: number; h: number; title: string; chatId: string };
   }
 }
 
-export class ChatShapeUtil extends InteractiveBoxShapeUtil<'chat', { title: string }> {
+/** The chat a card fronts: its `chatId` prop when set (attach flow), else its shape id. */
+export const chatIdOf = (shape: ChatShapeTl): string => shape.props.chatId || shape.id;
+
+export class ChatShapeUtil extends InteractiveBoxShapeUtil<'chat', { title: string; chatId: string }> {
   static override type = 'chat' as const;
-  static override props = { w: T.number, h: T.number, title: T.string };
+  static override props = { w: T.number, h: T.number, title: T.string, chatId: T.string };
 
   override getDefaultProps(): ChatShapeTl['props'] {
-    return { w: 380, h: 460, title: 'Chat' };
+    return { w: 380, h: 460, title: 'Chat', chatId: '' };
   }
 
   override cornerRadius = 12;
@@ -40,9 +45,9 @@ export class ChatShapeUtil extends InteractiveBoxShapeUtil<'chat', { title: stri
     key: inChatBody,
   };
 
-  override onContainerPointerDown = (shape: ChatShapeTl) => setActiveChat(shape.id);
+  override onContainerPointerDown = (shape: ChatShapeTl) => setActiveChat(chatIdOf(shape));
 
   protected override renderContent(shape: ChatShapeTl) {
-    return <ChatView chatId={shape.id} title={shape.props.title} />;
+    return <ChatView chatId={chatIdOf(shape)} title={shape.props.title} />;
   }
 }

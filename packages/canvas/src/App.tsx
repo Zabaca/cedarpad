@@ -244,7 +244,11 @@ export default function App() {
       const unlisten = editor.store.listen(
         (entry) => {
           for (const rec of Object.values(entry.changes.removed)) {
-            if (rec.typeName === 'shape' && (rec as { type?: string }).type === 'chat') closeSession(rec.id);
+            if (rec.typeName === 'shape' && (rec as { type?: string }).type === 'chat') {
+              // An attached card fronts an existing chat via props.chatId (attach flow).
+              const props = (rec as { props?: { chatId?: string } }).props;
+              closeSession(props?.chatId || rec.id);
+            }
           }
         },
         { scope: 'document' },

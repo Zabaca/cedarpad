@@ -9,6 +9,7 @@
 // notify seam, and a `runTurn` that actually drives `query({ resume })`.
 
 import { conversations } from '../web-poc/lib/db/index.ts';
+import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { CanvasImage } from './agent.ts';
@@ -28,11 +29,14 @@ export type Notify = (conversation: ConversationRow, question: string) => void |
  */
 export async function findOrCreateConversation(
   db: Database,
-  input: { sessionId: string; userId: string; workspaceId: string; summary?: string | null; ownerRef?: string },
+  input: { sessionId: string; userId: string; workspaceId: string; summary?: string | null; ownerRef?: string; canvasId?: string },
 ): Promise<ConversationRow> {
+  // The chat→canvas edge is first-wins (attachCanvas only fills a null edge): a turn that
+  // carries a canvas backfills chats born before capture, but never re-homes a linked chat.
   if (input.ownerRef) {
     const byChat = await conversations.getByOwnerRef(db, input.ownerRef);
     if (byChat) {
+      if (input.canvasId && !byChat.canvasId) await conversations.attachCanvas(db, byChat.id, input.canvasId);
       if (byChat.sessionId !== input.sessionId) {
         return (await conversations.rebindSession(db, byChat.id, input.sessionId)) ?? byChat;
       }
@@ -42,6 +46,7 @@ export async function findOrCreateConversation(
   const existing = await conversations.getBySessionId(db, input.sessionId);
   if (existing) {
     if (input.ownerRef && !existing.ownerRef) await conversations.setOwnerRef(db, existing.id, input.ownerRef);
+    if (input.canvasId && !existing.canvasId) await conversations.attachCanvas(db, existing.id, input.canvasId);
     return (await conversations.touch(db, existing.id)) ?? existing;
   }
   return conversations.create(db, {
@@ -49,9 +54,100 @@ export async function findOrCreateConversation(
     userId: input.userId,
     workspaceId: input.workspaceId,
     ownerRef: input.ownerRef ?? null,
+    canvasId: input.canvasId ?? null,
     summary: input.summary ?? null,
     lastMessagePreview: input.summary ?? null,
   });
+}
+
+/**
+ * Lazy backfill (canvas pairing): chats born before edge capture existed live as `chat`
+ * shapes in canvas state, but their rows carry no canvas edge. When a canvas session builds,
+ * the bridge hands its chat-shape ids here; each row found by ownerRef gets the edge.
+ * First-wins (attachCanvas fills only a null edge) and unknown chat ids are ignored, so the
+ * call is idempotent and safe to fire on every boot. Best-effort per row.
+ */
+export async function backfillCanvasEdges(db: Database, canvasId: string, chatIds: string[]): Promise<void> {
+  for (const chatId of chatIds) {
+    const row = await conversations.getByOwnerRef(db, chatId);
+    if (row && !row.canvasId) await conversations.attachCanvas(db, row.id, canvasId);
+  }
+}
+
+/** The seam attach needs from a canvas session: current shapes (for free-space placement)
+ * and an upsert (to place the card). The bridge adapts its CanvasSession registry to this. */
+export interface AttachDeps {
+  db: Database;
+  getSession: (canvasId: string) => Promise<{
+    // ReadonlyArray<unknown>: the real store yields the CanvasShape union, whose arrow member
+    // has no x/y/w at all — placement coerces per-shape instead of demanding a common shape.
+    shapes: () => ReadonlyArray<unknown>;
+    upsert: (shapes: Array<Record<string, unknown>>) => void;
+  }>;
+  /** The live chatId for a session (bridge ChatMeta), when known — mirrors openConversation. */
+  chatIdForSession: (sessionId: string) => string | null;
+}
+
+export type AttachResult =
+  | { ok: true; canvasId: string }
+  | { ok: false; error: 'not_found' | 'already_linked' | 'wrong_workspace' };
+
+/** Mirrors src/active-canvas DEFAULT_CANVAS_ID: the legacy canvas every workspace always
+ * offers, registry-row-less by design (worker/shell.ts lists it unconditionally). */
+const DEFAULT_CANVAS_ID = 'default';
+
+/**
+ * Attach (canvas pairing, slice 3): link a canvas-less Conversation to a canvas and place a
+ * live `chat` card shape on it, so the pairing is visible from both sides. `canvasId` given →
+ * attach to that existing canvas (same-workspace only); omitted → create one in the
+ * Conversation's workspace, named from the chat summary. First-wins: an already-linked
+ * Conversation is refused (no detach in v1). The card fronts the EXISTING chat via its
+ * `chatId` prop (the shape id must be a fresh `shape:` id — tldraw owns that namespace).
+ */
+export async function attachConversationToCanvas(
+  deps: AttachDeps,
+  conversationId: string,
+  input: { canvasId?: string },
+): Promise<AttachResult> {
+  const conv = await conversations.get(deps.db, conversationId);
+  if (!conv) return { ok: false, error: 'not_found' };
+  if (conv.canvasId) return { ok: false, error: 'already_linked' };
+
+  let canvasId = input.canvasId;
+  if (canvasId) {
+    // The legacy default canvas has no registry row but belongs to every workspace.
+    if (canvasId !== DEFAULT_CANVAS_ID) {
+      const target = await canvasRegistry.get(deps.db, canvasId);
+      if (!target) return { ok: false, error: 'not_found' };
+      if (target.workspaceId !== conv.workspaceId) return { ok: false, error: 'wrong_workspace' };
+    }
+  } else {
+    const name = (conv.summary ?? '').trim().slice(0, 60) || 'Canvas';
+    canvasId = (await canvasRegistry.create(deps.db, { workspaceId: conv.workspaceId, name })).id;
+  }
+
+  await conversations.attachCanvas(deps.db, conv.id, canvasId);
+
+  // Place the card in free space: right of everything, level with the top of the layout.
+  const session = await deps.getSession(canvasId);
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const shapes = session.shapes().map((s) => s as { x?: unknown; y?: unknown; w?: unknown });
+  const x = shapes.length ? Math.max(...shapes.map((s) => num(s.x) + num(s.w))) + 80 : 120;
+  const y = shapes.length ? Math.min(...shapes.map((s) => num(s.y))) : 120;
+  const chatId = deps.chatIdForSession(conv.sessionId) ?? conv.ownerRef ?? conv.id;
+  session.upsert([
+    {
+      id: `shape:pair-${crypto.randomUUID()}`,
+      type: 'chat',
+      x,
+      y,
+      w: 380,
+      h: 460,
+      title: (conv.summary ?? '').trim().slice(0, 40) || 'Chat',
+      chatId,
+    },
+  ]);
+  return { ok: true, canvasId };
 }
 
 /**

@@ -94,6 +94,13 @@ describe('toTldrawPartial', () => {
   test('chat -> chat with w/h/title props (the id is the chat id)', () => {
     const p = partial({ id: 'shape:k', type: 'chat', x: 8, y: 9, w: 380, h: 460, title: 'Chat 2', color: 'black' });
     expect(p).toMatchObject({ type: 'chat', x: 8, y: 9, props: { w: 380, h: 460, title: 'Chat 2' } });
+    // No chatId on a canvas-born card: the prop defaults to '' (tldraw props are total).
+    expect((p?.props as { chatId?: string }).chatId).toBe('');
+  });
+
+  test('an attached chat card carries chatId both ways (the card fronts an EXISTING chat)', () => {
+    const p = partial({ id: 'shape:pair-1', type: 'chat', x: 0, y: 0, w: 380, h: 460, title: 'Chat', chatId: 'chat_att', color: 'black' });
+    expect((p?.props as { chatId?: string }).chatId).toBe('chat_att');
   });
 
   test('frame -> frame with w/h/name props', () => {
@@ -216,6 +223,19 @@ describe('fromTldrawShape', () => {
       { plaintext: 'ignored' },
     );
     expect(s).toEqual({ id: 'shape:k', type: 'chat', x: 8, y: 9, w: 380, h: 460, title: 'Chat 2', color: 'black' });
+  });
+
+  test('chat decode keeps a non-empty chatId and drops the empty default (round-trip stable)', () => {
+    const attached = decode(
+      { id: 'shape:pair-1', type: 'chat', x: 0, y: 0, props: { w: 380, h: 460, title: 'Chat', chatId: 'chat_att' } },
+      { plaintext: '' },
+    );
+    expect((attached as { chatId?: string }).chatId).toBe('chat_att');
+    const born = decode(
+      { id: 'shape:k', type: 'chat', x: 0, y: 0, props: { w: 380, h: 460, title: 'Chat', chatId: '' } },
+      { plaintext: '' },
+    );
+    expect('chatId' in (born as object)).toBe(false);
   });
 
   test('image -> image, pulling src from ctx (resolved by the shell from the asset)', () => {

@@ -588,6 +588,8 @@ export const conversations = sqliteTable(
       .default(sql`(unixepoch() * 1000)`),
     /** Nullable canvas owner edge (the owner pointer; canvas lives in its registry). */
     ownerRef: text("owner_ref"),
+    /** Nullable chat→canvas edge: the canvas this chat's card lives on (at most one). */
+    canvasId: text("canvas_id"),
     /** Platform workspace id (registry / `cs_workspace`). Plain text, no FK. */
     workspaceId: text("workspace_id").notNull(),
     userId: text("user_id").notNull(),

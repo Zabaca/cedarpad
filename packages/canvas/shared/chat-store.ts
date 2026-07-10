@@ -10,7 +10,7 @@
 
 import { type ChatEvent, type ChatFrame, type TaskStatus, type TodoStatus, isChatFrame } from './chat-wire.ts';
 import { registerStream, setBeatTargets, setBusyCheck } from '../src/idle.ts';
-import { withCanvasHeader, withCanvasParam } from '../src/active-canvas.ts';
+import { withCanvasParam, withPadCanvasHeader } from '../src/active-canvas.ts';
 
 // `parentId` (set on subagent items) is the spawning Task chip's tool_use id, so the
 // view can indent them under it. Tool items carry their own `toolUseId` so a `task`
@@ -166,7 +166,7 @@ export function ensureSession(chatId: string): void {
  *  any tab/device and survives a recycle. Best-effort: a failed fetch leaves state as-is. */
 async function rehydrate(chatId: string): Promise<void> {
   try {
-    const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/transcript`), { headers: withCanvasHeader() });
+    const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/transcript`), { headers: withPadCanvasHeader() });
     if (!res.ok) return;
     const { config, events, busy } = (await res.json()) as { config?: { model?: string; effort?: string; forkNext?: boolean }; events?: ChatEvent[]; busy?: boolean };
     clearBubbles(chatId);
@@ -303,7 +303,7 @@ export function setEffort(chatId: string, effort: string): void {
 }
 
 function postConfig(chatId: string, patch: { model?: string; effort?: string; forkNext?: boolean }): Promise<unknown> {
-  return fetch(bridgeUrl(chatId, `/api/chat/${chatId}/config`), { method: 'POST', headers: withCanvasHeader({ 'content-type': 'application/json' }), body: JSON.stringify(patch) }).catch(() => {});
+  return fetch(bridgeUrl(chatId, `/api/chat/${chatId}/config`), { method: 'POST', headers: withPadCanvasHeader({ 'content-type': 'application/json' }), body: JSON.stringify(patch) }).catch(() => {});
 }
 
 /** Seed `newId` as a fork of `parentId` on the SERVER (its ChatMeta resumes the parent's
@@ -311,7 +311,7 @@ function postConfig(chatId: string, patch: { model?: string; effort?: string; fo
  *  JSONL transcript until the fork diverges. The parent session is untouched (ADR 0004). */
 export function forkSession(parentId: string, newId: string): void {
   ensureSession(newId);
-  void fetch(bridgeUrl(newId, `/api/chat/${newId}/fork`), { method: 'POST', headers: withCanvasHeader({ 'content-type': 'application/json' }), body: JSON.stringify({ from: parentId }) })
+  void fetch(bridgeUrl(newId, `/api/chat/${newId}/fork`), { method: 'POST', headers: withPadCanvasHeader({ 'content-type': 'application/json' }), body: JSON.stringify({ from: parentId }) })
     .then(() => rehydrate(newId))
     .catch(() => {});
 }
@@ -486,7 +486,7 @@ async function dispatchSend(chatId: string, message: string, images: PendingImag
     // carries only the turn's content.
     const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/send`), {
       method: 'POST',
-      headers: withCanvasHeader({ 'content-type': 'application/json' }),
+      headers: withPadCanvasHeader({ 'content-type': 'application/json' }),
       body: JSON.stringify({ message, images: images.map(({ media_type, data }) => ({ media_type, data })) }),
     });
     // fetch only rejects on a network failure, so an HTTP error status (425 Too Early =
@@ -517,7 +517,7 @@ export async function interrupt(chatId: string): Promise<void> {
   if (!s || !s.busy) return;
   if (s.queue.length) update(chatId, { queue: [] });
   try {
-    await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/interrupt`), { method: 'POST', headers: withCanvasHeader() });
+    await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/interrupt`), { method: 'POST', headers: withPadCanvasHeader() });
   } catch {
     /* ignore */
   }

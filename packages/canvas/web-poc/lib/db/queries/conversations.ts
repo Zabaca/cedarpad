@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Database } from "../client.js";
 import { type ConversationRow, conversations } from "../schema.js";
 
@@ -21,6 +21,7 @@ export async function create(
     userId: string;
     workspaceId: string;
     ownerRef?: string | null;
+    canvasId?: string | null;
     summary?: string | null;
     lastMessagePreview?: string | null;
   },
@@ -33,6 +34,7 @@ export async function create(
       userId: input.userId,
       workspaceId: input.workspaceId,
       ownerRef: input.ownerRef ?? null,
+      canvasId: input.canvasId ?? null,
       summary: input.summary ?? null,
       lastMessagePreview: input.lastMessagePreview ?? null,
     })
@@ -163,6 +165,17 @@ export async function rebindSession(db: Database, id: string, sessionId: string)
 /** Backfill the owning-chat pointer on a legacy row (pre-owner_ref rows). */
 export async function setOwnerRef(db: Database, id: string, ownerRef: string): Promise<ConversationRow | null> {
   return patch(db, id, { ownerRef });
+}
+
+/** Set the chat→canvas edge, first-wins: only when the row has no canvas yet (a chat
+ * lives on at most one canvas; there is no detach in v1). Returns the row, or null
+ * if the conversation is missing. */
+export async function attachCanvas(db: Database, id: string, canvasId: string): Promise<ConversationRow | null> {
+  await db
+    .update(conversations)
+    .set({ canvasId })
+    .where(and(eq(conversations.id, id), isNull(conversations.canvasId)));
+  return get(db, id);
 }
 
 /** Hard-delete a Conversation row (legacy-duplicate cleanup only — product flows archive

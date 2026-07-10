@@ -14,6 +14,8 @@ export interface InboxItem {
   summary: string | null;
   lastMessagePreview: string | null;
   workspaceId: string;
+  /** The chat→canvas edge (canvas pairing): the canvas this chat's card lives on, or null. */
+  canvasId: string | null;
   lastActivity: number;
 }
 
@@ -26,6 +28,7 @@ const toItem = (r: ConversationRow): InboxItem => ({
   summary: r.summary,
   lastMessagePreview: r.lastMessagePreview,
   workspaceId: r.workspaceId,
+  canvasId: r.canvasId,
   lastActivity: r.lastActivity instanceof Date ? r.lastActivity.getTime() : Number(r.lastActivity),
 });
 

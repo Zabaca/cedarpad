@@ -178,6 +178,17 @@ to be re-homed.)
   canvas glossary's `session = chat` collision.
 - **Conversation** = Session + inbox state (open/closed, read/unread, needs-attention,
   last-activity). May own a Canvas (the owner edge above).
+- **Canvas edge** (`canvas_id`, nullable): a Conversation links to **at most one canvas** —
+  the canvas its chat card lives on. Direction matters: this is chat → canvas (one canvas
+  hosts many chat cards, each pointing back at it), the *reverse* of the canvas's own
+  owner pointer (canvas → owning session, provenance). Canvas-born chats get the edge at
+  birth; a canvas-less Conversation can **attach** — attach writes the edge AND places a
+  live `chat` card shape on the canvas, so the pairing is visible from both sides.
+  Create-and-attach makes a new canvas (named from the chat summary) in the
+  Conversation's own workspace; attach is **same-workspace only**. No detach (v1).
+  In the Inbox thread, the linked canvas renders as a **third pane** — the live Render
+  Pad iframe, the same live-synced surface as the canvas stage, never a snapshot; with
+  no edge, the pane offers create/attach.
 - The Inbox is a **unified session index**: EVERY Session gets a Conversation row (created on
   its first turn, idempotent by `sessionId`), so the one surface lists all sessions — canvas
   chats and background-agent runs alike. `end_turn` never *creates* the row; it just sets its

@@ -8,7 +8,7 @@ import { createClient } from '@libsql/client';
 import { makeDb, conversations } from '../web-poc/lib/db/index.ts';
 import { memBackend } from './blob-store.ts';
 import { projectDirForCwd, transcriptKey } from './transcript-r2.ts';
-import { dedupeLegacyConversations, endTurn, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
+import { attachConversationToCanvas, backfillCanvasEdges, dedupeLegacyConversations, endTurn, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { makeStopGate } from './agent.ts';
 
 // In-memory DB built from the real Drizzle migrations (mirrors conversations.test.ts, bun:test).
@@ -135,6 +135,31 @@ describe('findOrCreateConversation: chat identity (ownerRef)', () => {
     const found = await findOrCreateConversation(db, { sessionId: 'sess-old', userId: 'u', workspaceId: 'w', ownerRef: 'chat_B' });
     expect(found.id).toBe(legacy.id);
     expect((await conversations.getByOwnerRef(db, 'chat_B'))?.id).toBe(legacy.id);
+  });
+
+  test('a canvas-born chat records its canvas edge at creation', async () => {
+    const db = await freshDb();
+    const born = await findOrCreateConversation(db, { sessionId: 's-cv', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c1', canvasId: 'cv_1' });
+    expect(born.canvasId).toBe('cv_1');
+  });
+
+  test('a later turn carrying a canvas backfills a null edge but never overwrites one', async () => {
+    const db = await freshDb();
+    const bare = await findOrCreateConversation(db, { sessionId: 's-a', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c2' });
+    expect(bare.canvasId).toBeNull();
+    // The chat's canvas shows up on a later turn (e.g. after the pad starts stamping it).
+    const filled = await findOrCreateConversation(db, { sessionId: 's-b', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c2', canvasId: 'cv_1' });
+    expect(filled.canvasId).toBe('cv_1');
+    // First wins: a conflicting claim never re-homes the chat.
+    const kept = await findOrCreateConversation(db, { sessionId: 's-c', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c2', canvasId: 'cv_2' });
+    expect(kept.canvasId).toBe('cv_1');
+  });
+
+  test('a turn with no canvas (inbox reply, dev-agent run) leaves the edge untouched', async () => {
+    const db = await freshDb();
+    await findOrCreateConversation(db, { sessionId: 's-1', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c3', canvasId: 'cv_9' });
+    const later = await findOrCreateConversation(db, { sessionId: 's-2', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c3' });
+    expect(later.canvasId).toBe('cv_9');
   });
 });
 
@@ -456,5 +481,124 @@ describe('openConversation', () => {
     } finally {
       if (existsSync(projectsDir)) rmSync(projectsDir, { recursive: true, force: true });
     }
+  });
+});
+
+// Lazy backfill (canvas pairing): chats born BEFORE edge capture existed live as shapes in
+// canvas state but their rows have no canvas edge. When a canvas session builds, the bridge
+// hands its chat-shape ids here; rows found by ownerRef get the edge — first-wins, so a row
+// already linked elsewhere is never re-homed, and unknown chat ids are ignored.
+describe('backfillCanvasEdges: canvas boot links pre-capture chats', () => {
+  test('fills null edges by ownerRef, skips linked rows and unknown chats', async () => {
+    const db = await freshDb();
+    const bare = await findOrCreateConversation(db, { sessionId: 's-1', userId: 'u', workspaceId: 'w', ownerRef: 'shape:a' });
+    const linked = await findOrCreateConversation(db, { sessionId: 's-2', userId: 'u', workspaceId: 'w', ownerRef: 'shape:b', canvasId: 'cv_other' });
+
+    await backfillCanvasEdges(db, 'cv_boot', ['shape:a', 'shape:b', 'shape:unknown']);
+
+    expect((await conversations.get(db, bare.id))?.canvasId).toBe('cv_boot');
+    expect((await conversations.get(db, linked.id))?.canvasId).toBe('cv_other');
+  });
+});
+
+// Attach (canvas pairing, slice 3): link a canvas-less Conversation to a canvas — existing
+// (same-workspace only) or created on the spot (named from the chat summary) — writing the
+// edge AND placing a live chat card shape on that canvas so the pairing is visible from both
+// sides. First-wins: an already-linked Conversation is refused, never re-homed.
+describe('attachConversationToCanvas', () => {
+  const fakeCanvas = () => {
+    const upserted: Array<Record<string, unknown>> = [];
+    return {
+      upserted,
+      getSession: (canvasId: string) =>
+        Promise.resolve({
+          canvasId,
+          shapes: () => [
+            { id: 'shape:existing', type: 'note', x: 100, y: 50, w: 200, h: 200 },
+          ],
+          upsert: (shapes: Array<Record<string, unknown>>) => void upserted.push(...shapes),
+        }),
+    };
+  };
+
+  const setup = async () => {
+    const db = await freshDb();
+    const conv = await findOrCreateConversation(db, {
+      sessionId: 's-att',
+      userId: 'u',
+      workspaceId: 'ws_a',
+      ownerRef: 'chat_att',
+      summary: 'Explore the pricing model options',
+    });
+    return { db, conv };
+  };
+
+  test('attach to an EXISTING same-workspace canvas: writes the edge and places the card', async () => {
+    const { db, conv } = await setup();
+    const registry = await import('../web-poc/lib/db/queries/canvases.ts');
+    const target = await registry.create(db, { workspaceId: 'ws_a', name: 'Board' });
+    const cv = fakeCanvas();
+
+    const res = await attachConversationToCanvas(
+      { db, getSession: cv.getSession, chatIdForSession: () => null },
+      conv.id,
+      { canvasId: target.id },
+    );
+
+    expect(res).toMatchObject({ ok: true, canvasId: target.id });
+    expect((await conversations.get(db, conv.id))?.canvasId).toBe(target.id);
+    // The card fronts the EXISTING chat (chatId = the conversation's chat), in free space.
+    expect(cv.upserted).toHaveLength(1);
+    const card = cv.upserted[0]!;
+    expect(card.type).toBe('chat');
+    expect(card.chatId).toBe('chat_att');
+    expect(String(card.id)).toStartWith('shape:');
+    expect(Number(card.x)).toBeGreaterThan(300); // right of the existing note (x 100 + w 200)
+  });
+
+  test('create-and-attach: a new canvas in the conversation’s workspace, named from the summary', async () => {
+    const { db, conv } = await setup();
+    const cv = fakeCanvas();
+
+    const res = await attachConversationToCanvas(
+      { db, getSession: cv.getSession, chatIdForSession: () => null },
+      conv.id,
+      {},
+    );
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error('unreachable');
+    const registry = await import('../web-poc/lib/db/queries/canvases.ts');
+    const made = await registry.get(db, res.canvasId);
+    expect(made?.workspaceId).toBe('ws_a');
+    expect(made?.name).toBe('Explore the pricing model options');
+    expect((await conversations.get(db, conv.id))?.canvasId).toBe(res.canvasId);
+    expect(cv.upserted).toHaveLength(1);
+  });
+
+  test('refuses an already-linked conversation (409 shape) and a cross-workspace canvas', async () => {
+    const { db, conv } = await setup();
+    const registry = await import('../web-poc/lib/db/queries/canvases.ts');
+    const foreign = await registry.create(db, { workspaceId: 'ws_OTHER', name: 'Elsewhere' });
+    const cv = fakeCanvas();
+    const deps = { db, getSession: cv.getSession, chatIdForSession: () => null };
+
+    const cross = await attachConversationToCanvas(deps, conv.id, { canvasId: foreign.id });
+    expect(cross).toMatchObject({ ok: false, error: 'wrong_workspace' });
+
+    const own = await registry.create(db, { workspaceId: 'ws_a', name: 'Mine' });
+    await attachConversationToCanvas(deps, conv.id, { canvasId: own.id });
+    const again = await attachConversationToCanvas(deps, conv.id, { canvasId: own.id });
+    expect(again).toMatchObject({ ok: false, error: 'already_linked' });
+    expect(cv.upserted).toHaveLength(1); // only the first attach placed a card
+  });
+
+  test('unknown conversation / unknown canvas → not_found', async () => {
+    const { db } = await setup();
+    const cv = fakeCanvas();
+    const deps = { db, getSession: cv.getSession, chatIdForSession: () => null };
+    expect(await attachConversationToCanvas(deps, 'conv_missing', {})).toMatchObject({ ok: false, error: 'not_found' });
+    const { conv } = await setup();
+    expect(await attachConversationToCanvas(deps, conv.id, { canvasId: 'cv_ghost' })).toMatchObject({ ok: false, error: 'not_found' });
   });
 });

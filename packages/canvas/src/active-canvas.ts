@@ -25,6 +25,17 @@ export function withCanvasHeader(headers?: HeadersInit): Record<string, string> 
   return { ...(headers as Record<string, string> | undefined), 'x-canvas-id': activeCanvasId() };
 }
 
+/** `x-canvas-id` for CHAT calls: stamped only when this surface IS a pad. The chat-store is
+ * shared with non-pad surfaces (the Inbox thread), where a defaulted stamp would falsely
+ * claim the Default canvas as the chat's home — the chat→canvas edge is a claim, not a
+ * fallback, so absence must mean "no canvas". */
+export function withPadCanvasHeader(headers?: HeadersInit): Record<string, string> {
+  const path = typeof window === 'undefined' ? null : window.location.pathname;
+  const id = path ? canvasIdFromPath(path) : null;
+  const base = { ...(headers as Record<string, string> | undefined) };
+  return id ? { ...base, 'x-canvas-id': id } : base;
+}
+
 /** Append `?canvas=<id>` to a stream URL (EventSource can't send headers). */
 export function withCanvasParam(url: string): string {
   const sep = url.includes('?') ? '&' : '?';

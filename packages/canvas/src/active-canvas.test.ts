@@ -4,7 +4,7 @@ import './happydom-harness.ts';
 
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import { DEFAULT_CANVAS_ID, activeCanvasId, canvasIdFromPath, withCanvasHeader, withCanvasParam } from './active-canvas';
+import { DEFAULT_CANVAS_ID, activeCanvasId, canvasIdFromPath, withCanvasHeader, withCanvasParam, withPadCanvasHeader } from './active-canvas';
 
 const setPath = (pathname: string) => {
   (globalThis as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL(
@@ -60,5 +60,24 @@ describe('withCanvasHeader / withCanvasParam — stamp the selection (default wh
   test('param appends ?canvas= / &canvas= correctly', () => {
     expect(withCanvasParam('/api/canvas/stream')).toBe(`/api/canvas/stream?canvas=${DEFAULT_CANVAS_ID}`);
     expect(withCanvasParam('/api/chat/stream?foo=1')).toBe(`/api/chat/stream?foo=1&canvas=${DEFAULT_CANVAS_ID}`);
+  });
+});
+
+// Chat calls claim a canvas only when the surface IS a pad: the chat-store is shared with
+// non-pad surfaces (the Inbox thread), where a defaulted x-canvas-id would falsely link the
+// conversation to the Default canvas (the chat→canvas edge is a claim, not a fallback).
+describe('withPadCanvasHeader — stamp only on a pad URL', () => {
+  test('on a pad: stamps that canvas id', () => {
+    setPath('/w/abc/canvas/cv_7/pad');
+    const h = withPadCanvasHeader({ 'content-type': 'application/json' });
+    expect(h['x-canvas-id']).toBe('cv_7');
+    expect(h['content-type']).toBe('application/json');
+  });
+
+  test('off a pad (inbox, shell): NO x-canvas-id — not even default', () => {
+    setPath('/');
+    const h = withPadCanvasHeader({ 'content-type': 'application/json' });
+    expect(h['x-canvas-id']).toBeUndefined();
+    expect(h['content-type']).toBe('application/json');
   });
 });
