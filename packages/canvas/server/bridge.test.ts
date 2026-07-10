@@ -131,13 +131,13 @@ describe('turnFlavor: the token decides the turn’s workspace tag + skill allow
   test('a token-armed turn files under the dev-agent tag and can see the explore skill', () => {
     const f = turnFlavor('ghs_minted');
     expect(f.workspaceId).toBe(DEV_AGENT_WORKSPACE_ID);
-    expect(f.skills).toEqual(['impeccable', 'improve-codebase-architecture']);
+    expect(f.skills).toEqual(['impeccable', 'tdd', 'improve-codebase-architecture']);
   });
 
-  test('a product turn keeps the bridge workspace and ONLY impeccable (no repo-refactor skill leaks)', () => {
+  test('a product turn keeps the bridge workspace and the base skills (no repo-refactor skill leaks)', () => {
     const f = turnFlavor(undefined);
     expect(f.workspaceId).toBe('default');
-    expect(f.skills).toEqual(['impeccable']);
+    expect(f.skills).toEqual(['impeccable', 'tdd']);
   });
 });
 

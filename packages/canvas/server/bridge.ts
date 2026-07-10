@@ -355,8 +355,8 @@ export const aborters = new Map<string, AbortController>();
  *     canvas chat can't wander into a repo-wide refactor exploration. */
 export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId: string; skills: string[] } {
   return devAgentGitToken
-    ? { workspaceId: DEV_AGENT_WORKSPACE_ID, skills: ['impeccable', 'improve-codebase-architecture'] }
-    : { workspaceId: WORKSPACE, skills: ['impeccable'] };
+    ? { workspaceId: DEV_AGENT_WORKSPACE_ID, skills: ['impeccable', 'tdd', 'improve-codebase-architecture'] }
+    : { workspaceId: WORKSPACE, skills: ['impeccable', 'tdd'] };
 }
 
 /** ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
