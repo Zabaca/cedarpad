@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { chatClients, handleRequest, prepareDevAgentTurn, setChatTurnDispatcher, webPocDb } from './bridge.ts';
+import { aborters, chatClients, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, turnFlavor, webPocDb } from './bridge.ts';
 import { resumeConversation } from './inbox.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { DEV_AGENT_WORKSPACE_ID } from './dev-agent-workflow.ts';
@@ -124,6 +124,23 @@ describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispa
   });
 });
 
+// ADR-0011 / 6a: the token header is the COMPLETE definition of a dev-agent turn — it also
+// drives the workspace tag (so the row + ask_human file under 'dev-agent', which is what the
+// edge's routing and per-send token mint key on) and the widened skill allowlist.
+describe('turnFlavor: the token decides the turn’s workspace tag + skill allowlist', () => {
+  test('a token-armed turn files under the dev-agent tag and can see the explore skill', () => {
+    const f = turnFlavor('ghs_minted');
+    expect(f.workspaceId).toBe(DEV_AGENT_WORKSPACE_ID);
+    expect(f.skills).toEqual(['impeccable', 'improve-codebase-architecture']);
+  });
+
+  test('a product turn keeps the bridge workspace and ONLY impeccable (no repo-refactor skill leaks)', () => {
+    const f = turnFlavor(undefined);
+    expect(f.workspaceId).toBe('default');
+    expect(f.skills).toEqual(['impeccable']);
+  });
+});
+
 describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-worktree cwd (ADR-0010 slice 6)', () => {
   test('no token ⇒ undefined — the turn gets NO open_pr tool and keeps the default cwd', async () => {
     expect(await prepareDevAgentTurn(undefined, 'chat_1', 'sess_1')).toBeUndefined();
@@ -174,6 +191,147 @@ describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-work
 
     expect(adopted).toEqual([]);
     expect(turn!.cwd).toBe('/wt/x');
+  });
+});
+
+// ADR-0011: one turn per chat, enforced at the wire. The client queue only protects the tab
+// that started the turn; a headless dev-agent run (or another tab) needs the server to say no.
+describe('/api/chat/:id/send: 409 turn_in_flight while the chat’s turn runs', () => {
+  let restore: () => void = () => {};
+  let dispatched: string[] = [];
+
+  beforeEach(() => {
+    dispatched = [];
+    chatClients.add(fakeSubscriber());
+    restore = setChatTurnDispatcher((chatId) => {
+      dispatched.push(chatId);
+    });
+  });
+
+  afterEach(() => {
+    restore();
+    for (const c of [...chatClients]) chatClients.delete(c);
+    aborters.delete('chat_busy');
+    aborters.delete('chat_running');
+  });
+
+  test('a send while a turn is in flight → 409 {turn_in_flight}, nothing dispatched', async () => {
+    aborters.set('chat_busy', new AbortController()); // a live turn holds the chat
+
+    const res = await handleRequest(sendReq('chat_busy'));
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'turn_in_flight', chatId: 'chat_busy' });
+    expect(dispatched).toEqual([]);
+  });
+
+  test('the transcript GET reports in-flight state, so a mid-run opener rehydrates busy', async () => {
+    aborters.set('chat_running', new AbortController());
+
+    const running = await handleRequest(new Request('http://localhost/api/chat/chat_running/transcript'));
+    const idle = await handleRequest(new Request('http://localhost/api/chat/chat_idle/transcript'));
+
+    expect(((await running.json()) as { busy?: boolean }).busy).toBe(true);
+    expect(((await idle.json()) as { busy?: boolean }).busy).toBe(false);
+  });
+});
+
+// ADR-0011: the dev-agent run IS a chat turn, kicked headlessly by the edge (Jobs / cron).
+// Deliberately NOT behind the 425 subscribe-before-send guard (no subscriber exists by
+// design — the Inbox attaches mid-stream later), single-flighted with JOIN semantics.
+describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
+  let restore: () => void = () => {};
+  let dispatched: Array<{ chatId: string; message: string; sessionId: string | null; devAgentGitToken?: string }> = [];
+  const kicked: string[] = [];
+
+  const kick = async (token = 'ghs_run') => {
+    const res = await handleRequest(
+      new Request('http://localhost/api/dev-agent/run', { method: 'POST', headers: { 'x-dev-agent-git-token': token } }),
+    );
+    const body = (await res.json()) as { chatId: string; joined: boolean };
+    kicked.push(body.chatId);
+    return { status: res.status, body };
+  };
+
+  beforeEach(() => {
+    dispatched = [];
+    // NO chatClients subscriber — the kick is headless by design.
+    for (const c of [...chatClients]) chatClients.delete(c);
+    restore = setChatTurnDispatcher((chatId, message, sessionId, _images, _model, _fork, _effort, _canvasId, devAgentGitToken) => {
+      dispatched.push({ chatId, message, sessionId, devAgentGitToken });
+    });
+  });
+
+  afterEach(() => {
+    restore();
+    for (const id of kicked) aborters.delete(id);
+    kicked.length = 0;
+  });
+
+  test('kicks a fresh turn: 202, no subscriber needed, token forwarded, prompt titled first', async () => {
+    const { status, body } = await kick();
+
+    expect(status).toBe(202);
+    expect(body.joined).toBe(false);
+    expect(body.chatId).toMatch(/^dev-agent-run-/);
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]!.chatId).toBe(body.chatId);
+    expect(dispatched[0]!.sessionId).toBeNull(); // every run is a fresh session
+    // First sentence = the Conversation row's title (row-at-start slices the message).
+    expect(dispatched[0]!.message.startsWith('Architecture explore:')).toBe(true);
+    // The prompt carries the workflow the harness used to enforce in code (ADR-0011 2a).
+    expect(dispatched[0]!.message).toContain('docs/adr/declined/');
+    expect(dispatched[0]!.message).toContain('ask_human');
+    expect(dispatched[0]!.devAgentGitToken).toBe('ghs_run');
+  });
+
+  test('join semantics: a kick during a running run returns THAT run, dispatching nothing new', async () => {
+    const first = await kick();
+    aborters.set(first.body.chatId, new AbortController()); // the spy doesn't run a real turn — simulate in-flight
+
+    const second = await kick();
+
+    expect(second.status).toBe(202);
+    expect(second.body).toEqual({ chatId: first.body.chatId, joined: true });
+    expect(dispatched).toHaveLength(1); // no pile-up
+  });
+
+  test('after the run settles, the next kick starts a fresh run', async () => {
+    const first = await kick();
+    // No aborter registered ⇒ the run has settled.
+    const second = await kick();
+
+    expect(second.body.joined).toBe(false);
+    expect(second.body.chatId).not.toBe(first.body.chatId);
+    expect(dispatched).toHaveLength(2);
+  });
+});
+
+// ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
+// (the init event), not when the first turn settles — that's what makes a headless dev-agent
+// run (and any long first turn) visible live in the "All" view.
+describe('indexSessionStart: a session enters the index when it starts (ADR-0011)', () => {
+  test('creates the Conversation row at init — waiting_on none, titled from the message', async () => {
+    const sessionId = `sess_start_${crypto.randomUUID()}`;
+
+    await indexSessionStart('chat_start', sessionId, 'Architecture explore: survey this repo for deepening opportunities. (long instructions follow)');
+
+    const row = await conversations.getBySessionId(webPocDb, sessionId);
+    expect(row).not.toBeNull();
+    expect(row!.waitingOn).toBe('none'); // visible in "All", never clutters "Needs me"
+    expect(row!.summary).toContain('Architecture explore');
+  });
+
+  test('idempotent: a resumed turn re-inits the same session without duplicating or retitling', async () => {
+    const sessionId = `sess_reinit_${crypto.randomUUID()}`;
+
+    await indexSessionStart('chat_a', sessionId, 'the original first message');
+    const first = await conversations.getBySessionId(webPocDb, sessionId);
+    await indexSessionStart('chat_a', sessionId, 'a later reply that must not retitle');
+    const second = await conversations.getBySessionId(webPocDb, sessionId);
+
+    expect(second!.id).toBe(first!.id); // one row per session
+    expect(second!.summary).toBe('the original first message');
   });
 });
 

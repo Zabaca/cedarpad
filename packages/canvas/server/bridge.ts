@@ -340,8 +340,40 @@ function chatStream(): Response {
 }
 
 // Live turns, keyed by chatId, so POST /interrupt can abort the in-flight query
-// (Esc / Stop in the UI). One turn per chat at a time, so one aborter per chat.
-const aborters = new Map<string, AbortController>();
+// (Esc / Stop in the UI). One turn per chat at a time — ENFORCED at /send (409
+// turn_in_flight, ADR-0011): the client-side queue only protects the tab that started
+// the turn; a headless dev-agent run or a second tab needs the wire to say no. Exported
+// as a test seam (like chatClients) so the guard is testable without a live SDK turn.
+export const aborters = new Map<string, AbortController>();
+
+/** ADR-0011 / ADR-0010 6a: the edge-minted token header is the COMPLETE definition of a
+ * dev-agent turn. Beyond the worktree + open_pr (prepareDevAgentTurn), it decides:
+ *   - the workspace tag the turn files under — 'dev-agent', so the row-at-start upsert and
+ *     any ask_human land as dev-agent Conversations (which is exactly what the edge's
+ *     routing and per-send token mint key on; a 'default'-tagged row would never re-arm);
+ *   - the skill allowlist — the explore skill is visible ONLY to dev-agent turns, so a
+ *     canvas chat can't wander into a repo-wide refactor exploration. */
+export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId: string; skills: string[] } {
+  return devAgentGitToken
+    ? { workspaceId: DEV_AGENT_WORKSPACE_ID, skills: ['impeccable', 'improve-codebase-architecture'] }
+    : { workspaceId: WORKSPACE, skills: ['impeccable'] };
+}
+
+/** ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
+ * (the turn's `init` event), landing in waiting_on:none — visible live in "All", never
+ * cluttering "Needs me". Also seeds ChatMeta right away so `chatIdForSession` resolves this
+ * chat MID-turn (opening the running Conversation attaches to this chat's live stream).
+ * Idempotent (find-or-create by sessionId; a resumed turn re-inits harmlessly) and
+ * best-effort — an index failure never fails the turn. */
+export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE): Promise<void> {
+  if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
+  await findOrCreateConversation(webPocDb, {
+    sessionId,
+    userId: INBOX_USER,
+    workspaceId,
+    summary: message.slice(0, 200),
+  }).catch((err) => console.error('[inbox] session-start row upsert failed:', err));
+}
 
 /** The dev-agent turn context (ADR-0010): armed iff the edge minted a git token for this
  * send — which it does only for a dev-agent Conversation. The token rides the request
@@ -392,6 +424,7 @@ export async function prepareDevAgentTurn(
 function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, canvasId: string = DEFAULT_CANVAS_ID, devAgentGitToken?: string): void {
   const ac = new AbortController();
   aborters.set(chatId, ac);
+  const flavor = turnFlavor(devAgentGitToken);
   void (async () => {
     let finalSessionId = sessionId;
     try {
@@ -399,13 +432,19 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
       // round-trip all use THIS store, so shapes land on the human's canvas and broadcast to
       // that canvas's SSE subscribers (per-canvas isolation, exactly how reads already resolve).
       const session = await canvasSessions.get(canvasId);
-      const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: WORKSPACE, notify };
+      const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: flavor.workspaceId, notify };
       // A dev-agent send (token present) runs in its prepared worktree with open_pr armed; a
       // prepare failure (clone/auth) surfaces through the catch below as the turn's error —
       // better a visible failure than an agent silently editing the live app tree.
       const devAgent = await prepareDevAgentTurn(devAgentGitToken, chatId, sessionId);
-      for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox, devAgent?.openPr, devAgent?.cwd)) {
+      for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox, devAgent?.openPr, devAgent?.cwd, flavor.skills)) {
         if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
+        // ADR-0011 row-at-start: index the session the moment its id is known (fire-and-
+        // forget; the finally-block upsert below stays as the settle-time backstop).
+        if (ev.kind === 'init') {
+          finalSessionId = ev.sessionId;
+          void indexSessionStart(chatId, ev.sessionId, message, inbox.workspaceId);
+        }
         broadcastChat(chatId, ev satisfies ChatEvent);
       }
     } catch (e) {
@@ -425,7 +464,7 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
         await findOrCreateConversation(webPocDb, {
           sessionId: finalSessionId,
           userId: INBOX_USER,
-          workspaceId: WORKSPACE,
+          workspaceId: flavor.workspaceId,
           summary: message.slice(0, 200),
         }).catch((err) => console.error('[inbox] session-row upsert failed:', err));
         // Inbox (#60/#61): mirror THIS session's transcript to R2 keyed by sessionId, so the Inbox
@@ -437,6 +476,24 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
     }
   })();
 }
+
+// The dev-agent run's prompt — this IS the workflow now (ADR-0011: the harness dissolved
+// into the agent's own turn). First sentence deliberately doubles as the Conversation row's
+// title (row-at-start titles from the message). The declined-marker dedup and the quiet-run
+// contract are prompt-law; if discipline degrades, the designed fallback is a tool-side
+// filter inside ask_human — never a resurrected harness.
+const DEV_AGENT_RUN_PROMPT = [
+  'Architecture explore: survey this repo for deepening opportunities.',
+  'Run the Explore and Present-candidates phases of the /improve-codebase-architecture skill. Do NOT propose interfaces or make any edits.',
+  'Then read docs/adr/declined/ and DROP every candidate that matches a declined marker.',
+  'If candidates survive, call the ask_human tool ONCE — a short summary plus a question listing every surviving candidate (title, rationale, severity) so the human can grill and choose from the thread. Then end your turn.',
+  'If none survive, end your turn WITHOUT calling ask_human: a quiet run must not ping the human.',
+].join('\n\n');
+
+// The in-flight dev-agent run's chatId (ADR-0011): one run at a time, with JOIN semantics —
+// a kick while one runs returns the RUNNING run instead of piling up a second explore.
+// Liveness is derived from `aborters` (the turn registry), so settling clears it naturally.
+let devAgentRunChatId: string | null = null;
 
 // Test seam: the turn dispatcher is indirected so a test can substitute a spy and
 // assert that a turn was (or, on the 425 reject path, was NOT) dispatched without
@@ -603,6 +660,25 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (path === '/api/chat/stream' && req.method === 'GET') {
       return chatStream();
     }
+    // POST /api/dev-agent/run — kick one dev-agent run as a HEADLESS chat turn (ADR-0011).
+    // The edge Jobs/cron handler proxies here with the freshly-minted token header; the token
+    // makes it a full dev-agent turn (worktree cwd + open_pr + 'dev-agent' tag + explore
+    // skill — see turnFlavor/prepareDevAgentTurn). Deliberately NOT behind the 425
+    // subscribe-before-send guard: no subscriber exists by design — the session indexes at
+    // init (row-at-start) and the Inbox attaches to the live stream when opened. One run at
+    // a time with JOIN semantics: a kick during a run answers with the running run's chatId.
+    if (path === '/api/dev-agent/run' && req.method === 'POST') {
+      if (devAgentRunChatId && aborters.has(devAgentRunChatId)) {
+        return json({ chatId: devAgentRunChatId, joined: true }, 202);
+      }
+      const chatId = `dev-agent-run-${crypto.randomUUID()}`;
+      devAgentRunChatId = chatId;
+      const token = req.headers.get('x-dev-agent-git-token') ?? undefined;
+      // A fresh session every run (sessionId null); the run's later grill turns resume it
+      // through the normal conversation path.
+      dispatchChatTurn(chatId, DEV_AGENT_RUN_PROMPT, null, [], undefined, undefined, undefined, DEFAULT_CANVAS_ID, token);
+      return json({ chatId, joined: false }, 202);
+    }
     const chatRoute = /^\/api\/chat\/([^/]+)\/send$/.exec(path);
     if (chatRoute && req.method === 'POST') {
       const chatId = decodeURIComponent(chatRoute[1] as string);
@@ -613,6 +689,11 @@ export async function handleRequest(req: Request): Promise<Response> {
       // replay), so reject early with 425 Too Early and dispatch nothing. Only a
       // race-losing / misbehaving client reaches here; the client gates on `subscribed`.
       if (chatClients.size === 0) return json({ error: 'no_subscribers', chatId }, 425);
+      // One turn per chat, enforced at the wire (ADR-0011): a send while this chat's turn
+      // runs would resume the SAME session concurrently (two SDK queries, one JSONL). The
+      // client re-queues on 409 and drains on the turn's done frame; Stop-then-send is the
+      // explicit way to talk over a running turn.
+      if (aborters.has(chatId)) return json({ error: 'turn_in_flight', chatId }, 409);
       const body = await readBody(req);
       const message = typeof body.message === 'string' ? body.message.trim() : '';
       // Pasted screenshots: [{ media_type, data(base64) }]. Allow an image-only turn.
@@ -666,7 +747,9 @@ export async function handleRequest(req: Request): Promise<Response> {
       const chatId = decodeURIComponent(transcriptRoute[1] as string);
       const meta = chatMeta.get(chatId);
       const events = meta.sessionId ? await loadSessionTranscript(SESSIONS_DIR, meta.sessionId) : [];
-      return json({ config: { model: meta.model, effort: meta.effort, forkNext: meta.forkNext }, events });
+      // `busy`: is a turn in flight for this chat RIGHT NOW (ADR-0011)? A mid-run opener
+      // missed the init frame, so rehydrate is how it learns to queue sends instead of 409ing.
+      return json({ config: { model: meta.model, effort: meta.effort, forkNext: meta.forkNext }, events, busy: aborters.has(chatId) });
     }
     // POST /api/chat/:id/interrupt — abort the in-flight turn (Esc / Stop).
     const interruptRoute = /^\/api\/chat\/([^/]+)\/interrupt$/.exec(path);

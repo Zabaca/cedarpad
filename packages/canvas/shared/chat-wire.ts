@@ -15,13 +15,18 @@ export type TaskStatus = 'running' | 'pending' | 'paused' | 'completed' | 'faile
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'deleted';
 
 /**
- * The typed event stream one chat turn emits, discriminated on `kind`. The 8 kinds:
- * `delta` | `tool_start` | `tool` | `thinking` | `tool_progress` | `task` | `todo` | `done`.
+ * The typed event stream one chat turn emits, discriminated on `kind`. The 9 kinds:
+ * `init` | `delta` | `tool_start` | `tool` | `thinking` | `tool_progress` | `task` | `todo` | `done`.
  *
  * `parentId` (= the spawning Task tool_use id) is set on events that came from a
  * subagent, so the UI nests them under that Task chip. Absent = the main agent.
  */
 export type ChatEvent =
+  // A turn started and the SDK assigned/confirmed its session id (the system/init message).
+  // Emitted once per LIVE turn (suppressed in replay): the bridge indexes the session in the
+  // Inbox the moment it starts (ADR-0011 row-at-start), and other tabs learn a turn began
+  // for a chat they didn't send on (the foreign-busy signal).
+  | { kind: 'init'; sessionId: string }
   // incremental assistant text (token-by-token). `role:'user'` is set ONLY by the JSONL
   // replay projection (ADR 0004) to render the human's own messages on rehydration; the
   // live stream never sets it (the client adds user bubbles locally), so absent = agent.

@@ -1,11 +1,12 @@
 import { useState } from 'react';
 
-// The Jobs stage: trigger background-agent runs on demand. A run is fire-and-forget on the edge
-// (POST /api/jobs/dev-agent/run → 202) — it wakes the dev-agent container, execs the workflow, and
-// surfaces in the Inbox as a session (the unified index). So this stage is purely the TRIGGER;
-// observation lives in the Inbox ("All sessions"), and it pings you when it needs a decision.
+// The Jobs stage: trigger background-agent runs on demand. A run is a headless chat turn on the
+// warm bridge (ADR-0011): POST /api/jobs/dev-agent/run → the edge mints the per-turn git token
+// and proxies the kick → 202 { chatId, joined }. The session appears in the Inbox ("All
+// sessions") the moment it starts (row-at-start) and streams live when opened — this stage is
+// purely the TRIGGER. joined:true = a run was already in flight and the kick joined it.
 
-type RunState = 'idle' | 'starting' | 'started' | 'error';
+type RunState = 'idle' | 'starting' | 'started' | 'joined' | 'error';
 
 export function JobsStage() {
   const [state, setState] = useState<RunState>('idle');
@@ -13,7 +14,9 @@ export function JobsStage() {
   const run = async () => {
     setState('starting');
     const r = await fetch('/api/jobs/dev-agent/run', { method: 'POST', credentials: 'same-origin' }).catch(() => null);
-    setState(r?.status === 202 ? 'started' : 'error');
+    if (r?.status !== 202) return setState('error');
+    const body = (await r.json().catch(() => null)) as { joined?: boolean } | null;
+    setState(body?.joined ? 'joined' : 'started');
   };
 
   return (
@@ -33,7 +36,12 @@ export function JobsStage() {
         </div>
         {state === 'started' && (
           <div className="jobs-note" role="status">
-            Started. It’ll show up in your Inbox under “All sessions,” and ping you when it needs a decision.
+            Started. It’s in your Inbox under “All sessions” — open it to watch live; it’ll ping you when it needs a decision.
+          </div>
+        )}
+        {state === 'joined' && (
+          <div className="jobs-note" role="status">
+            Already running — the current run is in your Inbox under “All sessions.”
           </div>
         )}
         {state === 'error' && (

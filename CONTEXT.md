@@ -226,8 +226,10 @@ Calling it sets the Conversation `waiting-on: human` + unread + notifies, then t
 commits its branch and **ends its turn** (its runner may sleep). My reply in the Inbox
 **resumes the Session** (SDK resume via `sessionId` + my message) on its runner →
 `waiting-on: agent` (waking the sandbox if needed) — mirrors the canvas chat's existing
-resume-by-`sessionId` pattern. A session enters the Inbox only when it first promotes, so
-in-progress agent work doesn't clutter it. Agent done without me → it closes the Conversation.
+resume-by-`sessionId` pattern. **A session enters the Inbox when it starts** (the moment
+the SDK assigns its id), landing in `waiting-on: none` — so a running session is visible
+live in the "All" view without cluttering "Needs me"; promotion (`ask_human`) is what flips
+it to `waiting-on: human`. Agent done without me → it closes the Conversation.
 
 **Runners** (where sessions execute — the Inbox is agnostic, it only coordinates). **Every
 runner runs the interactive bridge** (the SDK chat multiplexer), so every Session is a
@@ -239,15 +241,18 @@ action the agent takes mid-conversation**, not a hardcoded consequence of the re
   start about my content). Sleeps aggressively (5m) to bound cost.
 - **Dev-agent**: a **role the warm workspace container plays**, not a separate container
   (ADR-0010) — "dev-agent" is a **logical Conversation tag** (`workspaceId: 'dev-agent'`,
-  disjoint from every product workspace id by construction). The batch run (Explore →
-  gate → `ask_human`) execs on the warm default container, single-flighted; the promoted
-  Conversation resumes on that container's bridge like any product chat. A dev-agent send
-  is armed per turn by an **edge-minted git-token header** (the App private key never
-  leaves the edge), and the turn runs in a **prepared `Zabaca/cedarpad` worktree** (hub
-  clone + worktree off `origin/main`, per-chat branch, reused across turns) — never the
-  live app tree — with **`open_pr` committing that tree → PR** (durable artifact; a
-  non-git baked `/app` edit would evaporate). **Worktree per conversation** (ADR-0003).
-  Analysis/candidates live as the Inbox Conversation; code changes land as a PR. First
-  workflow: scheduled `/improve-codebase-architecture` → promotes a Conversation
-  (`waiting-on: human`) with its candidates; I **grill it through that thread** (a real
-  chat), and it opens the PR when we align.
+  disjoint from every product workspace id by construction). A **dev-agent turn** is any
+  bridge chat turn armed with the **edge-minted git-token header** (the App private key
+  never leaves the edge); that one signal drives everything dev-agent about it: the
+  `'dev-agent'` tag, the **prepared `Zabaca/cedarpad` worktree** it runs in (hub clone +
+  worktree off `origin/main`, per-chat branch, reused across turns — never the live app
+  tree), and the **`open_pr` tool committing that tree → PR** (durable artifact; a non-git
+  baked `/app` edit would evaporate). **Worktree per conversation** (ADR-0003). A
+  **dev-agent run** (the Jobs "Run now" / daily cron) is just such a turn kicked headlessly
+  on the warm bridge — there is no separate batch execution path — single-flighted with
+  join semantics (a kick during a run returns the running run's conversation). Its session
+  appears in the Inbox at start like any session, streams live when opened, and can be
+  interrupted like any chat. First workflow: `/improve-codebase-architecture`'s Explore →
+  the agent itself drops declined candidates (`docs/adr/declined/`) and calls `ask_human`
+  with survivors (`waiting-on: human`) — or ends quietly with none; I **grill it through
+  that thread** (a real chat), and it opens the PR when we align.

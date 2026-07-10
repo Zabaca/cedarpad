@@ -128,6 +128,17 @@ export function classifySdkMessage(m: SDKMessage, acc: TurnAccum, opts?: { repla
   }
 
   if (m.type === 'system') {
+    // Turn start (ADR-0011): the init message is where a turn's session id is first known —
+    // for a NEW session, minutes before the result would deliver it. Fold it into acc and
+    // (live only) emit the `init` event so the bridge can index the session at start and
+    // other tabs learn a turn began. Replay suppresses it: the settled transcript needs no
+    // start marker, and the id arrives via the result fold anyway.
+    if ((m as { subtype?: string }).subtype === 'init') {
+      const sid = (m as { session_id?: string }).session_id;
+      if (!sid) return { events: [], acc };
+      const next = sid === acc.sessionId ? acc : { ...acc, sessionId: sid };
+      return { events: opts?.replay ? [] : [{ kind: 'init', sessionId: sid }], acc: next };
+    }
     // Live thinking-token estimate during the redacted-thinking phase: the one moving signal
     // while Opus reasons silently (it omits the raw CoT). Drives the "thinking · ~N tokens" pill.
     if ((m as { subtype?: string }).subtype === 'thinking_tokens') {
