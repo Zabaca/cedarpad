@@ -39,7 +39,7 @@ export async function findOrCreateConversation(
   });
 }
 
-export interface AskHumanDeps {
+export interface EndTurnDeps {
   db: Database;
   /** The running session's id. Read lazily: a NEW session is only assigned an id mid-turn (the
    *  SDK init message), so the tool reads it at call time, not at factory time. */
@@ -49,15 +49,22 @@ export interface AskHumanDeps {
   notify?: Notify;
 }
 
+/** The `end_turn` tool's payload (ADR-0012): every turn declares its ending. */
+export type EndTurnInput =
+  | { outcome: 'needs_human'; summary: string; question: string }
+  | { outcome: 'done'; summary: string };
+
 /**
- * The `ask_human` tool body. Upserts + promotes this session's Conversation, fires notify, and
- * returns agent-facing text. Returns WITHOUT waiting for a reply — the agent commits its work and
- * ends its turn; the human's later reply resumes the session (see resumeConversation).
+ * The `end_turn` tool body (ADR-0012: every turn ends by declaring its outcome).
+ *   needs_human — promote this session's Conversation (open/human/unread, preview = the
+ *                 question), fire notify. The human's reply later resumes the session.
+ *   done        — the work is complete: waiting_on:none, unread, preview = the summary.
+ * Returns agent-facing text. NEVER blocks for a reply.
  */
-export async function askHuman(deps: AskHumanDeps, input: { summary: string; question: string }): Promise<string> {
+export async function endTurn(deps: EndTurnDeps, input: EndTurnInput): Promise<string> {
   const sessionId = deps.getSessionId();
   if (!sessionId) {
-    return 'ask_human is unavailable right now (this session has no id yet). Answer as best you can, or try again next turn.';
+    return 'end_turn is unavailable right now (this session has no id yet). Finish your message and stop.';
   }
   const conv = await findOrCreateConversation(deps.db, {
     sessionId,
@@ -65,7 +72,11 @@ export async function askHuman(deps: AskHumanDeps, input: { summary: string; que
     workspaceId: deps.workspaceId,
     summary: input.summary,
   });
-  const promoted = await conversations.promote(deps.db, conv.id);
+  if (input.outcome === 'done') {
+    await conversations.markDone(deps.db, conv.id, input.summary);
+    return 'Turn ending recorded (done). Stop here — do not continue working.';
+  }
+  const promoted = await conversations.promote(deps.db, conv.id, input.question);
   try {
     await deps.notify?.(promoted ?? conv, input.question);
   } catch {

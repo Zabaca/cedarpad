@@ -180,9 +180,9 @@ to be re-homed.)
   last-activity). May own a Canvas (the owner edge above).
 - The Inbox is a **unified session index**: EVERY Session gets a Conversation row (created on
   its first turn, idempotent by `sessionId`), so the one surface lists all sessions — canvas
-  chats and background-agent runs alike. `ask_human` no longer *creates* the row; it just
-  **promotes** an existing one (waiting-on→human). Noise is handled by the default filter, not
-  by withholding rows.
+  chats and background-agent runs alike. `end_turn` never *creates* the row; it just sets its
+  ending state (needs_human **promotes**, done records completion). Noise is handled by the
+  default filter, not by withholding rows.
 - **State model** (two axes):
   - `status`: `open | closed` — closed = archived.
   - `waiting-on`: `human | agent | none` — `human` = needs my attention; a fresh session lands
@@ -221,15 +221,19 @@ canvas-state. R2's **only** consumer is **resume-restore** (R2 → runner FS →
 path for display. The inbox **list** renders from Turso metadata while runners sleep; a
 **chat interface never renders from R2** (see "A chat interface is a live bridge view").
 
-**Promote protocol** (checkpoint-and-resume, async): the agent has an `ask_human` tool.
-Calling it sets the Conversation `waiting-on: human` + unread + notifies, then the agent
-commits its branch and **ends its turn** (its runner may sleep). My reply in the Inbox
-**resumes the Session** (SDK resume via `sessionId` + my message) on its runner →
-`waiting-on: agent` (waking the sandbox if needed) — mirrors the canvas chat's existing
-resume-by-`sessionId` pattern. **A session enters the Inbox when it starts** (the moment
-the SDK assigns its id), landing in `waiting-on: none` — so a running session is visible
-live in the "All" view without cluttering "Needs me"; promotion (`ask_human`) is what flips
-it to `waiting-on: human`. Agent done without me → it closes the Conversation.
+**Promote protocol** (checkpoint-and-resume, async): **every turn ends by declaring its
+ending** through the mandatory `end_turn` tool (ADR-0012; a Stop hook refuses an undeclared
+stop). Outcome `needs_human` (with a question) sets the Conversation `waiting-on: human` +
+unread + preview = the question + notifies, then the agent stops (its runner may sleep);
+outcome `done` (with a summary) records completion (`waiting-on: none`, unread, preview =
+the summary). A question must never live only in prose — routing it through `needs_human`
+is what makes "Needs me" truthful. My reply in the Inbox **resumes the Session** (SDK
+resume via `sessionId` + my message) on its runner → `waiting-on: agent` (waking the
+sandbox if needed) — mirrors the canvas chat's existing resume-by-`sessionId` pattern.
+**A session enters the Inbox when it starts** (the moment the SDK assigns its id), landing
+in `waiting-on: none` — so a running session is visible live in the "All" view without
+cluttering "Needs me". Closing (archiving) is a **human verb** in the Inbox UI; the agent
+has no close.
 
 **Runners** (where sessions execute — the Inbox is agnostic, it only coordinates). **Every
 runner runs the interactive bridge** (the SDK chat multiplexer), so every Session is a
@@ -253,6 +257,6 @@ action the agent takes mid-conversation**, not a hardcoded consequence of the re
   join semantics (a kick during a run returns the running run's conversation). Its session
   appears in the Inbox at start like any session, streams live when opened, and can be
   interrupted like any chat. First workflow: `/improve-codebase-architecture`'s Explore →
-  the agent itself drops declined candidates (`docs/adr/declined/`) and calls `ask_human`
-  with survivors (`waiting-on: human`) — or ends quietly with none; I **grill it through
-  that thread** (a real chat), and it opens the PR when we align.
+  the agent itself drops declined candidates (`docs/adr/declined/`) and ends its turn with
+  `end_turn needs_human` listing survivors (`waiting-on: human`) — or `done` with none; I
+  **grill it through that thread** (a real chat), and it opens the PR when we align.

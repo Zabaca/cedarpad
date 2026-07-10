@@ -1,6 +1,8 @@
 # A dev-agent run is a chat turn
 
-Status: accepted (design). Amends [ADR-0010](./0010-dev-agent-is-a-role-not-a-container.md)
+Status: accepted (design). Amended by [ADR-0012](./0012-every-turn-ends-with-end-turn.md)
+(`ask_human` → `end_turn`; the quiet-run contract is superseded — a quiet run now ends
+`done`, mechanically gated). Amends [ADR-0010](./0010-dev-agent-is-a-role-not-a-container.md)
 (its batch-exec half) and extends [ADR-0009](./0009-one-chat-system-live-bridge-view.md) —
 "one chat system" now includes the *scheduled* run itself, not just the grill that follows it.
 Vocabulary: root [CONTEXT.md](../../CONTEXT.md) ("Runners" + "Promote protocol" sections).

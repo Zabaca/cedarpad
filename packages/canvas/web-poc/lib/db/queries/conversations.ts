@@ -108,11 +108,25 @@ async function patch(
  * Promote: an agent asks for the human. → open, waiting_on:human, unread, and
  * touch last_activity so it sorts to the top of the inbox.
  */
-export async function promote(db: Database, id: string): Promise<ConversationRow | null> {
+export async function promote(db: Database, id: string, preview?: string): Promise<ConversationRow | null> {
   return patch(db, id, {
     status: "open",
     waitingOn: "human",
     unread: true,
+    lastActivity: now(),
+    ...(preview !== undefined ? { lastMessagePreview: preview } : {}),
+  });
+}
+
+/**
+ * Done: the agent declares the turn's work complete (end_turn outcome:done, ADR-0012).
+ * Nothing pending → waiting_on:none; unread + preview so "All" shows what finished.
+ */
+export async function markDone(db: Database, id: string, preview: string): Promise<ConversationRow | null> {
+  return patch(db, id, {
+    waitingOn: "none",
+    unread: true,
+    lastMessagePreview: preview,
     lastActivity: now(),
   });
 }

@@ -281,7 +281,7 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     expect(dispatched[0]!.message.startsWith('Architecture explore:')).toBe(true);
     // The prompt carries the workflow the harness used to enforce in code (ADR-0011 2a).
     expect(dispatched[0]!.message).toContain('docs/adr/declined/');
-    expect(dispatched[0]!.message).toContain('ask_human');
+    expect(dispatched[0]!.message).toContain('end_turn');
     expect(dispatched[0]!.devAgentGitToken).toBe('ghs_run');
   });
 
