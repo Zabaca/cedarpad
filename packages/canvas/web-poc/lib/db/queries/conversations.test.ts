@@ -93,6 +93,14 @@ describe("conversation store — state transitions", () => {
     expect(reopened?.status).toBe("open");
   });
 
+  it("close clears waiting_on (archiving resolves the ask)", async () => {
+    const c = await seed();
+    await conversations.promote(db, c.id); // waiting_on:human
+    const closed = await conversations.close(db, c.id);
+    expect(closed?.status).toBe("closed");
+    expect(closed?.waitingOn).toBe("none");
+  });
+
   it("transitions on a missing conversation return null", async () => {
     expect(await conversations.promote(db, "conv_missing")).toBeNull();
     expect(await conversations.close(db, "conv_missing")).toBeNull();

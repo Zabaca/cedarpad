@@ -181,9 +181,10 @@ export async function markActivity(db: Database, id: string): Promise<Conversati
   return patch(db, id, { unread: true, lastActivity: now() });
 }
 
-/** Close (archive): filtered out of the default inbox view. */
+/** Close (archive): filtered out of the default inbox view. Also clears waiting_on — archiving
+ * resolves the ask, so a closed Conversation never needs to pin for attention. */
 export async function close(db: Database, id: string): Promise<ConversationRow | null> {
-  return patch(db, id, { status: "closed" });
+  return patch(db, id, { status: "closed", waitingOn: "none" });
 }
 
 /** Reopen a closed Conversation. */

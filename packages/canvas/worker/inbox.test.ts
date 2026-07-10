@@ -51,6 +51,14 @@ describe('orderInbox', () => {
     expect(orderInbox(rows).map((i) => i.id)).toEqual(['human-new', 'human-old', 'agent-new', 'agent-old']);
   });
 
+  test('a closed row waiting_on:human does not pin above an open row with newer activity', () => {
+    const rows = [
+      row({ id: 'closed-waiting', status: 'closed', waitingOn: 'human', lastActivity: new Date(100) }),
+      row({ id: 'open-newer', status: 'open', waitingOn: 'agent', lastActivity: new Date(200) }),
+    ];
+    expect(orderInbox(rows).map((i) => i.id)).toEqual(['open-newer', 'closed-waiting']);
+  });
+
   test('normalizes lastActivity to epoch ms and projects the list fields', () => {
     const [item] = orderInbox([
       row({ id: 'x', waitingOn: 'human', unread: true, summary: 'S', lastMessagePreview: 'P', lastActivity: new Date(1234) }),
