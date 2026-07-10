@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ChatView } from '../../../shared/ChatView';
 import { onChatFrame, openFrameSignal, setConnectionTarget } from '../../../shared/chat-store';
 import type { InboxChatResponse, InboxItem, InboxListResponse, InboxView } from './contract';
+import { inboxStateFromUrl, urlWithInboxState } from './inbox-url';
 
 // The Inbox stage (ADR-0009 / #124): the `stage === 'inbox'` case of the Shell, under the ONE
 // chrome (the rail). Two panes over the edge API: a left LIST of the user's Conversations
@@ -18,15 +19,22 @@ const bridgePrefix = (convId: string): string => `/inbox/${encodeURIComponent(co
 const preview = (it: InboxItem): string => it.lastMessagePreview ?? it.summary ?? '';
 
 export function InboxStage() {
+  // Filters + selection are URL-persisted: a reload lands back on the same view/workspace/
+  // selected conversation, the same spirit as stage.ts. Parsed once, lazily, on mount.
+  const [initialUrlState] = useState(() => inboxStateFromUrl(window.location.search));
   // The unified session index: "Needs me" (default) = the attention subset (ask_human promotions);
   // "All" = every session (canvas chats, dev-agent runs); "Closed" = the archive.
-  const [view, setView] = useState<InboxView>('needs-me');
-  const [workspace, setWorkspace] = useState('');
+  const [view, setView] = useState<InboxView>(initialUrlState.view);
+  const [workspace, setWorkspace] = useState(initialUrlState.workspace);
   const [items, setItems] = useState<InboxItem[]>([]);
   const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading');
   // The opened Conversation (the whole item, so the thread keeps its summary/status even after a
   // close drops it from the filtered list). null = nothing open.
   const [current, setCurrent] = useState<InboxItem | null>(null);
+  // A `conv` named in the URL on mount is selected once the (async) list loads and contains it —
+  // it may live in a different view than the one showing; cleared after the first load attempt
+  // whether or not it matched, since after that the selection is user-driven.
+  const pendingConvId = useRef(initialUrlState.conv);
 
   // The list is a pure function of the two filters, so re-query whenever either changes —
   // this is what makes a view change re-fetch `/api/inbox?view=…`.
@@ -43,11 +51,23 @@ export function InboxStage() {
     const d = (await r.json()) as InboxListResponse;
     setItems(d.items);
     setState('ready');
+    if (pendingConvId.current) {
+      const match = d.items.find((it) => it.id === pendingConvId.current);
+      if (match) setCurrent(match);
+      pendingConvId.current = null;
+    }
     // Open the doorbell stream through any conversation's bridge proxy (they all resolve to
     // the warm default container, whose chat stream broadcasts every chat's frames).
     // Idempotent: the shared stream is a singleton.
     if (d.items[0]) openFrameSignal(bridgePrefix(d.items[0].id));
   }, [view, workspace]);
+
+  // Keep the URL in sync with the filters + selection — replace, not push, so twiddling filters
+  // never bloats back-button history (Shell.tsx already owns pushState for the stage itself).
+  useEffect(() => {
+    const qs = urlWithInboxState(window.location.search, { view, workspace, conv: current?.id ?? null });
+    window.history.replaceState(null, '', window.location.pathname + qs);
+  }, [view, workspace, current?.id]);
 
   useEffect(() => {
     void loadList();
