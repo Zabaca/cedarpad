@@ -95,6 +95,7 @@ export function InboxStage() {
             onChange={(e) => setView(e.target.value as InboxView)}
           >
             <option value="needs-me">Needs me</option>
+            <option value="open">Open</option>
             <option value="all">All sessions</option>
             <option value="closed">Closed</option>
           </select>

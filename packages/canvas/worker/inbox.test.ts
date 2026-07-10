@@ -12,8 +12,11 @@ describe('viewToListOpts — the unified-index views', () => {
     expect(viewToListOpts(null)).toEqual({ status: 'open', waitingOn: 'human' });
     expect(viewToListOpts('bogus')).toEqual({ status: 'open', waitingOn: 'human' });
   });
-  test('all shows every open session (no waiting_on filter)', () => {
-    expect(viewToListOpts('all')).toEqual({ status: 'open' });
+  test('open shows every open session (no waiting_on filter)', () => {
+    expect(viewToListOpts('open')).toEqual({ status: 'open' });
+  });
+  test('all shows every session, open and closed (no status filter)', () => {
+    expect(viewToListOpts('all')).toEqual({});
   });
   test('closed shows the archive', () => {
     expect(viewToListOpts('closed')).toEqual({ status: 'closed' });

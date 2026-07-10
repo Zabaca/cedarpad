@@ -40,10 +40,10 @@ export function orderInbox(rows: ConversationRow[]): InboxItem[] {
   return items.sort((a, b) => rank(a) - rank(b) || b.lastActivity - a.lastActivity);
 }
 
-/** The three Inbox views the Shell can request. `needs-me` (default) is the attention subset —
- *  ask_human promotions; `all` is the unified session index (every session, promoted or not);
- *  `closed` is the archive. */
-export type InboxView = 'needs-me' | 'all' | 'closed';
+/** The four Inbox views the Shell can request. `needs-me` (default) is the attention subset —
+ *  ask_human promotions; `open` is every open session (promoted or not); `all` is the unified
+ *  session index with no status filter (open and closed); `closed` is the archive. */
+export type InboxView = 'needs-me' | 'open' | 'all' | 'closed';
 
 /** Pure: map a requested view to a `conversations.list` filter. Unknown/absent → `needs-me`, so the
  *  default (and any caller that omits the param) gets the attention inbox, never the full firehose. */
@@ -52,7 +52,8 @@ export function viewToListOpts(view: string | null): {
   waitingOn?: 'human' | 'agent' | 'none';
 } {
   if (view === 'closed') return { status: 'closed' };
-  if (view === 'all') return { status: 'open' };
+  if (view === 'open') return { status: 'open' };
+  if (view === 'all') return {};
   return { status: 'open', waitingOn: 'human' };
 }
 

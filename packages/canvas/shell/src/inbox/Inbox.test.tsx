@@ -65,9 +65,11 @@ function stubInbox() {
         const matchesView =
           view === 'closed'
             ? it.status === 'closed'
-            : view === 'all'
+            : view === 'open'
               ? it.status === 'open'
-              : it.status === 'open' && it.waitingOn === 'human'; // needs-me (default)
+              : view === 'all'
+                ? true
+                : it.status === 'open' && it.waitingOn === 'human'; // needs-me (default)
         return matchesView && (!workspace || it.workspaceId === workspace);
       });
       return Response.json({ items });
@@ -177,18 +179,32 @@ describe('the inbox list', () => {
     expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['Ship it', 'Review PR']);
   });
 
-  test('"All sessions" shows every session — including non-promoted ones the default hides', async () => {
+  test('"Open" shows every open session — including non-promoted ones the default hides', async () => {
     store = [item({ id: 'c1', summary: 'ask', waitingOn: 'human' }), item({ id: 'c2', summary: 'idle chat', waitingOn: 'none' })];
+    await mount();
+    calls = [];
+
+    await changeSelect(viewFilter(), 'open');
+    expect(calls).toContain('GET /api/inbox?view=open');
+    // the idle (waiting_on:none) session now appears — every open session
+    expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['ask', 'idle chat']);
+
+    await changeSelect(viewFilter(), 'closed');
+    expect(calls).toContain('GET /api/inbox?view=closed');
+  });
+
+  test('"All sessions" shows every session, open and closed — no status filter', async () => {
+    store = [
+      item({ id: 'c1', summary: 'ask', waitingOn: 'human' }),
+      item({ id: 'c2', summary: 'idle chat', waitingOn: 'none' }),
+      item({ id: 'c3', summary: 'archived', status: 'closed', waitingOn: 'none' }),
+    ];
     await mount();
     calls = [];
 
     await changeSelect(viewFilter(), 'all');
     expect(calls).toContain('GET /api/inbox?view=all');
-    // the idle (waiting_on:none) session now appears — the unified index
-    expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['ask', 'idle chat']);
-
-    await changeSelect(viewFilter(), 'closed');
-    expect(calls).toContain('GET /api/inbox?view=closed');
+    expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['ask', 'idle chat', 'archived']);
   });
 
   test('browsing the list never wakes a runner — it touches ONLY /api/inbox*', async () => {
