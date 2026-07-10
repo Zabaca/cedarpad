@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 
+import { canvasFromUrl, urlWithCanvas } from './canvas-url';
 import { InboxStage } from './inbox/Inbox';
 import { JobsStage } from './jobs/Jobs';
 import { type Stage, stageFromUrl, urlForStage } from './stage';
@@ -268,11 +269,13 @@ type Registry = {
   canvases: CanvasEntry[];
   setCanvases: React.Dispatch<React.SetStateAction<CanvasEntry[]>>;
   reload: () => Promise<void>;
+  loaded: boolean;
 };
 
 function useCanvasRegistry(): Registry {
   const [workspaceId, setWorkspaceId] = useState('');
   const [canvases, setCanvases] = useState<CanvasEntry[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
   const reload = useCallback(async () => {
     const r = await fetch('/api/canvases', { credentials: 'same-origin' }).catch(() => null);
@@ -280,22 +283,39 @@ function useCanvasRegistry(): Registry {
     const d = (await r.json()) as { workspaceId: string; canvases: CanvasEntry[] };
     setWorkspaceId(d.workspaceId);
     setCanvases(d.canvases);
+    setLoaded(true);
   }, []);
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  return { workspaceId, canvases, setCanvases, reload };
+  return { workspaceId, canvases, setCanvases, reload, loaded };
 }
 
 function CanvasStage({ registry }: { registry: Registry }) {
-  const { workspaceId: wsId, canvases, setCanvases, reload: load } = registry;
-  const [selected, setSelected] = useState<string | null>(null);
+  const { workspaceId: wsId, canvases, setCanvases, reload: load, loaded } = registry;
+  // The selected canvas is a URL, so a reload/back-button lands back on the same open canvas.
+  const [selected, setSelected] = useState<string | null>(() => canvasFromUrl(window.location.search));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
 
+  useEffect(() => {
+    const qs = urlWithCanvas(window.location.search, selected);
+    window.history.replaceState(null, '', window.location.pathname + qs);
+  }, [selected]);
+
   // The list always offers the legacy Default canvas (no registry row) so you can return to it.
   const canvasList: CanvasEntry[] = [{ id: DEFAULT_CANVAS_ID, name: 'Default' }, ...canvases];
+
+  // A URL can name a canvas that no longer exists (deleted elsewhere, stale bookmark). Only
+  // clear it once the registry has actually loaded — clearing before then would drop a valid
+  // selection just because the async fetch hasn't landed yet.
+  useEffect(() => {
+    if (!loaded) return;
+    if (selected && selected !== DEFAULT_CANVAS_ID && !canvases.some((c) => c.id === selected)) {
+      setSelected(null);
+    }
+  }, [loaded, canvases, selected]);
 
   const createCanvas = async () => {
     const r = await fetch('/api/canvases', {
