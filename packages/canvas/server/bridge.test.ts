@@ -410,6 +410,26 @@ describe('POST /api/inbox/:id/reply routes EVERY conversation through the chat t
   });
 });
 
+describe('GET /api/inbox/:id/chat: opening a thread marks it read', () => {
+  test('clears unread on the Conversation it opens', async () => {
+    const conv = await conversations.create(webPocDb, {
+      sessionId: `sess_open_${crypto.randomUUID()}`,
+      userId: 'default',
+      workspaceId: 'cs_workspace_abc',
+      summary: 'a session with an unread reply',
+    });
+    await conversations.markActivity(webPocDb, conv.id); // unread:true
+
+    const res = await handleRequest(new Request(`http://localhost/api/inbox/${conv.id}/chat`));
+
+    expect(res.status).toBe(200);
+    // markRead is fire-and-forget; give its microtask a tick to land.
+    await new Promise((r) => setTimeout(r, 0));
+    const after = await conversations.get(webPocDb, conv.id);
+    expect(after?.unread).toBe(false);
+  });
+});
+
 describe('/api/buildrev: public build stamp (#74)', () => {
   test('returns ONLY buildRev — none of /api/status persistence/client fields', async () => {
     const res = await handleRequest(new Request('http://localhost/api/buildrev'));

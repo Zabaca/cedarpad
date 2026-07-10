@@ -181,6 +181,12 @@ export async function markActivity(db: Database, id: string): Promise<Conversati
   return patch(db, id, { unread: true, lastActivity: now() });
 }
 
+/** Mark read: clears unread only. No last_activity touch — reading isn't activity, and
+ * touching it would resort the list under the human's own click. */
+export async function markRead(db: Database, id: string): Promise<ConversationRow | null> {
+  return patch(db, id, { unread: false });
+}
+
 /** Close (archive): filtered out of the default inbox view. Also clears waiting_on — archiving
  * resolves the ask, so a closed Conversation never needs to pin for attention. */
 export async function close(db: Database, id: string): Promise<ConversationRow | null> {

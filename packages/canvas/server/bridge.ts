@@ -794,6 +794,9 @@ export async function handleRequest(req: Request): Promise<Response> {
         },
         conv,
       );
+      // Opening a thread is reading it, not activity — clear unread best-effort so a Turso
+      // hiccup never blocks opening the chat.
+      void conversations.markRead(webPocDb, id).catch(() => {});
       return json({ chatId });
     }
 

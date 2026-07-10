@@ -93,6 +93,17 @@ describe("conversation store — state transitions", () => {
     expect(reopened?.status).toBe("open");
   });
 
+  it("markRead → clears unread only, leaves last_activity untouched (reading isn't activity)", async () => {
+    const c = await seed();
+    await conversations.markActivity(db, c.id); // unread:true, bumps last_activity
+    const active = await conversations.get(db, c.id);
+    const before = active!.lastActivity.getTime();
+    await new Promise((r) => setTimeout(r, 2));
+    const read = await conversations.markRead(db, c.id);
+    expect(read?.unread).toBe(false);
+    expect(read?.lastActivity.getTime()).toBe(before);
+  });
+
   it("close clears waiting_on (archiving resolves the ask)", async () => {
     const c = await seed();
     await conversations.promote(db, c.id); // waiting_on:human
