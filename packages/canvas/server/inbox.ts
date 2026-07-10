@@ -19,24 +19,69 @@ import { type BlobGetter, readRawTranscript, restore as restoreTranscript } from
 export type Notify = (conversation: ConversationRow, question: string) => void | Promise<void>;
 
 /**
- * Find-or-create the Conversation for a Session, idempotent by `sessionId`: a second `ask_human`
- * on the same session returns the existing row (it is then re-promoted, not duplicated).
+ * Find-or-create the Conversation for a chat turn. Identity is the CHAT (`ownerRef` =
+ * bridge chatId), not the SDK session: resume mints a NEW sessionId every turn, so keying
+ * rows by sessionId created one duplicate row per turn. A repeat call for the same chat
+ * reuses its row and re-points `sessionId` at the newest session (the resume pointer);
+ * legacy rows found by sessionId get their ownerRef backfilled. Every repeat touches
+ * last_activity so the Inbox sorts active conversations to the top.
  */
 export async function findOrCreateConversation(
   db: Database,
-  input: { sessionId: string; userId: string; workspaceId: string; summary?: string | null },
+  input: { sessionId: string; userId: string; workspaceId: string; summary?: string | null; ownerRef?: string },
 ): Promise<ConversationRow> {
+  if (input.ownerRef) {
+    const byChat = await conversations.getByOwnerRef(db, input.ownerRef);
+    if (byChat) {
+      if (byChat.sessionId !== input.sessionId) {
+        return (await conversations.rebindSession(db, byChat.id, input.sessionId)) ?? byChat;
+      }
+      return (await conversations.touch(db, byChat.id)) ?? byChat;
+    }
+  }
   const existing = await conversations.getBySessionId(db, input.sessionId);
-  // A repeat call means a new turn on this session — touch last_activity so the
-  // Inbox sorts it to the top (create/promote/reply already touch; plain turns must too).
-  if (existing) return (await conversations.touch(db, existing.id)) ?? existing;
+  if (existing) {
+    if (input.ownerRef && !existing.ownerRef) await conversations.setOwnerRef(db, existing.id, input.ownerRef);
+    return (await conversations.touch(db, existing.id)) ?? existing;
+  }
   return conversations.create(db, {
     sessionId: input.sessionId,
     userId: input.userId,
     workspaceId: input.workspaceId,
+    ownerRef: input.ownerRef ?? null,
     summary: input.summary ?? null,
     lastMessagePreview: input.summary ?? null,
   });
+}
+
+/**
+ * One-time cleanup for the pre-ownerRef era: sessionId-keyed rows piled up one duplicate per
+ * turn (same chat, same first-message summary). For each (workspaceId, summary) group of
+ * LEGACY rows (ownerRef null), keep the best row — waiting_on:human first, else newest
+ * activity — and hard-delete the rest. Rows with an ownerRef are already correctly keyed and
+ * are never touched. Idempotent; safe to run at every boot (post-cleanup groups have size 1).
+ */
+export async function dedupeLegacyConversations(db: Database, userId: string): Promise<number> {
+  const rows = await conversations.list(db, userId);
+  const legacy = rows.filter((r) => !r.ownerRef);
+  const groups = new Map<string, ConversationRow[]>();
+  for (const r of legacy) {
+    const key = `${r.workspaceId}\n${r.summary ?? ''}`;
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+  let removed = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const rank = (r: ConversationRow) => (r.waitingOn === 'human' ? 0 : 1);
+    const at = (r: ConversationRow) => (r.lastActivity instanceof Date ? r.lastActivity.getTime() : Number(r.lastActivity));
+    const [keep, ...rest] = [...group].sort((a, b) => rank(a) - rank(b) || at(b) - at(a));
+    for (const r of rest) {
+      await conversations.remove(db, r.id);
+      removed += 1;
+    }
+    void keep;
+  }
+  return removed;
 }
 
 export interface EndTurnDeps {
@@ -46,6 +91,8 @@ export interface EndTurnDeps {
   getSessionId: () => string | null;
   userId: string;
   workspaceId: string;
+  /** The bridge chatId owning this turn — the Conversation's identity key (ownerRef). */
+  ownerRef?: string;
   notify?: Notify;
 }
 
@@ -70,6 +117,7 @@ export async function endTurn(deps: EndTurnDeps, input: EndTurnInput): Promise<s
     sessionId,
     userId: deps.userId,
     workspaceId: deps.workspaceId,
+    ownerRef: deps.ownerRef,
     summary: input.summary,
   });
   if (input.outcome === 'done') {
@@ -171,7 +219,9 @@ export async function openConversation(
   if (!present) {
     await (deps.restore ?? restoreTranscript)(deps.getter, deps.projectsDir, deps.cwd, conversation.sessionId);
   }
-  const chatId = deps.chatIdForSession(conversation.sessionId) ?? conversation.id;
+  // Resolve the chat: a live ChatMeta homing wins; else the durable owner pointer (the chatId
+  // the row was keyed by); else fall back to a stable per-conversation id (headless legacy).
+  const chatId = deps.chatIdForSession(conversation.sessionId) ?? conversation.ownerRef ?? conversation.id;
   deps.seedChatMeta(chatId, conversation.sessionId);
   return { chatId };
 }

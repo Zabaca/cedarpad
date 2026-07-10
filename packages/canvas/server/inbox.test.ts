@@ -8,7 +8,7 @@ import { createClient } from '@libsql/client';
 import { makeDb, conversations } from '../web-poc/lib/db/index.ts';
 import { memBackend } from './blob-store.ts';
 import { projectDirForCwd, transcriptKey } from './transcript-r2.ts';
-import { endTurn, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
+import { dedupeLegacyConversations, endTurn, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { makeStopGate } from './agent.ts';
 
 // In-memory DB built from the real Drizzle migrations (mirrors conversations.test.ts, bun:test).
@@ -113,6 +113,55 @@ describe('end_turn protocol (ADR-0012)', () => {
     );
     expect(text.toLowerCase()).toContain('unavailable');
     expect(await conversations.list(db, 'user_a')).toHaveLength(0);
+  });
+});
+
+// The Conversation's identity is the CHAT (ownerRef), not the SDK session: resume mints a
+// new sessionId per turn, and keying rows by sessionId created one duplicate row per turn.
+describe('findOrCreateConversation: chat identity (ownerRef)', () => {
+  test('a new turn on the same chat REUSES the row and re-points sessionId (no duplicate)', async () => {
+    const db = await freshDb();
+    const a = await findOrCreateConversation(db, { sessionId: 'sess-1', userId: 'u', workspaceId: 'w', ownerRef: 'chat_A', summary: 'first message' });
+    // Next turn: resume minted a NEW sessionId for the same chat.
+    const b = await findOrCreateConversation(db, { sessionId: 'sess-2', userId: 'u', workspaceId: 'w', ownerRef: 'chat_A', summary: 'first message' });
+    expect(b.id).toBe(a.id);
+    expect(b.sessionId).toBe('sess-2'); // the resume pointer follows the newest session
+    expect(await conversations.list(db, 'u')).toHaveLength(1);
+  });
+
+  test('a legacy row (found by sessionId, no ownerRef) gets its ownerRef backfilled', async () => {
+    const db = await freshDb();
+    const legacy = await conversations.create(db, { sessionId: 'sess-old', userId: 'u', workspaceId: 'w', summary: 'old' });
+    const found = await findOrCreateConversation(db, { sessionId: 'sess-old', userId: 'u', workspaceId: 'w', ownerRef: 'chat_B' });
+    expect(found.id).toBe(legacy.id);
+    expect((await conversations.getByOwnerRef(db, 'chat_B'))?.id).toBe(legacy.id);
+  });
+});
+
+describe('dedupeLegacyConversations: collapse the per-turn duplicate rows', () => {
+  test('keeps the best legacy row per (workspace, summary) — waiting_on:human wins — and deletes the rest', async () => {
+    const db = await freshDb();
+    // Three dupes of one chat (same summary), one of them promoted; plus an unrelated row.
+    const d1 = await conversations.create(db, { sessionId: 's1', userId: 'u', workspaceId: 'w', summary: 'explore run' });
+    const d2 = await conversations.create(db, { sessionId: 's2', userId: 'u', workspaceId: 'w', summary: 'explore run' });
+    await conversations.promote(db, d2.id);
+    const d3 = await conversations.create(db, { sessionId: 's3', userId: 'u', workspaceId: 'w', summary: 'explore run' });
+    const other = await conversations.create(db, { sessionId: 's4', userId: 'u', workspaceId: 'w', summary: 'different chat' });
+
+    const removed = await dedupeLegacyConversations(db, 'u');
+    expect(removed).toBe(2);
+    const left = await conversations.list(db, 'u');
+    expect(left.map((c) => c.id).sort()).toEqual([d2.id, other.id].sort()); // promoted row survives
+    void d1;
+    void d3;
+  });
+
+  test('rows keyed by ownerRef are never touched, and a second run is a no-op', async () => {
+    const db = await freshDb();
+    await conversations.create(db, { sessionId: 's1', userId: 'u', workspaceId: 'w', ownerRef: 'chat_1', summary: 'same title' });
+    await conversations.create(db, { sessionId: 's2', userId: 'u', workspaceId: 'w', ownerRef: 'chat_2', summary: 'same title' });
+    expect(await dedupeLegacyConversations(db, 'u')).toBe(0);
+    expect(await conversations.list(db, 'u')).toHaveLength(2);
   });
 });
 

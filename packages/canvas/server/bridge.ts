@@ -20,7 +20,7 @@ import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeMs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import { type Notify, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
+import { type Notify, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { DEV_AGENT_WORKSPACE_ID, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
@@ -103,6 +103,10 @@ const webPocApp = buildApp({ db: webPocDb });
 const INBOX_USER = process.env.CANVAS_USER ?? 'default';
 const notify: Notify = (conv, question) =>
   console.log(`[inbox] waiting_on:human conv=${conv.id} session=${conv.sessionId} q=${question.slice(0, 80)}`);
+// One-time cleanup of the pre-ownerRef duplicate rows (one per turn); idempotent per boot.
+void dedupeLegacyConversations(webPocDb, INBOX_USER)
+  .then((n) => n && console.log(`[inbox] deduped ${n} legacy conversation row(s)`))
+  .catch((err) => console.error('[inbox] legacy dedupe failed:', err));
 
 // SSE encoder shared by the chat multiplexer (canvas SSE lives per-session now).
 const enc = new TextEncoder();
@@ -364,7 +368,7 @@ export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId:
  * (the turn's `init` event), landing in waiting_on:none — visible live in "All", never
  * cluttering "Needs me". Also seeds ChatMeta right away so `chatIdForSession` resolves this
  * chat MID-turn (opening the running Conversation attaches to this chat's live stream).
- * Idempotent (find-or-create by sessionId; a resumed turn re-inits harmlessly) and
+ * Idempotent (find-or-create by chat, rebinding the newest sessionId) and
  * best-effort — an index failure never fails the turn. */
 export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE): Promise<void> {
   if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
@@ -372,6 +376,7 @@ export async function indexSessionStart(chatId: string, sessionId: string, messa
     sessionId,
     userId: INBOX_USER,
     workspaceId,
+    ownerRef: chatId,
     summary: message.slice(0, 200),
   }).catch((err) => console.error('[inbox] session-start row upsert failed:', err));
 }
@@ -433,7 +438,7 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
       // round-trip all use THIS store, so shapes land on the human's canvas and broadcast to
       // that canvas's SSE subscribers (per-canvas isolation, exactly how reads already resolve).
       const session = await canvasSessions.get(canvasId);
-      const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: flavor.workspaceId, notify };
+      const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: flavor.workspaceId, ownerRef: chatId, notify };
       // A dev-agent send (token present) runs in its prepared worktree with open_pr armed; a
       // prepare failure (clone/auth) surfaces through the catch below as the turn's error —
       // better a visible failure than an agent silently editing the live app tree.
@@ -458,14 +463,15 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
       await onTurnComplete();
       if (finalSessionId) {
         // Unified session index: every session gets a Conversation row so it appears in the Inbox's
-        // "All" view — not just ask_human promotions. Idempotent by sessionId (find-or-create), so a
-        // session that later calls ask_human is the SAME row, just promoted. Lands in waiting_on:none
-        // (nothing pending) → the default "Needs me" view is unaffected. Title = the first message
-        // (create-only; later turns/replies don't overwrite it). Best-effort — never fails a turn.
+        // "All" view — not just end_turn promotions. Idempotent by CHAT (ownerRef; resume mints a
+        // new sessionId per turn, so the chat is the identity and the row is re-pointed at the
+        // newest session). Lands in waiting_on:none (nothing pending) → the default "Needs me"
+        // view is unaffected. Title = the first message (create-only). Best-effort — never fails a turn.
         await findOrCreateConversation(webPocDb, {
           sessionId: finalSessionId,
           userId: INBOX_USER,
           workspaceId: flavor.workspaceId,
+          ownerRef: chatId,
           summary: message.slice(0, 200),
         })
           // Mechanical settle (ADR-0012 fallback): every settled turn marks activity (unread +

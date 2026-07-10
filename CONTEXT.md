@@ -220,6 +220,11 @@ canvas-state. R2's **only** consumer is **resume-restore** (R2 → runner FS →
 `query({ resume: sessionId })` on wake); it is the durability substrate, **not** a read
 path for display. The inbox **list** renders from Turso metadata while runners sleep; a
 **chat interface never renders from R2** (see "A chat interface is a live bridge view").
+An open Inbox tab keeps the list live via a **doorbell**: it subscribes to the container's
+chat stream and refetches the Turso list when a frame implies a row changed (turn start,
+settle, `end_turn`) — the stream carries no list data, it is purely the signal. A
+Conversation's **identity is its chat** (`owner_ref` = bridge chatId); `session_id` is just
+the current resume pointer, re-pointed each turn (resume mints a new session id per turn).
 
 **Promote protocol** (checkpoint-and-resume, async): **every turn ends by declaring its
 ending** through the mandatory `end_turn` tool (ADR-0012; a Stop hook refuses an undeclared

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ChatView } from '../../../shared/ChatView';
-import { setConnectionTarget } from '../../../shared/chat-store';
+import { onChatFrame, openFrameSignal, setConnectionTarget } from '../../../shared/chat-store';
 import type { InboxChatResponse, InboxItem, InboxListResponse, InboxView } from './contract';
 
 // The Inbox stage (ADR-0009 / #124): the `stage === 'inbox'` case of the Shell, under the ONE
@@ -43,19 +43,35 @@ export function InboxStage() {
     const d = (await r.json()) as InboxListResponse;
     setItems(d.items);
     setState('ready');
+    // Open the doorbell stream through any conversation's bridge proxy (they all resolve to
+    // the warm default container, whose chat stream broadcasts every chat's frames).
+    // Idempotent: the shared stream is a singleton.
+    if (d.items[0]) openFrameSignal(bridgePrefix(d.items[0].id));
   }, [view, workspace]);
 
   useEffect(() => {
     void loadList();
-    // The list is edge metadata with no push channel: state changes (a turn settling, an
-    // end_turn promotion) land in Turso, not in this tab. Poll while visible + refetch on
-    // tab return so the list tracks reality without a manual refresh.
+    // Push-driven list: the container's chat stream is the doorbell — frames that imply a
+    // row changed (turn start, turn settle, an end_turn declaration) trigger a debounced
+    // refetch of the authoritative Turso list. A slow poll + tab-return refetch stay as the
+    // safety net (the stream can be closed by the idle gate or drop mid-deploy). The stream
+    // itself is opened by loadList once it knows a conversation to route through.
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    const ring = () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => void loadList(), 800);
+    };
+    const offFrames = onChatFrame((_chatId, ev) => {
+      if (ev.kind === 'init' || ev.kind === 'done' || (ev.kind === 'tool' && ev.name === 'end_turn')) ring();
+    });
     const tick = () => {
       if (!document.hidden) void loadList();
     };
-    const t = setInterval(tick, 15_000);
+    const t = setInterval(tick, 60_000);
     document.addEventListener('visibilitychange', tick);
     return () => {
+      offFrames();
+      clearTimeout(debounce);
       clearInterval(t);
       document.removeEventListener('visibilitychange', tick);
     };
