@@ -36,6 +36,36 @@ describe('init frame (a turn started, possibly not by this tab)', () => {
   });
 });
 
+// ask_human is the one tool whose INPUT is human-facing: the question it posts to the Inbox.
+// The thread must RENDER that question — a chip labeled "ask_human" with the text discarded
+// left the human unable to read what they were being asked (both live and on rehydrate,
+// since replay emits the same tool event).
+describe('ask_human tool event → the question renders as a readable bubble', () => {
+  test('the tool chip is followed by the question text as an agent message', () => {
+    const id = 'chat_askhuman';
+    ensureSession(id);
+    routeChatFrame(
+      frame(id, {
+        kind: 'tool',
+        name: 'ask_human',
+        input: { summary: '6 candidates to review', question: '1. [high] Consolidate X\n2. [low] Simplify Y' },
+      }),
+    );
+
+    const items = getSnapshot(id).items;
+    expect(items.at(-2)).toMatchObject({ kind: 'tool', label: 'ask_human' });
+    expect(items.at(-1)).toMatchObject({ kind: 'msg', role: 'agent', text: '1. [high] Consolidate X\n2. [low] Simplify Y' });
+  });
+
+  test('other tools do NOT dump their input as a bubble', () => {
+    const id = 'chat_othertool';
+    ensureSession(id);
+    routeChatFrame(frame(id, { kind: 'tool', name: 'Read', input: { file_path: '/a/b.ts' } }));
+
+    expect(getSnapshot(id).items.at(-1)).toMatchObject({ kind: 'tool' });
+  });
+});
+
 // Fork is now SERVER-driven (ADR 0004): the child's ChatMeta is seeded server-side (it can
 // resume the parent's session with a one-shot fork), then the child rehydrates from the
 // JSONL-derived transcript. The client no longer copies transcript/sdk from localStorage.

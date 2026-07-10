@@ -372,6 +372,13 @@ function applyEvent(chatId: string, ev: ChatEvent) {
     openBubble.set(bubbleKey(chatId, ev.parentId), null); // next text starts a fresh bubble after the chip
     const id = nextItemId();
     update(chatId, (s) => ({ ...s, status: 'working', items: [...s.items, { id, kind: 'tool', label: toolLabel(ev), ...(ev.parentId ? { parentId: ev.parentId } : {}), ...(ev.id ? { toolUseId: ev.id } : {}) }] }));
+    // ask_human is the one tool whose INPUT is human-facing — the question it posts to the
+    // Inbox. Render it as a readable agent bubble after the chip (live AND replay emit the
+    // same tool event): a question the human can't read isn't a question.
+    const q = ev.name === 'ask_human' ? (ev.input as { question?: unknown } | null)?.question : undefined;
+    if (typeof q === 'string' && q) {
+      update(chatId, (s) => ({ ...s, items: [...s.items, { id: nextItemId(), kind: 'msg', role: 'agent', text: q }] }));
+    }
   } else if (ev.kind === 'task' && ev.taskId) {
     const taskId = ev.taskId;
     const terminal = !!ev.status && TERMINAL.has(ev.status);
