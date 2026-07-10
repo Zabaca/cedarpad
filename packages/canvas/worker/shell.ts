@@ -83,14 +83,24 @@ export async function handleCanvasesApi(
   canvasId?: string,
 ): Promise<Response> {
   const workspaceId = await activeWorkspaceId(request, database, user);
-  if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
 
   if (!canvasId) {
     if (request.method === 'GET') {
-      const rows = await canvasRegistry.list(database, workspaceId);
+      // Canvas pairing: the Inbox attach panel lists the CONVERSATION's workspace, which may
+      // differ from the rail's cs_workspace cookie — an explicit ?workspace= wins for the
+      // read, ownership-checked exactly like the cookie. Mutations below never honor it.
+      const named = new URL(request.url).searchParams.get('workspace');
+      const listWorkspaceId = named
+        ? named === DEFAULT_WORKSPACE_ID || (await getWorkspace(database, named, user.id))
+          ? named
+          : null
+        : workspaceId;
+      if (!listWorkspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
+      const rows = await canvasRegistry.list(database, listWorkspaceId);
       const canvases: CanvasView[] = rows.map((c) => ({ id: c.id, name: c.name }));
-      return Response.json({ workspaceId, canvases });
+      return Response.json({ workspaceId: listWorkspaceId, canvases });
     }
+    if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
     if (request.method === 'POST') {
       const parsed = CreateCanvasInput.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return Response.json({ error: 'invalid name' }, { status: 400 });
