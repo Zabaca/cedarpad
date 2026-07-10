@@ -3,14 +3,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatView } from '../../../shared/ChatView';
 import { onChatFrame, openFrameSignal, setConnectionTarget } from '../../../shared/chat-store';
 import type { InboxChatResponse, InboxItem, InboxListResponse, InboxView } from './contract';
+import { padUrlFor } from './inbox-pad-url';
 import { inboxStateFromUrl, urlWithInboxState } from './inbox-url';
 
 // The Inbox stage (ADR-0009 / #124): the `stage === 'inbox'` case of the Shell, under the ONE
-// chrome (the rail). Two panes over the edge API: a left LIST of the user's Conversations
+// chrome (the rail). Panes over the edge API: a left LIST of the user's Conversations
 // (Turso only — waiting_on:human badged, unread dot, status + workspace filters, never wakes a
-// runner) and a right THREAD that is now a LIVE <ChatView> over the Conversation's OWNING bridge
+// runner), a THREAD that is a LIVE <ChatView> over the Conversation's OWNING bridge
 // (through the /inbox/:id/bridge proxy) — streaming transcript + reply + image paste, the SAME
-// component the canvas renders. Only OPENING a conversation wakes its runner; browsing does not.
+// component the canvas renders — and, once a conversation is open, a third CANVAS pane: the
+// chat→canvas edge (`InboxItem.canvasId`, worker/inbox-view.ts) rendered as the same live
+// same-origin Render Pad iframe `CanvasStage` mounts, or a placeholder when nothing's linked yet.
+// Only OPENING a conversation wakes its runner; browsing does not.
 
 /** The edge chat proxy prefix a Conversation's <ChatView> addresses its owning bridge through. */
 const bridgePrefix = (convId: string): string => `/inbox/${encodeURIComponent(convId)}/bridge`;
@@ -149,6 +153,27 @@ export function InboxStage() {
           <div className="inbox-empty">Select a conversation.</div>
         )}
       </div>
+      {current && <CanvasPane item={current} />}
+    </div>
+  );
+}
+
+// The linked canvas, third pane: a live Render Pad iframe when the conversation has a
+// `canvasId`, else a placeholder (a follow-up slice replaces its contents with an attach/create
+// panel). Keyed by conversation + canvasId in the parent-adjacent usage below so switching
+// conversations remounts the iframe cleanly rather than reusing a stale one.
+function CanvasPane({ item }: { item: InboxItem }) {
+  const padUrl = padUrlFor(item);
+  return (
+    <div className="inbox-canvas">
+      {padUrl ? (
+        <iframe key={`${item.id}:${item.canvasId}`} className="inbox-canvas-frame" title="canvas" src={padUrl} />
+      ) : (
+        <div className="inbox-canvas-empty">
+          <b>No canvas linked</b>
+          <small>Attach or create coming soon</small>
+        </div>
+      )}
     </div>
   );
 }

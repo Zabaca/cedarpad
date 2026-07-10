@@ -29,6 +29,7 @@ type Item = {
   lastMessagePreview: string | null;
   workspaceId: string;
   lastActivity: number;
+  canvasId: string | null;
 };
 
 const realFetch = globalThis.fetch;
@@ -43,6 +44,7 @@ const item = (o: Partial<Item> & { id: string }): Item => ({
   lastMessagePreview: null,
   workspaceId: 'ws_1',
   lastActivity: 0,
+  canvasId: null,
   ...o,
 });
 
@@ -328,5 +330,36 @@ describe('URL-persisted state', () => {
     const params = new URLSearchParams(window.location.search);
     expect(params.get('conv')).toBe('c1');
     expect(params.has('view')).toBe(false); // needs-me is the default — kept out of the URL
+  });
+});
+
+// The third pane: the conversation's linked canvas (`InboxItem.canvasId`, the chat→canvas edge).
+describe('the canvas pane', () => {
+  test('no conversation selected — no third pane', async () => {
+    store = [item({ id: 'c1', waitingOn: 'human' })];
+    await mount();
+    expect(container.querySelector('.inbox-canvas')).toBeNull();
+  });
+
+  test('canvasId is null — the placeholder renders, not an iframe', async () => {
+    store = [item({ id: 'c1', waitingOn: 'human', canvasId: null })];
+    await mount();
+    await click(items()[0] ?? null);
+
+    expect(container.querySelector('.inbox-canvas-empty')).not.toBeNull();
+    expect(container.querySelector('.inbox-canvas-empty')?.textContent).toContain('No canvas linked');
+    expect(container.querySelector('.inbox-canvas iframe')).toBeNull();
+  });
+
+  test('canvasId is set — a live Render Pad iframe at the same URL the canvas stage uses', async () => {
+    store = [item({ id: 'c1', workspaceId: 'ws_1', waitingOn: 'human', canvasId: 'cv_1' })];
+    await mount();
+    await click(items()[0] ?? null);
+
+    const frame = container.querySelector('.inbox-canvas iframe');
+    expect(frame).not.toBeNull();
+    expect(frame?.getAttribute('src')).toBe('/w/ws_1/canvas/cv_1/pad');
+    expect(frame?.getAttribute('title')).toBe('canvas');
+    expect(container.querySelector('.inbox-canvas-empty')).toBeNull();
   });
 });
