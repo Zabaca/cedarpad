@@ -20,7 +20,7 @@ import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeMs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import { type Notify, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
+import { type Notify, attachConversationToCanvas, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { DEV_AGENT_WORKSPACE_ID, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
@@ -816,6 +816,37 @@ export async function handleRequest(req: Request): Promise<Response> {
       // hiccup never blocks opening the chat.
       void conversations.markRead(webPocDb, id).catch(() => {});
       return json({ chatId });
+    }
+
+    // POST /api/inbox/:id/attach-canvas — canvas pairing (slice 3): link a canvas-less
+    // Conversation to a canvas and place a live chat card on it. `{canvasId}` attaches to
+    // that existing canvas (same-workspace only); an empty body creates one in the
+    // Conversation's workspace, named from the chat summary. The Inbox third pane calls this
+    // through the edge chat proxy.
+    const attachRoute = /^\/api\/inbox\/([^/]+)\/attach-canvas$/.exec(path);
+    if (attachRoute && req.method === 'POST') {
+      const id = decodeURIComponent(attachRoute[1] as string);
+      const body = await readBody(req);
+      const result = await attachConversationToCanvas(
+        {
+          db: webPocDb,
+          getSession: async (cid) => {
+            const session = await canvasSessions.get(cid);
+            return {
+              shapes: () => session.store.getState().shapes,
+              upsert: (shapes) => void session.store.upsert(shapes as never),
+            };
+          },
+          chatIdForSession: (sid: string) => chatIdForSession(sid) ?? null,
+        },
+        id,
+        { canvasId: typeof body.canvasId === 'string' && body.canvasId ? body.canvasId : undefined },
+      );
+      if (!result.ok) {
+        const status = result.error === 'not_found' ? 404 : result.error === 'already_linked' ? 409 : 400;
+        return json({ error: result.error }, status);
+      }
+      return json(result);
     }
 
     // POST /api/inbox/:id/reply — the human answers an ask_human item (#61). Restore the session's

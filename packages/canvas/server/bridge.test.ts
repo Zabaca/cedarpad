@@ -525,3 +525,51 @@ describe('POST /api/inbox/:id/reply routes the resumed turn to the conversation�
     expect(dispatched).toEqual([{ canvasId: 'cv_linked' }]);
   });
 });
+
+// Canvas pairing slice 3: POST /api/inbox/:id/attach-canvas links a canvas-less Conversation
+// to a canvas (creating one when none is named) and places a live chat card on it. The route
+// wires the REAL attach core (inbox.ts) to the bridge's canvas-session registry + registry db.
+describe('POST /api/inbox/:id/attach-canvas', () => {
+  const attachReq = (id: string, body: Record<string, unknown> = {}): Request =>
+    new Request(`http://localhost/api/inbox/${encodeURIComponent(id)}/attach-canvas`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  test('create-and-attach: 200, a new canvas in the conversation’s workspace, edge written', async () => {
+    const conv = await conversations.create(webPocDb, {
+      sessionId: `sess_attach_${crypto.randomUUID()}`,
+      userId: 'default',
+      workspaceId: 'ws_attach_test',
+      ownerRef: `chat_attach_${crypto.randomUUID()}`,
+      summary: 'Pick a pricing model',
+    });
+
+    const res = await handleRequest(attachReq(conv.id));
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; canvasId: string };
+    expect(body.ok).toBe(true);
+    expect(body.canvasId).toStartWith('cv_');
+    expect((await conversations.get(webPocDb, conv.id))?.canvasId).toBe(body.canvasId);
+  });
+
+  test('an already-linked conversation is refused with 409 (first-wins, no detach)', async () => {
+    const conv = await conversations.create(webPocDb, {
+      sessionId: `sess_linked_${crypto.randomUUID()}`,
+      userId: 'default',
+      workspaceId: 'ws_attach_test',
+      canvasId: 'cv_already',
+      summary: 'linked',
+    });
+
+    const res = await handleRequest(attachReq(conv.id));
+    expect(res.status).toBe(409);
+  });
+
+  test('unknown conversation → 404', async () => {
+    const res = await handleRequest(attachReq('conv_ghost'));
+    expect(res.status).toBe(404);
+  });
+});
