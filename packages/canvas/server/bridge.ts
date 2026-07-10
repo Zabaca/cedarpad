@@ -26,6 +26,7 @@ import { DEV_AGENT_WORKSPACE_ID, openDevAgentPr } from './dev-agent-workflow.ts'
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
+import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
 
@@ -433,75 +434,58 @@ export async function prepareDevAgentTurn(
   return { openPr, cwd: worktree.path };
 }
 
+/** Settle-time Conversation upsert (the finally-block backstop): every settled turn marks
+ * activity (unread + touch) so the session surfaces in the Inbox "All" view even when the
+ * end_turn gate was bypassed (ungated stop, error turn). Idempotent by CHAT (ownerRef; resume
+ * mints a new sessionId per turn, so the chat is the identity and the row is re-pointed at the
+ * newest session). The turn awaits the row-at-start index first (see TurnDeps.indexSession), so
+ * this find-or-create finds the one row instead of racing it into a duplicate. Best-effort. */
+async function settleConversation(input: { chatId: string; sessionId: string; message: string; workspaceId: string; canvasId?: string }): Promise<void> {
+  await findOrCreateConversation(webPocDb, {
+    sessionId: input.sessionId,
+    userId: INBOX_USER,
+    workspaceId: input.workspaceId,
+    ownerRef: input.chatId,
+    canvasId: input.canvasId,
+    summary: input.message.slice(0, 200),
+  })
+    .then((conv) => conversations.markActivity(webPocDb, conv.id))
+    .catch((err) => console.error('[inbox] session-row upsert failed:', err));
+}
+
+/** The turn's collaborators, each bound to its singleton. `runChatTurn` (below) turns a request
+ * into a `TurnInput` and hands it here; `server/turn.ts` owns the phase order. */
+const turnDeps: TurnDeps = {
+  aborters,
+  flavor: turnFlavor,
+  getSession: (canvasId) => canvasSessions.get(canvasId),
+  defaultCanvasId: DEFAULT_CANVAS_ID,
+  prepareDevAgent: (token, chatId, sessionId) => prepareDevAgentTurn(token, chatId, sessionId),
+  runChat,
+  bumpSharedModuleAcrossCanvases,
+  broadcast: broadcastChat,
+  inbox: { db: webPocDb, userId: INBOX_USER, notify },
+  indexSession: indexSessionStart,
+  stampSession: (chatId, sessionId) => chatMeta.set(chatId, { sessionId }),
+  onTurnComplete,
+  settleConversation,
+  // Inbox (#60/#61): mirror the transcript to R2 keyed by sessionId so the Inbox can render
+  // history and resume can restore it while the runner sleeps. Best-effort — never fails a turn.
+  backupTranscript: (sessionId) =>
+    backupTranscript(blobBackend, SESSIONS_DIR, sessionId).catch((err) =>
+      console.error('[inbox] transcript backup failed:', err),
+    ),
+};
+
 /** Run one turn for a chat and broadcast its events. Fire-and-forget (output is the SSE).
  * The turn runs against the session for `requestCanvasId` (the request's active canvas, #79)
  * so the agent reads/draws on the canvas the human is on; absent ⇒ the default store,
  * unchanged — BUT absence also means the turn claims no chat→canvas edge for the
  * Conversation (an inbox reply must never link a chat to the Default canvas by default).
  * `devAgentGitToken` (edge-minted, per dev-agent send) arms the `open_pr` tool for THIS turn
- * only — see prepareDevAgentTurn. */
+ * only — see prepareDevAgentTurn. The lifecycle itself lives in `server/turn.ts`. */
 function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string): void {
-  const ac = new AbortController();
-  aborters.set(chatId, ac);
-  const flavor = turnFlavor(devAgentGitToken);
-  const canvasId = requestCanvasId ?? DEFAULT_CANVAS_ID;
-  void (async () => {
-    let finalSessionId = sessionId;
-    try {
-      // Resolve the ACTIVE canvas's session: the agent's reads, writes, tools, and screenshot
-      // round-trip all use THIS store, so shapes land on the human's canvas and broadcast to
-      // that canvas's SSE subscribers (per-canvas isolation, exactly how reads already resolve).
-      const session = await canvasSessions.get(canvasId);
-      const inbox = { db: webPocDb, userId: INBOX_USER, workspaceId: flavor.workspaceId, ownerRef: chatId, notify };
-      // A dev-agent send (token present) runs in its prepared worktree with open_pr armed; a
-      // prepare failure (clone/auth) surfaces through the catch below as the turn's error —
-      // better a visible failure than an agent silently editing the live app tree.
-      const devAgent = await prepareDevAgentTurn(devAgentGitToken, chatId, sessionId);
-      for await (const ev of runChat(session.store, message, sessionId, session.requestScreenshot, images, chatId, model, forkSession, ac, effort, session.canvasId, bumpSharedModuleAcrossCanvases, inbox, devAgent?.openPr, devAgent?.cwd, flavor.skills)) {
-        if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
-        // ADR-0011 row-at-start: index the session the moment its id is known (fire-and-
-        // forget; the finally-block upsert below stays as the settle-time backstop).
-        if (ev.kind === 'init') {
-          finalSessionId = ev.sessionId;
-          void indexSessionStart(chatId, ev.sessionId, message, inbox.workspaceId, requestCanvasId);
-        }
-        broadcastChat(chatId, ev satisfies ChatEvent);
-      }
-    } catch (e) {
-      broadcastChat(chatId, { kind: 'done', sessionId, costUsd: 0, error: (e as Error).message } satisfies ChatEvent);
-    } finally {
-      aborters.delete(chatId);
-      // ADR 0004: stamp the (possibly new/forked) sessionId so resume + rehydrate find the JSONL.
-      if (finalSessionId && finalSessionId !== sessionId) chatMeta.set(chatId, { sessionId: finalSessionId });
-      // ADR 0003: persist sessions/components/custom now that the turn settled.
-      await onTurnComplete();
-      if (finalSessionId) {
-        // Unified session index: every session gets a Conversation row so it appears in the Inbox's
-        // "All" view — not just end_turn promotions. Idempotent by CHAT (ownerRef; resume mints a
-        // new sessionId per turn, so the chat is the identity and the row is re-pointed at the
-        // newest session). Lands in waiting_on:none (nothing pending) → the default "Needs me"
-        // view is unaffected. Title = the first message (create-only). Best-effort — never fails a turn.
-        await findOrCreateConversation(webPocDb, {
-          sessionId: finalSessionId,
-          userId: INBOX_USER,
-          workspaceId: flavor.workspaceId,
-          ownerRef: chatId,
-          canvasId: requestCanvasId,
-          summary: message.slice(0, 200),
-        })
-          // Mechanical settle (ADR-0012 fallback): every settled turn marks activity (unread +
-          // touch) so the row surfaces in "All" even when the end_turn gate was bypassed
-          // (ungated stop, error turn). Idempotent after a normal end_turn (also sets unread).
-          .then((conv) => conversations.markActivity(webPocDb, conv.id))
-          .catch((err) => console.error('[inbox] session-row upsert failed:', err));
-        // Inbox (#60/#61): mirror THIS session's transcript to R2 keyed by sessionId, so the Inbox
-        // can render history and resume can restore it while the runner sleeps. Best-effort.
-        await backupTranscript(blobBackend, SESSIONS_DIR, finalSessionId).catch((err) =>
-          console.error('[inbox] transcript backup failed:', err),
-        );
-      }
-    }
-  })();
+  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken }, turnDeps);
 }
 
 // The dev-agent run's prompt — this IS the workflow now (ADR-0011: the harness dissolved
