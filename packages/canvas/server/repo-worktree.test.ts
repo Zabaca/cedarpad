@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -182,6 +182,68 @@ describe('pushAndOpenPR is gated on the GitHub token', () => {
       ).rejects.toThrow(GITHUB_TOKEN_ENV);
     } finally {
       if (prev !== undefined) process.env[GITHUB_TOKEN_ENV] = prev;
+    }
+  });
+});
+
+// ── The minted token reaches `gh` as GH_TOKEN (the container image lacks gh — see the
+// Dockerfile — but the env threading is testable offline with a fake `gh` on PATH) ─────
+//
+// `pushAndOpenPR` pushes to a real (local scratch) remote, then spawns `gh pr create`. A
+// fake `gh` script standing in for the real binary records the env it was invoked with, so
+// this proves the token flows into the CHILD PROCESS's env only — never process.env itself.
+describe('pushAndOpenPR threads the token to gh as GH_TOKEN on the spawned process only', () => {
+  test('the fake gh sees GH_TOKEN; process.env is untouched', async () => {
+    const root = join(tmpdir(), `PushPrIT_${process.pid}_${Date.now()}`);
+    const remote = join(root, 'remote.git');
+    const seed = join(root, 'seed');
+    const workspace = join(root, 'ws');
+    const fakeBin = join(root, 'bin');
+    const captured = join(root, 'gh-invocation.json');
+    const prevPath = process.env.PATH;
+    try {
+      mkdirSync(root, { recursive: true });
+      mkdirSync(fakeBin, { recursive: true });
+      await runGit(root, ['init', '--bare', '-b', 'main', remote]);
+      await runGit(root, ['clone', remote, seed]);
+      await Bun.write(join(seed, 'README.md'), '# seed\n');
+      await runGit(seed, ['add', '-A']);
+      await runGit(seed, ['commit', '-m', 'seed']);
+      await runGit(seed, ['push', 'origin', 'main']);
+
+      // A fake `gh` that just records argv + GH_TOKEN, then prints a fake PR URL — no
+      // network, no real GitHub, so this runs fully offline.
+      writeFileSync(
+        join(fakeBin, 'gh'),
+        `#!/bin/sh\ncat > "${captured}" <<EOF\n{"argv":"$*","ghToken":"$GH_TOKEN"}\nEOF\necho "https://github.com/fake/pr/1"\n`,
+      );
+      chmodSync(join(fakeBin, 'gh'), 0o755);
+
+      const mgr = createRepoWorktreeManager({
+        repo: 'Zabaca/cedarpad',
+        workspaceRoot: workspace,
+        remoteUrl: remote,
+        token: 'sekrit-token',
+      });
+      const branch = branchName('gh-token-it', 'run1');
+      const wt = await mgr.prepareWorktree(branch);
+      await Bun.write(join(wt.path, 'NEW.txt'), 'hello');
+      expect(await mgr.commit(wt, 'feat: add NEW')).toBe(true);
+
+      // Put the fake gh first on PATH for this call only.
+      process.env.PATH = `${fakeBin}:${prevPath}`;
+      const url = await mgr.pushAndOpenPR(wt, { title: 'T', body: 'B' });
+
+      expect(url).toBe('https://github.com/fake/pr/1');
+      const invocation = JSON.parse(await Bun.file(captured).text());
+      expect(invocation.ghToken).toBe('sekrit-token');
+      expect(invocation.argv).toContain(branch);
+      // The real assertion: pushAndOpenPR sets GH_TOKEN on the SPAWNED process's env only —
+      // it never mutates process.env itself.
+      expect(process.env[GITHUB_TOKEN_ENV]).not.toBe('sekrit-token');
+    } finally {
+      process.env.PATH = prevPath;
+      if (existsSync(root)) rmSync(root, { recursive: true, force: true });
     }
   });
 });

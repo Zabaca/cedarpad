@@ -9,6 +9,28 @@ FROM docker.io/cloudflare/sandbox:0.12.1
 # bun (the runtime for the bridge + vite) ships in the base image at
 # /usr/local/bin/bun, so no install step is needed.
 
+# gh (GitHub CLI) — the dev-agent's `open_pr` tool shells out to `gh pr create`
+# (server/repo-worktree.ts) after committing + pushing. Installed from the official apt
+# repo (base image is Ubuntu 22.04/jammy), unpinned like the rest of apt's packages here —
+# not a version download, since nothing else in this Dockerfile pins apt package versions.
+# Placed before the bun-install layer below (and touches no files copied by it) so it stays
+# cached across code-only deploys (commit 902f17e) and only re-runs if this RUN changes.
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+  && wget -nv -O /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+  && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+  && mkdir -p -m 755 /etc/apt/sources.list.d \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends gh \
+  && rm -rf /var/lib/apt/lists/*
+
+# Default git identity for dev-agent commits: repo-worktree.ts's `commit()` runs plain
+# `git commit` with no `-c user.name`/`user.email` or author env, so it needs identity
+# configured somewhere — system-level here so it's present regardless of which user the
+# container process runs as.
+RUN git config --system user.name "cedarpad-dev-agent" \
+  && git config --system user.email "dev-agent@cedarpad.local"
+
 # Build context is the REPO ROOT (wrangler.jsonc `image_build_context: "../.."`), so
 # we bake the workspace — root manifest + lockfile + the packages the canvas instance
 # needs. web-poc now lives in-tree at packages/canvas/web-poc (imported by relative
