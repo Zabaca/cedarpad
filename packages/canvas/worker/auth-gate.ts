@@ -47,10 +47,14 @@ export function decideGate(pathname: string, session: ResolvedSession): Gate {
   return session?.user ? { decision: 'allow', user: session.user } : { decision: 'deny' };
 }
 
-/** Build the edge Better Auth instance against remote Turso (the integration seam). */
+/** Build the edge Better Auth instance against remote Turso (the integration seam).
+ * Memoized per isolate: the db client is already shared (createDbForWorker caches), and
+ * rebuilding the Better Auth wrapper per request was pure waste on the hot gate path. */
+let cachedAuth: { db: unknown; auth: ReturnType<typeof createAuth> } | null = null;
 function edgeAuth(env: Env) {
   const db = createDbForWorker(env as unknown as Bindings);
-  return createAuth(db, env as unknown as Bindings);
+  if (cachedAuth?.db !== db) cachedAuth = { db, auth: createAuth(db, env as unknown as Bindings) };
+  return cachedAuth.auth;
 }
 
 /**

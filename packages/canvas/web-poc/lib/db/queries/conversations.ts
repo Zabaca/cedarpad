@@ -143,6 +143,34 @@ export async function reply(db: Database, id: string): Promise<ConversationRow |
   });
 }
 
+/** Get the Conversation owned by a chat (`owner_ref` = the bridge chatId), or null. */
+export async function getByOwnerRef(db: Database, ownerRef: string): Promise<ConversationRow | null> {
+  const [row] = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.ownerRef, ownerRef))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Re-point a Conversation at its chat's newest SDK session — resume mints a NEW sessionId
+ * every turn, so the chat (owner_ref) is the identity and session_id is just the current
+ * resume pointer. Touches last_activity (a rebind only happens because a turn ran). */
+export async function rebindSession(db: Database, id: string, sessionId: string): Promise<ConversationRow | null> {
+  return patch(db, id, { sessionId, lastActivity: now() });
+}
+
+/** Backfill the owning-chat pointer on a legacy row (pre-owner_ref rows). */
+export async function setOwnerRef(db: Database, id: string, ownerRef: string): Promise<ConversationRow | null> {
+  return patch(db, id, { ownerRef });
+}
+
+/** Hard-delete a Conversation row (legacy-duplicate cleanup only — product flows archive
+ * via close(), they never delete). */
+export async function remove(db: Database, id: string): Promise<void> {
+  await db.delete(conversations).where(eq(conversations.id, id));
+}
+
 /** Touch last_activity only (axes + unread unchanged) — a turn ran, sort it to the top. */
 export async function touch(db: Database, id: string, at: Date = now()): Promise<ConversationRow | null> {
   return patch(db, id, { lastActivity: at });

@@ -180,9 +180,9 @@ function Rail({
       >
         Z
       </button>
+      {railBtn('inbox', 'Inbox', <IconInbox />)}
       {railBtn('canvas', 'Canvases', <IconCanvases />)}
       {railBtn('notebook', 'Notebook', <IconNotebook />)}
-      {railBtn('inbox', 'Inbox', <IconInbox />)}
       {railBtn('jobs', 'Jobs', <IconJobs />)}
       <div className="lp-rail-bottom">
         <button

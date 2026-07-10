@@ -332,8 +332,26 @@ export function routeChatFrame(raw: string): void {
   }
   if (!isChatFrame(parsed)) return; // parsed is now narrowed to ChatFrame
   const { chatId, ...ev } = parsed;
+  // List-signal listeners (the Inbox doorbell) see EVERY frame — including chats this
+  // client doesn't hold a session for (a headless dev-agent run, another tab's chat).
+  for (const l of frameListeners) l(chatId, ev);
   if (!sessions.has(chatId)) return; // a frame for a chat this client doesn't hold
   applyEvent(chatId, ev);
+}
+
+// The Inbox "list changed" doorbell (grill 2026-07-10): the container's chat stream is the
+// only live channel that observes turn starts/settles, so list consumers subscribe here and
+// refetch the authoritative Turso list when a frame implies a row changed. No list data
+// rides the stream — it is purely a signal.
+const frameListeners = new Set<(chatId: string, ev: ChatEvent) => void>();
+export function onChatFrame(cb: (chatId: string, ev: ChatEvent) => void): () => void {
+  frameListeners.add(cb);
+  return () => void frameListeners.delete(cb);
+}
+/** Open the shared stream WITHOUT attaching a chat — for signal-only consumers (the Inbox
+ * list). Idempotent; the idle gate still closes/reopens it with tab visibility. */
+export function openFrameSignal(target = ''): void {
+  ensureSharedStream(target);
 }
 
 function applyEvent(chatId: string, ev: ChatEvent) {
