@@ -36,7 +36,7 @@ const toItem = (r: ConversationRow): InboxItem => ({
  */
 export function orderInbox(rows: ConversationRow[]): InboxItem[] {
   const items = rows.map(toItem);
-  const rank = (i: InboxItem) => (i.waitingOn === 'human' ? 0 : 1);
+  const rank = (i: InboxItem) => (i.status === 'open' && i.waitingOn === 'human' ? 0 : 1);
   return items.sort((a, b) => rank(a) - rank(b) || b.lastActivity - a.lastActivity);
 }
 
