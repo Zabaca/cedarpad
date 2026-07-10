@@ -121,3 +121,50 @@ describe('renderLogin — the post-cutover deny page (edge Better Auth is the so
     expect(html).not.toContain('cs_gate');
   });
 });
+
+// Canvas pairing: the Inbox attach panel lists the CONVERSATION's workspace's canvases, not
+// the rail's cs_workspace cookie — GET accepts an explicit ?workspace= override, ownership-
+// checked exactly like the cookie. Mutations never honor it (cookie-scoped as before).
+describe('handleCanvasesApi — GET ?workspace= override (the Inbox attach panel)', () => {
+  test('lists the named workspace regardless of the cookie', async () => {
+    const ws = await createWorkspace(database, { name: 'PairWs', ownerUserId: USER.id });
+    await canvasRegistry.create(database, { workspaceId: ws.id, name: 'PairBoard' });
+
+    const res = await handleCanvasesApi(
+      new Request(`https://x/api/canvases?workspace=${ws.id}`), // no cookie at all
+      database,
+      USER,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson(res);
+    expect(body.workspaceId).toBe(ws.id);
+    expect(body.canvases.map((c: { name: string }) => c.name)).toContain('PairBoard');
+  });
+
+  test('a non-owned ?workspace= is 404 (same gate as the cookie path)', async () => {
+    const res = await handleCanvasesApi(
+      new Request('https://x/api/canvases?workspace=ws_not_mine'),
+      database,
+      USER,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  test('POST ignores ?workspace= — mutations stay cookie-scoped', async () => {
+    const ws = await createWorkspace(database, { name: 'MutWs', ownerUserId: USER.id });
+    const res = await handleCanvasesApi(
+      new Request(`https://x/api/canvases?workspace=${ws.id}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Sneak' }),
+      }),
+      database,
+      USER,
+    );
+    expect(res.status).toBe(201);
+    const made = await readJson(res);
+    // Created in the COOKIE scope (default), not the query-named workspace.
+    const inWs = await readJson(await handleCanvasesApi(new Request(`https://x/api/canvases?workspace=${ws.id}`), database, USER));
+    expect(inWs.canvases.map((c: { id: string }) => c.id)).not.toContain(made.id);
+  });
+});

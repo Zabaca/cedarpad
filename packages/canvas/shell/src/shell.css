@@ -477,6 +477,49 @@ body,
   color: var(--muted);
   font-size: 12px;
 }
+/* The attach panel (the empty state's contents): pick-or-create, matching the filter controls. */
+.inbox-attach-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.inbox-attach-row select {
+  flex: 1;
+  min-width: 0;
+  background: var(--void);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+}
+.inbox-attach-row button,
+.inbox-attach-create {
+  background: var(--void);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.inbox-attach-row button:disabled,
+.inbox-attach-create:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.inbox-attach-create {
+  display: block;
+  margin: 10px auto 0;
+}
+.inbox-attach-error {
+  display: block;
+  margin-top: 8px;
+  color: #e5484d;
+  font-size: 12px;
+}
 .inbox-threadhead {
   display: flex;
   align-items: center;
