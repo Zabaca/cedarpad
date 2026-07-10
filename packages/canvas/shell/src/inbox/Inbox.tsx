@@ -3,14 +3,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatView } from '../../../shared/ChatView';
 import { onChatFrame, openFrameSignal, setConnectionTarget } from '../../../shared/chat-store';
 import type { InboxChatResponse, InboxItem, InboxListResponse, InboxView } from './contract';
+import { padUrlFor } from './inbox-pad-url';
 import { inboxStateFromUrl, urlWithInboxState } from './inbox-url';
 
 // The Inbox stage (ADR-0009 / #124): the `stage === 'inbox'` case of the Shell, under the ONE
-// chrome (the rail). Two panes over the edge API: a left LIST of the user's Conversations
+// chrome (the rail). Panes over the edge API: a left LIST of the user's Conversations
 // (Turso only — waiting_on:human badged, unread dot, status + workspace filters, never wakes a
-// runner) and a right THREAD that is now a LIVE <ChatView> over the Conversation's OWNING bridge
+// runner), a THREAD that is a LIVE <ChatView> over the Conversation's OWNING bridge
 // (through the /inbox/:id/bridge proxy) — streaming transcript + reply + image paste, the SAME
-// component the canvas renders. Only OPENING a conversation wakes its runner; browsing does not.
+// component the canvas renders — and, once a conversation is open, a third CANVAS pane: the
+// chat→canvas edge (`InboxItem.canvasId`, worker/inbox-view.ts) rendered as the same live
+// same-origin Render Pad iframe `CanvasStage` mounts, or a placeholder when nothing's linked yet.
+// Only OPENING a conversation wakes its runner; browsing does not.
 
 /** The edge chat proxy prefix a Conversation's <ChatView> addresses its owning bridge through. */
 const bridgePrefix = (convId: string): string => `/inbox/${encodeURIComponent(convId)}/bridge`;
@@ -51,6 +55,10 @@ export function InboxStage() {
     const d = (await r.json()) as InboxListResponse;
     setItems(d.items);
     setState('ready');
+    // Refresh the opened item from the authoritative list (it's a snapshot): an attach
+    // (canvasId), a rename, or a triage flip should reach the thread + canvas pane without
+    // reselecting. Keep the snapshot when the row left the filtered list (e.g. just closed).
+    setCurrent((cur) => (cur ? (d.items.find((it) => it.id === cur.id) ?? cur) : cur));
     if (pendingConvId.current) {
       const match = d.items.find((it) => it.id === pendingConvId.current);
       if (match) setCurrent(match);
@@ -149,6 +157,94 @@ export function InboxStage() {
           <div className="inbox-empty">Select a conversation.</div>
         )}
       </div>
+      {current && <CanvasPane item={current} onAttached={loadList} />}
+    </div>
+  );
+}
+
+// The linked canvas, third pane: a live Render Pad iframe when the conversation has a
+// `canvasId`, else the attach panel (link an existing same-workspace canvas, or create one
+// named from the chat summary). Keyed by conversation + canvasId so switching conversations
+// remounts the iframe cleanly rather than reusing a stale one.
+function CanvasPane({ item, onAttached }: { item: InboxItem; onAttached: () => void }) {
+  const padUrl = padUrlFor(item);
+  return (
+    <div className="inbox-canvas">
+      {padUrl ? (
+        <iframe key={`${item.id}:${item.canvasId}`} className="inbox-canvas-frame" title="canvas" src={padUrl} />
+      ) : (
+        <AttachPanel key={item.id} item={item} onAttached={onAttached} />
+      )}
+    </div>
+  );
+}
+
+// The attach panel (canvas pairing): the empty state of the third pane. Both actions call
+// the bridge's attach endpoint through the edge chat proxy; on success the list refetch
+// brings back the item with its canvasId set, which swaps this panel for the live pad.
+function AttachPanel({ item, onAttached }: { item: InboxItem; onAttached: () => void }) {
+  const [canvases, setCanvases] = useState<Array<{ id: string; name: string }>>([]);
+  const [selected, setSelected] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // The workspace's canvases, from the edge registry (scoped by ?workspace — the
+  // conversation's workspace, not the rail's cs_workspace cookie). 'default' is the
+  // registry-less legacy canvas every workspace offers (mirrors Shell.tsx).
+  useEffect(() => {
+    let alive = true;
+    void fetch(`/api/canvases?workspace=${encodeURIComponent(item.workspaceId)}`, { credentials: 'same-origin' })
+      .then((r) => (r.ok ? (r.json() as Promise<{ canvases: Array<{ id: string; name: string }> }>) : null))
+      .then((d) => {
+        if (alive && d) setCanvases([{ id: 'default', name: 'Default' }, ...d.canvases]);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [item.workspaceId]);
+
+  const attach = async (body: { canvasId?: string }) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${bridgePrefix(item.id)}/api/inbox/${encodeURIComponent(item.id)}/attach-canvas`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        credentials: 'same-origin',
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(err?.error ?? `attach failed (${res.status})`);
+      }
+      onAttached();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="inbox-canvas-empty">
+      <b>No canvas linked</b>
+      <div className="inbox-attach-row">
+        <select value={selected} disabled={busy} onChange={(e) => setSelected(e.target.value)}>
+          <option value="">Pick a canvas…</option>
+          {canvases.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <button type="button" disabled={busy || !selected} onClick={() => void attach({ canvasId: selected })}>
+          Attach
+        </button>
+      </div>
+      <button type="button" className="inbox-attach-create" disabled={busy} onClick={() => void attach({})}>
+        Create canvas from this chat
+      </button>
+      {error && <small className="inbox-attach-error">{error}</small>}
     </div>
   );
 }
