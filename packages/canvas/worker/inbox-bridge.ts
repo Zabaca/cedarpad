@@ -96,5 +96,11 @@ export async function handleInboxBridge(
     if (token) proxied.headers.set('x-dev-agent-git-token', token);
   }
 
+  // Canvas pairing: the Inbox surface is not a pad, so its ChatView stamps no x-canvas-id.
+  // A linked Conversation's SEND gets the stamp from its row instead, so the resumed turn
+  // runs against the chat's own canvas store (the agent reads/draws the canvas it lives on).
+  // Sends only — reads route by path, not by canvas claim.
+  if (isChatSend && conv.canvasId) proxied.headers.set('x-canvas-id', conv.canvasId);
+
   return serveWorkspace(proxied, env, coordsForWorkspace(conv.workspaceId));
 }

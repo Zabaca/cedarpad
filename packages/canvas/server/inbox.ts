@@ -28,11 +28,14 @@ export type Notify = (conversation: ConversationRow, question: string) => void |
  */
 export async function findOrCreateConversation(
   db: Database,
-  input: { sessionId: string; userId: string; workspaceId: string; summary?: string | null; ownerRef?: string },
+  input: { sessionId: string; userId: string; workspaceId: string; summary?: string | null; ownerRef?: string; canvasId?: string },
 ): Promise<ConversationRow> {
+  // The chat→canvas edge is first-wins (attachCanvas only fills a null edge): a turn that
+  // carries a canvas backfills chats born before capture, but never re-homes a linked chat.
   if (input.ownerRef) {
     const byChat = await conversations.getByOwnerRef(db, input.ownerRef);
     if (byChat) {
+      if (input.canvasId && !byChat.canvasId) await conversations.attachCanvas(db, byChat.id, input.canvasId);
       if (byChat.sessionId !== input.sessionId) {
         return (await conversations.rebindSession(db, byChat.id, input.sessionId)) ?? byChat;
       }
@@ -42,6 +45,7 @@ export async function findOrCreateConversation(
   const existing = await conversations.getBySessionId(db, input.sessionId);
   if (existing) {
     if (input.ownerRef && !existing.ownerRef) await conversations.setOwnerRef(db, existing.id, input.ownerRef);
+    if (input.canvasId && !existing.canvasId) await conversations.attachCanvas(db, existing.id, input.canvasId);
     return (await conversations.touch(db, existing.id)) ?? existing;
   }
   return conversations.create(db, {
@@ -49,9 +53,24 @@ export async function findOrCreateConversation(
     userId: input.userId,
     workspaceId: input.workspaceId,
     ownerRef: input.ownerRef ?? null,
+    canvasId: input.canvasId ?? null,
     summary: input.summary ?? null,
     lastMessagePreview: input.summary ?? null,
   });
+}
+
+/**
+ * Lazy backfill (canvas pairing): chats born before edge capture existed live as `chat`
+ * shapes in canvas state, but their rows carry no canvas edge. When a canvas session builds,
+ * the bridge hands its chat-shape ids here; each row found by ownerRef gets the edge.
+ * First-wins (attachCanvas fills only a null edge) and unknown chat ids are ignored, so the
+ * call is idempotent and safe to fire on every boot. Best-effort per row.
+ */
+export async function backfillCanvasEdges(db: Database, canvasId: string, chatIds: string[]): Promise<void> {
+  for (const chatId of chatIds) {
+    const row = await conversations.getByOwnerRef(db, chatId);
+    if (row && !row.canvasId) await conversations.attachCanvas(db, row.id, canvasId);
+  }
 }
 
 /**

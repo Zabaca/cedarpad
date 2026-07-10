@@ -17,6 +17,7 @@ import { LEGACY_SANDBOX_ID, type SandboxCoords } from './sandbox-resolver.ts';
 let conv: ConversationRow | null = null;
 let served: SandboxCoords[] = [];
 let servedTokens: Array<string | null> = [];
+let servedCanvasIds: Array<string | null> = [];
 let replyCalls: string[] = [];
 let mintCalls = 0;
 let mintResult: string | null = 'ghs_minted';
@@ -27,6 +28,7 @@ mock.module('./sandbox-runtime.ts', () => ({
   serveWorkspace: (req: Request, _env: unknown, coords: SandboxCoords) => {
     served.push(coords);
     servedTokens.push(req.headers.get('x-dev-agent-git-token'));
+    servedCanvasIds.push(req.headers.get('x-canvas-id'));
     return new Response('proxied');
   },
 }));
@@ -51,6 +53,7 @@ const row = (o: Partial<ConversationRow> = {}): ConversationRow =>
     unread: true,
     lastActivity: new Date(0),
     ownerRef: null,
+    canvasId: null,
     workspaceId: 'default',
     userId: 'u_1',
     summary: null,
@@ -84,6 +87,7 @@ beforeEach(() => {
   conv = row();
   served = [];
   servedTokens = [];
+  servedCanvasIds = [];
   replyCalls = [];
   mintCalls = 0;
   mintResult = 'ghs_minted';
@@ -197,5 +201,27 @@ describe('handleInboxBridge: which runner bridge a Conversation is proxied to (c
     expect(served[0]?.sandboxId).toBe(LEGACY_SANDBOX_ID);
     expect(served[0]?.canvasWorkspace).toBe('default');
     expect(served[0]?.r2Prefix).toBe('workspaces/default/');
+  });
+});
+
+// The chat→canvas edge (canvas pairing): a linked Conversation's SEND is routed to ITS canvas
+// store — the edge stamps x-canvas-id from the row, since the Inbox surface (not a pad) sends
+// no stamp of its own. Reads never stamp; unlinked conversations proxy untouched.
+describe('handleInboxBridge: a linked Conversation’s send carries its canvas to the bridge', () => {
+  test('a send for a canvas-linked Conversation stamps x-canvas-id', async () => {
+    conv = row({ canvasId: 'cv_home' });
+    await proxy('POST', '/api/chat/chat_1/send');
+    expect(servedCanvasIds).toEqual(['cv_home']);
+  });
+
+  test('an unlinked Conversation’s send carries no x-canvas-id', async () => {
+    await proxy('POST', '/api/chat/chat_1/send');
+    expect(servedCanvasIds).toEqual([null]);
+  });
+
+  test('a transcript GET never stamps (routing the turn, not the read)', async () => {
+    conv = row({ canvasId: 'cv_home' });
+    await proxy('GET', '/api/chat/chat_1/transcript');
+    expect(servedCanvasIds).toEqual([null]);
   });
 });

@@ -181,3 +181,25 @@ describe("conversation store — list filtering, sort, scoping", () => {
     expect(listed.map((c) => c.id)).toContain(mine.id);
   });
 });
+
+describe("conversation store — canvas edge (chat → canvas, at most one)", () => {
+  it("create accepts a canvasId; default is null", async () => {
+    const born = await seed({ canvasId: "cv_1" });
+    expect(born.canvasId).toBe("cv_1");
+    const bare = await seed();
+    expect(bare.canvasId).toBeNull();
+  });
+
+  it("attachCanvas sets the edge only when null (first wins; no detach in v1)", async () => {
+    const conv = await seed();
+    const attached = await conversations.attachCanvas(db, conv.id, "cv_a");
+    expect(attached?.canvasId).toBe("cv_a");
+    // A second attach is a no-op: the edge is single and immutable in v1.
+    const again = await conversations.attachCanvas(db, conv.id, "cv_b");
+    expect(again?.canvasId).toBe("cv_a");
+  });
+
+  it("attachCanvas on a missing conversation returns null", async () => {
+    expect(await conversations.attachCanvas(db, "conv_missing", "cv_a")).toBeNull();
+  });
+});

@@ -441,3 +441,87 @@ describe('/api/buildrev: public build stamp (#74)', () => {
     expect(typeof body.buildRev).toBe('string');
   });
 });
+
+// Chat→canvas pairing (slice 1): a send that EXPLICITLY addresses a canvas (x-canvas-id /
+// ?canvas — the pad stamps it) dispatches that id; an unaddressed send (inbox thread,
+// dev-agent kick) dispatches undefined so the turn routes to the default store WITHOUT
+// claiming a canvas edge for the conversation.
+describe('/api/chat/:id/send: the explicit canvas reaches the dispatch; absence claims nothing', () => {
+  let restore: () => void = () => {};
+  let dispatched: Array<{ chatId: string; canvasId?: string }> = [];
+
+  beforeEach(() => {
+    dispatched = [];
+    chatClients.add(fakeSubscriber());
+    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, canvasId) => {
+      dispatched.push({ chatId, canvasId });
+    });
+  });
+
+  afterEach(() => {
+    restore();
+    for (const c of [...chatClients]) chatClients.delete(c);
+  });
+
+  test('a pad send (x-canvas-id) dispatches that canvas', async () => {
+    const req = new Request('http://localhost/api/chat/chat_pad/send', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-canvas-id': 'cv_123' },
+      body: JSON.stringify({ message: 'draw a box' }),
+    });
+    const res = await handleRequest(req);
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'chat_pad', canvasId: 'cv_123' }]);
+  });
+
+  test('an unaddressed send dispatches undefined — never a defaulted claim', async () => {
+    const res = await handleRequest(sendReq('chat_inbox'));
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'chat_inbox', canvasId: undefined }]);
+  });
+});
+
+describe('indexSessionStart: records the chat→canvas edge when the turn carries one', () => {
+  test('a canvas-born session lands with its canvas edge; an unaddressed one stays null', async () => {
+    const withCanvas = `sess_cv_${crypto.randomUUID()}`;
+    await indexSessionStart('chat_cv', withCanvas, 'born on a canvas', undefined, 'cv_9');
+    expect((await conversations.getBySessionId(webPocDb, withCanvas))!.canvasId).toBe('cv_9');
+
+    const without = `sess_nocv_${crypto.randomUUID()}`;
+    await indexSessionStart('chat_nocv', without, 'born in the inbox');
+    expect((await conversations.getBySessionId(webPocDb, without))!.canvasId).toBeNull();
+  });
+});
+
+describe('POST /api/inbox/:id/reply routes the resumed turn to the conversation’s canvas', () => {
+  let restore: () => void = () => {};
+  let dispatched: Array<{ canvasId?: string }> = [];
+
+  beforeEach(() => {
+    dispatched = [];
+    restore = setChatTurnDispatcher((_chatId, _message, _sessionId, _images, _model, _fork, _effort, canvasId) => {
+      dispatched.push({ canvasId });
+    });
+  });
+
+  afterEach(() => restore());
+
+  test('a linked conversation resumes on ITS canvas store, not the default', async () => {
+    const conv = await conversations.create(webPocDb, {
+      sessionId: `sess_linked_${crypto.randomUUID()}`,
+      userId: 'default',
+      workspaceId: 'cs_workspace_abc',
+      canvasId: 'cv_linked',
+      summary: 'a canvas-born chat',
+    });
+    const res = await handleRequest(
+      new Request(`http://localhost/api/inbox/${encodeURIComponent(conv.id)}/reply`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: 'continue' }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(dispatched).toEqual([{ canvasId: 'cv_linked' }]);
+  });
+});

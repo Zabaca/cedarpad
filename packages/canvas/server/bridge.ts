@@ -20,7 +20,7 @@ import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeMs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import { type Notify, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
+import { type Notify, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { DEV_AGENT_WORKSPACE_ID, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
@@ -129,7 +129,17 @@ const blobStore = new BlobStore(blobBackend);
 // first registry entry). The browser selects a canvas via the `x-canvas-id` header
 // (or `?canvas=`); absent → the default, so today's un-namespaced /api/canvas/* calls
 // resolve to the default canvas exactly as before.
-const canvasSessions = createSessionRegistry((id) => createCanvasSession(blobStore, WORKSPACE, id));
+const canvasSessions = createSessionRegistry(async (id) => {
+  const session = await createCanvasSession(blobStore, WORKSPACE, id);
+  // Lazy backfill (canvas pairing): the chat card shapes ARE the ground truth for where a
+  // chat lives, so link pre-capture chats to this canvas when it builds. Idempotent
+  // (first-wins per row) and fire-and-forget — an edge failure never blocks a canvas boot.
+  const chatIds = session.store.getState().shapes.filter((s) => s.type === 'chat').map((s) => s.id);
+  if (chatIds.length > 0) {
+    void backfillCanvasEdges(webPocDb, id, chatIds).catch((err) => console.error('[inbox] canvas-edge backfill failed:', err));
+  }
+  return session;
+});
 function canvasIdFrom(req: Request, url: URL): string {
   return req.headers.get('x-canvas-id') ?? url.searchParams.get('canvas') ?? DEFAULT_CANVAS_ID;
 }
@@ -370,13 +380,14 @@ export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId:
  * chat MID-turn (opening the running Conversation attaches to this chat's live stream).
  * Idempotent (find-or-create by chat, rebinding the newest sessionId) and
  * best-effort — an index failure never fails the turn. */
-export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE): Promise<void> {
+export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string): Promise<void> {
   if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
   await findOrCreateConversation(webPocDb, {
     sessionId,
     userId: INBOX_USER,
     workspaceId,
     ownerRef: chatId,
+    canvasId,
     summary: message.slice(0, 200),
   }).catch((err) => console.error('[inbox] session-start row upsert failed:', err));
 }
@@ -423,14 +434,17 @@ export async function prepareDevAgentTurn(
 }
 
 /** Run one turn for a chat and broadcast its events. Fire-and-forget (output is the SSE).
- * The turn runs against the session for `canvasId` (the request's active canvas, #79) so the
- * agent reads/draws on the canvas the human is on; absent/unknown ⇒ the default, unchanged.
+ * The turn runs against the session for `requestCanvasId` (the request's active canvas, #79)
+ * so the agent reads/draws on the canvas the human is on; absent ⇒ the default store,
+ * unchanged — BUT absence also means the turn claims no chat→canvas edge for the
+ * Conversation (an inbox reply must never link a chat to the Default canvas by default).
  * `devAgentGitToken` (edge-minted, per dev-agent send) arms the `open_pr` tool for THIS turn
  * only — see prepareDevAgentTurn. */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, canvasId: string = DEFAULT_CANVAS_ID, devAgentGitToken?: string): void {
+function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string): void {
   const ac = new AbortController();
   aborters.set(chatId, ac);
   const flavor = turnFlavor(devAgentGitToken);
+  const canvasId = requestCanvasId ?? DEFAULT_CANVAS_ID;
   void (async () => {
     let finalSessionId = sessionId;
     try {
@@ -449,7 +463,7 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
         // forget; the finally-block upsert below stays as the settle-time backstop).
         if (ev.kind === 'init') {
           finalSessionId = ev.sessionId;
-          void indexSessionStart(chatId, ev.sessionId, message, inbox.workspaceId);
+          void indexSessionStart(chatId, ev.sessionId, message, inbox.workspaceId, requestCanvasId);
         }
         broadcastChat(chatId, ev satisfies ChatEvent);
       }
@@ -472,6 +486,7 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
           userId: INBOX_USER,
           workspaceId: flavor.workspaceId,
           ownerRef: chatId,
+          canvasId: requestCanvasId,
           summary: message.slice(0, 200),
         })
           // Mechanical settle (ADR-0012 fallback): every settled turn marks activity (unread +
@@ -687,7 +702,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const token = req.headers.get('x-dev-agent-git-token') ?? undefined;
       // A fresh session every run (sessionId null); the run's later grill turns resume it
       // through the normal conversation path.
-      dispatchChatTurn(chatId, DEV_AGENT_RUN_PROMPT, null, [], undefined, undefined, undefined, DEFAULT_CANVAS_ID, token);
+      dispatchChatTurn(chatId, DEV_AGENT_RUN_PROMPT, null, [], undefined, undefined, undefined, undefined, token);
       return json({ chatId, joined: false }, 202);
     }
     const chatRoute = /^\/api\/chat\/([^/]+)\/send$/.exec(path);
@@ -720,7 +735,10 @@ export async function handleRequest(req: Request): Promise<Response> {
       // The edge-minted dev-agent git token (ADR-0010) rides a request header — set by the edge
       // chat proxy on a dev-agent Conversation's send only — and arms open_pr for this turn.
       const devAgentGitToken = req.headers.get('x-dev-agent-git-token') ?? undefined;
-      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort, canvasIdFrom(req, url), devAgentGitToken);
+      // EXPLICIT canvas only (no default): the pad stamps x-canvas-id; an unaddressed send
+      // (inbox thread) routes to the default store without claiming a canvas edge.
+      const requestCanvasId = req.headers.get('x-canvas-id') ?? url.searchParams.get('canvas') ?? undefined;
+      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort, requestCanvasId, devAgentGitToken);
       return json({ ok: true }, 202);
     }
     // POST /api/chat/:id/config — update server-owned ChatMeta (model/effort/forkNext),
@@ -829,7 +847,9 @@ export async function handleRequest(req: Request): Promise<Response> {
           cwd: CANVAS_CWD,
           // Reuse the chat-turn machinery: resume streams + persists + backs up like any turn.
           runTurn: (sessionId, msg, imgs) => {
-            dispatchChatTurn(chatIdForSession(sessionId) ?? conv.id, msg, sessionId, imgs);
+            // Resume on the conversation's OWN canvas store (when linked) so a reply from the
+            // Inbox has the agent reading/drawing the same canvas the chat lives on.
+            dispatchChatTurn(chatIdForSession(sessionId) ?? conv.id, msg, sessionId, imgs, undefined, undefined, undefined, conv.canvasId ?? undefined);
           },
         },
         conv,

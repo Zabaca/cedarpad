@@ -1,0 +1,1 @@
+ALTER TABLE `conversations` ADD `canvas_id` text;
