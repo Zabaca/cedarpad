@@ -424,7 +424,7 @@ export async function* runChat(
     settingSources: ['user', 'project'] as Array<'user' | 'project' | 'local'>,
     // The allowlist is per-turn (ADR-0011): a dev-agent turn also sees the explore skill;
     // every product turn stays impeccable-only. Discovery is separate (project source).
-    skills: skills ?? ['impeccable'],
+    skills: skills ?? ['impeccable', 'tdd'],
     // A dev-agent turn runs in its prepared worktree (ADR-0010 slice 6) — the caller passes
     // that path so edits + resume both scope to it; every product turn keeps the default.
     cwd: cwd ?? process.env.CANVAS_CWD ?? process.cwd(),
