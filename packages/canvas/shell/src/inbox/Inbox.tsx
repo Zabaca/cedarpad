@@ -47,6 +47,18 @@ export function InboxStage() {
 
   useEffect(() => {
     void loadList();
+    // The list is edge metadata with no push channel: state changes (a turn settling, an
+    // end_turn promotion) land in Turso, not in this tab. Poll while visible + refetch on
+    // tab return so the list tracks reality without a manual refresh.
+    const tick = () => {
+      if (!document.hidden) void loadList();
+    };
+    const t = setInterval(tick, 15_000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [loadList]);
 
   // Workspace options come from the loaded list (the old page derived them the same way),

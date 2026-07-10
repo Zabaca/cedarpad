@@ -193,15 +193,29 @@ function ensureSharedStream(target = ''): void {
   if (sharedStream) return;
   sharedStreamTarget = target;
   const es = new EventSource(withCanvasParam(`${target}/api/chat/stream`));
+  let opened = false;
   es.onopen = () => {
     streamReady = true;
     // Unblock send() on every known session (send is gated on `subscribed`).
     for (const id of sessions.keys()) update(id, { subscribed: true });
+    // A RE-open (auto-reconnect after a drop) missed live frames — recover them from the
+    // server transcript, same as the idle-gate reopen path.
+    if (opened) for (const id of sessions.keys()) void rehydrate(id);
+    opened = true;
   };
   es.onerror = () => {
     // Drop the gate until EventSource auto-reconnects (onopen re-arms it).
     streamReady = false;
     for (const id of sessions.keys()) update(id, { subscribed: false });
+    // A CLOSED stream never auto-reconnects (the server answered with a non-stream response,
+    // e.g. mid-deploy). Recreate it after a short backoff — otherwise every chat is stuck on
+    // "connecting…" until a manual refresh.
+    if (es.readyState === EventSource.CLOSED && sharedStream === es) {
+      sharedStream = null;
+      setTimeout(() => {
+        if (!sharedStream) reopenSharedStream();
+      }, 2000);
+    }
   };
   es.onmessage = (e) => routeChatFrame(e.data as string);
   sharedStream = es;
