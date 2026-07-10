@@ -129,6 +129,11 @@ export async function reply(db: Database, id: string): Promise<ConversationRow |
   });
 }
 
+/** Touch last_activity only (axes + unread unchanged) — a turn ran, sort it to the top. */
+export async function touch(db: Database, id: string, at: Date = now()): Promise<ConversationRow | null> {
+  return patch(db, id, { lastActivity: at });
+}
+
 /** Mark new agent activity: unread + touch last_activity (axes unchanged). */
 export async function markActivity(db: Database, id: string): Promise<ConversationRow | null> {
   return patch(db, id, { unread: true, lastActivity: now() });

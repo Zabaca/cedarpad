@@ -104,6 +104,16 @@ describe('findOrCreateConversation', () => {
     expect(b.summary).toBe('x'); // create-only: the first title sticks, later turns don't overwrite it
   });
 
+  test('a later call for an existing session touches lastActivity (a new turn sorts it to the top)', async () => {
+    const db = await freshDb();
+    const a = await findOrCreateConversation(db, { sessionId: 's-touch', userId: 'u', workspaceId: 'w', summary: 'x' });
+    // Age the row, then simulate the next turn's find-or-create.
+    await conversations.touch(db, a.id, new Date(Date.now() - 60_000));
+    const b = await findOrCreateConversation(db, { sessionId: 's-touch', userId: 'u', workspaceId: 'w', summary: 'x' });
+    expect(b.lastActivity.getTime()).toBeGreaterThan(a.lastActivity.getTime() - 30_000);
+    expect(b.lastActivity.getTime()).toBeGreaterThanOrEqual(Date.now() - 5_000);
+  });
+
   test('a plain session lands in waiting_on:none — it shows in "All" but NOT in the "Needs me" view', async () => {
     // The unified session index (every session gets a row) must not pollute the default attention
     // view: a session that never called ask_human stays waiting_on:none until (if) it promotes.

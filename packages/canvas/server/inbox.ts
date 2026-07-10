@@ -27,7 +27,9 @@ export async function findOrCreateConversation(
   input: { sessionId: string; userId: string; workspaceId: string; summary?: string | null },
 ): Promise<ConversationRow> {
   const existing = await conversations.getBySessionId(db, input.sessionId);
-  if (existing) return existing;
+  // A repeat call means a new turn on this session — touch last_activity so the
+  // Inbox sorts it to the top (create/promote/reply already touch; plain turns must too).
+  if (existing) return (await conversations.touch(db, existing.id)) ?? existing;
   return conversations.create(db, {
     sessionId: input.sessionId,
     userId: input.userId,
