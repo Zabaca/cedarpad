@@ -466,7 +466,12 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
           userId: INBOX_USER,
           workspaceId: flavor.workspaceId,
           summary: message.slice(0, 200),
-        }).catch((err) => console.error('[inbox] session-row upsert failed:', err));
+        })
+          // Mechanical settle (ADR-0012 fallback): every settled turn marks activity (unread +
+          // touch) so the row surfaces in "All" even when the end_turn gate was bypassed
+          // (ungated stop, error turn). Idempotent after a normal end_turn (also sets unread).
+          .then((conv) => conversations.markActivity(webPocDb, conv.id))
+          .catch((err) => console.error('[inbox] session-row upsert failed:', err));
         // Inbox (#60/#61): mirror THIS session's transcript to R2 keyed by sessionId, so the Inbox
         // can render history and resume can restore it while the runner sleeps. Best-effort.
         await backupTranscript(blobBackend, SESSIONS_DIR, finalSessionId).catch((err) =>
@@ -479,15 +484,16 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
 
 // The dev-agent run's prompt — this IS the workflow now (ADR-0011: the harness dissolved
 // into the agent's own turn). First sentence deliberately doubles as the Conversation row's
-// title (row-at-start titles from the message). The declined-marker dedup and the quiet-run
-// contract are prompt-law; if discipline degrades, the designed fallback is a tool-side
-// filter inside ask_human — never a resurrected harness.
+// title (row-at-start titles from the message). The declined-marker dedup is prompt-law; if
+// discipline degrades, the designed fallback is a tool-side filter inside end_turn — never a
+// resurrected harness. The ending itself is MECHANICALLY gated (ADR-0012: every turn must
+// declare its ending via end_turn — needs_human or done).
 const DEV_AGENT_RUN_PROMPT = [
   'Architecture explore: survey this repo for deepening opportunities.',
   'Run the Explore and Present-candidates phases of the /improve-codebase-architecture skill. Do NOT propose interfaces or make any edits.',
   'Then read docs/adr/declined/ and DROP every candidate that matches a declined marker.',
-  'If candidates survive, call the ask_human tool ONCE — a short summary plus a question listing every surviving candidate (title, rationale, severity) so the human can grill and choose from the thread. Then end your turn.',
-  'If none survive, end your turn WITHOUT calling ask_human: a quiet run must not ping the human.',
+  'If candidates survive, call end_turn ONCE with outcome "needs_human" — a short summary plus a question listing every surviving candidate (title, rationale, severity) so the human can grill and choose from the thread. Then stop.',
+  'If none survive, call end_turn with outcome "done" (summary: no candidates survived) — a quiet run must not ping the human.',
 ].join('\n\n');
 
 // The in-flight dev-agent run's chatId (ADR-0011): one run at a time, with JOIN semantics —

@@ -8,7 +8,8 @@ import { createClient } from '@libsql/client';
 import { makeDb, conversations } from '../web-poc/lib/db/index.ts';
 import { memBackend } from './blob-store.ts';
 import { projectDirForCwd, transcriptKey } from './transcript-r2.ts';
-import { askHuman, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
+import { endTurn, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
+import { makeStopGate } from './agent.ts';
 
 // In-memory DB built from the real Drizzle migrations (mirrors conversations.test.ts, bun:test).
 const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
@@ -30,13 +31,13 @@ async function freshDb() {
   return makeDb(client);
 }
 
-describe('ask_human promote protocol', () => {
-  test('promotes the session Conversation (creating it), fires notify, returns without blocking', async () => {
+describe('end_turn protocol (ADR-0012)', () => {
+  test('needs_human: promotes the session Conversation (creating it), fires notify, returns without blocking', async () => {
     const db = await freshDb();
     const notified: Array<{ id: string; question: string }> = [];
     const sessionId = 'sess-ask-1';
 
-    const text = await askHuman(
+    const text = await endTurn(
       {
         db,
         getSessionId: () => sessionId,
@@ -44,7 +45,7 @@ describe('ask_human promote protocol', () => {
         workspaceId: 'ws_a',
         notify: (conv, question) => void notified.push({ id: conv.id, question }),
       },
-      { summary: 'Need approval', question: 'Ship it?' },
+      { outcome: 'needs_human', summary: 'Need approval', question: 'Ship it?' },
     );
 
     // Returns agent-facing text (non-blocking): it never awaited a human reply.
@@ -62,19 +63,39 @@ describe('ask_human promote protocol', () => {
     expect(notified).toHaveLength(1);
     expect(notified[0]?.id).toBe(conv!.id);
     expect(notified[0]?.question).toBe('Ship it?');
+    // The row's preview is the question, so the Inbox list shows WHAT is being asked.
+    expect(conv?.lastMessagePreview).toBe('Ship it?');
   });
 
-  test('find-or-create by sessionId is idempotent: a second ask_human updates, not duplicates', async () => {
+  test('done: records completion — waiting_on:none, unread, preview = the summary, no notify', async () => {
+    const db = await freshDb();
+    const notified: string[] = [];
+    const sessionId = 'sess-done-1';
+
+    const text = await endTurn(
+      { db, getSessionId: () => sessionId, userId: 'user_a', workspaceId: 'ws_a', notify: (_c, q) => void notified.push(q) },
+      { outcome: 'done', summary: 'Committed #3; nothing pending' },
+    );
+
+    expect(text.toLowerCase()).toContain('done');
+    const conv = await conversations.getBySessionId(db, sessionId);
+    expect(conv?.waitingOn).toBe('none'); // stays OUT of "Needs me"
+    expect(conv?.unread).toBe(true); // but "All" shows the activity dot
+    expect(conv?.lastMessagePreview).toBe('Committed #3; nothing pending');
+    expect(notified).toHaveLength(0); // done never pings the human
+  });
+
+  test('find-or-create by sessionId is idempotent: a second end_turn updates, not duplicates', async () => {
     const db = await freshDb();
     const sessionId = 'sess-ask-2';
     const deps = { db, getSessionId: () => sessionId, userId: 'user_a', workspaceId: 'ws_a' };
 
-    await askHuman(deps, { summary: 'first', question: 'q1' });
+    await endTurn(deps, { outcome: 'needs_human', summary: 'first', question: 'q1' });
     const first = await conversations.getBySessionId(db, sessionId);
 
     // Human replies, handing the turn back; agent asks again on the SAME session.
     await conversations.reply(db, first!.id);
-    await askHuman(deps, { summary: 'second', question: 'q2' });
+    await endTurn(deps, { outcome: 'needs_human', summary: 'second', question: 'q2' });
 
     const all = await conversations.list(db, 'user_a');
     const forSession = all.filter((c) => c.sessionId === sessionId);
@@ -84,14 +105,37 @@ describe('ask_human promote protocol', () => {
     expect(forSession[0]?.unread).toBe(true);
   });
 
-  test('with no session id yet, ask_human degrades and creates nothing', async () => {
+  test('with no session id yet, end_turn degrades and creates nothing', async () => {
     const db = await freshDb();
-    const text = await askHuman(
+    const text = await endTurn(
       { db, getSessionId: () => null, userId: 'user_a', workspaceId: 'ws_a' },
-      { summary: 's', question: 'q' },
+      { outcome: 'needs_human', summary: 's', question: 'q' },
     );
     expect(text.toLowerCase()).toContain('unavailable');
     expect(await conversations.list(db, 'user_a')).toHaveLength(0);
+  });
+});
+
+// ADR-0012: the Stop-hook gate — a turn may not end without an end_turn declaration.
+describe('makeStopGate', () => {
+  test('blocks a stop until end_turn ran, then approves', async () => {
+    let ended = false;
+    const gate = makeStopGate(() => ended, () => false);
+    expect((await gate()).decision).toBe('block');
+    ended = true;
+    expect((await gate()).decision).toBeUndefined();
+  });
+
+  test('gives up after maxBlocks refusals (guardrail, not a cage)', async () => {
+    const gate = makeStopGate(() => false, () => false, 2);
+    expect((await gate()).decision).toBe('block');
+    expect((await gate()).decision).toBe('block');
+    expect((await gate()).decision).toBeUndefined(); // 3rd stop passes ungated
+  });
+
+  test('a user-aborted turn is exempt', async () => {
+    const gate = makeStopGate(() => false, () => true);
+    expect((await gate()).decision).toBeUndefined();
   });
 });
 

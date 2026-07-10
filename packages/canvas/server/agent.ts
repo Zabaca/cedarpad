@@ -25,7 +25,7 @@ import {
   updateShapesOp,
 } from '../src/canvas-ops.ts';
 import { adoptSharedComponent, editComponent, isShared, listComponents, promoteComponent, readComponent, writeComponent } from './components.ts';
-import { type AskHumanDeps, askHuman } from './inbox.ts';
+import { type EndTurnDeps, type EndTurnInput, endTurn } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 
@@ -82,16 +82,17 @@ export type CaptureView = () => Promise<string | null>;
  * Absent (single-store contexts, tests) ⇒ only the current store is bumped. */
 export type BumpShared = (module: string) => number;
 
-/** The `ask_human` tool body (server/inbox.ts binds db + sessionId + notify). Present ⇒ the agent
- * gets an `ask_human` tool; absent (canvas-only contexts, tests) ⇒ the tool is omitted, unchanged. */
-export type AskHuman = (input: { summary: string; question: string }) => Promise<string>;
+/** The `end_turn` tool body (server/inbox.ts binds db + sessionId + notify). Present ⇒ the agent
+ * gets an `end_turn` tool + the Stop-hook gate (ADR-0012); absent (canvas-only contexts, tests)
+ * ⇒ both are omitted, unchanged. */
+export type EndTurn = (input: EndTurnInput) => Promise<string>;
 
 /** The `open_pr` tool body (bridge binds it on the dev-agent runner to `openDevAgentPr`). Present ⇒
  * the agent gets an `open_pr` tool that commits its worktree + opens a PR; absent (every product
  * chat, tests) ⇒ the tool is omitted, unchanged. ADR-0009 Tier 2 / #126. */
 export type OpenPr = (input: { title: string; body: string; commitMessage: string }) => Promise<string>;
 
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, askHuman?: AskHuman, openPr?: OpenPr) {
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr) {
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -296,18 +297,26 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         { ids: z.array(z.string()).min(2), edge: z.enum(['left', 'right', 'top', 'bottom', 'center-x', 'center-y']) },
         async ({ ids, edge }) => result(alignOp(store, ids, edge)),
       ),
-      // Human-in-the-loop (#61): present only when the bridge injected the inbox seam. Posts to the
-      // Inbox + notifies, then the agent must END its turn — this tool NEVER blocks for a reply.
-      ...(askHuman
+      // The turn's mandatory terminal (ADR-0012): present only when the bridge injected the inbox
+      // seam. Declares the ending — needs_human promotes to the Inbox + notifies; done records
+      // completion. Either way the agent then STOPS — this tool NEVER blocks for a reply.
+      ...(endTurn
         ? [
             tool(
-              'ask_human',
-              'Pause and ask the human when you are BLOCKED and need their decision, approval, or missing information you cannot obtain yourself. This posts your question to their Inbox and notifies them; it does NOT wait for an answer. After calling it you MUST commit any work in progress and END YOUR TURN — do not loop or poll. The human replies later, which resumes this exact session with full context. Use sparingly, only when genuinely stuck on something only the human can resolve.',
+              'end_turn',
+              'ALWAYS call this exactly once as the LAST tool call of your turn, to declare how the turn ends. outcome "needs_human": you are blocked on the human — a decision, approval, or information only they have; supply `question` (it is posted to their Inbox and they are notified; the tool does NOT wait — after calling it, stop; their reply resumes this session). outcome "done": the work for this turn is complete and nothing is pending on the human; the summary is shown in their Inbox list. Never end a turn with an unanswered question in prose — route it through outcome "needs_human". Say everything important in your message first: `summary` is for the Inbox list, not a substitute for your reply.',
               {
-                summary: z.string().describe('One-line summary of what you need (shown in the inbox list).'),
-                question: z.string().describe('The full question / context for the human.'),
+                outcome: z.enum(['needs_human', 'done']).describe('needs_human = blocked on the human (requires `question`); done = work complete, nothing pending.'),
+                summary: z.string().describe('One-line summary of where the turn ended (shown in the inbox list).'),
+                question: z.string().optional().describe('needs_human only: the full question / context for the human.'),
               },
-              async ({ summary, question }) => result({ text: await askHuman({ summary, question }) }),
+              async ({ outcome, summary, question }) => {
+                if (outcome === 'needs_human' && !question) {
+                  return result({ text: 'outcome "needs_human" requires a `question` — call end_turn again with the question for the human.' });
+                }
+                const input: EndTurnInput = outcome === 'done' ? { outcome, summary } : { outcome, summary, question: question! };
+                return result({ text: await endTurn(input) });
+              },
             ),
           ]
         : []),
@@ -346,7 +355,35 @@ const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and hav
 
 BACKEND: when a component needs server-side work (call a third-party API with a secret, hit a database, receive a webhook), author a CUSTOM HANDLER at \`server/custom/<name>.ts\` — \`export default (req: Request) => Response\` (or any JSON-serializable value) — reached at \`/api/custom/<name>\`. It may call outbound (APIs, DBs) and the core canvas via \`\${CANVAS_BRIDGE}/api/canvas\` (CANVAS_BRIDGE is in its env); it runs in an isolated process and so CANNOT touch canvas state directly — go through that HTTP API. Read \`server/custom/hello.ts\` first for the shape. New/edited handlers hot-reload with no restart.
 
-BOUNDARY (important): you may author ONLY under \`src/canvas-components/\` (frontend components) and \`server/custom/\` (backend handlers) — these persist across restarts and hot-reload. Do NOT modify the CORE: the app shell, anything in \`src/\` outside \`canvas-components/\`, or anything in \`server/\` outside \`custom/\` (especially \`bridge.ts\`). The core is image-only — edits there will NOT persist and can break the live canvas for everyone.`;
+BOUNDARY (important): you may author ONLY under \`src/canvas-components/\` (frontend components) and \`server/custom/\` (backend handlers) — these persist across restarts and hot-reload. Do NOT modify the CORE: the app shell, anything in \`src/\` outside \`canvas-components/\`, or anything in \`server/\` outside \`custom/\` (especially \`bridge.ts\`). The core is image-only — edits there will NOT persist and can break the live canvas for everyone.
+
+ENDING A TURN: if you have an end_turn tool, ALWAYS finish your turn by calling it exactly once — outcome "needs_human" when you are blocked on the human (include your question; never leave a question only in prose), outcome "done" when the work is complete. Say everything important in your message first; the summary is for the human's Inbox list.`;
+
+/** The Stop-hook gate (ADR-0012): a turn may not end until the agent declared its ending via
+ * `end_turn`. Pure factory so the guard unit-tests without the SDK: `ended()` reads the per-turn
+ * flag (set by the end_turn handler), `aborted()` exempts user interrupts, and after `maxBlocks`
+ * refusals the stop is let through (a guardrail, not a cage — the mechanical settle is the
+ * fallback) with a log line so degrading compliance is visible. */
+export function makeStopGate(
+  ended: () => boolean,
+  aborted: () => boolean,
+  maxBlocks = 2,
+): () => Promise<{ decision?: 'block'; reason?: string }> {
+  let blocks = 0;
+  return async () => {
+    if (ended() || aborted()) return {};
+    if (blocks >= maxBlocks) {
+      console.error('[inbox] turn ended ungated: end_turn was never called after', blocks, 'blocks');
+      return {};
+    }
+    blocks += 1;
+    return {
+      decision: 'block',
+      reason:
+        'You must declare how this turn ends before stopping: call the end_turn tool with outcome "needs_human" (you are blocked on the human — include your question) or outcome "done" (the work is complete). Then stop.',
+    };
+  };
+}
 
 /** A pasted screenshot the human attached to their message (base64, no data: prefix). */
 export type CanvasImage = { media_type: string; data: string };
@@ -399,18 +436,31 @@ export async function* runChat(
   effort?: string,
   canvasId: string = 'default',
   bumpShared?: BumpShared,
-  inbox?: Omit<AskHumanDeps, 'getSessionId'>,
+  inbox?: Omit<EndTurnDeps, 'getSessionId'>,
   openPr?: OpenPr,
   cwd?: string,
   skills?: string[],
 ): AsyncGenerator<ChatEvent> {
-  // acc tracks the (possibly newly-assigned) sessionId across the turn; ask_human reads it lazily
+  // acc tracks the (possibly newly-assigned) sessionId across the turn; end_turn reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
   let acc: TurnAccum = { sessionId, costUsd: 0 };
-  const askHumanSeam = inbox
-    ? (input: { summary: string; question: string }) => askHuman({ ...inbox, getSessionId: () => acc.sessionId }, input)
+  // ADR-0012: the end_turn handler flips this flag; the Stop-hook gate below refuses to let the
+  // turn end while it is unset (with a bounded retry budget + abort exemption).
+  let turnEnded = false;
+  const endTurnSeam = inbox
+    ? async (input: EndTurnInput) => {
+        const text = await endTurn({ ...inbox, getSessionId: () => acc.sessionId }, input);
+        turnEnded = true;
+        return text;
+      }
     : undefined;
-  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, askHumanSeam, openPr);
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr);
+  const stopGate = endTurnSeam
+    ? makeStopGate(
+        () => turnEnded,
+        () => abortController?.signal.aborted ?? false,
+      )
+    : undefined;
 
   // The canvas chat is a full Claude Code agent: all built-in tools (Bash, Read, Write,
   // Edit, Web*, Task, ...) plus the canvas MCP server, auto-approved.
@@ -443,6 +493,8 @@ export async function* runChat(
         forwardSubagentText: true, // stream Task-subagent text/thinking inline (parent_tool_use_id-tagged) so the UI can nest it
         agentProgressSummaries: true, // periodic "Analyzing X" summaries on task_progress
         ...(abortController ? { abortController } : {}), // Esc / Stop -> abort this turn
+        // ADR-0012: the Stop-hook gate — a turn may not end without an end_turn declaration.
+        ...(stopGate ? { hooks: { Stop: [{ hooks: [stopGate] }] } } : {}),
         ...fullOptions,
         ...(sessionId ? { resume: sessionId, ...(forkSession ? { forkSession: true } : {}) } : {}),
       },

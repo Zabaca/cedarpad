@@ -36,12 +36,38 @@ describe('init frame (a turn started, possibly not by this tab)', () => {
   });
 });
 
-// ask_human is the one tool whose INPUT is human-facing: the question it posts to the Inbox.
-// The thread must RENDER that question — a chip labeled "ask_human" with the text discarded
-// left the human unable to read what they were being asked (both live and on rehydrate,
+// end_turn (and legacy ask_human in old transcripts) is the one tool whose INPUT is human-facing:
+// the question/summary it posts to the Inbox. The thread must RENDER it — a chip with the text
+// discarded left the human unable to read what they were being asked (both live and on rehydrate,
 // since replay emits the same tool event).
-describe('ask_human tool event → the question renders as a readable bubble', () => {
-  test('the tool chip is followed by the question text as an agent message', () => {
+describe('end_turn tool event → the question/summary renders as a readable bubble', () => {
+  test('needs_human: the tool chip is followed by the question text as an agent message', () => {
+    const id = 'chat_endturn_q';
+    ensureSession(id);
+    routeChatFrame(
+      frame(id, {
+        kind: 'tool',
+        name: 'end_turn',
+        input: { outcome: 'needs_human', summary: '6 candidates to review', question: '1. [high] Consolidate X\n2. [low] Simplify Y' },
+      }),
+    );
+
+    const items = getSnapshot(id).items;
+    expect(items.at(-2)).toMatchObject({ kind: 'tool', label: 'end_turn' });
+    expect(items.at(-1)).toMatchObject({ kind: 'msg', role: 'agent', text: '1. [high] Consolidate X\n2. [low] Simplify Y' });
+  });
+
+  test('done: the tool chip is followed by the summary as an agent message', () => {
+    const id = 'chat_endturn_done';
+    ensureSession(id);
+    routeChatFrame(frame(id, { kind: 'tool', name: 'end_turn', input: { outcome: 'done', summary: 'Committed #3; plan for #2 ready' } }));
+
+    const items = getSnapshot(id).items;
+    expect(items.at(-2)).toMatchObject({ kind: 'tool', label: 'end_turn' });
+    expect(items.at(-1)).toMatchObject({ kind: 'msg', role: 'agent', text: 'Committed #3; plan for #2 ready' });
+  });
+
+  test('legacy ask_human events (old transcripts) still render their question', () => {
     const id = 'chat_askhuman';
     ensureSession(id);
     routeChatFrame(
