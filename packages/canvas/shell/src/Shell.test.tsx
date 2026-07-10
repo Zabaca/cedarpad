@@ -169,6 +169,42 @@ describe('the canvas stage', () => {
   });
 });
 
+// The selected canvas is URL-persisted (mirrors stage.ts / inbox-url.ts): a reload lands
+// back on the same open canvas, though the camera/zoom inside the pad already did.
+describe('the selected canvas persists in the URL', () => {
+  test('picking a canvas sets ?canvas=<id> (replaceState, no history entry)', async () => {
+    await click([...container.querySelectorAll('.page-row')][1] ?? null);
+
+    expect(window.location.search).toBe('?canvas=cv_1');
+  });
+
+  test('a reload with ?canvas=<id> in the URL reopens that canvas', async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    (window as unknown as { happyDOM?: { setURL: (u: string) => void } }).happyDOM?.setURL(
+      'https://poc.cedarpad.com/?canvas=cv_1',
+    );
+    window.history.replaceState(null, '', '/?canvas=cv_1');
+    await mountShell();
+
+    expect(container.querySelector('iframe')?.getAttribute('src')).toBe('/w/ws_abc/canvas/cv_1/pad');
+  });
+
+  test('a stale ?canvas=<id> naming a deleted canvas is dropped once the registry loads', async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    (window as unknown as { happyDOM?: { setURL: (u: string) => void } }).happyDOM?.setURL(
+      'https://poc.cedarpad.com/?canvas=cv_gone',
+    );
+    window.history.replaceState(null, '', '/?canvas=cv_gone');
+    await mountShell();
+
+    await waitFor(() => window.location.search === '');
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(container.querySelector('.pad-empty')).not.toBeNull();
+  });
+});
+
 // The Z button's workspace list is now backed by the edge registry, replacing the
 // hardcoded `WORKSPACE_NAME = 'Zabaca'` the container's LeftPanel carried.
 describe('the workspace popover is backed by /api/workspaces', () => {
