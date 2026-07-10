@@ -138,6 +138,8 @@ function buildShape(raw: Record<string, unknown>, id: string, c: ShapeColor): Ca
         w: num(raw.w ?? 380, 'w'),
         h: num(raw.h ?? 460, 'h'),
         title: str(raw.title) || 'Chat',
+        // Attach flow: the card fronts an existing chat. Absent/'' stays absent.
+        ...(str(raw.chatId) ? { chatId: str(raw.chatId) } : {}),
       };
     case 'frame':
       return {

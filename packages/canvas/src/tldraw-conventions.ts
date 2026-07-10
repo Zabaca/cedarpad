@@ -107,13 +107,15 @@ function buildPartial<R>(s: CanvasShape, encodeText: (plain: string) => R): TLSh
         props: { w: s.w, h: s.h, module: s.module, data: s.data, rev: s.rev },
       } as unknown as TLShapePartial;
     case 'chat':
-      // `chat` is our custom shape (a conversation card); the shape id is the chat id.
+      // `chat` is our custom shape (a conversation card); the shape id is the chat id —
+      // unless `chatId` is set (attach flow), in which case the card fronts that chat.
+      // tldraw props are total, so the absent case encodes as ''.
       return {
         id,
         type: 'chat',
         x: s.x,
         y: s.y,
-        props: { w: s.w, h: s.h, title: s.title },
+        props: { w: s.w, h: s.h, title: s.title, chatId: s.chatId ?? '' },
       } as unknown as TLShapePartial;
     case 'frame':
       // Built-in tldraw container. `name` is its label; children parent to it.
@@ -267,6 +269,9 @@ function decodeFromTldraw(
         w: Number(p.w ?? 380),
         h: Number(p.h ?? 460),
         title: String(p.title ?? 'Chat'),
+        // '' is the tldraw-props encoding of "no override" — drop it so the model stays
+        // byte-stable with pre-chatId docs and canvas-born cards.
+        ...(p.chatId ? { chatId: String(p.chatId) } : {}),
         color,
       };
     case 'frame':
