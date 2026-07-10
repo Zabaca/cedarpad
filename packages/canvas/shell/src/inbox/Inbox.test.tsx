@@ -156,6 +156,10 @@ beforeEach(() => {
   store = [];
   stubInbox();
   (globalThis as { EventSource?: unknown }).EventSource = StubEventSource as unknown;
+  // Give the document a real origin so pushState (relative URL) resolves under happy-dom, whose
+  // default document is about:blank (origin null) — same fix as Shell.test.tsx.
+  (window as unknown as { happyDOM?: { setURL: (u: string) => void } }).happyDOM?.setURL('https://poc.cedarpad.com/');
+  window.history.replaceState(null, '', '/');
 });
 
 afterEach(async () => {
@@ -283,5 +287,46 @@ describe('thread actions', () => {
     expect(calls).toContain('POST /api/inbox/c1/close');
     // The default "Needs me" view requires status:open; c1 is now closed, so it's gone from the list.
     expect(items()).toHaveLength(0);
+  });
+});
+
+// Filters + selection are URL-persisted (mirrors stage.ts): a reload lands back on the same
+// view/workspace/selected conversation.
+describe('URL-persisted state', () => {
+  test('mounting with ?view=all&conv=<id> restores the filter and selects that conversation once the list loads', async () => {
+    store = [
+      item({ id: 'c1', summary: 'idle chat', waitingOn: 'none' }), // needs-me would hide this
+    ];
+    window.history.pushState(null, '', '/?stage=inbox&view=all&conv=c1');
+    await mount();
+
+    expect(calls).toContain('GET /api/inbox?view=all');
+    expect((viewFilter() as HTMLSelectElement).value).toBe('all');
+    // Selected once the async list loaded and contained it — the thread pane mounts <ChatView>.
+    expect(container.querySelector('.chat-card')).not.toBeNull();
+    expect(container.querySelector('.inbox-item.sel')?.querySelector('b')?.textContent).toBe('idle chat');
+  });
+
+  test('changing the view filter updates the URL (replaceState, stage= preserved)', async () => {
+    window.history.pushState(null, '', '/?stage=inbox');
+    store = [item({ id: 'c1', waitingOn: 'human' })];
+    await mount();
+
+    await changeSelect(viewFilter(), 'all');
+
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get('stage')).toBe('inbox');
+    expect(params.get('view')).toBe('all');
+  });
+
+  test('selecting a conversation adds ?conv=<id>; the default view is omitted from the URL', async () => {
+    window.history.pushState(null, '', '/?stage=inbox');
+    store = [item({ id: 'c1', summary: 'Thread', waitingOn: 'human' })];
+    await mount();
+    await click(items()[0] ?? null);
+
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get('conv')).toBe('c1');
+    expect(params.has('view')).toBe(false); // needs-me is the default — kept out of the URL
   });
 });
