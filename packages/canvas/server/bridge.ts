@@ -25,7 +25,7 @@ import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-work
 import { DEV_AGENT_WORKSPACE_ID, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
-import { adoptSharedComponent, promoteComponent } from './components.ts';
+import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
 
@@ -162,6 +162,7 @@ const sink = new PersistSink();
 sink.register({ name: 'sessions', serialize: () => tarSubtree(SESSIONS_DIR), save: (b) => blobStore.saveSessions(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'components', serialize: () => tarSubtree(COMPONENTS_DIR), save: (b) => blobStore.saveComponents(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'custom', serialize: () => tarSubtree(CUSTOM_DIR), save: (b) => blobStore.saveCustom(WORKSPACE, b as Uint8Array) });
+sink.register(chatMeta.persistable());
 
 const savedMtime: Record<'components' | 'custom', number> = { components: 0, custom: 0 };
 async function flushIfDirty(name: 'components' | 'custom', dir: string): Promise<void> {
@@ -174,7 +175,7 @@ async function flushIfDirty(name: 'components' | 'custom', dir: string): Promise
 /** ADR 0003 turn-completion batch. chatMeta persists always (dev + prod, for resume +
  *  cross-device rehydrate); the file-tar artifacts persist to R2 in the container only. */
 async function onTurnComplete(): Promise<void> {
-  await chatMeta.save().catch((err) => console.error('[chatmeta] save failed:', err));
+  await sink.flush('chatMeta');
   if (!process.env.R2_BUCKET) return;
   await sink.flush('sessions'); // a turn always wrote JSONL
   await flushIfDirty('components', COMPONENTS_DIR);
@@ -642,8 +643,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const body = await readBody(req);
       const module = typeof body.module === 'string' ? body.module : '';
       try {
-        promoteComponent(canvasId, module);
-        return json({ ok: true, reloaded: bumpSharedModuleAcrossCanvases(module) });
+        return json({ ok: true, reloaded: promoteToShared(canvasId, module, () => bumpSharedModuleAcrossCanvases(module)) });
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
@@ -653,8 +653,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const body = await readBody(req);
       const module = typeof body.module === 'string' ? body.module : '';
       try {
-        adoptSharedComponent(session.canvasId, module);
-        return json({ ok: true, reloaded: bumpAllComponents(session.store, nextComponentRev(session.store)) });
+        return json({ ok: true, reloaded: adoptFromShared(session.canvasId, module, () => bumpAllComponents(session.store, nextComponentRev(session.store))) });
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
@@ -708,7 +707,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       // ADR 0004: sessionId/model/effort/fork are server-owned (ChatMeta), not in the body.
       const meta = chatMeta.get(chatId);
       const forkSession = chatMeta.consumeFork(chatId); // one-shot; cleared in memory now
-      if (forkSession) void chatMeta.save().catch((err) => console.error('[chatmeta] save failed:', err)); // persist the clear so a recycle can't re-fork
+      if (forkSession) void sink.flush('chatMeta'); // persist the clear so a recycle can't re-fork
       const effort = meta.effort && meta.effort !== 'default' ? meta.effort : undefined; // 'default' = let the model decide
       // Route the turn to the request's active canvas (#79): the agent draws on the canvas the
       // human is on (x-canvas-id / ?canvas), exactly how the canvas reads/SSE already resolve.
@@ -729,7 +728,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       if (typeof body.effort === 'string') patch.effort = body.effort;
       if (typeof body.forkNext === 'boolean') patch.forkNext = body.forkNext;
       chatMeta.set(chatId, patch);
-      await chatMeta.save().catch((err) => console.error('[chatmeta] save failed:', err));
+      await sink.flush('chatMeta');
       broadcastChat(chatId, { kind: 'config', ...patch } satisfies ChatEvent);
       return json({ ok: true });
     }
@@ -742,7 +741,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const body = await readBody(req);
       const parent = chatMeta.get(typeof body.from === 'string' ? body.from : '');
       chatMeta.set(childId, { sessionId: parent.sessionId, model: parent.model, effort: parent.effort, forkNext: !!parent.sessionId });
-      await chatMeta.save().catch((err) => console.error('[chatmeta] save failed:', err));
+      await sink.flush('chatMeta');
       return json({ ok: true });
     }
     // GET /api/chat/:id/transcript — rehydrate on (re)connect: the JSONL-derived settled

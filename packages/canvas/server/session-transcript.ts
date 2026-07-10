@@ -10,6 +10,7 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
+import { findSessionJsonl } from './session-jsonl.ts';
 import type { ChatEvent } from './agent.ts';
 
 /** Fold settled SDK messages into ordered replay ChatEvents. `result` lines fold
@@ -44,12 +45,11 @@ export function projectJsonl(text: string): ChatEvent[] {
   return projectTranscript(msgs);
 }
 
-/** Load + project a session's transcript. Globs `**\/<sessionId>.jsonl` so it is robust to
- *  flat vs cwd-hash nesting; an absent file yields `[]` (not an error). */
+/** Load + project a session's transcript. Locates the JSONL via findSessionJsonl (robust to
+ *  flat vs cwd-hash nesting); an absent file yields `[]` (not an error). */
 export async function loadSessionTranscript(projectsDir: string, sessionId: string): Promise<ChatEvent[]> {
-  const glob = new Bun.Glob(`**/${sessionId}.jsonl`);
   let text = '';
-  for await (const path of glob.scan({ cwd: projectsDir, absolute: true })) {
+  for (const path of await findSessionJsonl(projectsDir, sessionId)) {
     text += (text ? '\n' : '') + (await Bun.file(path).text());
   }
   return projectJsonl(text);
