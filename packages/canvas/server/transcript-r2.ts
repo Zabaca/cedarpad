@@ -11,10 +11,15 @@
 // implements `BlobGetter` against its own R2 access and reads with just the sessionId.
 
 import { mkdir, rename, rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 
 import type { ChatEvent } from '../shared/chat-wire.ts';
+import { findSessionJsonl, resumeJsonlPath } from './session-jsonl.ts';
 import { projectJsonl } from './session-transcript.ts';
+
+// projectDirForCwd's canonical home is now session-jsonl.ts (the one home for a session's
+// JSONL-path knowledge); re-exported here for existing importers.
+export { projectDirForCwd } from './session-jsonl.ts';
 
 /** Read seam for the R2 blob. `get` returns null for an absent key. `BlobBackend`
  * (blob-store.ts) satisfies this structurally, so the container reuses it as-is; the edge
@@ -34,21 +39,12 @@ export interface BlobPutter {
  * alone (CONTEXT.md → Inbox → Storage). */
 export const transcriptKey = (sessionId: string): string => `sessions/${sessionId}/transcript.jsonl`;
 
-/** Pure: the SDK's on-disk project-dir name for a cwd. Claude Code encodes the absolute cwd
- * into a single dir segment by replacing every `/` and `.` with `-` (e.g. `/workspace/app`
- * → `-workspace-app`), so `resume` reads `<projectsDir>/<encoded>/<sessionId>.jsonl`. Restore
- * must land the file at exactly that path. */
-export const projectDirForCwd = (cwd: string): string => cwd.replace(/[/.]/g, '-');
-
-/** Locate + read the raw session JSONL bytes on disk. Globs `**\/<sessionId>.jsonl` (same as
- * loadSessionTranscript) so it is robust to nesting; an absent file yields null. Returns the
- * raw bytes — restore must reproduce them verbatim, so we do NOT project here. */
+/** Locate + read the raw session JSONL bytes on disk (nesting-robust via findSessionJsonl); an
+ * absent file yields null. Returns the raw bytes — restore must reproduce them verbatim, so we
+ * do NOT project here. */
 export async function readRawTranscript(projectsDir: string, sessionId: string): Promise<Uint8Array | null> {
-  const glob = new Bun.Glob(`**/${sessionId}.jsonl`);
-  for await (const path of glob.scan({ cwd: projectsDir, absolute: true })) {
-    return new Uint8Array(await Bun.file(path).arrayBuffer());
-  }
-  return null;
+  const [path] = await findSessionJsonl(projectsDir, sessionId);
+  return path ? new Uint8Array(await Bun.file(path).arrayBuffer()) : null;
 }
 
 /** Container-side: mirror a session's on-disk JSONL to R2. Idempotent — a re-backup of a
@@ -70,10 +66,8 @@ export async function backup(putter: BlobPutter, projectsDir: string, sessionId:
  * copy elsewhere is a stale restore artifact (⊆ dest at its last backup) and is culled.
  * Returns the dest path, or null when the session has no JSONL anywhere (a fresh session). */
 export async function adoptSession(projectsDir: string, sessionId: string, cwd: string): Promise<string | null> {
-  const dest = join(projectsDir, projectDirForCwd(cwd), `${sessionId}.jsonl`);
-  const found: string[] = [];
-  const glob = new Bun.Glob(`**/${sessionId}.jsonl`);
-  for await (const path of glob.scan({ cwd: projectsDir, absolute: true })) found.push(path);
+  const dest = resumeJsonlPath(projectsDir, cwd, sessionId);
+  const found = await findSessionJsonl(projectsDir, sessionId);
   if (found.length === 0) return null;
 
   const others = found.filter((p) => p !== dest);
@@ -97,7 +91,7 @@ export async function restore(
 ): Promise<string | null> {
   const bytes = await getter.get(transcriptKey(sessionId));
   if (bytes === null) return null;
-  const path = join(projectsDir, projectDirForCwd(cwd), `${sessionId}.jsonl`);
+  const path = resumeJsonlPath(projectsDir, cwd, sessionId);
   await Bun.write(path, bytes);
   return path;
 }

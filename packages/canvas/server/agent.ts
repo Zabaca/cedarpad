@@ -24,7 +24,8 @@ import {
   setComponentDataOp,
   updateShapesOp,
 } from '../src/canvas-ops.ts';
-import { adoptSharedComponent, editComponent, isShared, listComponents, promoteComponent, readComponent, writeComponent } from './components.ts';
+import { editComponent, isShared, listComponents, readComponent, writeComponent } from './components.ts';
+import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { type EndTurnDeps, type EndTurnInput, endTurn } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
@@ -244,8 +245,7 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         { module: z.string().describe('Component name to promote (no extension).') },
         async ({ module }) => {
           try {
-            promoteComponent(canvasId, module);
-            const canvases = bumpShared ? bumpShared(module) : bumpAllComponents(store, nextComponentRev(store)) && 1;
+            const canvases = promoteToShared(canvasId, module, () => (bumpShared ? bumpShared(module) : bumpAllComponents(store, nextComponentRev(store)) && 1));
             return result({ text: `Promoted ${module}.tsx to the shared library${canvases ? ` (reloaded ${canvases} canvas(es) that placed it)` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
@@ -258,8 +258,7 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         { module: z.string().describe('Shared component name to copy into this canvas (no extension).') },
         async ({ module }) => {
           try {
-            adoptSharedComponent(canvasId, module);
-            const reloaded = bumpAllComponents(store, nextComponentRev(store));
+            const reloaded = adoptFromShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store)));
             return result({ text: `Copied shared ${module}.tsx into this canvas${reloaded ? ` (reloaded ${reloaded} placed instance(s))` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });

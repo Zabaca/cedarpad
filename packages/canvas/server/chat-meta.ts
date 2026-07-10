@@ -7,6 +7,7 @@
 
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../shared/chat-store.ts';
 import type { BlobStore } from './blob-store.ts';
+import type { Persistable } from './persistable.ts';
 
 export type ChatMeta = { sessionId: string | null; model: string; effort: string; forkNext: boolean };
 
@@ -50,5 +51,13 @@ export class ChatMetaStore {
 
   async save(): Promise<void> {
     await this.store.saveChatMeta(this.ws, this.map);
+  }
+
+  /** Adapter so chatMeta persists through the ADR-0003 PersistSink like sessions/components/
+   *  custom — one attempt→record-health→log wrapper, visible at /api/status, instead of the
+   *  ad-hoc `save().catch(log)` calls at each mutation site. No guard: config isn't
+   *  data-loss-critical like the canvas. */
+  persistable(): Persistable<Record<string, ChatMeta>> {
+    return { name: 'chatMeta', serialize: () => this.snapshot(), save: () => this.save() };
   }
 }
