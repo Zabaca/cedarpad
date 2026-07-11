@@ -309,3 +309,115 @@ describe('the rail remembers each stage’s URL state across navigation', () => 
     expect(window.location.search).toBe('?stage=jobs');
   });
 });
+
+// The docked chat panel (CONTEXT.md "Docked chat"): a chat card in the embedded pad can be
+// docked into a Shell-level pane beside the pad — a MIRROR (the card stays), one slot per
+// canvas, remembered per device. The pad's dock gesture is the one postMessage that crosses
+// the iframe boundary; everything else converges at the bridge.
+describe('the docked chat panel on the canvas stage', () => {
+  // <ChatView> opens the shared SSE stream on mount; happy-dom has no EventSource, so stub
+  // a no-op that reports "open" (same shape as Inbox.test.tsx's stub).
+  class StubEventSource {
+    onopen: (() => void) | null = null;
+    onmessage: ((e: { data: string }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(public url: string) {
+      setTimeout(() => this.onopen?.(), 0);
+    }
+    close() {}
+  }
+  const realEventSource = (globalThis as { EventSource?: unknown }).EventSource;
+
+  beforeEach(() => {
+    (globalThis as { EventSource?: unknown }).EventSource = StubEventSource as unknown;
+    localStorage.clear();
+  });
+  afterEach(() => {
+    (globalThis as { EventSource?: unknown }).EventSource = realEventSource;
+    localStorage.clear();
+  });
+
+  /** The pad's dock gesture, as the Shell receives it: a same-origin window message. */
+  const post = async (data: unknown, origin = 'https://poc.cedarpad.com') => {
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', { data, origin }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+  };
+
+  const openRoadmap = async () => {
+    await click([...container.querySelectorAll('.page-row')][1] ?? null); // cv_1 "Roadmap"
+  };
+
+  test('a dock message from the pad mounts the chat panel with a live ChatView', async () => {
+    await openRoadmap();
+    expect(container.querySelector('.canvas-dock')).toBeNull(); // nothing docked yet
+
+    await post({ type: 'cedarpad:dock-chat', chatId: 'shape:c1', title: 'Fix login' });
+
+    const panel = container.querySelector('.canvas-dock');
+    expect(panel).not.toBeNull();
+    expect(panel?.querySelector('.canvas-dock-head')?.textContent).toContain('Fix login');
+    expect(panel?.querySelector('.chat-card')).not.toBeNull(); // the SAME shared ChatView
+    expect(container.querySelector('iframe')).not.toBeNull(); // mirror: the pad stays mounted
+  });
+
+  test('one slot: docking a second chat replaces the first (mirror — nothing is lost)', async () => {
+    await openRoadmap();
+    await post({ type: 'cedarpad:dock-chat', chatId: 'shape:c1', title: 'Fix login' });
+    await post({ type: 'cedarpad:dock-chat', chatId: 'shape:c2', title: 'Deploy fix' });
+
+    const heads = [...container.querySelectorAll('.canvas-dock-head')];
+    expect(heads).toHaveLength(1); // still one panel, not two
+    expect(heads[0]?.textContent).toContain('Deploy fix');
+  });
+
+  test('a wrong-origin or foreign-shaped message never docks anything', async () => {
+    await openRoadmap();
+    await post({ type: 'cedarpad:dock-chat', chatId: 'shape:evil', title: 'evil' }, 'https://attacker.example');
+    await post({ type: 'webpack-dev-server', chatId: 'shape:noise' });
+
+    expect(container.querySelector('.canvas-dock')).toBeNull();
+  });
+
+  test('the ✕ undocks: the panel unmounts and the pad takes the width back', async () => {
+    await openRoadmap();
+    await post({ type: 'cedarpad:dock-chat', chatId: 'shape:c1', title: 'Fix login' });
+    expect(container.querySelector('.canvas-dock')).not.toBeNull();
+
+    await click(container.querySelector('[aria-label="Undock chat"]'));
+
+    expect(container.querySelector('.canvas-dock')).toBeNull();
+    expect(container.querySelector('iframe')).not.toBeNull();
+  });
+
+  test('deleting the docked chat’s card undocks (the panel is a projection of the card)', async () => {
+    await openRoadmap();
+    await post({ type: 'cedarpad:dock-chat', chatId: 'shape:c1', title: 'Fix login' });
+
+    await post({ type: 'cedarpad:chat-deleted', chatId: 'shape:other' }); // some OTHER card
+    expect(container.querySelector('.canvas-dock')).not.toBeNull(); // unaffected
+
+    await post({ type: 'cedarpad:chat-deleted', chatId: 'shape:c1' }); // the docked one
+    expect(container.querySelector('.canvas-dock')).toBeNull();
+  });
+
+  test('the dock is remembered per canvas: switching canvases swaps it, and a reload restores it', async () => {
+    await openRoadmap();
+    await post({ type: 'cedarpad:dock-chat', chatId: 'shape:c1', title: 'Fix login' });
+
+    // Another canvas has its own (empty) slot…
+    await click([...container.querySelectorAll('.page-row')][0] ?? null); // Default
+    expect(container.querySelector('.canvas-dock')).toBeNull();
+    // …and coming back restores this one's.
+    await click([...container.querySelectorAll('.page-row')][1] ?? null); // Roadmap
+    expect(container.querySelector('.canvas-dock-head')?.textContent).toContain('Fix login');
+
+    // A fresh mount (reload) restores it from device memory.
+    await act(async () => root.unmount());
+    container.remove();
+    window.history.replaceState(null, '', '/?canvas=cv_1');
+    await mountShell();
+    expect(container.querySelector('.canvas-dock-head')?.textContent).toContain('Fix login');
+  });
+});

@@ -1,5 +1,10 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 
+import { ChatView } from '../../shared/ChatView';
+import { setCanvasOverride } from '../../shared/chat-store';
+import { DOCK_CHAT, parseDockMessage } from '../../shared/dock-messages';
+import { DOCK_MEMORY_KEY, DOCK_WIDTH_KEY, type DockMemory, type DockedChat, parseDockMemory, parseDockWidth, serializeDockMemory } from './canvas-dock';
+import { clampWidth, MAX_PANE_WIDTH, MIN_PANE_WIDTH } from './inbox/inbox-panes';
 import { canvasFromUrl, urlWithCanvas } from './canvas-url';
 import { InboxStage } from './inbox/Inbox';
 import { JobsStage } from './jobs/Jobs';
@@ -305,12 +310,66 @@ function useCanvasRegistry(): Registry {
   return { workspaceId, canvases, setCanvases, reload, loaded };
 }
 
+/** Dock memory minus one canvas's slot (undock / the docked card was deleted). */
+const withoutDock = (d: DockMemory, canvasId: string): DockMemory =>
+  Object.fromEntries(Object.entries(d).filter(([k]) => k !== canvasId));
+
 function CanvasStage({ registry }: { registry: Registry }) {
   const { workspaceId: wsId, canvases, setCanvases, reload: load, loaded } = registry;
   // The selected canvas is a URL, so a reload/back-button lands back on the same open canvas.
   const [selected, setSelected] = useState<string | null>(() => canvasFromUrl(window.location.search));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+
+  // The docked chat, per canvas (CONTEXT.md "Docked chat") — per-device memory, restored
+  // from localStorage on mount. The dock gesture is the ONE postMessage that crosses the
+  // pad iframe's boundary — validated by origin AND shape.
+  const [docks, setDocksState] = useState<DockMemory>(() => parseDockMemory(localStorage.getItem(DOCK_MEMORY_KEY)));
+  const docked = selected ? (docks[selected] ?? null) : null;
+  const setDocks = useCallback((mutate: (d: DockMemory) => DockMemory) => {
+    setDocksState((d) => {
+      const next = mutate(d);
+      localStorage.setItem(DOCK_MEMORY_KEY, serializeDockMemory(next));
+      return next;
+    });
+  }, []);
+  // Drag-to-resize, same shape as the Inbox's pane divider; persists on release.
+  const [dockWidth, setDockWidth] = useState(() => parseDockWidth(localStorage.getItem(DOCK_WIDTH_KEY)));
+  const startDockResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = dockWidth;
+    const onMove = (ev: PointerEvent) => {
+      setDockWidth(clampWidth(startWidth + (ev.clientX - startX), MIN_PANE_WIDTH, MAX_PANE_WIDTH));
+    };
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      setDockWidth((w) => {
+        localStorage.setItem(DOCK_WIDTH_KEY, String(w));
+        return w;
+      });
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  };
+
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin || !selected) return;
+      const msg = parseDockMessage(e.data);
+      if (!msg) return;
+      if (msg.type === DOCK_CHAT) {
+        setDocks((d) => ({ ...d, [selected]: { chatId: msg.chatId, title: msg.title } }));
+      } else {
+        // The docked chat's card was deleted (its session closed with it) — the panel is a
+        // projection of the card, so it undocks. Other cards' deletions are not ours.
+        setDocks((d) => (d[selected]?.chatId === msg.chatId ? withoutDock(d, selected) : d));
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [selected, setDocks]);
 
   useEffect(() => {
     const qs = urlWithCanvas(window.location.search, selected);
@@ -425,6 +484,27 @@ function CanvasStage({ registry }: { registry: Registry }) {
         </ul>
       </aside>
 
+      {/* The docked chat panel: the same shared <ChatView> the card renders, mounted at the
+          Shell level beside the pad. A mirror — the card stays on the canvas; both are live
+          views of one session, converging at the bridge. */}
+      {selected && docked && (
+        <div className="canvas-dock" style={{ width: dockWidth, flex: 'none' }}>
+          <div className="canvas-dock-head">
+            <b>{docked.title}</b>
+            <button
+              type="button"
+              aria-label="Undock chat"
+              title="Undock (the card stays on the canvas)"
+              onClick={() => setDocks((d) => withoutDock(d, selected))}
+            >
+              ✕
+            </button>
+          </div>
+          <DockedChatPane key={`${selected}:${docked.chatId}`} canvasId={selected} docked={docked} />
+        </div>
+      )}
+      {selected && docked && <div className="canvas-dock-divider" onPointerDown={startDockResize} />}
+
       {/* Mounting this iframe is the ONLY thing that wakes the container. Same-origin, so the
           session cookie rides along and the pad's chat/SSE work exactly as they do standalone. */}
       {selected && wsId ? (
@@ -436,6 +516,18 @@ function CanvasStage({ registry }: { registry: Registry }) {
       ) : (
         <div className="pad-empty">Pick a canvas to open it.</div>
       )}
+    </div>
+  );
+}
+
+// The docked chat body. The canvas override is stamped DURING render (ensureSession-style),
+// before <ChatView>'s openStream effect fires — the Shell lives at `/`, so without it the
+// chat's sends would route to the default store instead of the canvas the panel fronts.
+function DockedChatPane({ canvasId, docked }: { canvasId: string; docked: DockedChat }) {
+  setCanvasOverride(docked.chatId, canvasId);
+  return (
+    <div className="canvas-dock-body">
+      <ChatView chatId={docked.chatId} title={docked.title} />
     </div>
   );
 }

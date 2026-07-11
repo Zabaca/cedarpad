@@ -97,6 +97,24 @@ function bridgeUrl(chatId: string, path: string): string {
   return `${connectionTarget(chatId)}${path}`;
 }
 
+// Canvas override (docked chat panel): the Shell renders a canvas chat OUTSIDE the pad URL,
+// so the location-based stamp (withPadCanvasHeader) can't see which canvas it belongs to.
+// An explicit per-chat override keeps the docked chat's calls routed to — and claiming —
+// the canvas its panel fronts. Never set for in-pad or Inbox chats (the claim stays explicit).
+const canvasOverrides = new Map<string, string>();
+
+/** Stamp `canvasId` on all of a chat's bridge calls (a Shell-docked canvas chat). */
+export function setCanvasOverride(chatId: string, canvasId: string): void {
+  canvasOverrides.set(chatId, canvasId);
+}
+
+/** Per-chat bridge headers: the pad-URL stamp, superseded by an explicit canvas override. */
+function chatHeaders(chatId: string, headers?: HeadersInit): Record<string, string> {
+  const id = canvasOverrides.get(chatId);
+  const base = withPadCanvasHeader(headers);
+  return id ? { ...base, 'x-canvas-id': id } : base;
+}
+
 /** The distinct set of bridge prefixes the idle beat must reach — one per bridge that
  *  currently holds a live chat session. Same-origin canvas chats collapse to `['']`.
  *  Fed to the idle gate so a Shell-connected chat beats its own bridge, not same-origin. */
@@ -166,7 +184,7 @@ export function ensureSession(chatId: string): void {
  *  any tab/device and survives a recycle. Best-effort: a failed fetch leaves state as-is. */
 async function rehydrate(chatId: string): Promise<void> {
   try {
-    const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/transcript`), { headers: withPadCanvasHeader() });
+    const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/transcript`), { headers: chatHeaders(chatId) });
     if (!res.ok) return;
     const { config, events, busy } = (await res.json()) as { config?: { model?: string; effort?: string; forkNext?: boolean }; events?: ChatEvent[]; busy?: boolean };
     clearBubbles(chatId);
@@ -261,6 +279,7 @@ export function openStream(chatId: string): void {
 export function closeSession(chatId: string): void {
   sessions.delete(chatId);
   listeners.delete(chatId);
+  canvasOverrides.delete(chatId);
   clearBubbles(chatId);
 }
 
@@ -303,7 +322,7 @@ export function setEffort(chatId: string, effort: string): void {
 }
 
 function postConfig(chatId: string, patch: { model?: string; effort?: string; forkNext?: boolean }): Promise<unknown> {
-  return fetch(bridgeUrl(chatId, `/api/chat/${chatId}/config`), { method: 'POST', headers: withPadCanvasHeader({ 'content-type': 'application/json' }), body: JSON.stringify(patch) }).catch(() => {});
+  return fetch(bridgeUrl(chatId, `/api/chat/${chatId}/config`), { method: 'POST', headers: chatHeaders(chatId, { 'content-type': 'application/json' }), body: JSON.stringify(patch) }).catch(() => {});
 }
 
 /** Seed `newId` as a fork of `parentId` on the SERVER (its ChatMeta resumes the parent's
@@ -311,7 +330,7 @@ function postConfig(chatId: string, patch: { model?: string; effort?: string; fo
  *  JSONL transcript until the fork diverges. The parent session is untouched (ADR 0004). */
 export function forkSession(parentId: string, newId: string): void {
   ensureSession(newId);
-  void fetch(bridgeUrl(newId, `/api/chat/${newId}/fork`), { method: 'POST', headers: withPadCanvasHeader({ 'content-type': 'application/json' }), body: JSON.stringify({ from: parentId }) })
+  void fetch(bridgeUrl(newId, `/api/chat/${newId}/fork`), { method: 'POST', headers: chatHeaders(newId, { 'content-type': 'application/json' }), body: JSON.stringify({ from: parentId }) })
     .then(() => rehydrate(newId))
     .catch(() => {});
 }
@@ -486,7 +505,7 @@ async function dispatchSend(chatId: string, message: string, images: PendingImag
     // carries only the turn's content.
     const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/send`), {
       method: 'POST',
-      headers: withPadCanvasHeader({ 'content-type': 'application/json' }),
+      headers: chatHeaders(chatId, { 'content-type': 'application/json' }),
       body: JSON.stringify({ message, images: images.map(({ media_type, data }) => ({ media_type, data })) }),
     });
     // fetch only rejects on a network failure, so an HTTP error status (425 Too Early =
@@ -517,7 +536,7 @@ export async function interrupt(chatId: string): Promise<void> {
   if (!s || !s.busy) return;
   if (s.queue.length) update(chatId, { queue: [] });
   try {
-    await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/interrupt`), { method: 'POST', headers: withPadCanvasHeader() });
+    await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/interrupt`), { method: 'POST', headers: chatHeaders(chatId) });
   } catch {
     /* ignore */
   }

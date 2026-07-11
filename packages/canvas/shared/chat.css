@@ -59,6 +59,7 @@
   padding: 1px 4px;
   cursor: pointer;
 }
+.chat-dock,
 .chat-fork {
   font: inherit;
   font-weight: 400;
