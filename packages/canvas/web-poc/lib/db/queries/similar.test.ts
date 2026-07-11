@@ -15,7 +15,7 @@ import { findSimilarProblems } from "./similar.js";
  * activates a small set of dimensions, so "closeness" is easy to reason about.
  */
 
-const MIGRATIONS_DIR = fileURLToPath(new URL("../../migrations", import.meta.url));
+const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url));
 
 /** Every migration's statements, in order — mirrors what the real migrator applies. */
 function migrationStatements(): string[] {

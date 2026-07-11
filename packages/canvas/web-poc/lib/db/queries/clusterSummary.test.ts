@@ -16,7 +16,7 @@ import {
  * Cluster-summary cache + membership. Fixture (one workspace):
  *   A —identical→ B —partial→ C   (C has an accepted solution, B a draft)
  */
-const MIGRATIONS_DIR = fileURLToPath(new URL("../../migrations", import.meta.url));
+const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url));
 
 /** Every migration's statements, in order — mirrors what the real migrator applies. */
 function migrationStatements(): string[] {

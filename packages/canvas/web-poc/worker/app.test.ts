@@ -13,7 +13,7 @@ import { buildApp } from "./index.js";
 import { drainAgentJobs } from "./worker.js";
 
 const MIGRATIONS_DIR = fileURLToPath(
-  new URL("../../../packages/db/migrations", import.meta.url).href,
+  new URL("../lib/db/migrations", import.meta.url).href,
 );
 
 /** Every migration's statements, in order — mirrors what the real migrator applies. */
@@ -132,11 +132,9 @@ describe("POST /v1/problems (intake + agent pipeline)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("reads a problem from another workspace (access spans all workspaces)", async () => {
+  it("cannot read a problem from another workspace (isolation, #57)", async () => {
     const res = await req("/v1/problems/prob_seed", {}, "ws_other");
-    expect(res.status).toBe(200);
-    const detail = (await res.json()) as { problem: { id: string } };
-    expect(detail.problem.id).toBe("prob_seed");
+    expect(res.status).toBe(404);
   });
 });
 
@@ -382,8 +380,8 @@ describe("GET /v1/problems/:id/cluster-summary (Tier 3)", () => {
   });
 });
 
-describe("access model: lists span all workspaces", () => {
-  it("lists problems across every workspace and narrows with ?workspaceId=", async () => {
+describe("access model: reads are confined to the active workspace (ADR-0007, #57)", () => {
+  it("lists only the active workspace's problems; an out-of-scope ?workspaceId= yields nothing", async () => {
     // Create a problem that lives in ws_other.
     const created = (await (
       await req(
@@ -394,35 +392,42 @@ describe("access model: lists span all workspaces", () => {
     ).json()) as { problem: { id: string; workspaceId: string } };
     expect(created.problem.workspaceId).toBe("ws_other");
 
-    // Default list (called as ws_test) spans all workspaces.
+    // Default list (called as ws_test) never sees ws_other's rows.
     const all = (await (await req("/v1/problems?limit=100")).json()) as {
       items: { workspaceId: string }[];
     };
     const wsIds = new Set(all.items.map((p) => p.workspaceId));
     expect(wsIds.has(WORKSPACE)).toBe(true);
-    expect(wsIds.has("ws_other")).toBe(true);
+    expect(wsIds.has("ws_other")).toBe(false);
 
-    // ?workspaceId= narrows to a single workspace.
+    // An explicit ?workspaceId= outside the caller's scope is forced empty, not honoured.
     const narrowed = (await (await req("/v1/problems?limit=100&workspaceId=ws_other")).json()) as {
       items: { id: string; workspaceId: string }[];
     };
-    expect(narrowed.items.length).toBeGreaterThan(0);
-    expect(narrowed.items.every((p) => p.workspaceId === "ws_other")).toBe(true);
-    expect(narrowed.items.some((p) => p.id === created.problem.id)).toBe(true);
+    expect(narrowed.items).toEqual([]);
+
+    // The row exists — its own workspace sees it.
+    const own = (await (await req("/v1/problems?limit=100", {}, "ws_other")).json()) as {
+      items: { id: string }[];
+    };
+    expect(own.items.some((p) => p.id === created.problem.id)).toBe(true);
   });
 
-  it("lists every workspace via GET /v1/workspaces", async () => {
+  it("GET /v1/workspaces returns only the active workspace", async () => {
     const res = await req("/v1/workspaces");
     expect(res.status).toBe(200);
     const ids = ((await res.json()) as { id: string }[]).map((w) => w.id);
     expect(ids).toContain(WORKSPACE);
-    expect(ids).toContain("ws_other");
+    expect(ids).not.toContain("ws_other");
   });
 
-  it("activates an existing workspace and 404s an unknown one", async () => {
-    const ok = await req("/v1/workspaces/ws_other/activate", { method: "POST" });
+  it("activates the active workspace; any other is a 404, same as an unknown one", async () => {
+    const ok = await req(`/v1/workspaces/${WORKSPACE}/activate`, { method: "POST" });
     expect(ok.status).toBe(200);
-    expect(((await ok.json()) as { id: string }).id).toBe("ws_other");
+    expect(((await ok.json()) as { id: string }).id).toBe(WORKSPACE);
+
+    const other = await req("/v1/workspaces/ws_other/activate", { method: "POST" });
+    expect(other.status).toBe(404);
 
     const missing = await req("/v1/workspaces/ws_nope/activate", { method: "POST" });
     expect(missing.status).toBe(404);

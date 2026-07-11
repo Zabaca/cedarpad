@@ -8,7 +8,7 @@ import * as schema from "../schema.js";
 import { claimNextAgentJob, enqueueAgentJob } from "./jobs.js";
 
 /** In-memory DB built from the real migrations (mirrors the other query tests). */
-const MIGRATIONS_DIR = fileURLToPath(new URL("../../migrations", import.meta.url));
+const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url));
 function migrationStatements(): string[] {
   return readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))

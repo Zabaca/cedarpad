@@ -9,7 +9,7 @@ import { buildApp, DOC_CONFIG } from "../worker/index.js";
  * test (`src/openapi.test.ts`) fails CI if it falls out of sync with the
  * contract. Run after any change to `@cedarpad/contract`.
  */
-const out = join(dirname(fileURLToPath(import.meta.url)), "../../../openapi.json");
+const out = join(dirname(fileURLToPath(import.meta.url)), "../openapi.json");
 const doc = buildApp().getOpenAPIDocument(DOC_CONFIG);
 writeFileSync(out, `${JSON.stringify(doc, null, 2)}\n`);
 console.log(`Wrote OpenAPI document → ${out}`);
