@@ -603,6 +603,65 @@ body,
   font-size: 13px;
 }
 
+/* The docked chat panel (canvas stage): [picker | chat | pad]. Exists only while a chat
+   is docked; the same shared <ChatView> chrome as the Inbox thread, de-carded the same way. */
+.canvas-dock {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+}
+.canvas-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.canvas-dock-head b {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-dock-head button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 3px 9px;
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+}
+.canvas-dock-head button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.canvas-dock-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.canvas-dock-body .chat-card {
+  border-radius: 0;
+  box-shadow: none;
+}
+.canvas-dock-body .chat-card-head {
+  cursor: default; /* no drag handle outside the canvas */
+}
+.canvas-dock-divider {
+  flex: none;
+  width: 5px;
+  cursor: col-resize;
+  background: var(--line);
+}
+.canvas-dock-divider:hover {
+  background: var(--accent);
+}
+
 /* Jobs stage (trigger background-agent runs; observation lives in the Inbox). */
 .stage-jobs {
   display: flex;

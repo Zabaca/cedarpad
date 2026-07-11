@@ -10,7 +10,9 @@ import { requestFork, setActiveChat } from '../src/agent-link';
 import { EFFORTS, ensureSession, getSnapshot, interrupt, MODELS, openStream, type PendingImage, send, setEffort, setModel, subscribe } from './chat-store';
 import { MarkdownMessage } from './MarkdownMessage';
 
-export function ChatView({ chatId, title }: { chatId: string; title: string }) {
+// `onDock` (optional) renders the dock affordance — only the embedded pad passes it
+// (ChatShape); the Inbox thread and the Shell's own docked panel render without one.
+export function ChatView({ chatId, title, onDock }: { chatId: string; title: string; onDock?: () => void }) {
   ensureSession(chatId); // idempotent sync load so the first render has the transcript
   const snap = React.useSyncExternalStore(
     React.useCallback((cb) => subscribe(chatId, cb), [chatId]),
@@ -122,6 +124,17 @@ export function ChatView({ chatId, title }: { chatId: string; title: string }) {
           <span className="chat-ctx" title="Context window used on the last turn">
             {snap.contextPct}%
           </span>
+        )}
+        {onDock && (
+          <button
+            type="button"
+            className="chat-dock"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onDock}
+            title="Dock this chat into the side panel (the card stays)"
+          >
+            ⇱
+          </button>
         )}
         <button
           type="button"

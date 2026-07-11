@@ -6,6 +6,7 @@ import { activeCanvasId } from './active-canvas';
 import { getActiveChat, setForkHandler } from './agent-link';
 import { ChatShapeUtil } from './ChatShape';
 import { closeSession, forkSession } from '../shared/chat-store';
+import { DOCK_CHAT_DELETED, postDockMessage } from '../shared/dock-messages';
 import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
 import { wireSync } from './sync';
@@ -247,7 +248,10 @@ export default function App() {
             if (rec.typeName === 'shape' && (rec as { type?: string }).type === 'chat') {
               // An attached card fronts an existing chat via props.chatId (attach flow).
               const props = (rec as { props?: { chatId?: string } }).props;
-              closeSession(props?.chatId || rec.id);
+              const chatId = props?.chatId || rec.id;
+              closeSession(chatId);
+              // Tell the embedding Shell (if any): a docked panel fronting this chat undocks.
+              postDockMessage({ type: DOCK_CHAT_DELETED, chatId });
             }
           }
         },

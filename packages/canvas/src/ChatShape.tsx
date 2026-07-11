@@ -7,6 +7,7 @@ import { T, type TLBaseShape } from 'tldraw';
 
 import { setActiveChat } from './agent-link';
 import { ChatView } from '../shared/ChatView';
+import { DOCK_CHAT, isEmbedded, postDockMessage } from '../shared/dock-messages';
 import { type EventGuards, InteractiveBoxShapeUtil } from './InteractiveBoxShapeUtil';
 import { inChatBody, inChatLog, isInteractiveControl } from './predicates';
 
@@ -48,6 +49,12 @@ export class ChatShapeUtil extends InteractiveBoxShapeUtil<'chat', { title: stri
   override onContainerPointerDown = (shape: ChatShapeTl) => setActiveChat(chatIdOf(shape));
 
   protected override renderContent(shape: ChatShapeTl) {
-    return <ChatView chatId={chatIdOf(shape)} title={shape.props.title} />;
+    const chatId = chatIdOf(shape);
+    // The dock gesture (CONTEXT.md "Docked chat"): only when embedded in the Shell —
+    // a standalone pad tab has no panel to dock into.
+    const onDock = isEmbedded()
+      ? () => postDockMessage({ type: DOCK_CHAT, chatId, title: shape.props.title })
+      : undefined;
+    return <ChatView chatId={chatId} title={shape.props.title} onDock={onDock} />;
   }
 }

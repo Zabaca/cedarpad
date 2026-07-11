@@ -191,6 +191,12 @@ to be re-homed.)
   In the Inbox thread, the linked canvas renders as a **third pane** — the live Render
   Pad iframe, the same live-synced surface as the canvas stage, never a snapshot; with
   no edge, the pane offers create/attach.
+- **Docked chat** (canvas stage): a chat card can be **docked** into a chat pane beside
+  the pad — a *mirror*, never a move: the card stays on the canvas and both are live
+  views of the same Session. One slot per canvas (docking another replaces it); undock
+  just empties the slot; deleting the docked chat's card closes the session and undocks
+  (the card is the chat's presence on the canvas — the pane is only a projection of it).
+  Which chat is docked is per-device UI memory, not domain state — no schema edge.
 - The Inbox is a **unified session index**: EVERY Session gets a Conversation row (created on
   its first turn, idempotent by `sessionId`), so the one surface lists all sessions — canvas
   chats and background-agent runs alike. `end_turn` never *creates* the row; it just sets its
@@ -202,9 +208,8 @@ to be re-homed.)
     in `none` (exists, nothing pending).
   - `unread`: new agent activity since I last looked.
   - **Views** (the list filter), each sorted by last-activity with `waiting-on:human` pinned:
-    - **Needs me** (default) = `status:open` + `waiting-on:human` — the attention subset (this
-      is the pre-unification "inbox"). Keeps background-agent items from drowning in canvas chats.
-    - **All sessions** = `status:open` — the whole index, promoted or not.
+    - **Open** (default) = `status:open` — every open session, attention pinned to the top.
+    - **All sessions** = the whole index, open and closed.
     - **Closed** = the archive.
   - Agent can promote (open + waiting-on=human + notify), post activity (unread), and self-close.
     I can read, reply (waiting-on→agent), close, reopen.

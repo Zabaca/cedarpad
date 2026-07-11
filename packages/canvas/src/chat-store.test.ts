@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { type ChatEvent, isChatFrame } from '../shared/chat-wire.ts';
 import type { ChatSnapshot } from '../shared/chat-store';
-import { beatTargets, connectionTarget, ensureSession, forkSession, getSnapshot, interrupt, isSubscribed, openStream, routeChatFrame, send, setConnectionTarget, subscribe } from '../shared/chat-store';
+import { beatTargets, connectionTarget, ensureSession, forkSession, getSnapshot, interrupt, isSubscribed, openStream, routeChatFrame, send, setCanvasOverride, setConnectionTarget, subscribe } from '../shared/chat-store';
 import { aliveUrl } from './idle.ts';
 
 /** Serialize a wire frame the way the bridge does: a ChatEvent tagged with its chatId. */
@@ -468,6 +468,71 @@ describe('connection target: per-chatId bridge prefix (ADR-0009 slice #121)', ()
     // b and c share one bridge — it appears once, not twice.
     expect(beatTargets().filter((t) => t === '/inbox/convX/bridge')).toHaveLength(1);
   });
+});
+
+// Docked chat panel: the Shell renders a canvas chat OUTSIDE the pad URL, so the
+// location-based x-canvas-id stamp (withPadCanvasHeader) can't see its canvas. An explicit
+// per-chat override keeps that chat's sends routed to — and claiming — the canvas the
+// panel fronts, without ever stamping chats that have no canvas (Inbox threads).
+describe('canvas override: a Shell-docked canvas chat stamps x-canvas-id explicitly', () => {
+  function withHeaderSpy(run: (ctx: { headersFor: (path: string) => Record<string, string> | undefined; fireOpen: () => void }) => Promise<void>) {
+    return async () => {
+      const realES = (globalThis as Record<string, unknown>).EventSource;
+      const realFetch = globalThis.fetch;
+      let inst: { onopen: (() => void) | null } | null = null;
+      (globalThis as Record<string, unknown>).EventSource = class {
+        onopen: (() => void) | null = null;
+        onerror: unknown = null;
+        onmessage: unknown = null;
+        constructor(_url: string) {
+          inst = this;
+        }
+        close() {}
+      };
+      const seen = new Map<string, Record<string, string>>();
+      globalThis.fetch = (async (url: unknown, init?: { headers?: Record<string, string> }) => {
+        seen.set(String(url), init?.headers ?? {});
+        return new Response('{"ok":true}', { status: 202, headers: { 'content-type': 'application/json' } });
+      }) as typeof fetch;
+      try {
+        await run({ headersFor: (path) => [...seen.entries()].find(([u]) => u.includes(path))?.[1], fireOpen: () => inst?.onopen?.() });
+      } finally {
+        globalThis.fetch = realFetch;
+        (globalThis as Record<string, unknown>).EventSource = realES;
+      }
+    };
+  }
+
+  test(
+    'send carries the overridden canvas id; an un-overridden chat carries none (per-chat isolation)',
+    withHeaderSpy(async ({ headersFor, fireOpen }) => {
+      const docked = 'chat_ov_docked';
+      const plain = 'chat_ov_plain';
+      setCanvasOverride(docked, 'cv_roadmap');
+      openStream(docked);
+      if (!isSubscribed(docked)) fireOpen();
+      openStream(plain);
+      if (!isSubscribed(plain)) fireOpen();
+
+      await send(docked, 'hi from the panel', []);
+      await send(plain, 'hi with no canvas', []);
+
+      expect(headersFor(`/api/chat/${docked}/send`)?.['x-canvas-id']).toBe('cv_roadmap');
+      // The claim is explicit, never a fallback: the plain chat must not be stamped at all.
+      expect(headersFor(`/api/chat/${plain}/send`)?.['x-canvas-id']).toBeUndefined();
+    }),
+  );
+
+  test(
+    'the transcript rehydrate carries the override too (the docked chat reads its canvas session)',
+    withHeaderSpy(async ({ headersFor }) => {
+      const id = 'chat_ov_rehydrate';
+      setCanvasOverride(id, 'cv_roadmap');
+      openStream(id);
+      await new Promise((r) => setTimeout(r, 0)); // let rehydrate's fetch settle
+      expect(headersFor(`/api/chat/${id}/transcript`)?.['x-canvas-id']).toBe('cv_roadmap');
+    }),
+  );
 });
 
 describe('aliveUrl: the heartbeat URL under a connection-target prefix (slice #121)', () => {
