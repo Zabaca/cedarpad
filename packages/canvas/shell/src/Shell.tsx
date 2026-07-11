@@ -3,7 +3,8 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { canvasFromUrl, urlWithCanvas } from './canvas-url';
 import { InboxStage } from './inbox/Inbox';
 import { JobsStage } from './jobs/Jobs';
-import { type Stage, stageFromUrl, urlForStage } from './stage';
+import { type Stage, stageFromUrl } from './stage';
+import { createStageMemory } from './stage-memory';
 
 // Notebook mounts lazily (PRD #103, slice #107) — the same lazy chunk the container app
 // used to code-split (`src/App.tsx` pre-#106) — so opening the canvas or inbox stage never
@@ -93,17 +94,29 @@ function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, onC
 
 export function Shell() {
   const [stage, setStage] = useState<Stage>(() => stageFromUrl(window.location.search));
+  // Per-tab memory of each stage's last URL (canvas's `?canvas=<id>`, inbox's filters — see
+  // stage-memory.ts), so the rail restores them instead of always landing on the bare default.
+  const stageMemory = useRef(createStageMemory()).current;
 
-  // Stage selection is a URL, so a reload/bookmark/back-button lands on the same stage.
+  // Stage selection is a URL, so a reload/bookmark/back-button lands on the same stage. Before
+  // leaving, remember the outgoing stage's current search so returning to it restores it.
   const selectStage = (next: Stage) => {
+    stageMemory.remember(stage, window.location.search);
     setStage(next);
-    window.history.pushState(null, '', urlForStage(next));
+    window.history.pushState(null, '', stageMemory.urlFor(next));
   };
   useEffect(() => {
-    const onPop = () => setStage(stageFromUrl(window.location.search));
+    // Back/forward already re-derives the stage from its own history entry, which carries the
+    // full state (each stage's replaceState calls keep it current). Just sync memory to match,
+    // rather than having memory override what popstate restored.
+    const onPop = () => {
+      const next = stageFromUrl(window.location.search);
+      stageMemory.remember(next, window.location.search);
+      setStage(next);
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  }, [stageMemory]);
 
   // The canvas registry, loaded once here rather than per-stage: it names the active
   // workspace (the cs_workspace cookie is HttpOnly, so the client can't read it), which the

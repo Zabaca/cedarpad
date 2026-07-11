@@ -47,6 +47,7 @@ function stubEdge() {
     calls.push(`${init?.method ?? 'GET'} ${url}`);
     if (url === '/api/workspaces') return Response.json(WORKSPACES);
     if (url === '/api/canvases') return Response.json(CANVASES);
+    if (url.startsWith('/api/inbox?')) return Response.json({ items: [] });
     // Better Auth's session check, so the lazily-mounted Notebook (slice #107) renders its
     // authenticated view instead of <AuthScreen/> — the Shell itself already sits behind
     // the edge auth gate, so under the Shell this always resolves.
@@ -263,5 +264,48 @@ describe('the notebook stage mounts WebPocApp with no second chrome', () => {
 
     // /api/canvases (fetched by the Shell itself) reported ws_abc as the active workspace.
     expect(calls.some((c) => c.includes('/v1/items') && c.includes('workspaceId=ws_abc'))).toBe(true);
+  });
+});
+
+// The rail used to build a fresh urlForStage(next) on every click, dropping whatever
+// query params the outgoing stage had accumulated (canvas's ?canvas=<id>, inbox's filters).
+// A reload restored them fine (they're read from the URL on mount); rail navigation didn't.
+// Stage memory (stage-memory.ts) closes that gap.
+describe('the rail remembers each stage’s URL state across navigation', () => {
+  test('picking a canvas, leaving to Inbox, and returning to Canvases restores ?canvas=', async () => {
+    await click([...container.querySelectorAll('.page-row')][1] ?? null);
+    expect(window.location.search).toBe('?canvas=cv_1');
+
+    await click(byTitle('Inbox'));
+    expect(window.location.search).toBe('?stage=inbox');
+
+    await click(byTitle('Canvases'));
+    expect(window.location.search).toBe('?canvas=cv_1');
+    expect(container.querySelector('iframe')?.getAttribute('src')).toBe('/w/ws_abc/canvas/cv_1/pad');
+  });
+
+  test('changing the inbox view filter, leaving, and returning restores it', async () => {
+    await click(byTitle('Inbox'));
+    await waitFor(() => calls.includes('GET /api/inbox?view=needs-me'));
+
+    const viewSelect = container.querySelector<HTMLSelectElement>('[aria-label="View filter"]');
+    expect(viewSelect).not.toBeNull();
+    await act(async () => {
+      viewSelect!.value = 'open';
+      viewSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(window.location.search).toBe('?stage=inbox&view=open');
+
+    await click(byTitle('Notebook'));
+    expect(window.location.search).toBe('?stage=notebook');
+
+    await click(byTitle('Inbox'));
+    expect(window.location.search).toBe('?stage=inbox&view=open');
+    expect(container.querySelector<HTMLSelectElement>('[aria-label="View filter"]')?.value).toBe('open');
+  });
+
+  test('a stage’s first visit still gets the bare urlForStage default', async () => {
+    await click(byTitle('Jobs'));
+    expect(window.location.search).toBe('?stage=jobs');
   });
 });
