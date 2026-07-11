@@ -4,6 +4,7 @@ import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
 import { orderInbox, viewToListOpts } from './inbox-view.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
+import { activeWorkspaceId } from './shell.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
 
@@ -19,7 +20,7 @@ const db = (env: Env) => createDbForWorker(env as unknown as Bindings);
 
 /**
  * The edge Inbox API, user-scoped from the authenticated session:
- *   GET  /api/inbox                 → { items: InboxItem[] }  (filters: status, workspace)
+ *   GET  /api/inbox                 → { items: InboxItem[] }  (filter: status; scoped to the active workspace)
  *   GET  /api/inbox/:id             → { conversation }  (Turso metadata only — never wakes a runner)
  *   POST /api/inbox/:id/reply       → forwarded to the container bridge (wakes it, #61)
  *   POST /api/inbox/:id/close       → store close
@@ -39,9 +40,12 @@ export async function handleInboxApi(
   // List.
   if (!id) {
     if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
-    // Unified session index: `?view=needs-me|all|closed` (default needs-me = the attention subset).
+    // Scoped to the ACTIVE workspace (the cs_workspace cookie, exactly how /api/canvases scopes) —
+    // an unknown/non-owned cookie 404s, same as handleCanvasesApi's mutation routes.
+    const workspaceId = await activeWorkspaceId(request, database, user);
+    if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
+    // Unified session index: `?view=open|all|closed` (default open).
     const listOpts = viewToListOpts(url.searchParams.get('view'));
-    const workspaceId = url.searchParams.get('workspace') ?? undefined;
     const rows = await conversations.list(database, user.id, { ...listOpts, workspaceId });
     return Response.json({ items: orderInbox(rows) });
   }

@@ -54,12 +54,13 @@ const CanvasView = z.object({ id: z.string(), name: z.string() });
 export type CanvasView = z.infer<typeof CanvasView>;
 
 /**
- * Resolve the active workspace for a canvas-registry call from the `cs_workspace`
- * cookie (set by /w/:id), enforcing ownership. Returns the workspace id to scope by,
- * or null when the selection is an unknown/non-owned workspace (⇒ the caller 404s).
- * The `default` id needs no registry row (the legacy prod workspace).
+ * Resolve the active workspace for a request from the `cs_workspace` cookie (set by
+ * /w/:id), enforcing ownership. Returns the workspace id to scope by, or null when the
+ * selection is an unknown/non-owned workspace (⇒ the caller 404s). The `default` id
+ * needs no registry row (the legacy prod workspace). Shared with the edge Inbox list
+ * (worker/inbox.ts), which scopes to the same active workspace as `/api/canvases`.
  */
-async function activeWorkspaceId(request: Request, database: Database, user: GateUser): Promise<string | null> {
+export async function activeWorkspaceId(request: Request, database: Database, user: GateUser): Promise<string | null> {
   const selected = readWorkspaceCookie(request.headers.get('cookie')) ?? DEFAULT_WORKSPACE_ID;
   if (selected === DEFAULT_WORKSPACE_ID) return DEFAULT_WORKSPACE_ID;
   const ws = await getWorkspace(database, selected, user.id);
