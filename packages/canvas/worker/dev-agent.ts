@@ -9,13 +9,6 @@ import type { mintDevAgentGitToken } from './github-app.ts';
 // separate execution path. Kept free of any `@cloudflare/sandbox` / `cloudflare:workers`
 // import so it's unit-testable off the edge runtime (the serve fn is injected).
 
-// The LOGICAL dev-agent tag (=== DEV_AGENT_WORKSPACE_ID in server/dev-agent-workflow.ts):
-// the Conversation.workspaceId a dev-agent run files under. NOT a container key (ADR-0010)
-// — dev-agent Conversations resume on the warm default container. Product workspace ids are
-// `'default'` and registry `cs_…` ids (derived containers are `workspace-<id>`), so
-// `'dev-agent'` stays disjoint from every product id by construction.
-export const DEV_AGENT_SANDBOX_ID = 'dev-agent';
-
 // The bridge route that runs one dev-agent run as a headless chat turn. The producer side
 // of the path contract; the consumer is the route match in server/bridge.ts.
 export const DEV_AGENT_RUN_PATH = '/api/dev-agent/run';

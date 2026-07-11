@@ -12,19 +12,20 @@
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { PrRequest, Worktree } from './repo-worktree.ts';
 
-// ── Routing: which Conversations are dev-agent workflows ──────────────────────────────
+// ── Which Conversations are dev-agent workflows ───────────────────────────────────────
 //
-// A dev-agent Conversation is tagged with THIS workspace id — a LOGICAL tag, not a container
-// key (ADR-0010): dev-agent Conversations resume on the warm default container. Disjoint
-// from every product workspace id (registry ids like `cs_...` / the default) by
-// construction. The edge proxy routes on it and mints the per-send git token for it; the
-// bridge's `turnFlavor` files token-armed turns under it.
-export const DEV_AGENT_WORKSPACE_ID = 'dev-agent';
+// Dev-agent-ness is the Conversation's KIND — a session TYPE, not a workspace. The rows
+// live in the workspace they run in (the default container's), like any chat; `kind`
+// carries what used to be the `workspace_id = 'dev-agent'` logical tag (the fake workspace
+// overloaded routing/mint/labeling onto a field that means "isolated environment"). The
+// edge proxy mints the per-send git token for this kind; the bridge's `turnFlavor` files
+// token-armed turns under it. The same string also prefixes dev-agent PR branch names.
+export const DEV_AGENT_KIND = 'dev-agent';
 
-/** True iff this Conversation was promoted by the dev-agent (so its sends are token-armed
- *  and it opens its PR via the `open_pr` tool). The dev-agent routing predicate. */
-export function isDevAgentConversation(conv: Pick<ConversationRow, 'workspaceId'>): boolean {
-  return conv.workspaceId === DEV_AGENT_WORKSPACE_ID;
+/** True iff this Conversation is a dev-agent session (so its sends are token-armed and it
+ *  opens its PR via the `open_pr` tool). */
+export function isDevAgentConversation(conv: Pick<ConversationRow, 'kind'>): boolean {
+  return conv.kind === DEV_AGENT_KIND;
 }
 
 // ── The PR half: the `open_pr` tool ───────────────────────────────────────────────────

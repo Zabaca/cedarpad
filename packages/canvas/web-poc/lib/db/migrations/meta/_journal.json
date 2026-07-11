@@ -50,6 +50,20 @@
       "when": 1783716176713,
       "tag": "0006_awesome_drax",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1783730513394,
+      "tag": "0007_massive_justice",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1783730513542,
+      "tag": "0008_backfill_dev_agent_kind",
+      "breakpoints": true
     }
   ]
 }

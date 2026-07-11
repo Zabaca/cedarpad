@@ -19,7 +19,7 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
   const calls: string[] = [];
   const deps: TurnDeps = {
     aborters: new Map(),
-    flavor: () => ({ workspaceId: 'default', skills: ['impeccable', 'tdd'] }),
+    flavor: () => ({ workspaceId: 'default', kind: 'chat' as const, skills: ['impeccable', 'tdd'] }),
     getSession: async () => {
       calls.push('getSession');
       return fakeSession;

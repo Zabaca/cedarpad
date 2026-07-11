@@ -20,6 +20,7 @@ export async function create(
     sessionId: string;
     userId: string;
     workspaceId: string;
+    kind?: (typeof conversations.kind.enumValues)[number];
     ownerRef?: string | null;
     canvasId?: string | null;
     summary?: string | null;
@@ -33,6 +34,7 @@ export async function create(
       sessionId: input.sessionId,
       userId: input.userId,
       workspaceId: input.workspaceId,
+      kind: input.kind ?? "chat",
       ownerRef: input.ownerRef ?? null,
       canvasId: input.canvasId ?? null,
       summary: input.summary ?? null,

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { GateUser } from './auth-gate.ts';
-import { DEV_AGENT_SANDBOX_ID } from './dev-agent.ts';
+import { DEV_AGENT_KIND } from '../server/dev-agent-workflow.ts';
 import { LEGACY_SANDBOX_ID, type SandboxCoords } from './sandbox-resolver.ts';
 
 // The edge chat proxy (`handleInboxBridge`) proxies a Conversation's chat traffic to its owning
@@ -54,6 +54,7 @@ const row = (o: Partial<ConversationRow> = {}): ConversationRow =>
     lastActivity: new Date(0),
     ownerRef: null,
     canvasId: null,
+    kind: 'chat',
     workspaceId: 'default',
     userId: 'u_1',
     summary: null,
@@ -144,7 +145,7 @@ describe('handleInboxBridge: the inbox triage flip on a proxied send', () => {
 // degrades to a token-less send (the turn just has no open_pr), never a blocked reply.
 describe('handleInboxBridge: the dev-agent git token is minted onto a proxied send (ADR-0010)', () => {
   test('a dev-agent send carries x-dev-agent-git-token to the owning bridge', async () => {
-    conv = row({ workspaceId: DEV_AGENT_SANDBOX_ID });
+    conv = row({ kind: DEV_AGENT_KIND });
     await proxy('POST', '/api/chat/chat_home/send');
 
     expect(mintCalls).toBe(1);
@@ -160,7 +161,7 @@ describe('handleInboxBridge: the dev-agent git token is minted onto a proxied se
   });
 
   test('a dev-agent transcript GET / alive beat never mints (only a send arms open_pr)', async () => {
-    conv = row({ workspaceId: DEV_AGENT_SANDBOX_ID });
+    conv = row({ kind: DEV_AGENT_KIND });
     await proxy('GET', '/api/chat/chat_home/transcript');
     await proxy('POST', '/api/alive');
 
@@ -169,7 +170,7 @@ describe('handleInboxBridge: the dev-agent git token is minted onto a proxied se
   });
 
   test('a failed mint (null) still proxies the send — token-less, never blocked', async () => {
-    conv = row({ workspaceId: DEV_AGENT_SANDBOX_ID });
+    conv = row({ kind: DEV_AGENT_KIND });
     mintResult = null;
     const res = await proxy('POST', '/api/chat/chat_home/send');
 
@@ -186,11 +187,11 @@ describe('handleInboxBridge: which runner bridge a Conversation is proxied to (c
     await settle();
 
     expect(served).toHaveLength(1);
-    expect(served[0]?.sandboxId).not.toBe(DEV_AGENT_SANDBOX_ID);
+    expect(served[0]?.sandboxId).not.toBe(DEV_AGENT_KIND);
   });
 
   test('a dev-agent Conversation resumes on the WARM default container (ADR-0010: a role, not a container)', async () => {
-    conv = row({ workspaceId: DEV_AGENT_SANDBOX_ID });
+    conv = row({ kind: DEV_AGENT_KIND }); // workspaceId stays 'default' — kind is the type, not a workspace
     await proxy('GET', '/api/chat/chat_home/transcript');
     await settle();
 

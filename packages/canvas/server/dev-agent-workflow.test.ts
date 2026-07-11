@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import type { PrRequest, Worktree } from './repo-worktree.ts';
 import {
-  DEV_AGENT_WORKSPACE_ID,
+  DEV_AGENT_KIND,
   type OpenPrDeps,
   isDevAgentConversation,
   openDevAgentPr,
@@ -73,10 +73,9 @@ describe('openDevAgentPr — the open_pr tool drives commit → PR on the runner
 
 // ── routing ───────────────────────────────────────────────────────────────────────────
 
-describe('isDevAgentConversation — dev-agent routing predicate', () => {
-  test('true for a dev-agent-tagged Conversation, false otherwise', () => {
-    expect(isDevAgentConversation({ workspaceId: DEV_AGENT_WORKSPACE_ID })).toBe(true);
-    expect(isDevAgentConversation({ workspaceId: 'cs_workspace_abc' })).toBe(false);
-    expect(isDevAgentConversation({ workspaceId: 'default' })).toBe(false);
+describe('isDevAgentConversation — the session-type predicate', () => {
+  test('true for a dev-agent-KINDED Conversation, false for a chat', () => {
+    expect(isDevAgentConversation({ kind: DEV_AGENT_KIND })).toBe(true);
+    expect(isDevAgentConversation({ kind: 'chat' })).toBe(false);
   });
 });

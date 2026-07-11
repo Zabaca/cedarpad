@@ -40,7 +40,7 @@ export interface TurnDeps {
   aborters: Map<string, AbortController>;
   /** The edge-minted token is the COMPLETE definition of a dev-agent turn: it decides the
    *  Inbox workspace tag + the skill allowlist (bridge.turnFlavor). */
-  flavor: (token: string | undefined) => { workspaceId: string; skills: string[] };
+  flavor: (token: string | undefined) => { workspaceId: string; kind: 'chat' | 'dev-agent'; skills: string[] };
   /** Resolve the request's active canvas session (#79) — the agent reads/draws on THAT store. */
   getSession: (canvasId: string) => Promise<CanvasSession>;
   /** Where an UNADDRESSED turn routes (the bridge's default canvas id). */
@@ -63,7 +63,7 @@ export interface TurnDeps {
    *  returned promise is AWAITED before the settle upsert, so the create-at-init and the
    *  settle-time find-or-create can never race into two rows for one chat (ownerRef has no
    *  unique index). Best-effort — never throws into the turn. */
-  indexSession: (chatId: string, sessionId: string, message: string, workspaceId: string, canvasId?: string) => Promise<void>;
+  indexSession: (chatId: string, sessionId: string, message: string, workspaceId: string, canvasId?: string, kind?: 'chat' | 'dev-agent') => Promise<void>;
   /** Persist the (possibly new/forked) resume pointer for this chat (ADR 0004). */
   stampSession: (chatId: string, sessionId: string) => void;
   /** ADR 0003 turn-completion persistence batch. */
@@ -76,6 +76,7 @@ export interface TurnDeps {
     message: string;
     workspaceId: string;
     canvasId?: string;
+    kind?: 'chat' | 'dev-agent';
   }) => Promise<void>;
   /** Mirror this session's transcript to R2 (resume-restore substrate). Best-effort. */
   backupTranscript: (sessionId: string) => Promise<unknown>;
@@ -100,7 +101,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
     // The request's active canvas (#79): the agent's reads, writes, tools, and screenshot
     // round-trip all use THIS store, so shapes land on the human's canvas and broadcast there.
     const session = await deps.getSession(canvasId ?? deps.defaultCanvasId);
-    const inbox = { ...deps.inbox, workspaceId: flavor.workspaceId, ownerRef: chatId };
+    const inbox = { ...deps.inbox, workspaceId: flavor.workspaceId, kind: flavor.kind, ownerRef: chatId };
     // A dev-agent send runs in its prepared worktree with open_pr armed; a prepare failure
     // (clone/auth) surfaces through the catch below as the turn's error — better a visible
     // failure than an agent silently editing the live app tree.
@@ -129,7 +130,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       if (ev.kind === 'init') {
         finalSessionId = ev.sessionId;
         // The EXPLICIT canvas (never the routing default) is the chat→canvas edge claim.
-        indexed = deps.indexSession(chatId, ev.sessionId, message, flavor.workspaceId, canvasId);
+        indexed = deps.indexSession(chatId, ev.sessionId, message, flavor.workspaceId, canvasId, flavor.kind);
       }
       deps.broadcast(chatId, ev satisfies ChatEvent);
     }
@@ -145,7 +146,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // The race fix: let the row-at-start create settle before the settle-time upsert reads
       // it, so find-or-create-by-chat finds the one row instead of inserting a second.
       await indexed.catch(() => {});
-      await deps.settleConversation({ chatId, sessionId: finalSessionId, message, workspaceId: flavor.workspaceId, canvasId });
+      await deps.settleConversation({ chatId, sessionId: finalSessionId, message, workspaceId: flavor.workspaceId, canvasId, kind: flavor.kind });
       await deps.backupTranscript(finalSessionId);
     }
   }

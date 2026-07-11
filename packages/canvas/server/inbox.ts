@@ -29,7 +29,7 @@ export type Notify = (conversation: ConversationRow, question: string) => void |
  */
 export async function findOrCreateConversation(
   db: Database,
-  input: { sessionId: string; userId: string; workspaceId: string; summary?: string | null; ownerRef?: string; canvasId?: string },
+  input: { sessionId: string; userId: string; workspaceId: string; kind?: 'chat' | 'dev-agent'; summary?: string | null; ownerRef?: string; canvasId?: string },
 ): Promise<ConversationRow> {
   // The chat→canvas edge is first-wins (attachCanvas only fills a null edge): a turn that
   // carries a canvas backfills chats born before capture, but never re-homes a linked chat.
@@ -53,6 +53,7 @@ export async function findOrCreateConversation(
     sessionId: input.sessionId,
     userId: input.userId,
     workspaceId: input.workspaceId,
+    kind: input.kind,
     ownerRef: input.ownerRef ?? null,
     canvasId: input.canvasId ?? null,
     summary: input.summary ?? null,
@@ -187,6 +188,8 @@ export interface EndTurnDeps {
   getSessionId: () => string | null;
   userId: string;
   workspaceId: string;
+  /** Session type ('chat' default): dev-agent turns file their Conversation under this kind. */
+  kind?: 'chat' | 'dev-agent';
   /** The bridge chatId owning this turn — the Conversation's identity key (ownerRef). */
   ownerRef?: string;
   notify?: Notify;
@@ -213,6 +216,7 @@ export async function endTurn(deps: EndTurnDeps, input: EndTurnInput): Promise<s
     sessionId,
     userId: deps.userId,
     workspaceId: deps.workspaceId,
+    kind: deps.kind,
     ownerRef: deps.ownerRef,
     summary: input.summary,
   });

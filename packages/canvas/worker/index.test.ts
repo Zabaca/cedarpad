@@ -355,14 +355,13 @@ describe('GET /inbox/:convId/bridge/* — the edge chat proxy, conv → owning b
   });
 
   test('a dev-agent conversation resumes on the WARM default container (ADR-0010)', async () => {
-    conv = convRow({ workspaceId: 'dev-agent', userId: 'u_1' });
+    // Dev-agent is a Conversation KIND now; the row lives in the workspace it runs in.
+    conv = convRow({ workspaceId: 'default', kind: 'dev-agent', userId: 'u_1' });
 
     await GET('/inbox/conv_1/bridge/api/chat/stream');
 
-    // The dev-agent is a Conversation tag, not a container: its chats resume on the same
-    // warm product container. NOT a derived `workspace-dev-agent` container either.
+    // No routing special-case: a dev-agent row routes like any default-workspace chat.
     expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
-    expect(served[0].sandboxId).not.toBe(resolve({ id: 'dev-agent' }).sandboxId);
   });
 
   test('a POST (send) is forwarded with its method + stripped sub-path to the owning container', async () => {
