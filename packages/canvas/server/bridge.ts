@@ -480,6 +480,19 @@ const turnDeps: TurnDeps = {
     ),
 };
 
+// Test seam: swap the turn's agent (`turnDeps.runChat`) on the live deps object. The
+// canvas-routing test needs the REAL runChatTurn (session resolution is what it tests)
+// with a fake agent — and `mock.module('./agent.ts')` can't deliver that once another
+// test file has already imported this module (bun's module cache binds first, so the
+// mock silently never applies and the real SDK runs). Production never calls this.
+export function setTurnRunChat(fn: TurnDeps['runChat']): () => void {
+  const prev = turnDeps.runChat;
+  turnDeps.runChat = fn;
+  return () => {
+    turnDeps.runChat = prev;
+  };
+}
+
 /** Run one turn for a chat and broadcast its events. Fire-and-forget (output is the SSE).
  * The turn runs against the session for `requestCanvasId` (the request's active canvas, #79)
  * so the agent reads/draws on the canvas the human is on; absent ⇒ the default store,
