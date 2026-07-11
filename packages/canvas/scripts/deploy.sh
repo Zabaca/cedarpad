@@ -8,24 +8,78 @@
 # Run it in the background (it can take ~10-15min): the rollout + cold boot are slow.
 #   bash packages/canvas/scripts/deploy.sh
 # Env overrides: CANVAS_URL (default https://poc.cedarpad.com), POLL_TRIES (default 60).
+#
+# CONCURRENT-EDIT SAFETY (incident: a deploy ran in the background while a rebase was
+# happening in the same checkout; the image baked mid-rebase conflict markers from
+# server/bridge.ts and the container crashed on boot). Two layers:
+#   1. Dirty tree is a HARD FAILURE by default (git status --porcelain non-empty), not
+#      just a warning. DEPLOY_ALLOW_DIRTY=1 restores the old warn-and-proceed behavior
+#      for an intentional "ship my uncommitted edits" deploy.
+#   2. On a clean tree, the whole build + deploy runs from a `git worktree` snapshot of
+#      HEAD, not the live checkout — so any edit (rebase, stray save) to the real
+#      checkout made *while the build is running* cannot leak into the image. The
+#      container's Dockerfile build context is the repo root (packages/canvas/
+#      wrangler.jsonc: image_build_context "../.."), so the WHOLE repo is snapshotted,
+#      not just packages/canvas. node_modules (untracked, install-heavy, and already
+#      stripped from the Docker build context by .dockerignore) is symlinked in from the
+#      real checkout rather than reinstalled, so this stays fast.
 set -uo pipefail
 
-cd "$(dirname "$0")/.."                       # packages/agent-canvas
-REPO_ROOT=$(git rev-parse --show-toplevel)
-SHA=$(git rev-parse --short HEAD)
+SCRIPT_DIR=$(cd "$(dirname "$0")/.." && pwd)          # packages/canvas (absolute)
+REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
+SHA=$(cd "$REPO_ROOT" && git rev-parse --short HEAD)
 URL=${CANVAS_URL:-https://poc.cedarpad.com}
 TRIES=${POLL_TRIES:-60}
+CANVAS_REL=$(cd "$SCRIPT_DIR" && git rev-parse --show-prefix | sed 's:/*$::')  # e.g. packages/canvas
 
-echo "→ stamping build-rev $SHA (uncommitted change = stamp is the working SHA, not what's deployed)"
-git diff --quiet && git diff --cached --quiet || echo "  ⚠️  working tree dirty — buildRev reflects HEAD, not your uncommitted edits"
+DC=$(mktemp -d)
+SNAPSHOT=""
+cleanup() {
+  rm -rf "$DC"
+  if [ -n "$SNAPSHOT" ]; then
+    git -C "$REPO_ROOT" worktree remove --force "$SNAPSHOT" 2>/dev/null
+    rm -rf "$SNAPSHOT"
+  fi
+}
+trap cleanup EXIT
+
+echo "→ checking working tree is clean (dirty tree can leak uncommitted/mid-edit code into the image)"
+DIRTY=$(git -C "$REPO_ROOT" status --porcelain)
+BUILD_ROOT="$REPO_ROOT"
+if [ -n "$DIRTY" ]; then
+  if [ "${DEPLOY_ALLOW_DIRTY:-}" = "1" ]; then
+    echo "  ⚠️  working tree dirty — DEPLOY_ALLOW_DIRTY=1 set, deploying the live checkout as-is (buildRev reflects HEAD, not your uncommitted edits)"
+  else
+    echo "❌ working tree is dirty — refusing to deploy (a concurrent edit mid-build is exactly how prod broke last time)."
+    echo "   Commit/stash your changes, or set DEPLOY_ALLOW_DIRTY=1 to deploy the live checkout anyway."
+    echo "$DIRTY"
+    exit 1
+  fi
+else
+  echo "→ tree is clean — building from an immutable snapshot of HEAD so a mid-build edit can't leak in"
+  SNAPSHOT=$(mktemp -d)
+  rmdir "$SNAPSHOT"
+  git -C "$REPO_ROOT" worktree add --detach "$SNAPSHOT" HEAD >/dev/null
+  # node_modules is untracked (git worktree add won't bring it) and is stripped from the
+  # Docker build context by .dockerignore anyway — symlink it in from the real checkout
+  # so host-side steps (bun run build, wrangler) don't need a fresh install.
+  while IFS= read -r nm; do
+    rel=${nm#"$REPO_ROOT"/}
+    mkdir -p "$SNAPSHOT/$(dirname "$rel")"
+    ln -s "$nm" "$SNAPSHOT/$rel"
+  done < <(find "$REPO_ROOT" -maxdepth 3 -name node_modules -not -path '*/node_modules/*')
+  BUILD_ROOT="$SNAPSHOT"
+fi
+
+CANVAS_DIR="$BUILD_ROOT/$CANVAS_REL"
+cd "$CANVAS_DIR"
+
+echo "→ stamping build-rev $SHA"
 printf '%s' "$SHA" > server/build-rev.txt
 
 # Headless Docker config (keychain/buildx workaround — see memory cf-container-deploy-headless).
-DC=$(mktemp -d)
 python3 -c "import json; c=json.load(open('$HOME/.docker/config.json')); c.pop('credsStore',None); c.pop('credStore',None); json.dump(c,open('$DC/config.json','w'))"
 for f in cli-plugins contexts buildx; do [ -e "$HOME/.docker/$f" ] && ln -s "$HOME/.docker/$f" "$DC/$f"; done
-cleanup() { rm -rf "$DC"; }
-trap cleanup EXIT
 
 # Shell SPA + Notebook static build (PRD #103): wrangler's `assets` binding bundles
 # shell/dist (the shell at `/`, the Notebook SPA under `/notebook`), so it must exist
@@ -36,7 +90,7 @@ echo "→ building Shell SPA + Notebook (shell/dist)"
 bun run build || { echo "❌ shell build failed"; exit 1; }
 
 echo "→ zbc apply production canvas (build + deploy + push secrets)"
-( cd "$REPO_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }
+( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }
 
 # Verify against the public /api/buildrev (#74). Post-#47 the edge Better Auth gate is
 # the sole gate, so /api/status and /__recycle serve the login page to an unauthenticated
