@@ -11,19 +11,21 @@ import { createRoot, type Root } from 'react-dom/client';
 import { connectionTarget } from '../../../shared/chat-store';
 import { InboxStage } from './Inbox';
 
-// A minimal in-memory edge for the Inbox stage. The LIST is Turso-only (`/api/inbox*`) and must
-// never wake a runner. OPENING a Conversation is now a live <ChatView> over the owning bridge via
-// the edge proxy (ADR-0009 / #124): the Shell first resolves the chatId from
-// `GET /inbox/:id/bridge/api/inbox/:id/chat` (the ONLY wake), sets the chat-store connection
-// target to that proxy prefix, and mounts <ChatView> — which then talks to the bridge under the
-// prefix (transcript/stream/send). Every request is recorded so we can assert (a) that browsing
-// the list touches ONLY `/api/inbox*` (no `/bridge` wake) and (b) that opening points <ChatView>
-// at the proxy.
+// A minimal in-memory edge for the Inbox stage. The LIST is Turso-only (`/api/inbox*`), scoped
+// server-side to the active workspace (no client-sent `?workspace=` anymore — worker/inbox.ts
+// resolves it from the `cs_workspace` cookie), and must never wake a runner. OPENING a
+// Conversation is a live <ChatView> over the owning bridge via the edge proxy (ADR-0009 / #124):
+// the Shell first resolves the chatId from `GET /inbox/:id/bridge/api/inbox/:id/chat` (the ONLY
+// wake), sets the chat-store connection target to that proxy prefix, and mounts <ChatView> —
+// which then talks to the bridge under the prefix (transcript/stream/send). Every request is
+// recorded so we can assert (a) that browsing the list touches ONLY `/api/inbox*` (no `/bridge`
+// wake) and (b) that opening points <ChatView> at the proxy.
 
 type Item = {
   id: string;
   status: 'open' | 'closed';
   waitingOn: 'human' | 'agent' | 'none';
+  kind: 'chat' | 'dev-agent';
   unread: boolean;
   summary: string | null;
   lastMessagePreview: string | null;
@@ -39,6 +41,7 @@ let store: Item[] = [];
 const item = (o: Partial<Item> & { id: string }): Item => ({
   status: 'open',
   waitingOn: 'none',
+  kind: 'chat',
   unread: false,
   summary: o.id,
   lastMessagePreview: null,
@@ -58,22 +61,14 @@ function stubInbox() {
     calls.push(`${method} ${url}`);
     const u = new URL(url, 'https://poc.cedarpad.com');
 
-    // GET /api/inbox?view=&workspace=  — the edge list (Turso, no wake). view maps to the same
-    // (status, waiting_on) filter the edge's viewToListOpts applies.
+    // GET /api/inbox?view=  — the edge list (Turso, no wake; server-side workspace-scoped, no
+    // client ?workspace= param). view maps to the same status filter the edge's
+    // viewToListOpts applies.
     if (u.pathname === '/api/inbox' && method === 'GET') {
-      const view = u.searchParams.get('view') ?? 'needs-me';
-      const workspace = u.searchParams.get('workspace');
-      const items = store.filter((it) => {
-        const matchesView =
-          view === 'closed'
-            ? it.status === 'closed'
-            : view === 'open'
-              ? it.status === 'open'
-              : view === 'all'
-                ? true
-                : it.status === 'open' && it.waitingOn === 'human'; // needs-me (default)
-        return matchesView && (!workspace || it.workspaceId === workspace);
-      });
+      const view = u.searchParams.get('view') ?? 'open';
+      const items = store.filter((it) =>
+        view === 'closed' ? it.status === 'closed' : view === 'all' ? true : it.status === 'open',
+      );
       return Response.json({ items });
     }
 
@@ -162,6 +157,7 @@ beforeEach(() => {
   // default document is about:blank (origin null) — same fix as Shell.test.tsx.
   (window as unknown as { happyDOM?: { setURL: (u: string) => void } }).happyDOM?.setURL('https://poc.cedarpad.com/');
   window.history.replaceState(null, '', '/');
+  localStorage.clear();
 });
 
 afterEach(async () => {
@@ -172,31 +168,18 @@ afterEach(async () => {
 });
 
 // The list is the ported left pane: it renders the edge list and re-queries on filter change.
+// No workspace filter — the Inbox is scoped server-side to the active workspace.
 describe('the inbox list', () => {
-  test('defaults to the "Needs me" view — GET /api/inbox?view=needs-me, showing waiting_on:human items', async () => {
+  test('defaults to the "Open" view — GET /api/inbox?view=open (no ?view= sent for the default)', async () => {
     store = [
       item({ id: 'c1', summary: 'Ship it', waitingOn: 'human' }),
-      item({ id: 'c2', summary: 'Review PR', waitingOn: 'human' }),
-      item({ id: 'c3', summary: 'idle chat', waitingOn: 'none' }), // a plain session — hidden by default
+      item({ id: 'c2', summary: 'idle chat', waitingOn: 'none' }),
+      item({ id: 'c3', summary: 'archived', status: 'closed' }), // closed — hidden by the open default
     ];
     await mount();
 
-    expect(calls).toContain('GET /api/inbox?view=needs-me');
-    expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['Ship it', 'Review PR']);
-  });
-
-  test('"Open" shows every open session — including non-promoted ones the default hides', async () => {
-    store = [item({ id: 'c1', summary: 'ask', waitingOn: 'human' }), item({ id: 'c2', summary: 'idle chat', waitingOn: 'none' })];
-    await mount();
-    calls = [];
-
-    await changeSelect(viewFilter(), 'open');
     expect(calls).toContain('GET /api/inbox?view=open');
-    // the idle (waiting_on:none) session now appears — every open session
-    expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['ask', 'idle chat']);
-
-    await changeSelect(viewFilter(), 'closed');
-    expect(calls).toContain('GET /api/inbox?view=closed');
+    expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['Ship it', 'idle chat']);
   });
 
   test('"All sessions" shows every session, open and closed — no status filter', async () => {
@@ -213,6 +196,22 @@ describe('the inbox list', () => {
     expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['ask', 'idle chat', 'archived']);
   });
 
+  test('"Closed" shows the archive', async () => {
+    store = [item({ id: 'c1', status: 'open' }), item({ id: 'c2', summary: 'archived', status: 'closed' })];
+    await mount();
+    calls = [];
+
+    await changeSelect(viewFilter(), 'closed');
+    expect(calls).toContain('GET /api/inbox?view=closed');
+    expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['archived']);
+  });
+
+  test('there is no workspace filter — the select is gone', async () => {
+    store = [item({ id: 'c1' })];
+    await mount();
+    expect(container.querySelector('[aria-label="Workspace filter"]')).toBeNull();
+  });
+
   test('browsing the list never wakes a runner — it touches ONLY /api/inbox*', async () => {
     store = [item({ id: 'c1', waitingOn: 'human' }), item({ id: 'c2', waitingOn: 'human' })];
     await mount();
@@ -224,7 +223,8 @@ describe('the inbox list', () => {
   });
 });
 
-// The row decorations ported verbatim from INBOX_HTML's render().
+// The row decorations ported verbatim from INBOX_HTML's render(), plus the dev-agent badge
+// (dev-agent rows now live in the `default` workspace, `kind: 'dev-agent'`, no special-casing).
 describe('the item row badges and dot', () => {
   test('waiting_on:human renders the waiting badge', async () => {
     store = [item({ id: 'c1', waitingOn: 'human' })];
@@ -247,6 +247,19 @@ describe('the item row badges and dot', () => {
     const badge = container.querySelector('.inbox-badge');
     expect(badge?.textContent).toBe('closed');
     expect(badge?.className).toContain('closed');
+  });
+
+  test('a dev-agent row renders the dev-agent badge', async () => {
+    store = [item({ id: 'c1', kind: 'dev-agent' })];
+    await mount();
+    const badge = container.querySelector('.inbox-badge.dev-agent');
+    expect(badge?.textContent).toBe('dev-agent');
+  });
+
+  test('a plain chat row does not render the dev-agent badge', async () => {
+    store = [item({ id: 'c1', kind: 'chat' })];
+    await mount();
+    expect(container.querySelector('.inbox-badge.dev-agent')).toBeNull();
   });
 });
 
@@ -284,20 +297,21 @@ describe('thread actions', () => {
     await mount();
     await click(items()[0] ?? null);
 
-    await click(container.querySelector('.inbox-threadhead button'));
+    const buttons = [...container.querySelectorAll('.inbox-threadhead button')];
+    await click(buttons.find((b) => b.textContent === 'Close') ?? null);
 
     expect(calls).toContain('POST /api/inbox/c1/close');
-    // The default "Needs me" view requires status:open; c1 is now closed, so it's gone from the list.
+    // The default "Open" view requires status:open; c1 is now closed, so it's gone from the list.
     expect(items()).toHaveLength(0);
   });
 });
 
 // Filters + selection are URL-persisted (mirrors stage.ts): a reload lands back on the same
-// view/workspace/selected conversation.
+// view/selected conversation.
 describe('URL-persisted state', () => {
   test('mounting with ?view=all&conv=<id> restores the filter and selects that conversation once the list loads', async () => {
     store = [
-      item({ id: 'c1', summary: 'idle chat', waitingOn: 'none' }), // needs-me would hide this
+      item({ id: 'c1', summary: 'archived', status: 'closed' }), // open view would hide this
     ];
     window.history.pushState(null, '', '/?stage=inbox&view=all&conv=c1');
     await mount();
@@ -306,7 +320,16 @@ describe('URL-persisted state', () => {
     expect((viewFilter() as HTMLSelectElement).value).toBe('all');
     // Selected once the async list loaded and contained it — the thread pane mounts <ChatView>.
     expect(container.querySelector('.chat-card')).not.toBeNull();
-    expect(container.querySelector('.inbox-item.sel')?.querySelector('b')?.textContent).toBe('idle chat');
+    expect(container.querySelector('.inbox-item.sel')?.querySelector('b')?.textContent).toBe('archived');
+  });
+
+  test('a legacy ?view=needs-me URL (the retired view) falls back to open', async () => {
+    window.history.pushState(null, '', '/?stage=inbox&view=needs-me');
+    store = [item({ id: 'c1' })];
+    await mount();
+
+    expect(calls).toContain('GET /api/inbox?view=open');
+    expect((viewFilter() as HTMLSelectElement).value).toBe('open');
   });
 
   test('changing the view filter updates the URL (replaceState, stage= preserved)', async () => {
@@ -329,7 +352,7 @@ describe('URL-persisted state', () => {
 
     const params = new URLSearchParams(window.location.search);
     expect(params.get('conv')).toBe('c1');
-    expect(params.has('view')).toBe(false); // needs-me is the default — kept out of the URL
+    expect(params.has('view')).toBe(false); // open is the default — kept out of the URL
   });
 });
 
@@ -361,5 +384,18 @@ describe('the canvas pane', () => {
     expect(frame?.getAttribute('src')).toBe('/w/ws_1/canvas/cv_1/pad');
     expect(frame?.getAttribute('title')).toBe('canvas');
     expect(container.querySelector('.inbox-canvas-empty')).toBeNull();
+  });
+
+  test('a toggle button hides the canvas pane (persisted; the thread takes the space)', async () => {
+    store = [item({ id: 'c1', waitingOn: 'human', canvasId: 'cv_1' })];
+    await mount();
+    await click(items()[0] ?? null);
+    expect(container.querySelector('.inbox-canvas')).not.toBeNull();
+
+    await click(container.querySelector('[aria-label="Hide canvas"]'));
+    expect(container.querySelector('.inbox-canvas')).toBeNull();
+
+    await click(container.querySelector('[aria-label="Show canvas"]'));
+    expect(container.querySelector('.inbox-canvas')).not.toBeNull();
   });
 });

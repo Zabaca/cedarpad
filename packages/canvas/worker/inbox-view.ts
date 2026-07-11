@@ -46,21 +46,21 @@ export function orderInbox(rows: ConversationRow[]): InboxItem[] {
   return items.sort((a, b) => rank(a) - rank(b) || b.lastActivity - a.lastActivity);
 }
 
-/** The four Inbox views the Shell can request. `needs-me` (default) is the attention subset —
- *  ask_human promotions; `open` is every open session (promoted or not); `all` is the unified
- *  session index with no status filter (open and closed); `closed` is the archive. */
-export type InboxView = 'needs-me' | 'open' | 'all' | 'closed';
+/** The three Inbox views the Shell can request. `open` (default) is every open session; `all` is
+ *  the unified session index with no status filter (open and closed); `closed` is the archive.
+ *  The waiting_on:human pinning in `orderInbox` still surfaces attention at the top of Open. */
+export type InboxView = 'open' | 'all' | 'closed';
 
-/** Pure: map a requested view to a `conversations.list` filter. Unknown/absent → `needs-me`, so the
- *  default (and any caller that omits the param) gets the attention inbox, never the full firehose. */
+/** Pure: map a requested view to a `conversations.list` filter. Unknown/absent → `open` (also a
+ *  legacy `?view=needs-me`, the retired view), so the default (and any caller that omits the
+ *  param) never gets the full firehose by accident. */
 export function viewToListOpts(view: string | null): {
   status?: 'open' | 'closed';
   waitingOn?: 'human' | 'agent' | 'none';
 } {
   if (view === 'closed') return { status: 'closed' };
-  if (view === 'open') return { status: 'open' };
   if (view === 'all') return {};
-  return { status: 'open', waitingOn: 'human' };
+  return { status: 'open' };
 }
 
 /** Pure, stable R2 object URL for a session's transcript blob (S3 path-style). */
