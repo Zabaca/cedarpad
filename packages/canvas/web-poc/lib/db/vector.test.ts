@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { problems } from "./schema.js";
 import { vector32 } from "./vector.js";
 
-// problems.embedding is a built float32Array column (F32_BLOB(1536)).
+// problems.embedding is a built float32Array column (F32_BLOB(1024)).
 const col = problems.embedding;
 
 describe("float32Array custom type", () => {
   it("declares an F32_BLOB column of the configured dimension", () => {
-    expect(col.getSQLType()).toBe("F32_BLOB(1536)");
+    expect(col.getSQLType()).toBe("F32_BLOB(1024)");
   });
 
   it("decodes a little-endian float32 buffer back to a number[]", () => {

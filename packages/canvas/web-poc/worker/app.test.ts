@@ -13,7 +13,7 @@ import { buildApp } from "./index.js";
 import { drainAgentJobs } from "./worker.js";
 
 const MIGRATIONS_DIR = fileURLToPath(
-  new URL("../../../packages/db/migrations", import.meta.url).href,
+  new URL("../lib/db/migrations", import.meta.url).href,
 );
 
 /** Every migration's statements, in order — mirrors what the real migrator applies. */

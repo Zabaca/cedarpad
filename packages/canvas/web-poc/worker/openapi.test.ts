@@ -9,7 +9,7 @@ import { DOC_CONFIG, buildApp } from "./index.js";
  * from the contract. If this fails, the spec is stale — run `bun run openapi:emit`
  * (and regenerate the web client with `bun --filter @cedarpad/web gen:api`).
  */
-const SPEC = join(dirname(fileURLToPath(import.meta.url)), "../../../openapi.json");
+const SPEC = join(dirname(fileURLToPath(import.meta.url)), "../openapi.json");
 
 describe("openapi.json", () => {
   it("is in sync with the contract (run `bun run openapi:emit` to refresh)", () => {

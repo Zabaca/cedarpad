@@ -25,7 +25,7 @@ import {
  * cross tenant boundaries; a node is excluded only when no edge reaches it.
  */
 
-const MIGRATIONS_DIR = fileURLToPath(new URL("../../migrations/", import.meta.url));
+const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
 
 function basis(indices: number[], dims = 1536): number[] {
   const v = new Array(dims).fill(0);

@@ -22,7 +22,7 @@ import { createEmbedder, createPipelineDeps, providerModelLabel } from "./agent.
 import type { Bindings } from "./context.js";
 
 const MIGRATIONS_DIR = fileURLToPath(
-  new URL("../../../packages/db/migrations", import.meta.url).href,
+  new URL("../lib/db/migrations", import.meta.url).href,
 );
 
 const WORKSPACE = "ws_eval";
