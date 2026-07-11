@@ -286,22 +286,22 @@ describe('the rail remembers each stage’s URL state across navigation', () => 
 
   test('changing the inbox view filter, leaving, and returning restores it', async () => {
     await click(byTitle('Inbox'));
-    await waitFor(() => calls.includes('GET /api/inbox?view=needs-me'));
+    await waitFor(() => calls.includes('GET /api/inbox?view=open')); // 'open' is the default view
 
     const viewSelect = container.querySelector<HTMLSelectElement>('[aria-label="View filter"]');
     expect(viewSelect).not.toBeNull();
     await act(async () => {
-      viewSelect!.value = 'open';
+      viewSelect!.value = 'closed'; // a NON-default view, so it lands in the URL
       viewSelect!.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    expect(window.location.search).toBe('?stage=inbox&view=open');
+    expect(window.location.search).toBe('?stage=inbox&view=closed');
 
     await click(byTitle('Notebook'));
     expect(window.location.search).toBe('?stage=notebook');
 
     await click(byTitle('Inbox'));
-    expect(window.location.search).toBe('?stage=inbox&view=open');
-    expect(container.querySelector<HTMLSelectElement>('[aria-label="View filter"]')?.value).toBe('open');
+    expect(window.location.search).toBe('?stage=inbox&view=closed');
+    expect(container.querySelector<HTMLSelectElement>('[aria-label="View filter"]')?.value).toBe('closed');
   });
 
   test('a stage’s first visit still gets the bare urlForStage default', async () => {
