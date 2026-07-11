@@ -22,7 +22,7 @@ import { maxMtimeMs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
 import { type Notify, attachConversationToCanvas, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-worktree.ts';
-import { DEV_AGENT_WORKSPACE_ID, openDevAgentPr } from './dev-agent-workflow.ts';
+import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
@@ -364,15 +364,16 @@ export const aborters = new Map<string, AbortController>();
 
 /** ADR-0011 / ADR-0010 6a: the edge-minted token header is the COMPLETE definition of a
  * dev-agent turn. Beyond the worktree + open_pr (prepareDevAgentTurn), it decides:
- *   - the workspace tag the turn files under — 'dev-agent', so the row-at-start upsert and
- *     any ask_human land as dev-agent Conversations (which is exactly what the edge's
- *     routing and per-send token mint key on; a 'default'-tagged row would never re-arm);
+ *   - the Conversation KIND the turn files under — 'dev-agent', so the row-at-start upsert
+ *     and any end_turn land as dev-agent Conversations (which is exactly what the edge's
+ *     per-send token mint keys on; a 'chat'-kinded row would never re-arm). The rows live
+ *     in the bridge's own workspace — dev-agent is a session type, not a workspace;
  *   - the skill allowlist — the explore skill is visible ONLY to dev-agent turns, so a
  *     canvas chat can't wander into a repo-wide refactor exploration. */
-export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId: string; skills: string[] } {
+export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId: string; kind: 'chat' | 'dev-agent'; skills: string[] } {
   return devAgentGitToken
-    ? { workspaceId: DEV_AGENT_WORKSPACE_ID, skills: ['impeccable', 'tdd', 'improve-codebase-architecture'] }
-    : { workspaceId: WORKSPACE, skills: ['impeccable', 'tdd'] };
+    ? { workspaceId: WORKSPACE, kind: DEV_AGENT_KIND, skills: ['impeccable', 'tdd', 'improve-codebase-architecture'] }
+    : { workspaceId: WORKSPACE, kind: 'chat', skills: ['impeccable', 'tdd'] };
 }
 
 /** ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
@@ -381,12 +382,13 @@ export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId:
  * chat MID-turn (opening the running Conversation attaches to this chat's live stream).
  * Idempotent (find-or-create by chat, rebinding the newest sessionId) and
  * best-effort — an index failure never fails the turn. */
-export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string): Promise<void> {
+export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, kind?: 'chat' | 'dev-agent'): Promise<void> {
   if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
   await findOrCreateConversation(webPocDb, {
     sessionId,
     userId: INBOX_USER,
     workspaceId,
+    kind,
     ownerRef: chatId,
     canvasId,
     summary: message.slice(0, 200),
@@ -423,7 +425,7 @@ export async function prepareDevAgentTurn(
 ): Promise<DevAgentTurn | undefined> {
   if (!token) return undefined;
   const git = deps.manager({ repo: DEFAULT_REPO, workspaceRoot: `${CANVAS_CWD}/.dev-agent`, token });
-  const worktree = await git.ensureWorktree(branchName(DEV_AGENT_WORKSPACE_ID, chatId));
+  const worktree = await git.ensureWorktree(branchName(DEV_AGENT_KIND, chatId));
   if (sessionId) await deps.adopt(SESSIONS_DIR, sessionId, worktree.path);
   const openPr: OpenPr = async (input) => {
     const url = await openDevAgentPr({ git, worktree }, input);
@@ -440,11 +442,12 @@ export async function prepareDevAgentTurn(
  * mints a new sessionId per turn, so the chat is the identity and the row is re-pointed at the
  * newest session). The turn awaits the row-at-start index first (see TurnDeps.indexSession), so
  * this find-or-create finds the one row instead of racing it into a duplicate. Best-effort. */
-async function settleConversation(input: { chatId: string; sessionId: string; message: string; workspaceId: string; canvasId?: string }): Promise<void> {
+async function settleConversation(input: { chatId: string; sessionId: string; message: string; workspaceId: string; canvasId?: string; kind?: 'chat' | 'dev-agent' }): Promise<void> {
   await findOrCreateConversation(webPocDb, {
     sessionId: input.sessionId,
     userId: INBOX_USER,
     workspaceId: input.workspaceId,
+    kind: input.kind,
     ownerRef: input.chatId,
     canvasId: input.canvasId,
     summary: input.message.slice(0, 200),

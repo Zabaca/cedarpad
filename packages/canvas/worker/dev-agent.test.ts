@@ -3,27 +3,8 @@ import { describe, expect, test } from 'bun:test';
 import { LEGACY_SANDBOX_ID, resolve } from './sandbox-resolver.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 import { sandboxId as deriveSandboxId } from '../web-poc/lib/db/queries/workspaces.ts';
-import { DEV_AGENT_RUN_PATH, DEV_AGENT_SANDBOX_ID, dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
+import { DEV_AGENT_RUN_PATH, dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
 import type { Env } from './index.ts';
-
-// ADR-0011: 'dev-agent' is a LOGICAL Conversation tag, not a container key — but its
-// disjointness from every product workspace id is still load-bearing (the edge mint gate and
-// the routing predicate both compare against it), so pin that it can never collide.
-describe('the dev-agent tag is distinct from every product workspace id', () => {
-  test('differs from the legacy/default product container', () => {
-    expect(DEV_AGENT_SANDBOX_ID).not.toBe(LEGACY_SANDBOX_ID);
-    expect(DEV_AGENT_SANDBOX_ID).not.toBe(resolve({ id: 'default', legacy: true }).sandboxId);
-  });
-
-  test('differs from any derived per-workspace container', () => {
-    for (const wsId of ['default', 'ws_abc123', 'dev-agent', 'canvas']) {
-      // Derived ids are always `workspace-<id>`, so the flat `dev-agent` tag can never
-      // collide even if a workspace were literally named "dev-agent".
-      expect(DEV_AGENT_SANDBOX_ID).not.toBe(deriveSandboxId(wsId));
-      expect(DEV_AGENT_SANDBOX_ID).not.toBe(resolve({ id: wsId }).sandboxId);
-    }
-  });
-});
 
 // ADR-0011: a dev-agent run is a chat turn kicked headlessly — the edge's whole job is
 // "mint the per-turn token, proxy the kick to the warm bridge." No exec, no batch env.

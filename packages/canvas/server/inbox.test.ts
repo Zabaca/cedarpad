@@ -602,3 +602,20 @@ describe('attachConversationToCanvas', () => {
     expect(await attachConversationToCanvas(deps, conv.id, { canvasId: 'cv_ghost' })).toMatchObject({ ok: false, error: 'not_found' });
   });
 });
+
+// Dev-agent is a session KIND, not a workspace: rows file under the workspace they run in,
+// and `kind` carries the type (the edge's token mint keys on it).
+describe('findOrCreateConversation: session kind', () => {
+  test('a dev-agent turn creates a dev-agent-kinded row in its real workspace', async () => {
+    const db = await freshDb();
+    const conv = await findOrCreateConversation(db, { sessionId: 's-da', userId: 'u', workspaceId: 'default', kind: 'dev-agent', ownerRef: 'chat_da' });
+    expect(conv.kind).toBe('dev-agent');
+    expect(conv.workspaceId).toBe('default');
+  });
+
+  test('kind defaults to chat', async () => {
+    const db = await freshDb();
+    const conv = await findOrCreateConversation(db, { sessionId: 's-c', userId: 'u', workspaceId: 'w', ownerRef: 'chat_c' });
+    expect(conv.kind).toBe('chat');
+  });
+});

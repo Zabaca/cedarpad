@@ -14,7 +14,7 @@ import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
 import { aborters, chatClients, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, turnFlavor, webPocDb } from './bridge.ts';
 import { resumeConversation } from './inbox.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
-import { DEV_AGENT_WORKSPACE_ID } from './dev-agent-workflow.ts';
+import { DEV_AGENT_KIND } from './dev-agent-workflow.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 
 const sendReq = (chatId: string, body: unknown = { message: 'hi' }): Request =>
@@ -127,15 +127,17 @@ describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispa
 // ADR-0011 / 6a: the token header is the COMPLETE definition of a dev-agent turn — it also
 // drives the workspace tag (so the row + ask_human file under 'dev-agent', which is what the
 // edge's routing and per-send token mint key on) and the widened skill allowlist.
-describe('turnFlavor: the token decides the turn’s workspace tag + skill allowlist', () => {
-  test('a token-armed turn files under the dev-agent tag and can see the explore skill', () => {
+describe('turnFlavor: the token decides the turn’s Conversation kind + skill allowlist', () => {
+  test('a token-armed turn is dev-agent KIND — in the bridge workspace, with the explore skill', () => {
     const f = turnFlavor('ghs_minted');
-    expect(f.workspaceId).toBe(DEV_AGENT_WORKSPACE_ID);
+    expect(f.kind).toBe(DEV_AGENT_KIND);
+    expect(f.workspaceId).toBe('default'); // the workspace it RUNS in — dev-agent is a type, not a workspace
     expect(f.skills).toEqual(['impeccable', 'tdd', 'improve-codebase-architecture']);
   });
 
-  test('a product turn keeps the bridge workspace and the base skills (no repo-refactor skill leaks)', () => {
+  test('a product turn is chat kind with the base skills (no repo-refactor skill leaks)', () => {
     const f = turnFlavor(undefined);
+    expect(f.kind).toBe('chat');
     expect(f.workspaceId).toBe('default');
     expect(f.skills).toEqual(['impeccable', 'tdd']);
   });
@@ -149,7 +151,7 @@ describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-work
   test('a token ⇒ the per-chat worktree is ensured, the session JSONL adopted to it, and cwd = the worktree', async () => {
     const ensured: string[] = [];
     const adopted: Array<{ sessionId: string; cwd: string }> = [];
-    const worktree = { path: '/wt/dev-agent-chat-1', branch: branchName(DEV_AGENT_WORKSPACE_ID, 'chat_1'), hub: '/wt/hub' };
+    const worktree = { path: '/wt/dev-agent-chat-1', branch: branchName(DEV_AGENT_KIND, 'chat_1'), hub: '/wt/hub' };
     const fakeManager = (() => ({
       ensureWorktree: async (branch: string) => {
         ensured.push(branch);
@@ -167,7 +169,7 @@ describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-work
 
     // The worktree is keyed by the dev-agent tag + chatId — deterministic per conversation,
     // so every turn of one grill flow lands in the same tree.
-    expect(ensured).toEqual([branchName(DEV_AGENT_WORKSPACE_ID, 'chat_1')]);
+    expect(ensured).toEqual([branchName(DEV_AGENT_KIND, 'chat_1')]);
     // The SDK resume is cwd-scoped (#133): the session JSONL must move to the worktree's dir.
     expect(adopted).toEqual([{ sessionId: 'sess_1', cwd: worktree.path }]);
     // The SDK turn runs IN the worktree — edits land there, never in the live app tree.
@@ -379,7 +381,8 @@ describe('POST /api/inbox/:id/reply routes EVERY conversation through the chat t
     const conv = await conversations.create(webPocDb, {
       sessionId: `sess_devagent_${crypto.randomUUID()}`,
       userId: 'default',
-      workspaceId: DEV_AGENT_WORKSPACE_ID,
+      workspaceId: 'default',
+      kind: DEV_AGENT_KIND,
       summary: 'architecture deepening candidates',
     });
 

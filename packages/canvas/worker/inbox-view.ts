@@ -10,6 +10,8 @@ export interface InboxItem {
   id: string;
   status: 'open' | 'closed';
   waitingOn: 'human' | 'agent' | 'none';
+  /** Session type: 'dev-agent' rows get a badge; they live in their real workspace now. */
+  kind: 'chat' | 'dev-agent';
   unread: boolean;
   summary: string | null;
   lastMessagePreview: string | null;
@@ -24,6 +26,7 @@ const toItem = (r: ConversationRow): InboxItem => ({
   id: r.id,
   status: r.status,
   waitingOn: r.waitingOn,
+  kind: r.kind,
   unread: r.unread,
   summary: r.summary,
   lastMessagePreview: r.lastMessagePreview,

@@ -572,6 +572,10 @@ export type NewCanvasRow = typeof canvases.$inferInsert;
  * ------------------------------------------------------------------ */
 export const conversationStatus = ["open", "closed"] as const;
 export const conversationWaitingOn = ["human", "agent", "none"] as const;
+/** Session type: what KIND of session this Conversation coordinates. `dev-agent` sessions
+ * live in the workspace they run in (default) — the kind, not a fake workspace, carries
+ * dev-agent-ness (token mint, run flavor, badge). */
+export const conversationKind = ["chat", "dev-agent"] as const;
 
 export const conversations = sqliteTable(
   "conversations",
@@ -581,6 +585,7 @@ export const conversations = sqliteTable(
     sessionId: text("session_id").notNull(),
     status: text("status", { enum: conversationStatus }).notNull().default("open"),
     waitingOn: text("waiting_on", { enum: conversationWaitingOn }).notNull().default("none"),
+    kind: text("kind", { enum: conversationKind }).notNull().default("chat"),
     unread: integer("unread", { mode: "boolean" }).notNull().default(false),
     /** Last activity, epoch ms — the default inbox sort key. */
     lastActivity: integer("last_activity", { mode: "timestamp_ms" })

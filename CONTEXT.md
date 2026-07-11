@@ -177,7 +177,9 @@ to be re-homed.)
   Conversation** (inbox app). "Conversation" is deliberately Intercom's word, to avoid the
   canvas glossary's `session = chat` collision.
 - **Conversation** = Session + inbox state (open/closed, read/unread, needs-attention,
-  last-activity). May own a Canvas (the owner edge above).
+  last-activity). May own a Canvas (the owner edge above). Carries a **kind**
+  (`chat | dev-agent`) — the session TYPE. Background-agent sessions are a kind, never a
+  fake workspace: they file under the workspace they run in.
 - **Canvas edge** (`canvas_id`, nullable): a Conversation links to **at most one canvas** —
   the canvas its chat card lives on. Direction matters: this is chat → canvas (one canvas
   hosts many chat cards, each pointing back at it), the *reverse* of the canvas's own
@@ -260,11 +262,13 @@ action the agent takes mid-conversation**, not a hardcoded consequence of the re
 - **Product runtime**: the workspace container (canvas/notebook chats + inbox chats I
   start about my content). Sleeps aggressively (5m) to bound cost.
 - **Dev-agent**: a **role the warm workspace container plays**, not a separate container
-  (ADR-0010) — "dev-agent" is a **logical Conversation tag** (`workspaceId: 'dev-agent'`,
-  disjoint from every product workspace id by construction). A **dev-agent turn** is any
+  (ADR-0010) — and a **session KIND, not a workspace**: the Conversation carries
+  `kind: 'dev-agent'` and lives in the workspace it runs in (`default`), so `workspace_id`
+  means one thing everywhere. (The former `workspaceId: 'dev-agent'` logical tag overloaded
+  the workspace field as a type; retired, rows backfilled.) A **dev-agent turn** is any
   bridge chat turn armed with the **edge-minted git-token header** (the App private key
   never leaves the edge); that one signal drives everything dev-agent about it: the
-  `'dev-agent'` tag, the **prepared `Zabaca/cedarpad` worktree** it runs in (hub clone +
+  `'dev-agent'` kind, the **prepared `Zabaca/cedarpad` worktree** it runs in (hub clone +
   worktree off `origin/main`, per-chat branch, reused across turns — never the live app
   tree), and the **`open_pr` tool committing that tree → PR** (durable artifact; a non-git
   baked `/app` edit would evaporate). **Worktree per conversation** (ADR-0003). A

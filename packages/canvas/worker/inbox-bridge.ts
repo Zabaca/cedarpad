@@ -2,7 +2,7 @@ import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import type { GateUser } from './auth-gate.ts';
-import { DEV_AGENT_SANDBOX_ID } from './dev-agent.ts';
+import { isDevAgentConversation } from '../server/dev-agent-workflow.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
 import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolver.ts';
@@ -20,22 +20,13 @@ import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 const db = (env: Env) => createDbForWorker(env as unknown as Bindings);
 
 /**
- * Resolve a Conversation's workspace to its owning runner's coordinates:
- *   - the legacy `default` id → the legacy/prod container;
- *   - a dev-agent Conversation (`workspaceId === DEV_AGENT_SANDBOX_ID`, `'dev-agent'` — a
- *     LOGICAL tag, disjoint-by-construction from every product workspace id) → the SAME warm
- *     default container product chats use (ADR-0010: the dev-agent is a role of the
- *     Conversation, not a container — the separate perpetually-cold sandbox is gone). It must
- *     NOT take the derived `workspace-<id>` scheme, which would point at a
- *     `workspace-dev-agent` container that holds no bridge session;
- *   - any other id → its derived per-workspace container.
+ * Resolve a Conversation's workspace to its owning runner's coordinates: the legacy
+ * `default` id → the legacy/prod container; any other id → its derived per-workspace
+ * container. (Dev-agent rows need no special case anymore — dev-agent is a Conversation
+ * KIND now, and the rows live in the workspace they run in, i.e. `default`.)
  */
 export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
-  resolve(
-    workspaceId === DEFAULT_WORKSPACE_ID || workspaceId === DEV_AGENT_SANDBOX_ID
-      ? DEFAULT_WORKSPACE
-      : { id: workspaceId },
-  );
+  resolve(workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: workspaceId });
 
 /**
  * The edge chat proxy: `/inbox/:convId/bridge/*`. Resolve the Conversation (ownership-checked
@@ -91,7 +82,7 @@ export async function handleInboxBridge(
   // that turn (server/bridge.ts prepareDevAgentTurn). The App private key never leaves the
   // edge (ADR-0008); the token is per-turn, never env-injected, never persisted. Best-effort:
   // a failed mint (null) proxies the send token-less rather than blocking the reply.
-  if (isChatSend && conv.workspaceId === DEV_AGENT_SANDBOX_ID) {
+  if (isChatSend && isDevAgentConversation(conv)) {
     const token = await mint(env, { nowSec: Math.floor(Date.now() / 1000) });
     if (token) proxied.headers.set('x-dev-agent-git-token', token);
   }
