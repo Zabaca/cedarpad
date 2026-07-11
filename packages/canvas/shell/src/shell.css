@@ -457,6 +457,30 @@ body,
   flex-direction: column;
   min-height: 0;
 }
+/* Drag-to-resize handles between the three panes: a thin bar that widens the LEFT neighbor. */
+.inbox-divider {
+  flex: none;
+  width: 5px;
+  cursor: col-resize;
+  background: var(--line);
+}
+.inbox-divider:hover {
+  background: var(--accent);
+}
+/* The canvas-pane show/hide toggle, in the thread head next to Close/Reopen. */
+.inbox-canvas-toggle {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 5px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+}
+.inbox-canvas-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 /* Third pane: the conversation's linked canvas, live (#161). Shares the thread's remaining
    space with a larger weight — the pad is the thing being worked on. */
 .inbox-canvas {

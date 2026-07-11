@@ -157,6 +157,7 @@ beforeEach(() => {
   // default document is about:blank (origin null) — same fix as Shell.test.tsx.
   (window as unknown as { happyDOM?: { setURL: (u: string) => void } }).happyDOM?.setURL('https://poc.cedarpad.com/');
   window.history.replaceState(null, '', '/');
+  localStorage.clear();
 });
 
 afterEach(async () => {
@@ -383,5 +384,18 @@ describe('the canvas pane', () => {
     expect(frame?.getAttribute('src')).toBe('/w/ws_1/canvas/cv_1/pad');
     expect(frame?.getAttribute('title')).toBe('canvas');
     expect(container.querySelector('.inbox-canvas-empty')).toBeNull();
+  });
+
+  test('a toggle button hides the canvas pane (persisted; the thread takes the space)', async () => {
+    store = [item({ id: 'c1', waitingOn: 'human', canvasId: 'cv_1' })];
+    await mount();
+    await click(items()[0] ?? null);
+    expect(container.querySelector('.inbox-canvas')).not.toBeNull();
+
+    await click(container.querySelector('[aria-label="Hide canvas"]'));
+    expect(container.querySelector('.inbox-canvas')).toBeNull();
+
+    await click(container.querySelector('[aria-label="Show canvas"]'));
+    expect(container.querySelector('.inbox-canvas')).not.toBeNull();
   });
 });
