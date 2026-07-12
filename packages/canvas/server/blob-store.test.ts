@@ -12,6 +12,7 @@ import {
   componentsKey,
   memBackend,
   sessionsKey,
+  skillsKey,
 } from './blob-store.ts';
 
 const sampleState = (): CanvasState => ({ version: 3, shapes: [] });
@@ -27,6 +28,10 @@ describe('blob keys', () => {
 
   test('B2b sessionsKey', () => {
     expect(sessionsKey('ws1')).toEqual('workspaces/ws1/sessions.tar');
+  });
+
+  test('B2c skillsKey', () => {
+    expect(skillsKey('ws1')).toEqual('workspaces/ws1/skills.tar');
   });
 });
 
@@ -67,6 +72,13 @@ describe('BlobStore', () => {
     const bytes = new Uint8Array([9, 8, 7, 0]);
     await store.saveSessions('ws1', bytes);
     expect(await store.loadSessions('ws1')).toEqual(bytes);
+  });
+
+  test('B6c workspace-skill bytes round-trip (ADR-0013)', async () => {
+    const store = new BlobStore(memBackend());
+    const bytes = new Uint8Array([4, 2, 0, 128]);
+    await store.saveSkills('ws1', bytes);
+    expect(await store.loadSkills('ws1')).toEqual(bytes);
   });
 
   test('B7 fsBackend round-trips canvas state through nested key dirs', async () => {

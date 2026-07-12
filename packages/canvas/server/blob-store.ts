@@ -29,6 +29,11 @@ export const customKey = (ws: string): string => `workspaces/${ws}/custom.tar`;
  * recycle loses every session's JSONL and `resume` fails ("No conversation found"). */
 export const sessionsKey = (ws: string): string => `workspaces/${ws}/sessions.tar`;
 
+/** workspace-scoped skill library tarball: the package's `.claude/skills/` (user- or
+ * agent-authored skill dirs + their supporting files). Extension content like
+ * components/custom (ADR-0013); platform skills stay image-only at ~/.claude/skills. */
+export const skillsKey = (ws: string): string => `workspaces/${ws}/skills.tar`;
+
 /** workspace-scoped per-chat durable state (ADR 0004): the `chatId → ChatMeta` map,
  * one JSON blob for the whole workspace. Replaces browser `localStorage` as the home for
  * `{ sessionId, model, effort, forkNext }`. */
@@ -124,6 +129,14 @@ export class BlobStore {
 
   async saveSessions(ws: string, bytes: Uint8Array): Promise<void> {
     await this.backend.put(sessionsKey(ws), bytes);
+  }
+
+  loadSkills(ws: string): Promise<Uint8Array | null> {
+    return this.backend.get(skillsKey(ws));
+  }
+
+  async saveSkills(ws: string, bytes: Uint8Array): Promise<void> {
+    await this.backend.put(skillsKey(ws), bytes);
   }
 
   async loadChatMeta(ws: string): Promise<Record<string, ChatMeta> | null> {

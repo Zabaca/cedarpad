@@ -165,22 +165,27 @@ try {
   console.error('[chatmeta] load failed; starting empty:', err);
 }
 
-// The three file-tar artifacts that the dead fs.watch left silent (ADR 0003). Each registers
-// as a Persistable through one sink so all three report health at /api/status; saved at
+// The file-tar artifacts that the dead fs.watch left silent (ADR 0003). Each registers
+// as a Persistable through one sink so all of them report health at /api/status; saved at
 // turn-completion (sessions always; components/custom on a max-mtime dirty-check). Canvas keeps
 // its own onChange trigger + health below. R2 in the container only — locally these files
 // already live on disk and the session JSONL is read in place.
 const COMPONENTS_DIR = `${PKG_ROOT}src/canvas-components`;
 const CUSTOM_DIR = `${PKG_ROOT}server/custom`;
 const SESSIONS_DIR = `${process.env.HOME ?? '/root'}/.claude/projects`;
+// Workspace skills (ADR-0013): user-/agent-authored skill dirs, discovered by the SDK's
+// 'project' source. Extension content like components/custom; may not exist yet (the dir
+// is created by the first authored skill — flushIfDirty's mtime guard skips an absent dir).
+const SKILLS_DIR = `${PKG_ROOT}.claude/skills`;
 const sink = new PersistSink();
 sink.register({ name: 'sessions', serialize: () => tarSubtree(SESSIONS_DIR), save: (b) => blobStore.saveSessions(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'components', serialize: () => tarSubtree(COMPONENTS_DIR), save: (b) => blobStore.saveComponents(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'custom', serialize: () => tarSubtree(CUSTOM_DIR), save: (b) => blobStore.saveCustom(WORKSPACE, b as Uint8Array) });
+sink.register({ name: 'skills', serialize: () => tarSubtree(SKILLS_DIR), save: (b) => blobStore.saveSkills(WORKSPACE, b as Uint8Array) });
 sink.register(chatMeta.persistable());
 
-const savedMtime: Record<'components' | 'custom', number> = { components: 0, custom: 0 };
-async function flushIfDirty(name: 'components' | 'custom', dir: string): Promise<void> {
+const savedMtime: Record<'components' | 'custom' | 'skills', number> = { components: 0, custom: 0, skills: 0 };
+async function flushIfDirty(name: 'components' | 'custom' | 'skills', dir: string): Promise<void> {
   const m = await maxMtimeMs(dir);
   if (m <= savedMtime[name]) return; // a draw-only turn left the library untouched
   savedMtime[name] = m;
@@ -195,6 +200,7 @@ async function onTurnComplete(): Promise<void> {
   await sink.flush('sessions'); // a turn always wrote JSONL
   await flushIfDirty('components', COMPONENTS_DIR);
   await flushIfDirty('custom', CUSTOM_DIR);
+  await flushIfDirty('skills', SKILLS_DIR);
 }
 
 // The per-canvas store, persistence, save-health, SSE subscriber set, and screenshot
@@ -368,12 +374,14 @@ export const aborters = new Map<string, AbortController>();
  *     and any end_turn land as dev-agent Conversations (which is exactly what the edge's
  *     per-send token mint keys on; a 'chat'-kinded row would never re-arm). The rows live
  *     in the bridge's own workspace — dev-agent is a session type, not a workspace;
- *   - the skill allowlist — the explore skill is visible ONLY to dev-agent turns, so a
- *     canvas chat can't wander into a repo-wide refactor exploration. */
-export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId: string; kind: 'chat' | 'dev-agent'; skills: string[] } {
+ *   - the skill policy (ADR-0013) — a chat turn enables ALL discovered skills (workspace
+ *     skills are content-that-asks; no allowlist), while a token-bearing dev-agent turn
+ *     keeps a pinned list so a planted workspace skill can never ride an allowlisted name
+ *     into a turn that holds a git token. */
+export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId: string; kind: 'chat' | 'dev-agent'; skills?: string[] } {
   return devAgentGitToken
     ? { workspaceId: WORKSPACE, kind: DEV_AGENT_KIND, skills: ['impeccable', 'tdd', 'improve-codebase-architecture'] }
-    : { workspaceId: WORKSPACE, kind: 'chat', skills: ['impeccable', 'tdd'] };
+    : { workspaceId: WORKSPACE, kind: 'chat' };
 }
 
 /** ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
