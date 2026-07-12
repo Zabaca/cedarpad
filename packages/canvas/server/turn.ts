@@ -39,8 +39,8 @@ export interface TurnDeps {
    *  the one-turn-per-chat 409 guard at the wire). */
   aborters: Map<string, AbortController>;
   /** The edge-minted token is the COMPLETE definition of a dev-agent turn: it decides the
-   *  Inbox workspace tag + the skill allowlist (bridge.turnFlavor). */
-  flavor: (token: string | undefined) => { workspaceId: string; kind: 'chat' | 'dev-agent'; skills: string[] };
+   *  Inbox workspace tag + the skill policy (bridge.turnFlavor; skills absent = all discovered). */
+  flavor: (token: string | undefined) => { workspaceId: string; kind: 'chat' | 'dev-agent'; skills?: string[] };
   /** Resolve the request's active canvas session (#79) — the agent reads/draws on THAT store. */
   getSession: (canvasId: string) => Promise<CanvasSession>;
   /** Where an UNADDRESSED turn routes (the bridge's default canvas id). */

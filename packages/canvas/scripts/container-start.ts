@@ -30,6 +30,10 @@ const CUSTOM = `${ROOT}server/custom`;
 // Claude session transcripts (~/.claude/projects); synced on their own so `resume`
 // survives a recycle.
 const SESSIONS = `${process.env.HOME ?? '/root'}/.claude/projects`;
+// Workspace skills (ADR-0013): user-/agent-authored skill dirs under the package's
+// .claude/skills, discovered by the SDK's 'project' source. Same persistence model as
+// components/custom. Platform skills live at ~/.claude/skills (image-only) instead.
+const SKILLS = `${ROOT}.claude/skills`;
 const store = new BlobStore(selectBackend(`${ROOT}.persist`)); // R2_BUCKET set in-container
 console.log(
   `[boot] env present: R2_BUCKET=${!!process.env.R2_BUCKET} R2_ACCESS_KEY_ID=${!!process.env.R2_ACCESS_KEY_ID} CLAUDE_CODE_OAUTH_TOKEN=${!!process.env.CLAUDE_CODE_OAUTH_TOKEN}`,
@@ -57,6 +61,18 @@ const custom = await store.loadCustom(WORKSPACE).catch((err) => {
 if (custom) {
   await extractOverlay(custom, CUSTOM);
   console.log(`[boot] ${ms()} custom handlers restored from R2`);
+}
+
+// Restore workspace skills. mkdir first: the dir won't exist in the image (skills are
+// workspace content, not baked) and extract needs it.
+await Bun.spawn(['mkdir', '-p', SKILLS]).exited;
+const skills = await store.loadSkills(WORKSPACE).catch((err) => {
+  console.error('[boot] workspace skills load failed; starting with none:', err);
+  return null;
+});
+if (skills) {
+  await extractOverlay(skills, SKILLS);
+  console.log(`[boot] ${ms()} workspace skills restored from R2`);
 }
 
 // Restore Claude session transcripts so `resume` finds the JSONL after a recycle.

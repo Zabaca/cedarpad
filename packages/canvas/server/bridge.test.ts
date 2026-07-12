@@ -126,20 +126,20 @@ describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispa
 
 // ADR-0011 / 6a: the token header is the COMPLETE definition of a dev-agent turn — it also
 // drives the workspace tag (so the row + ask_human file under 'dev-agent', which is what the
-// edge's routing and per-send token mint key on) and the widened skill allowlist.
-describe('turnFlavor: the token decides the turn’s Conversation kind + skill allowlist', () => {
-  test('a token-armed turn is dev-agent KIND — in the bridge workspace, with the explore skill', () => {
+// edge's routing and per-send token mint key on) and the skill policy (ADR-0013).
+describe('turnFlavor: the token decides the turn’s Conversation kind + skill policy', () => {
+  test('a token-armed turn is dev-agent KIND — pinned skills, exactly the curated three (ADR-0013: a workspace skill must never ride a name into a token-bearing turn)', () => {
     const f = turnFlavor('ghs_minted');
     expect(f.kind).toBe(DEV_AGENT_KIND);
     expect(f.workspaceId).toBe('default'); // the workspace it RUNS in — dev-agent is a type, not a workspace
     expect(f.skills).toEqual(['impeccable', 'tdd', 'improve-codebase-architecture']);
   });
 
-  test('a product turn is chat kind with the base skills (no repo-refactor skill leaks)', () => {
+  test('a product turn is chat kind with NO skill allowlist — all discovered skills enabled (ADR-0013)', () => {
     const f = turnFlavor(undefined);
     expect(f.kind).toBe('chat');
     expect(f.workspaceId).toBe('default');
-    expect(f.skills).toEqual(['impeccable', 'tdd']);
+    expect(f.skills).toBeUndefined();
   });
 });
 

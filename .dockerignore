@@ -17,3 +17,8 @@ packages/app
 **/.dev.vars
 **/.web-poc-dev.db
 **/.web-poc-dev.db-*
+
+# Workspace skills are workspace CONTENT (R2 skills.tar, restored at boot — ADR-0013),
+# never image content. A locally-authored skill on the deploy machine must not leak
+# into every workspace's image.
+packages/canvas/.claude

@@ -466,14 +466,14 @@ export async function* runChat(
   const fullOptions = {
     systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: CANVAS_APPEND },
     tools: { type: 'preset' as const, preset: 'claude_code' as const }, // all built-in tools (Bash, Read, Write, Edit, Web*, Task...)
-    // Load user + project .claude config: 'project' is required so the repo's skills (e.g.
-    // .claude/skills/impeccable) are DISCOVERED. The `skills` filter below then exposes only
-    // impeccable to the model — every other discovered skill is hidden from its Skill listing.
-    // (Discovery and enable are two separate stages: project source finds them, skills picks.)
+    // Load user + project .claude config (ADR-0013): 'user' discovers platform skills (baked
+    // at the container's ~/.claude/skills), 'project' discovers workspace skills (the
+    // package's .claude/skills, synced via skills.tar). Discovery and enable are two stages:
+    // the sources find skills, the `skills` filter picks.
     settingSources: ['user', 'project'] as Array<'user' | 'project' | 'local'>,
-    // The allowlist is per-turn (ADR-0011): a dev-agent turn also sees the explore skill;
-    // every product turn stays impeccable-only. Discovery is separate (project source).
-    skills: skills ?? ['impeccable', 'tdd'],
+    // The skill policy is per-turn (ADR-0013): dev-agent turns pass a pinned list; chat
+    // turns pass none, and OMITTING the filter enables every discovered skill.
+    ...(skills ? { skills } : {}),
     // A dev-agent turn runs in its prepared worktree (ADR-0010 slice 6) — the caller passes
     // that path so edits + resume both scope to it; every product turn keeps the default.
     cwd: cwd ?? process.env.CANVAS_CWD ?? process.cwd(),
