@@ -1,0 +1,432 @@
+# Founder-annotated YC application guides (highest-value corpus group)
+# Two sources where the founder published/annotated their own application advice per question.
+source_group: founder-annotated
+fetch_date: 2026-07-12
+sources:
+  - name: Basedash S20 annotated application
+    url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    note: >
+      Full real application published with per-question founder commentary.
+      Founder (Max Musing) applied 4 times total (2 interviews with different
+      ideas) before Basedash was accepted into S20. Solo founder, prior YC
+      experience (cofounded Scholarly/ScholarMe, S19).
+  - name: Fluently (Yurii Rebryk, W24) YC application guide
+    url: https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+    hn_thread: https://news.ycombinator.com/item?id=41987512
+    note: >
+      Guide by Yurii Rebryk (Fluently, YC W24; ex Google/Nvidia/Amazon), accepted
+      on 3rd application, wrote the guide after reviewing 100+ applications.
+      Guide is advice + good/bad example answers per question rather than a full
+      published application; excerpts below are the examples he cites (some from
+      famous YC apps like Dropbox/GitLab, one apparently Fluently's own TAM math).
+      Direct Notion fetch was JS-gated; content retrieved via r.jina.ai render.
+
+records:
+  # ---------------- Basedash (S20) ----------------
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: description_50_chars
+    answer_excerpt: "Collaborative database interface for teams."
+    answer_summary: Ultra-concise positioning that fits the 50-char limit and names the product category plus who it is for.
+    why_notable: The one-liner is what frames every subsequent answer for the reviewer.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: This sentence forms the basis for how reviewers understand everything else; test it on people unfamiliar with the product to make sure it lands.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Basedash is a collaborative database interface that lets team members view and edit data directly from their production database."
+    answer_summary: Positions the product as "Airtable for your existing database", letting teams access and edit production data without building internal tools.
+    why_notable: Uses the "X but Y" well-known-comparison pattern to make a technical product instantly legible.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: Calls this the most important question in the application; use comparisons to well-known products, and make sure a reviewer with no context understands the value proposition.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: location
+    answer_excerpt: "Montreal, Canada / Unknown"
+    answer_summary: Answered honestly that post-YC location was undecided.
+    why_notable: Evidence that a non-Bay-Area, even undecided, location answer does not block acceptance.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: YC accepts companies globally; relocating to the Bay Area is not required.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: hacked_system
+    answer_excerpt: "I managed to continue working on my company as my capstone project for school until I graduate."
+    answer_summary: Negotiated dual-purpose academic work (startup as capstone) and recruited a friend doing technical work for free under legal agreements.
+    why_notable: Shows the kind of everyday resourcefulness YC looks for rather than a dramatic story.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: The question rewards creativity; it is about demonstrating resourcefulness and problem-solving outside normal constraints.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: impressive_achievement
+    answer_excerpt: "I cofounded Scholarly (now ScholarMe), which was part of YC S19."
+    answer_summary: Cites a prior YC-funded company as the impressive non-this-startup achievement.
+    why_notable: Prior founding experience, especially prior YC, is among the strongest possible answers here.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: null
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: exclusive_commitment
+    answer_excerpt: "Yes"
+    answer_summary: Committed to working exclusively on the project for the next year.
+    why_notable: Effectively a required yes; anything else signals lack of seriousness.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: Required question; demonstrates seriousness and availability.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: founder_video
+    answer_excerpt: null
+    answer_summary: Submitted a one-minute founder intro video (URL not republished).
+    why_notable: Founder treats the video as a real signal channel, not a checkbox.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: Showcase the cofounder relationship and invest in production quality (lighting, audio, background).
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: technical_work
+    answer_excerpt: "99% by myself. I have a friend doing some technical work for free under an NDA and IP agreement."
+    answer_summary: Nearly all code founder-written; the one outside contributor is disclosed with legal protections named.
+    why_notable: Models how to disclose non-founder technical work without triggering YC's outsourcing red flag.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: Ideally all technical work is founder-built; if not, disclose external contributions clearly along with the legal protections in place.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: how_far_along
+    answer_excerpt: "MVP fully developed, launched on Product Hunt a couple months ago."
+    answer_summary: Launched MVP with a public Product Hunt launch and early signups.
+    why_notable: Concrete launched-state answer at a very early stage still reads as strong progress.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: YC accepts companies at every stage from idea to post-Series A; don't self-reject for being early.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: how_long_working
+    answer_excerpt: "6 months dabbling with the idea, 3 months full-time."
+    answer_summary: Distinguishes exploratory time from full-time commitment, showing escalation.
+    why_notable: Honest time accounting lets reviewers judge velocity (progress per unit time) accurately.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: null
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: users_customers
+    answer_excerpt: ">300 signups. Got a couple YC companies trying it out."
+    answer_summary: 300+ signups, trial customers including ReadyEducation and ScholarMe, interest from Adalo; barely any paying users.
+    why_notable: Demonstrates acceptance is possible with tiny revenue if usage and named early customers exist.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: Revenue stage isn't critical for acceptance.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: revenue_monthly
+    answer_excerpt: null
+    answer_summary: $30/month in the two most recent months, $0 before that; also mentions a small grant used for marketing.
+    why_notable: A real accepted application with near-zero revenue, filled in honestly month by month.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: null
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: why_this_idea
+    answer_excerpt: "I discovered the need for this product after working on another startup. We really wanted to use Airtable's interface for our own database."
+    answer_summary: Personal pain from a prior startup; wanted Airtable's UX on top of their own production database and it didn't exist.
+    why_notable: Textbook founder-market-fit answer grounded in lived need rather than market analysis.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: Easiest to answer if you have personal need for the product; otherwise you must show strong proof that others want it.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: whats_new
+    answer_excerpt: "People resort to passing raw data between teams."
+    answer_summary: Combines database interfaces with analytics dashboards plus collaboration; the substitute behavior (manually passing raw data around) is slow and unsafe.
+    why_notable: Names a genuinely painful substitute behavior, which is what the question is scoring.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: The alternative solutions people currently use should sound genuinely painful.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: competitors_insight
+    answer_excerpt: "Software is built by teams, not individuals."
+    answer_summary: Names Forest Admin, Mode, Prisma, Internal as competitors; claims superior setup and interface, and a core insight that team-based workflows (not solo admin tools) drive the need.
+    why_notable: Shows both halves done right, naming real competitors without fear plus a crisp one-line insight.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: Don't be afraid to name large competitors, explain why you win; the insight should validate your moat and ideally be backed by user evidence.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: how_make_money
+    answer_excerpt: "Selling a subscription to companies for complete access to the product. Potentially as much as Tableau (~$1.2B)."
+    answer_summary: SaaS subscription model with an enterprise-scale comparable (Tableau) as the ceiling estimate.
+    why_notable: Uses a named comparable company as the market-size proxy instead of an abstract TAM figure.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: Pick one of the standard business models (SaaS, transactional, marketplace, usage-based, enterprise, etc.) and include a bottoms-up market analysis that supports a $1-10B outcome.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: how_get_users
+    answer_excerpt: "Typical marketing to tech companies (SEO, SEM, content marketing, etc.). No chicken-egg problem."
+    answer_summary: Standard B2B/dev-tool acquisition channels; explicitly notes no network-effect bootstrap problem.
+    why_notable: An unglamorous but honest distribution answer from an accepted application.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: Show traction with your GTM strategy and identify the specific communities where your users live (Discord servers, subreddits, niche forums).
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: company_category
+    answer_excerpt: "Developer Tools"
+    answer_summary: Selected Developer Tools as the category.
+    why_notable: Simple factual field; included for completeness of the published application.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: null
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: legal_entity
+    answer_excerpt: null
+    answer_summary: Yes; a Canadian corporation registered in Quebec.
+    why_notable: Non-Delaware, non-US entity did not block acceptance (YC handles restructuring later).
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: null
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: equity_breakdown
+    answer_excerpt: null
+    answer_summary: 100% founder-owned (solo founder).
+    why_notable: Confirms solo-founder, fully-owned cap tables are acceptable.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: YC accepts solo founders.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: other_ideas
+    answer_excerpt: "Included managed database hosting."
+    answer_summary: Listed adjacent product ideas such as managed database hosting.
+    why_notable: YC explicitly says it sometimes funds an idea from this list rather than the main one.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: List adjacent products or major feature expansions; check YC's Requests for Startups to align with what they're looking for.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: surprising_discovery
+    answer_excerpt: "My last name is Musing which is slightly amusing."
+    answer_summary: A lighthearted personal detail rather than a research finding.
+    why_notable: Shows the question is treated as a personality probe, not a knowledge test.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: This is a personality-test question; culture/personality fit matters alongside business merit.
+
+  - company: Basedash
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: unmapped
+    answer_excerpt: null
+    answer_summary: >
+      General principles from the guide (not tied to one question): keep answers to 1-2
+      sentences with the first sentence as a TL;DR; optimize for a reviewer with zero
+      domain knowledge; never exaggerate; each answer must stand alone because reviewers
+      may read out of order or skip questions; improving the company beats polishing the
+      application.
+    why_notable: Cross-cutting advice from a founder who applied 4 times and reviewed his own trajectory.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+    founder_commentary: "Legacy/meta note: applies to the whole form, not a single question."
+
+  # ---------------- Fluently (W24) guide ----------------
+  - company: Fluently
+    batch: W24
+    year: 2024
+    stage_at_application: launched_no_revenue
+    outcome: reapplied_then_accepted
+    question_id: description_50_chars
+    answer_excerpt: "Good examples he cites: Loom, 'Record and share video messages instantly'; bad: 'Tynker for B2B creative thinking mLearning'."
+    answer_summary: Name the customer and problem in plain words within 50 chars; only use "Airbnb for X" analogies when X is universally known.
+    why_notable: Reviewer-side view (100+ applications reviewed) of why most one-liners fail on jargon and obscure references.
+    source_url: https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+    founder_commentary: Avoid jargon and vague terminology; the reference-company analogy only works if the reference is universally known.
+
+  - company: Fluently
+    batch: W24
+    year: 2024
+    stage_at_application: launched_no_revenue
+    outcome: reapplied_then_accepted
+    question_id: what_will_you_make
+    answer_excerpt: "He holds up Dropbox's original application answer (automatic sync, existing-workflow integration, offline access) as the model."
+    answer_summary: Expand the one-liner in under 5 sentences, clarify customer/problem/solution, add one sentence of long-term vision; build a website in 1-2 days (e.g. Framer) and include a 60-90s demo video if an MVP exists.
+    why_notable: Concrete length and demo-format guidance from a recent accepted founder.
+    source_url: https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+    founder_commentary: Keep it under 5 sentences; the demo video should be 60-90 seconds of product, not pitch.
+
+  - company: Fluently
+    batch: W24
+    year: 2024
+    stage_at_application: launched_no_revenue
+    outcome: reapplied_then_accepted
+    question_id: how_far_along
+    answer_excerpt: "Good example he gives: 'Founding team of 4 assembled. 70% of MVP complete. 10 onboarding calls scheduled in 2 weeks.'"
+    answer_summary: 3-5 factual bullets leading with revenue, users, or LOIs; distinguish installs from active users; don't pad minimal progress with research fluff (his bad example lists '832 studies reviewed').
+    why_notable: Explicitly names the metric-inflation patterns reviewers penalize.
+    source_url: https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+    founder_commentary: Base everything on facts and numbers; misleading metrics (installs as users, uncontextualized retention) read as dishonesty.
+
+  - company: Fluently
+    batch: W24
+    year: 2024
+    stage_at_application: launched_no_revenue
+    outcome: reapplied_then_accepted
+    question_id: users_customers
+    answer_excerpt: "His rewrite example: '4 couples using product. App free, but generated $150 in donations.'"
+    answer_summary: Give concrete numbers per metric (payments, usage, LOIs, interviews) in 1-2 sentences; the same tiny traction stated plainly beats it buried in hedging.
+    why_notable: Shows tiny traction is fine if stated as clean numbers rather than narrative.
+    source_url: https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+    founder_commentary: Keep responses to 1-2 sentences of concrete numbers.
+
+  - company: Fluently
+    batch: W24
+    year: 2024
+    stage_at_application: launched_no_revenue
+    outcome: reapplied_then_accepted
+    question_id: why_this_idea
+    answer_excerpt: "Model answer he cites: GitLab's founder needed the product at his previous job, and everyone at the company except account managers was a developer."
+    answer_summary: One sentence on inspiration, 1-2 sentences on domain expertise, then facts/numbers showing market demand.
+    why_notable: Gives an exact sentence budget for the founder-market-fit answer.
+    source_url: https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+    founder_commentary: Lead with the personal inspiration, then evidence; keep it tight.
+
+  - company: Fluently
+    batch: W24
+    year: 2024
+    stage_at_application: launched_no_revenue
+    outcome: reapplied_then_accepted
+    question_id: competitors_insight
+    answer_excerpt: "Model he cites: GitLab positioning open-source against GitHub Enterprise and Atlassian Stash, with open-source as free marketing."
+    answer_summary: List 2-3 primary competitors, state how users solve the problem today, and articulate the differentiation and why it wins.
+    why_notable: Reviewer-calibrated structure for the question most applicants dodge with "no competitors".
+    source_url: https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+    founder_commentary: Show the rationale for your advantage, not just a feature list.
+
+  - company: Fluently
+    batch: W24
+    year: 2024
+    stage_at_application: launched_no_revenue
+    outcome: reapplied_then_accepted
+    question_id: how_make_money
+    answer_excerpt: "At $25/month subscription, need 334k paid customers ($100M ARR), representing 0.4% of 84 million non-native professionals."
+    answer_summary: Bottom-up TAM only (customers x annual price), show the path to $100M ARR and what tiny market share that requires; never cite top-down analyst spend figures (his bad example is 'global $10B corporate training spend').
+    why_notable: The excerpt appears to be Fluently's own market math, a worked template for the revenue-ceiling clause.
+    source_url: https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+    founder_commentary: Bottom-up, not top-down; show the percentage of the market needed to reach $100M ARR.
+
+  - company: Fluently
+    batch: W24
+    year: 2024
+    stage_at_application: launched_no_revenue
+    outcome: reapplied_then_accepted
+    question_id: equity_breakdown
+    answer_excerpt: null
+    answer_summary: Roughly equal splits among essential founders; 50/50 for two cofounders; heavily skewed splits (90/10) flag future motivation problems.
+    why_notable: Confirms the skewed-split screening flag from the reviewer side.
+    source_url: https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+    founder_commentary: Every founder on the cap table should be critical to the company's success.
+
+  - company: Fluently
+    batch: W24
+    year: 2024
+    stage_at_application: launched_no_revenue
+    outcome: reapplied_then_accepted
+    question_id: other_ideas
+    answer_excerpt: null
+    answer_summary: Include 2-3 backup ideas, each as a 50-char description plus one sentence of rationale.
+    why_notable: Gives a concrete format for a question most applicants leave vague or blank.
+    source_url: https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+    founder_commentary: Demonstrates thoughtfulness and flexibility.
+
+  - company: Fluently
+    batch: W24
+    year: 2024
+    stage_at_application: launched_no_revenue
+    outcome: reapplied_then_accepted
+    question_id: unmapped
+    answer_excerpt: "\"Tom accepted us 80% because of our team, not the idea.\""
+    answer_summary: >
+      Cross-cutting principles plus HN-thread commentary: answer directly and concisely
+      (1-5 sentences), facts and numbers over marketing language, honesty over optics,
+      YC invests in people so lead with team excellence. In the HN thread Rebryk says
+      their YC partner accepted them mostly on team; commenters add getting 4-5 YC
+      alumni to review the application and doing practice interviews. Rebryk also notes
+      he attended a rural Pennsylvania state school, countering the pedigree objection.
+    why_notable: The team-over-idea admission is a direct data point on what actually drove an acceptance.
+    source_url: https://news.ycombinator.com/item?id=41987512
+    founder_commentary: "Legacy/meta note: whole-application principles and HN thread remarks, not a single form question."

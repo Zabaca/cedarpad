@@ -1,0 +1,2243 @@
+# Corpus: shizune.co YC application examples
+# Source group: shizune
+# Fetched: 2026-07-12
+# Notes: All 32 company pages on shizune.co/yc-application-examples fetched successfully.
+#   Excerpts are short illustrative snippets as rendered on shizune's pages (which
+#   republish the original applications); paraphrases are ours. Outcome "accepted"
+#   means the application shown led to a YC offer per the page; stage is as described
+#   at application time.
+source_group: shizune
+fetch_date: "2026-07-12"
+index_url: https://shizune.co/yc-application-examples
+
+records:
+  # ---------------- GitLab (W15) ----------------
+  - company: GitLab
+    batch: W15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "open source software to collaborate on code... version control code including pull/merge requests, forking and public projects"
+    answer_summary: "Self-hosted GitHub alternative with version control, collaboration, wikis, issue tracking, and CI."
+    why_notable: "Open-source distribution framed as the product story itself."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+  - company: GitLab
+    batch: W15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: location
+    answer_excerpt: "The Netherlands, Ukraine (with employees in San Francisco), we don't know yet where will be based after YC"
+    answer_summary: "Fully distributed international team; openly admitted no post-YC HQ plan."
+    why_notable: "Honest \"we don't know yet\" on a logistics question did not hurt a strong application."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+  - company: GitLab
+    batch: W15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "In 2011 Dmitriy started GitLab. We met in 2012 via email when Sytse started building GitLab.com"
+    answer_summary: "Founders met remotely over the open-source project itself and formalized the partnership in 2013."
+    why_notable: "Counterexample to the met-in-person norm; the shared project was the relationship."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+  - company: GitLab
+    batch: W15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "Over 100.000 organizations are using GitLab... most popular open source version control software"
+    answer_summary: "$1M ARR growing ~60%/mo, 100k+ orgs, enterprise logos (Qualcomm, NASA, Nasdaq), more installs than GitHub Enterprise."
+    why_notable: "Late-stage applicant using YC as an amplifier; traction stated in concrete comparatives."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+  - company: GitLab
+    batch: W15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "open source... allows you to market your product for free... need to have a proprietary commercial version to generate scalable revenue"
+    answer_summary: "Open core as both distribution and monetization insight vs closed-source competitors."
+    why_notable: "The insight clause is a business-model mechanism, not a feature comparison."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+  - company: GitLab
+    batch: W15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: impressive_achievement
+    answer_excerpt: "Sytse has build recreational manned submarines from scratch... currently the largest producer of them in the world"
+    answer_summary: "Cited founding U-Boat Worx (submarine manufacturer) as pre-software proof of building capability."
+    why_notable: "The canonical example of a wildly non-obvious but concrete impressive-achievement answer."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+  - company: GitLab
+    batch: W15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: demo_url
+    answer_excerpt: "http://demo.gitlab.com/users/sign_in"
+    answer_summary: "Live demo login for reviewers to test the actual product."
+    why_notable: "Live product beats video when you have one."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+
+  # ---------------- Cruise (W14) ----------------
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Cruise builds a system that inexpensively turns your car into a self-driving vehicle... bolts on like a roof rack."
+    answer_summary: "Aftermarket retrofit kit (cameras, radar, GPS) targeting under $3,000 and 90% of driving scenarios."
+    why_notable: "Hugely ambitious idea made concrete via a mundane analogy (\"like a roof rack\") and a price point."
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We've acquired an Audi S4... and have started fitting it with cameras and drive-by-wire equipment... it will be just a demo."
+    answer_summary: "Two weeks in; bought a test car and began hardware integration, targeting a Demo Day demo only."
+    why_notable: "Accepted with essentially zero progress; velocity and founder quality carried it."
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_long_working
+    answer_excerpt: "We have been working for about two weeks (started roughly mid October)."
+    answer_summary: "Company was two weeks old at application."
+    why_notable: "Shows the traction bar scales with founder track record (Vogt had founded Justin.tv/Twitch)."
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: impressive_achievement
+    answer_excerpt: "kvogt: Built various devices that were the first ever to crack certain kinds of high-security safes... jebagu: I helped to build a self-driving car."
+    answer_summary: "Vogt cited safe-cracking devices; Bagu cited DARPA Grand Challenge autonomous-vehicle work."
+    why_notable: "One or two concrete sentences each, directly relevant to the product domain."
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "We met in early October 2013 after being introduced by Danielle Fong (Chief Scientist, LightSail Energy)."
+    answer_summary: "Founders had met only weeks before, via a named ecosystem introduction."
+    why_notable: "Counterexample to the long-relationship norm; named the introducer for credibility."
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Self-driving car technology has so many positive effects on society... save tens of thousands of lives."
+    answer_summary: "Mission framing: emissions, productivity, accident prevention, lives saved."
+    why_notable: "Rare example where a societal-impact answer works, because the founders had domain credentials."
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "It costs at least an order of magnitude less than what is being built today... designed to work on existing cars."
+    answer_summary: "Differentiator is 10x cost reduction plus retrofit to existing vehicles."
+    why_notable: "Quantified novelty (order of magnitude) rather than adjectives."
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "We are most afraid of Google. Their systems potentially have access to Streetview and Maps data, which is extremely hard to replicate."
+    answer_summary: "Named the scariest competitor honestly and identified the specific hard-to-replicate asset (data)."
+    why_notable: "Naming and analyzing the giant instead of claiming no competition."
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We will make money by selling and installing our equipment on existing vehicles. Over time, more of our revenue will come from subscriptions fees."
+    answer_summary: "Hardware sales first, transitioning to recurring subscriptions."
+    why_notable: "Simple two-phase model; no inflated TAM math."
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: equity_breakdown
+    answer_excerpt: "50/50 split between Kyle and Jeremy. $100K convertible note from Kyle."
+    answer_summary: "Equal split; founder self-funded via convertible note."
+    why_notable: "Clean equal split plus skin-in-the-game signal."
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Cruise
+    batch: W14
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: other_ideas
+    answer_excerpt: "Turbotax for mortgages / DNS for snail mail / Github for CAD"
+    answer_summary: "Three terse X-for-Y alternates."
+    why_notable: "The question rewards compressed, legible idea framing."
+    source_url: https://shizune.co/yc-application-examples/cruise
+
+  # ---------------- Mixpanel (S09) ----------------
+  - company: Mixpanel
+    batch: S09
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Mixpanel is a business intelligence service that helps improve online companies by tracking user interactions, engagement, and optimization avenues instead of just tracking page views."
+    answer_summary: "Engagement analytics vs pageview analytics; behavior and funnel optimization for online companies."
+    why_notable: "Defines the product by contrast with the incumbent metric (pageviews)."
+    source_url: https://shizune.co/yc-application-examples/mixpanel
+  - company: Mixpanel
+    batch: S09
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: prototype_timeline
+    answer_excerpt: "We currently already have a alpha build... A beta will likely be finished either before summer starts or soon during."
+    answer_summary: "Alpha already deployed with early customers (including YC company Posterous) and generating revenue."
+    why_notable: "Answered a pre-product question by showing they were already past it."
+    source_url: https://shizune.co/yc-application-examples/mixpanel
+  - company: Mixpanel
+    batch: S09
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "I've known Tim for just over a year. We were in the same discrete math class..."
+    answer_summary: "Met in a university math class; Suhail recruited Tim personally."
+    why_notable: "Short honest answer; relationship depth shown via the joint SongRaptor project instead."
+    source_url: https://shizune.co/yc-application-examples/mixpanel
+  - company: Mixpanel
+    batch: S09
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: project_together
+    answer_excerpt: "Recently we've been working on a music search and on-demand streaming site called SongRaptor."
+    answer_summary: "Built a music site together and used it as the live guinea pig for Mixpanel's own analytics."
+    why_notable: "The joint project doubled as product validation, tying two answers together."
+    source_url: https://shizune.co/yc-application-examples/mixpanel
+  - company: Mixpanel
+    batch: S09
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: impressive_achievement
+    answer_excerpt: "Suhail... developed an application that got over 1 MM installs, and an opensource javascript framework."
+    answer_summary: "Concrete numbers (1M installs) plus open-source work; cofounder cited academic distinction."
+    why_notable: "Quantified, verifiable achievements."
+    source_url: https://shizune.co/yc-application-examples/mixpanel
+  - company: Mixpanel
+    batch: S09
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "Mixpanel will let people learn about their customers by tracking interactions and engagement."
+    answer_summary: "Democratizes analytics that only Facebook-scale companies could build internally."
+    why_notable: "Novelty framed as bringing an internal big-co capability to everyone."
+    source_url: https://shizune.co/yc-application-examples/mixpanel
+  - company: Mixpanel
+    batch: S09
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "Our primary competitor is Google Analytics... We fear Google the most because of their market penetration and their engineering resources."
+    answer_summary: "Named the free incumbent honestly; insight came from Slide/Max Levchin experience building data-driven products (\"Working at Slide, known for being data-driven, inspired me to build Mixpanel\")."
+    why_notable: "Pairs an honest fear with an earned secret from insider experience."
+    source_url: https://shizune.co/yc-application-examples/mixpanel
+  - company: Mixpanel
+    batch: S09
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "Mixpanel's business model is a subscription based freemium model... we can scale prices based solely on usage similar to that of Amazon S3."
+    answer_summary: "Usage-scaled freemium SaaS, startups first then enterprise."
+    why_notable: "Anchored pricing model to a familiar precedent (S3)."
+    source_url: https://shizune.co/yc-application-examples/mixpanel
+  - company: Mixpanel
+    batch: S09
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: other_ideas
+    answer_excerpt: "We're considering entering other areas of analytics and business intelligence such as Mobile and outsourced data processing through Hadoop."
+    answer_summary: "Adjacent expansions rather than unrelated ideas."
+    why_notable: "Used the question to show depth in the same space, not scatter."
+    source_url: https://shizune.co/yc-application-examples/mixpanel
+  - company: Mixpanel
+    batch: S09
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: surprising_discovery
+    answer_excerpt: "Users have the tendency to defy your expectations all the time. If you don't listen, you won't survive."
+    answer_summary: "Lesson from early customers: observed behavior beats assumptions."
+    why_notable: "Discovery tied to the product thesis itself."
+    source_url: https://shizune.co/yc-application-examples/mixpanel
+
+  # ---------------- OpenPhone (S18) ----------------
+  - company: OpenPhone
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "Phone system meets CRM built for small businesses"
+    answer_summary: "Business phone plus lightweight CRM for SMBs on mobile."
+    why_notable: "One-liner names the category mashup and the customer in nine words."
+    source_url: https://shizune.co/yc-application-examples/openphone
+  - company: OpenPhone
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "I observed that contractors who looked more professional, followed up with their customers... earned noticeably more money."
+    answer_summary: "Insight from prior job at Joist.com watching contractors; professionalism in comms correlated with income, yet SMBs juggled personal phones."
+    why_notable: "Demand evidence from direct observation of the customer at a previous employer."
+    source_url: https://shizune.co/yc-application-examples/openphone
+  - company: OpenPhone
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We are a subscription-based product with plans starting at $10/month."
+    answer_summary: "Subscription tiers $10 to $200/mo; sized against 33M North American SMBs and a $40B market."
+    why_notable: "Bottom-up pricing plus top-down market size in one answer."
+    source_url: https://shizune.co/yc-application-examples/openphone
+  - company: OpenPhone
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_get_users
+    answer_excerpt: "There are 2 million people searching for small business phone systems every month... we want to spend money on AdWords initially."
+    answer_summary: "High-intent search capture via AdWords, plus referrals and app-store optimization."
+    why_notable: "Distribution answer starts from measured search demand, not hope."
+    source_url: https://shizune.co/yc-application-examples/openphone
+  - company: OpenPhone
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: users_customers
+    answer_excerpt: "1,500 users and 32 paying customers"
+    answer_summary: "Early revenue stage with specific user and payer counts."
+    why_notable: "Small numbers stated plainly instead of dressed up."
+    source_url: https://shizune.co/yc-application-examples/openphone
+  - company: OpenPhone
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_apply_yc
+    answer_excerpt: "We want to be a part of a fast-paced program... surrounded by people who are building the future."
+    answer_summary: "Sought mentorship and pace; generic but earnest."
+    why_notable: "Example of a low-weight question answered briefly without overinvestment."
+    source_url: https://shizune.co/yc-application-examples/openphone
+
+  # ---------------- Slite (W18) ----------------
+  - company: Slite
+    batch: W18
+    year: 2018
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "The first note app designed for teams"
+    answer_summary: "Team-first note app, contrast with consumer note tools."
+    why_notable: "Claims a category (\"first X for Y\") within 50 chars."
+    source_url: https://shizune.co/yc-application-examples/slite
+  - company: Slite
+    batch: W18
+    year: 2018
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Slite brings transparency and accessibility to your team's knowledge through notes, much like Slack brought transparency to your communication"
+    answer_summary: "Centralized team knowledge, explicitly analogized to Slack's effect on chat."
+    why_notable: "Single well-chosen analogy carries the whole positioning."
+    source_url: https://shizune.co/yc-application-examples/slite
+  - company: Slite
+    batch: W18
+    year: 2018
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "As of today, I'm a solo founder and this situation suits me perfectly"
+    answer_summary: "Solo founder, framed as a deliberate strength, backed by a 7-person team and eFounders support."
+    why_notable: "Rare accepted solo-founder answer that owns the situation rather than apologizing."
+    source_url: https://shizune.co/yc-application-examples/slite
+  - company: Slite
+    batch: W18
+    year: 2018
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: users_customers
+    answer_excerpt: "400+ active users spread among 50+ teams. Our largest by far, ABTasty, has more than 100 users"
+    answer_summary: "Private beta traction with named largest customer."
+    why_notable: "Names the biggest account, exactly what the question asks."
+    source_url: https://shizune.co/yc-application-examples/slite
+  - company: Slite
+    batch: W18
+    year: 2018
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Like Chat went from private sphere to business sphere with software like Slack, I'm convinced Note will spread from consumer to businesses"
+    answer_summary: "Thesis by trajectory analogy: notes will consumerize into business like chat did."
+    why_notable: "A market-timing argument standing in for personal-pain evidence."
+    source_url: https://shizune.co/yc-application-examples/slite
+  - company: Slite
+    batch: W18
+    year: 2018
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "Word processors focus on independent docs, Slite is all about the big picture"
+    answer_summary: "Substitutes are word processors and wikis; novelty is unified team knowledge over fragmented docs."
+    why_notable: "Names the substitute behavior directly."
+    source_url: https://shizune.co/yc-application-examples/slite
+  - company: Slite
+    batch: W18
+    year: 2018
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We'll sell Slite on a pay-per-user model, starting at 10$/user/month"
+    answer_summary: "Per-seat pricing mirroring Slack, targeting 3-500 person companies."
+    why_notable: "Borrowing a proven adjacent pricing model."
+    source_url: https://shizune.co/yc-application-examples/slite
+  - company: Slite
+    batch: W18
+    year: 2018
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: other_ideas
+    answer_excerpt: "the next generation of remote tool, allowing with a set of mixed reality & 360 cameras to get the proximity effect"
+    answer_summary: "Future vision of immersive remote collaboration."
+    why_notable: "Used the ideas question for a far-horizon vision in the same problem space."
+    source_url: https://shizune.co/yc-application-examples/slite
+
+  # ---------------- MagicBell (W21) ----------------
+  - company: MagicBell
+    batch: W21
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "In-app notification center for web & mobile apps"
+    answer_summary: "Embeddable notification infrastructure for product teams."
+    why_notable: "Plain category description within the limit."
+    source_url: https://shizune.co/yc-application-examples/magicbell
+  - company: MagicBell
+    batch: W21
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We have a stable MVP delivering over a million notifications a month for two B2B apps."
+    answer_summary: "MVP in production at real volume; one enterprise lead per week from content marketing."
+    why_notable: "Usage volume as the traction headline when revenue was tiny."
+    source_url: https://shizune.co/yc-application-examples/magicbell
+  - company: MagicBell
+    batch: W21
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: revenue_monthly
+    answer_excerpt: "August revenue is $999"
+    answer_summary: "Sub-$1k monthly revenue, with a signed $299/mo contract starting later; committed revenue delayed by banking setup."
+    why_notable: "Radically honest tiny-revenue disclosure with context, accepted anyway."
+    source_url: https://shizune.co/yc-application-examples/magicbell
+  - company: MagicBell
+    batch: W21
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "It's a problem faced universally by B2B apps"
+    answer_summary: "Founder built the same thing internally at SupportBee (her prior company, 500+ enterprise customers); knew it costs 2 engineers + designer for 2 months."
+    why_notable: "Founder-market fit via having been the exact customer."
+    source_url: https://shizune.co/yc-application-examples/magicbell
+  - company: MagicBell
+    batch: W21
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "We let them bcc their existing email notifications to us... takes less than 30 mins"
+    answer_summary: "Adoption-friction hack: ingest legacy email notifications so integration starts in minutes, API migration comes later."
+    why_notable: "Novelty expressed as a go-to-market wedge, not a feature list."
+    source_url: https://shizune.co/yc-application-examples/magicbell
+  - company: MagicBell
+    batch: W21
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_apply_yc
+    answer_excerpt: "As a transgender female founder, I lack the industry network to make this business become the industry leader it can be."
+    answer_summary: "Explicitly asked YC for the network she lacked."
+    why_notable: "Candid, personal, specific ask rather than flattery."
+    source_url: https://shizune.co/yc-application-examples/magicbell
+
+  # ---------------- Metlo (S21) ----------------
+  # NOTE: shizune's Metlo page shows the founders' application written around their
+  # earlier data-science-notebook idea ("Supernote"); the company later became the
+  # API-security product. Records reflect the application as published.
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: technical_work
+    answer_excerpt: "Both of us do all the work. No one else has worked on Supernote."
+    answer_summary: "Two technical founders, no outside contributors."
+    why_notable: "The exact clean answer YC wants on the technical-work screen."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "We've known each other for almost 4 yrs. We met in college where we both worked in the AI and Vision lab."
+    answer_summary: "Four years, met in a research lab, later roommates in SF."
+    why_notable: "Duration + context + ongoing closeness in two sentences."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: project_together
+    answer_excerpt: "We made a consumer subscription app... in December 2020... The app reached $8K MRR in mid-Feb."
+    answer_summary: "Shipped a consumer app together in a week that hit $8K MRR, then deprioritized it for this idea."
+    why_notable: "The side project proves shipping speed AND revenue instinct."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We came up with the idea ~2 weeks ago, have done 15 user interviews since then and should have our MVP up and running by Saturday (3/26)."
+    answer_summary: "Two-week-old idea, 15 interviews done, MVP dated to a specific Saturday, 3 pre-sales worth $150."
+    why_notable: "Progress measured in interviews, a hard date, and pre-sales rather than code."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_long_working
+    answer_excerpt: "Akshay has been working on this full-time for 2 weeks. Shri has been working nights and weekends for the last 2 weeks and full-time for 2 days."
+    answer_summary: "Exact split of full-time vs nights-and-weekends per founder."
+    why_notable: "Answers both halves of the question precisely."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: revenue_monthly
+    answer_excerpt: "Feb 2021: $150 Jan 2021: $0 Dec 2020: $0"
+    answer_summary: "Month-by-month numbers including the zeros."
+    why_notable: "Filled the structured revenue fields honestly at near-zero."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: revenue_growth_notes
+    answer_excerpt: "All our revenue is from 3 pre-sales for lifetime use of our product... 1 out of the customers who bought it in the pre-sale is a close friend of Shri's."
+    answer_summary: "Disclosed that pre-sales were discounted lifetime deals and one buyer was a friend."
+    why_notable: "Volunteered the weakening caveat; honesty as signal."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Among all our conversations (27 convos), 4 people who were Data Scientists at startups brought up that they 'could be managing our notebooks much better'."
+    answer_summary: "Idea sourced from counted customer conversations; domain expertise from DS tooling roles at Facebook and Uber."
+    why_notable: "Demand evidence quantified (27 conversations, 4 unprompted mentions)."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "A lot of our features exist in disparate open source software but there's no one tool that a Data Scientist or ML Engineer can use to manage their whole workflow."
+    answer_summary: "Substitutes are fragmented OSS tools; novelty is the integrated workflow."
+    why_notable: "Directly answers the substitutes clause."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "We don't have any real competitors right now except Deepnote (YC S19) and Naas... We do fear Databricks changing their notebook product to be exactly the same as ours."
+    answer_summary: "Named niche competitors and the platform giant threat; insight was that DS tooling is systematically underrated and the notebook is the beachhead (\"if you capture the DS notebook... you can expand easily into other areas\")."
+    why_notable: "Insight is a market-structure claim, not a feature edge."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We'll make money with a SaaS subscription by charging $20-50/user/month and then charging for notebooks deployed as APIs on a usage-basis."
+    answer_summary: "Per-seat plus usage-based pricing with an expansion path."
+    why_notable: "Two-part model matching how the product creates value."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_get_users
+    answer_excerpt: "Most of our users initially will come from sales and marketing but in the medium-longer term, a free tier for students and individuals will help us get much more organic and word-of-mouth growth."
+    answer_summary: "Direct sales first, freemium-driven organic later."
+    why_notable: "Sequenced distribution plan rather than a single channel."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: legal_entity
+    answer_excerpt: "No"
+    answer_summary: "Not incorporated at application time."
+    why_notable: "One-word answers are fine on low-weight fields."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: other_ideas
+    answer_excerpt: "1. Feature Store for ML 2. Consumer subscription app studio... 3. Sourcing tool for recruiters based on data merged from GitHub and LinkedIn"
+    answer_summary: "Three concrete alternates, mostly adjacent to their skills."
+    why_notable: "Ideas grounded in domains they had actually worked."
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: Metlo
+    batch: S21
+    year: 2021
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: surprising_discovery
+    answer_excerpt: "Paid marketing is a *much* better channel than people give it credit for... Few companies like Netflix, Wish and Spotify understand this deeply."
+    answer_summary: "Contrarian growth learning from their earlier consumer app."
+    why_notable: "Discovery is an earned, contrarian operating belief."
+    source_url: https://shizune.co/yc-application-examples/metlo
+
+  # ---------------- Prolific (S19) ----------------
+  - company: Prolific
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "Quickly find research participants you can trust."
+    answer_summary: "Marketplace matching researchers with vetted study participants."
+    why_notable: "Verb-led one-liner embedding the differentiator (trust)."
+    source_url: https://shizune.co/yc-application-examples/prolific
+  - company: Prolific
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "In the first year of my PhD I had a hard time finding participants for my research"
+    answer_summary: "Founder hit the problem personally as a psychology PhD student; recruitment pain and data quality issues are field-wide."
+    why_notable: "Textbook scratch-your-own-itch with domain credentials."
+    source_url: https://shizune.co/yc-application-examples/prolific
+  - company: Prolific
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We're already profitable."
+    answer_summary: "200% YoY growth, 2,000+ paying researchers, 30,000+ monthly active participants, dozens of $10k+/yr customers, profitable."
+    why_notable: "Profitability as the single strongest word in a traction answer."
+    source_url: https://shizune.co/yc-application-examples/prolific
+  - company: Prolific
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "TRUST. Researchers aren't willing to pay if they can't be sure the data will be good."
+    answer_summary: "vs Mechanical Turk: data quality, fair participant pay, transparency; the insight is that trust, not price, clears the market."
+    why_notable: "One-word thesis opening; insight framed against the incumbent's known weakness."
+    source_url: https://shizune.co/yc-application-examples/prolific
+  - company: Prolific
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: technical_work
+    answer_excerpt: "100% of our code was written by my co-founder (Phelim) and the four engineers we've hired"
+    answer_summary: "Technical cofounder plus hired engineers; no outsourcing."
+    why_notable: "Clean disclosure of exactly who builds."
+    source_url: https://shizune.co/yc-application-examples/prolific
+  - company: Prolific
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_long_working
+    answer_excerpt: "part-time during PhDs for four years, then full-time for eight months"
+    answer_summary: "Long part-time gestation, recently full-time; founders known 6+ years from Cambridge."
+    why_notable: "Slow-burn timeline made credible by profitability."
+    source_url: https://shizune.co/yc-application-examples/prolific
+
+  # ---------------- Dropbox (S07) ----------------
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: demo_url
+    answer_excerpt: "Here's a screencast that I'll also put up on news.yc"
+    answer_summary: "Screencast plus a Windows installer for reviewers."
+    why_notable: "The famous screencast-as-demo before launch; demo did the convincing."
+    source_url: https://shizune.co/yc-application-examples/dropbox
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Dropbox synchronizes files across your/your team's computers. It's much better than uploading or email"
+    answer_summary: "File sync integrated with Windows, backed by S3, combining sync, backup, versioning for non-technical users."
+    why_notable: "Defines the product against the substitute behaviors (uploading, email)."
+    source_url: https://shizune.co/yc-application-examples/dropbox
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "there's no good integrated solution"
+    answer_summary: "Competitors solved sync, backup, and web access separately; Dropbox unified all three with zero configuration."
+    why_notable: "Novelty as integration + zero-config, not any single new capability."
+    source_url: https://shizune.co/yc-application-examples/dropbox
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "freemium approach, where we give away free 1GB accounts and charge for additional storage"
+    answer_summary: "Free 1GB tier, paid individual ($5/mo for 10GB) and business ($20+/mo) tiers, plus partner licensing."
+    why_notable: "The freemium storage-ladder model stated years before it was standard."
+    source_url: https://shizune.co/yc-application-examples/dropbox
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: impressive_achievement
+    answer_excerpt: "programming since age 5; built profitable SAT prep company; created poker bot"
+    answer_summary: "Drew Houston's solo-founder credentials: precocity, a profitable business, and a hard technical hack."
+    why_notable: "Solo founder compensating with unusually strong individual evidence (application also jokes \"There's a joke in here somewhere\" on the founder-relationship question)."
+    founder_commentary: "The application's humor about solo status is itself a known artifact; YC pushed Houston to find a cofounder."
+    source_url: https://shizune.co/yc-application-examples/dropbox
+
+  # ---------------- Paystack (W16) ----------------
+  - company: Paystack
+    batch: W16
+    year: 2015
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "APIs and tools to enable merchants accept payments in African Markets"
+    answer_summary: "Developer-first payments infrastructure for African merchants."
+    why_notable: "Geography as the wedge inside the 50 chars."
+    source_url: https://shizune.co/yc-application-examples/paystack
+  - company: Paystack
+    batch: W16
+    year: 2015
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "Private Beta. We are piloting with a dozen merchants and we have hundreds of merchants on our waiting list."
+    answer_summary: "A dozen pilot merchants, 400+ waitlist, pre-revenue."
+    why_notable: "Waitlist as demand evidence when revenue does not exist yet."
+    source_url: https://shizune.co/yc-application-examples/paystack
+  - company: Paystack
+    batch: W16
+    year: 2015
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "When i founded my first startup in 2010, we needed a way to accept payments online, there was no solution locally"
+    answer_summary: "Prior founder hit the gap personally, then spent 2014 building payment integrations for banks before starting Paystack."
+    why_notable: "Personal pain plus paid domain apprenticeship in the exact niche."
+    source_url: https://shizune.co/yc-application-examples/paystack
+  - company: Paystack
+    batch: W16
+    year: 2015
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "In Nigeria.. there's still no way to accept recurring payments or one click payments."
+    answer_summary: "Recurring and one-click payments simply unavailable locally; substitutes were offshore-account workarounds."
+    why_notable: "Novelty is absolute in the target geography, not incremental."
+    source_url: https://shizune.co/yc-application-examples/paystack
+  - company: Paystack
+    batch: W16
+    year: 2015
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "Transaction fees. 1.9% + 50cents"
+    answer_summary: "Per-transaction take rate, Stripe-style."
+    why_notable: "Six-word business-model answer."
+    source_url: https://shizune.co/yc-application-examples/paystack
+  - company: Paystack
+    batch: W16
+    year: 2015
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: equity_breakdown
+    answer_excerpt: "Shola (Founder/CEO): 80% | Employee Pool: 10% | Advisory Pool: 10%"
+    answer_summary: "Majority solo-founder ownership with employee and advisor pools."
+    why_notable: "Pools carved out pre-YC signaled team-building intent."
+    source_url: https://shizune.co/yc-application-examples/paystack
+
+  # ---------------- Dendron (W21) ----------------
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "Superhuman for note taking"
+    answer_summary: "Speed-first note tool positioned via a hot company analogy."
+    why_notable: "X-for-Y one-liner leaning on a brand synonymous with speed."
+    source_url: https://shizune.co/yc-application-examples/dendron
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "a note taking tool that lets users find notes in seconds, no matter how many notes they have"
+    answer_summary: "Markdown VSCode extension with hierarchy-based lookup, local storage, publishing."
+    why_notable: "Benefit stated as a measurable capability (find in seconds at any scale)."
+    source_url: https://shizune.co/yc-application-examples/dendron
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: technical_work
+    answer_excerpt: "Kevin is the sole full time developer for the project"
+    answer_summary: "Solo technical founder builds everything."
+    why_notable: "Solo-founder technical answer, accepted."
+    source_url: https://shizune.co/yc-application-examples/dendron
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: impressive_achievement
+    answer_excerpt: "Build a one man AWS consulting company... with fortune 50 clients and a standard rate of $320/hour"
+    answer_summary: "Solo consultancy with Fortune 50 clients at a premium rate."
+    why_notable: "Rate and client tier quantify credibility in one sentence."
+    source_url: https://shizune.co/yc-application-examples/dendron
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We launched our preview June of 2020... over 100 users in our community Discord"
+    answer_summary: "Preview launched, 100+ Discord members, 28 multiple-times-daily users."
+    why_notable: "Tiny numbers but sliced to show intensity of use (28 daily actives)."
+    source_url: https://shizune.co/yc-application-examples/dendron
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: users_customers
+    answer_excerpt: "28 of which are very active users (people who use Dendron multiple times a day)"
+    answer_summary: "Pre-revenue; 28 highly engaged users, zero paying."
+    why_notable: "Engagement depth substituting for breadth."
+    source_url: https://shizune.co/yc-application-examples/dendron
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Knowledge management has been a lifelong obsession of mine... use Dendron to manage a corpus of +20K notes"
+    answer_summary: "Decade-long personal obsession; founder is his own power user with 20k+ notes."
+    why_notable: "Obsession quantified by the founder's own corpus."
+    source_url: https://shizune.co/yc-application-examples/dendron
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "hierarchies have never been used to their full potential in note taking tools... Dendron gives you all the good parts"
+    answer_summary: "Hierarchy-first design without the friction competitors add."
+    why_notable: "Novelty as an underexploited old idea done right."
+    source_url: https://shizune.co/yc-application-examples/dendron
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "Established competitors are Notion and Roam... Upcoming competitors are Obsidian, Logseq and Foam"
+    answer_summary: "Two-tier competitor map (funded incumbents vs free upstarts) with hierarchy-first differentiation."
+    why_notable: "Complete, layered competitive landscape rather than a token mention."
+    source_url: https://shizune.co/yc-application-examples/dendron
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We plan on making money in three phases: - 1st phase: pro account... 2nd phase: server side features... 3rd phase: team features"
+    answer_summary: "Phased monetization: individual pro, cloud, then teams."
+    why_notable: "Sequenced revenue plan matching product maturity."
+    source_url: https://shizune.co/yc-application-examples/dendron
+  - company: Dendron
+    batch: W21
+    year: 2020
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_get_users
+    answer_excerpt: "We plan on publishing vertical specific notes on particular domains... The 'Open AWS Catalogue' is an example"
+    answer_summary: "Content-led acquisition via published domain knowledge bases."
+    why_notable: "Distribution plan derived from the product's own output."
+    source_url: https://shizune.co/yc-application-examples/dendron
+
+  # ---------------- Virtually (S20) ----------------
+  - company: Virtually
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "We're building tools to power online trade schools. With our software, anyone can build a 'Lambda School for X' business."
+    answer_summary: "All-in-one platform (admissions, live video, payments, ISA tracking) for online educators."
+    why_notable: "Positions via a then-hot company as the template customers want to copy."
+    source_url: https://shizune.co/yc-application-examples/virtually
+  - company: Virtually
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "For the past year, I've built intimate relationships with 30+ influential content creators and online educators."
+    answer_summary: "Built the tool for his own use, generalized it when educator contacts asked for access."
+    why_notable: "Demand evidence = inbound pull from a cultivated network."
+    source_url: https://shizune.co/yc-application-examples/virtually
+  - company: Virtually
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "We take the engineering out of building an online trade school so educators can focus teaching their craft."
+    answer_summary: "Substitutes are duct-taped Zoom + Calendly + Google Forms stacks; product consolidates them."
+    why_notable: "Names the exact substitute toolchain."
+    source_url: https://shizune.co/yc-application-examples/virtually
+  - company: Virtually
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "It's free to accept the first ten students. From there, we charge $25 / month for every additional cohort of ten students."
+    answer_summary: "Freemium scaling with student count; $6.36B TAM across 5.3M potential educators."
+    why_notable: "Pricing unit (cohorts of ten) mirrors the customer's own growth."
+    source_url: https://shizune.co/yc-application-examples/virtually
+  - company: Virtually
+    batch: S20
+    year: 2020
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: users_customers
+    answer_excerpt: "launched mid-November 2019, ~$1,540 revenue, 5 paying customers"
+    answer_summary: "Five paying customers, ~$1.5k total revenue at application."
+    why_notable: "Small but real paid usage stated plainly."
+    source_url: https://shizune.co/yc-application-examples/virtually
+
+  # ---------------- InEvent (S19) ----------------
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "Enterprise all in one event marketing SaaS"
+    answer_summary: "Integrated event-management platform for enterprises."
+    why_notable: "Category + buyer + delivery model in seven words."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "InEvent is the Salesforce for events... without having to upload data 3-4x times on different pages."
+    answer_summary: "Unifies registration, apps, check-in, badging with data flowing once; integrates with Salesforce/Marketo/Oracle."
+    why_notable: "Analogy plus the concrete pain (re-uploading data 3-4x)."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We have an ARR of 1,1 million USD dollars. We are growing 120% per year. We have 30 people working with us."
+    answer_summary: "$1.1M ARR, 120% YoY, 30 staff, 12 countries, 85% retention/upsell."
+    why_notable: "Dense metrics block; every claim a number."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: users_customers
+    answer_excerpt: "45 active customers... Each customer pays an average of about 25,000 dollars per year. Our largest contract is 212,000 dollars per year."
+    answer_summary: "45 active enterprise customers, $25k ACV, $212k top contract; logos include Embraer, Santander."
+    why_notable: "Answers who-pays-most exactly as asked, with the dollar figure."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: revenue_monthly
+    answer_excerpt: "2015 - 39,000 USD / 2016 - 225,000 USD / 2017 - 696,000 USD / 2018 - 1,151,000 USD"
+    answer_summary: "Four-year revenue ladder from $39k to $1.15M."
+    why_notable: "Multi-year trajectory shown as raw numbers."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: reapplied_then_accepted
+    question_id: previous_application
+    answer_excerpt: "We applied in 2015... we had only 8,000 dollars in ARR. Since then we have increased our revenue to more than one million dollars."
+    answer_summary: "Rejected in 2015 at $8k ARR; reapplied four years later at 125x the revenue and got in."
+    why_notable: "The canonical reapplication answer: growth since last application IS the answer."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "By charging our customers... We believe we can hit one billion dollars in ARR in 12 years."
+    answer_summary: "Enterprise SaaS subscriptions; $1B ARR ambition benchmarked against Cvent's $260M quarters."
+    why_notable: "Ceiling estimate anchored to the incumbent's actuals."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "Cvent and etouches and splashthat... our biggest fear is us not being able to meet our potential."
+    answer_summary: "Named incumbents; insight = enterprises run 35+ SaaS tools so seamless data flow, not modules, wins (\"The integration between parts... Data should flow easily within the org\")."
+    why_notable: "Reframes the biggest fear as execution, not competition."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: equity_breakdown
+    answer_excerpt: "Pedro Góes - 61% / Vinicius Neris - 29% / Mauricio Giordano - 10%"
+    answer_summary: "Unequal three-founder split disclosed exactly."
+    why_notable: "Example of a skewed split at a company accepted anyway (with $1.1M ARR)."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: investment_taken
+    answer_excerpt: "bootstrapped"
+    answer_summary: "No outside investment at $1.1M ARR; $152k cash, 7 months runway."
+    why_notable: "Bootstrapped-to-revenue as a capital-efficiency signal."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: surprising_discovery
+    answer_excerpt: "I had an issue... I started saying I was allergic to cream cheese. It solved the problem."
+    answer_summary: "Reframing a request as an allergy always worked; a lesson about message framing in sales."
+    why_notable: "Small personal story carrying a real operating insight."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_apply_yc
+    answer_excerpt: "Stripe Atlas"
+    answer_summary: "Stripe Atlas exposure led to the application."
+    why_notable: "Two-word answer on a low-weight question."
+    source_url: https://shizune.co/yc-application-examples/inevent
+  - company: InEvent
+    batch: S19
+    year: 2019
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "We met in College, in Brazil, in 2011... We have been colleagues and then working together for more than 8 years now."
+    answer_summary: "Met as engineering students at USP; 8+ years working together, won a global hackathon in Miami together."
+    why_notable: "Long shared history plus a concrete joint win."
+    source_url: https://shizune.co/yc-application-examples/inevent
+
+  # ---------------- Goodly (S18) ----------------
+  - company: Goodly
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "Student Loan Repayment as an Employee Benefit."
+    answer_summary: "Employers pay down employee student debt through the platform."
+    why_notable: "The whole business model fits in the one-liner."
+    source_url: https://shizune.co/yc-application-examples/goodly
+  - company: Goodly
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Goodly came from Greg's personal experience with student loans"
+    answer_summary: "Cofounder needed loans after his father's death; team saw employer demand amid the $1.5T student-debt crisis and the war for talent."
+    why_notable: "Personal story plus macro tailwind in one answer."
+    source_url: https://shizune.co/yc-application-examples/goodly
+  - company: Goodly
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "Goodly can be implemented in 10 minutes and is flexible enough to fit any budget."
+    answer_summary: "vs Gradifi/Tuition.io: simplicity, no setup fees, employee-centric tooling."
+    why_notable: "Differentiation on implementation friction, not features."
+    source_url: https://shizune.co/yc-application-examples/goodly
+  - company: Goodly
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "$6/month for each employee that participates with no setup costs or annual fees."
+    answer_summary: "Per-participant pricing; TAM math to $3.16B ARR if scaled across 44M debt holders."
+    why_notable: "Unit price and honest ceiling arithmetic."
+    source_url: https://shizune.co/yc-application-examples/goodly
+  - company: Goodly
+    batch: S18
+    year: 2018
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We had five alpha customers"
+    answer_summary: "Five alpha customers in the first week of selling; 4 weeks full-time; unsolicited investor offers including Postmates' CEO."
+    why_notable: "Sales velocity (5 customers, week one) as the early signal."
+    source_url: https://shizune.co/yc-application-examples/goodly
+
+  # ---------------- Relationship Hero (S17) ----------------
+  - company: Relationship Hero
+    batch: S17
+    year: 2017
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "We've all struggled in our own dating lives and know the feeling of having no clue what to do next."
+    answer_summary: "Founders spent years and $20k+ on dating coaching themselves; saw a gap in accessible guidance for app-era dating."
+    why_notable: "Personal spend ($20k) as proof they are the customer."
+    source_url: https://shizune.co/yc-application-examples/relationship-hero
+  - company: Relationship Hero
+    batch: S17
+    year: 2017
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "Unlike them, our business is designed to solve the problem on a global scale."
+    answer_summary: "Insight: dating apps solved matchmaking but created a new relationship-navigation problem; apply the same scalable platform model to coaching."
+    why_notable: "Insight is a second-order consequence of the incumbent's success."
+    source_url: https://shizune.co/yc-application-examples/relationship-hero
+
+  # ---------------- Simple Habit (W17) ----------------
+  - company: Simple Habit
+    batch: W17
+    year: 2016
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "5-minute meditation app. Spotify for meditation."
+    answer_summary: "Bite-size meditation with a marketplace of teachers."
+    why_notable: "Two framings in 44 chars: the unit of use and the business analogy."
+    source_url: https://shizune.co/yc-application-examples/simple-habit
+  - company: Simple Habit
+    batch: W17
+    year: 2016
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "meditations to reduce anxiety before a meeting, improve focus at work, and sleep better"
+    answer_summary: "iOS app, 5-minute sessions from 100+ teachers curated by situation and mood."
+    why_notable: "Product described through user situations, not features."
+    source_url: https://shizune.co/yc-application-examples/simple-habit
+  - company: Simple Habit
+    batch: W17
+    year: 2016
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "In just 3 months, we are reaching close to 100K downloads on our iPhone app."
+    answer_summary: "~100k downloads in 3 months, 5% paid conversion at ~$12/mo, 95% monthly user growth."
+    why_notable: "Growth-rate plus conversion economics, not just downloads."
+    source_url: https://shizune.co/yc-application-examples/simple-habit
+  - company: Simple Habit
+    batch: W17
+    year: 2016
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "users experience meditation fatigue from listening to the same voice/personality over and over again"
+    answer_summary: "Multi-teacher marketplace vs single-voice apps (Headspace/Calm); mirrors music streaming."
+    why_notable: "Novelty rooted in an observed user behavior (voice fatigue)."
+    source_url: https://shizune.co/yc-application-examples/simple-habit
+  - company: Simple Habit
+    batch: W17
+    year: 2016
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_apply_yc
+    answer_excerpt: "Y Combinator has an incredible network of entrepreneurs and mentors"
+    answer_summary: "Network, recruiting, and access to target users inside YC."
+    why_notable: "Standard answer; low-weight question handled briefly."
+    source_url: https://shizune.co/yc-application-examples/simple-habit
+
+  # ---------------- bxblue (S17) ----------------
+  - company: bxblue
+    batch: S17
+    year: 2017
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "Payroll-deductible loans, offline to online"
+    answer_summary: "Digitizing Brazil's $80B payroll-loan market."
+    why_notable: "Offline-to-online framing compresses the entire thesis."
+    source_url: https://shizune.co/yc-application-examples/bxblue
+  - company: bxblue
+    batch: S17
+    year: 2017
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "We are making a platform where users in Brazil can compare, choose, and get an online payroll-deductible loans in under 20 minutes"
+    answer_summary: "Marketplace connecting guaranteed-income borrowers to lenders; 20 minutes vs 3-4 business days."
+    why_notable: "Value quantified as time-to-loan delta."
+    source_url: https://shizune.co/yc-application-examples/bxblue
+  - company: bxblue
+    batch: S17
+    year: 2017
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: location
+    answer_excerpt: "We are now based in Brasilia, Brazil's capital, which has a high density of public servants."
+    answer_summary: "HQ chosen for customer density (public servants); São Paulo considered post-YC for banks."
+    why_notable: "Even the location answer argues customer proximity."
+    source_url: https://shizune.co/yc-application-examples/bxblue
+  - company: bxblue
+    batch: S17
+    year: 2017
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We have a fully functional MVP: lots of Zapier + Pipedrive + Heroku in the last 6 months."
+    answer_summary: "Duct-taped MVP, paycheck-analysis algorithm, 20% MoM growth since Oct 2016, $300k GMV."
+    why_notable: "Proudly discloses the no-code duct tape behind the MVP."
+    source_url: https://shizune.co/yc-application-examples/bxblue
+  - company: bxblue
+    batch: S17
+    year: 2017
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: revenue_monthly
+    answer_excerpt: "Month 1: $2,900 | Month 2: $2,100 | Month 3: $1,500 | Months 4-6: $0"
+    answer_summary: "Declining-then-zero monthly revenue during self-funded testing, disclosed as-is."
+    why_notable: "Reported a shrinking revenue line honestly with the reason."
+    source_url: https://shizune.co/yc-application-examples/bxblue
+  - company: bxblue
+    batch: S17
+    year: 2017
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "the team have witnessed many people going through the trouble of getting a payroll-deductible loan"
+    answer_summary: "Brasilia proximity to public servants plus prior banking experience."
+    why_notable: "Geographic and professional adjacency as expertise."
+    source_url: https://shizune.co/yc-application-examples/bxblue
+  - company: bxblue
+    batch: S17
+    year: 2017
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "We've created (and are improving) an algorithm that analyses one's paycheck stub and simulates all loans' opportunities in a matter of seconds"
+    answer_summary: "Instant borrowing-capacity simulation vs manual multi-day bank visits."
+    why_notable: "Novelty is a concrete artifact (the algorithm), not a claim."
+    source_url: https://shizune.co/yc-application-examples/bxblue
+  - company: bxblue
+    batch: S17
+    year: 2017
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "Our biggest competitors are bank correspondents: regular stores that can sell financial products on behalf of the banks."
+    answer_summary: "Competition is offline (correspondents, street brokers), not other startups; edge is recurring-customer focus and transparency."
+    why_notable: "Correctly identifies offline incumbents as the real competitor set."
+    source_url: https://shizune.co/yc-application-examples/bxblue
+  - company: bxblue
+    batch: S17
+    year: 2017
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We get a 6 to 10% commission on every loan generated by our platform."
+    answer_summary: "Bank-paid commissions; 1.1M federal servants initially, recurring loans over lifetimes."
+    why_notable: "Take-rate plus lifetime-repeat dynamics."
+    source_url: https://shizune.co/yc-application-examples/bxblue
+  - company: bxblue
+    batch: S17
+    year: 2017
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: runway
+    answer_excerpt: "Approximately 18 months with $250K in bank"
+    answer_summary: "$5k monthly burn, $250k banked, ~18 months runway."
+    why_notable: "Clean burn/balance/runway triplet."
+    source_url: https://shizune.co/yc-application-examples/bxblue
+
+  # ---------------- The Flex Company (S16) ----------------
+  - company: The Flex Company
+    batch: S16
+    year: 2016
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "We make FLEX, a more comfortable alternative to tampons"
+    answer_summary: "Disposable menstrual disc as tampon alternative."
+    why_notable: "Physical consumer product one-liner naming the incumbent."
+    source_url: https://shizune.co/yc-application-examples/the-flex-company
+  - company: The Flex Company
+    batch: S16
+    year: 2016
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "April marks our 1 year anniversary and we've raised $225k... we've acquired 20,000 signups of customers who want to try FLEX"
+    answer_summary: "Pre-launch: 200+ women in product trials, 20k organic signups growing 1k/week with zero paid acquisition."
+    why_notable: "Pre-launch demand proven via signup velocity at zero CAC."
+    source_url: https://shizune.co/yc-application-examples/the-flex-company
+  - company: The Flex Company
+    batch: S16
+    year: 2016
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "91% of women want a tampon alternative... we discovered an old patent for a product that's been completely neglected"
+    answer_summary: "Personal frustration plus market research plus a neglected 20-year-old patent with existing clinical data."
+    why_notable: "The \"secret\" is a literal artifact: an abandoned patent."
+    source_url: https://shizune.co/yc-application-examples/the-flex-company
+  - company: The Flex Company
+    batch: S16
+    year: 2016
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We aim to capture $3M in revenue during our first two years and see ourselves as a $100 million company in 5 years"
+    answer_summary: "DTC subscription in the $15B feminine-hygiene market; staged revenue targets."
+    why_notable: "Near-term target plus 5-year ceiling, both numeric."
+    source_url: https://shizune.co/yc-application-examples/the-flex-company
+
+  # ---------------- Kash (S14) ----------------
+  - company: Kash
+    batch: S14
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Venmo for Brick & Mortar Retail, not just P2P. Credit card fees... can eat up to 50% of their profits."
+    answer_summary: "ACH-first in-store payments so retailers skip card fees; card fallback for reliability."
+    why_notable: "Analogy plus the customer's pain quantified (50% of profits)."
+    source_url: https://shizune.co/yc-application-examples/kash
+  - company: Kash
+    batch: S14
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "When this product hit the market, we saw a surprisingly high percentage (8%) of customers paying via our platform."
+    answer_summary: "Retailers actively pushed their earlier app to customers to dodge card fees; 8% adoption validated demand."
+    why_notable: "Demand evidence from an unexpected metric in a prior product."
+    source_url: https://shizune.co/yc-application-examples/kash
+  - company: Kash
+    batch: S14
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "We marry the advantages of ACH (ubiquitous and affordable) and the advantages of credit cards (fast)."
+    answer_summary: "Combines ACH cost with card speed, unlike pure-ACH or pure-card rails."
+    why_notable: "Novelty as a hybrid of two known systems' strengths."
+    source_url: https://shizune.co/yc-application-examples/kash
+  - company: Kash
+    batch: S14
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "We do fear Google and Apple. If they get their act together, they could really disrupt the whole industry."
+    answer_summary: "Acknowledged Venmo/Square/PayPal but ranked platform giants as the real threat."
+    why_notable: "Distinguishes named competitors from feared ones."
+    source_url: https://shizune.co/yc-application-examples/kash
+  - company: Kash
+    batch: S14
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We can charge 1% where they have to charge 2-5%."
+    answer_summary: "Undercut card processing via cheaper rails; $1.2B addressable, $22M/yr at 20k retailers."
+    why_notable: "Pricing power derived from structural cost advantage."
+    source_url: https://shizune.co/yc-application-examples/kash
+
+  # ---------------- SketchDeck (W14) ----------------
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "SketchDeck is an iPad app that turns sketches into slides: this saves time and delivers better slides."
+    answer_summary: "Convert hand sketches to formatted slides; long-term touch-device presentation platform."
+    why_notable: "Product, benefit, and vision in two sentences."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "Chris and I have known each-other since undergraduate at Cambridge. We met (unglamorously) in the college bar."
+    answer_summary: "Long friendship from Cambridge undergrad."
+    why_notable: "Self-aware tone; duration is the substance."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: project_together
+    answer_excerpt: "We spent the last year building a tech startup together - Datoral (rapid data visualization with natural search)"
+    answer_summary: "Prior startup together: pilots with major companies, raised 150k GBP, shut down over cofounder conflicts."
+    why_notable: "A failed prior startup presented as evidence of working together under stress."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: hacked_system
+    answer_excerpt: "I've been on holiday most weeks this summer, thanks to micro-adventures... Head out of work, grab friends and jump on a train"
+    answer_summary: "Redefined \"adventure\" as overnight micro-trips fitting around work."
+    why_notable: "One of the few published answers to the hacked-a-system question; the hack is reframing constraints."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We're in week two of our business, but we already have our first paying client. They are paying £5 per slide we create"
+    answer_summary: "Week two with a paying client; core service performed manually while automation is built."
+    why_notable: "Do-things-that-don't-scale: founder IS the product while tech catches up."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "We've both worked in strategy consultancies, and created around two thousand slides for big corporates."
+    answer_summary: "Direct experience of the pain: two thousand slides made by hand in consulting."
+    why_notable: "Domain expertise quantified in units of suffering (slides)."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "Our solution combines modern computer vision techniques with the proliferation of touchscreen devices."
+    answer_summary: "Timing argument: CV maturity meets tablet adoption; substitutes are manual builders and outsourcers."
+    why_notable: "Why-now framing built into the novelty answer."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "We'd say our closest current competitor is the low cost slide design outsourcers. We most fear other startups due to their speed"
+    answer_summary: "Nearest competitor is outsourcing; biggest fear is faster startups; edge is combined domain + CS + design skills."
+    why_notable: "Separates current competitor from feared competitor honestly."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "For low volume clients we charge on a per slide basis. For higher volume clients we have per user subscriptions... £100m revenue in five years"
+    answer_summary: "Tiered pricing (5 GBP/slide or 100 GBP/user/mo); 500k+ consultants worldwide."
+    why_notable: "Pricing tiers matched to customer volume, plus a ceiling."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_get_users
+    answer_excerpt: "Our extended networks are revealing a large a number of people working in consultancies, banks and other corporates who want our service"
+    answer_summary: "Founder networks into consultancies, pilots converted to subscriptions, then referrals and trials."
+    why_notable: "Distribution rooted in where the founders already have access."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+  - company: SketchDeck
+    batch: W14
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: surprising_discovery
+    answer_excerpt: "It turns out that if you vaporize alcohol into fog, it becomes a lot more fun... I plan to incorporate this into a piece of immersive theatre."
+    answer_summary: "Odd genuine curiosity anecdote with a planned use."
+    why_notable: "Genuinely surprising trivia beats resume-polish here."
+    source_url: https://shizune.co/yc-application-examples/sketchdeck
+
+  # ---------------- Mimir (S15) ----------------
+  - company: Mimir
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "standalone Computer Science courses that can be deployed with a couple clicks into any of the 80% of high schools in America that don't offer any Computer Science courses."
+    answer_summary: "Automated CS classroom (grading, plagiarism detection, analytics, live chat support) requiring only computers."
+    why_notable: "The market gap (80% of schools) embedded in the product sentence."
+    source_url: https://shizune.co/yc-application-examples/mimir
+  - company: Mimir
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "High Schools will be mandated to introduce CS courses in their curriculum but they will struggle to do so due to budget constraints."
+    answer_summary: "Founders experienced CS education's impact themselves; schools face ~$70k/yr cost and instructor shortage against coming mandates."
+    why_notable: "Regulatory tailwind plus cost math as the why-now."
+    source_url: https://shizune.co/yc-application-examples/mimir
+  - company: Mimir
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "our platform... supports core programming languages such as Java, C, and C# in addition to the web based languages that others support."
+    answer_summary: "vs Code.org/CodeHS: full automated classroom (no instructor needed) and real languages, with ML plagiarism detection."
+    why_notable: "Differentiates on eliminating the binding constraint (qualified teachers)."
+    source_url: https://shizune.co/yc-application-examples/mimir
+  - company: Mimir
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "Our biggest fear is Google... They have yet to introduce a pre-builts CS program that can be deployed into school but it is certainly something we can see them doing."
+    answer_summary: "CodeHS/Code.org as competitors; Google as the existential fear."
+    why_notable: "Another Google-fear answer; pattern across batches."
+    source_url: https://shizune.co/yc-application-examples/mimir
+  - company: Mimir
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We make money through recurring enterprise sales... We estimate our average deal size will 35k... total market size of close to $3 Billion in America alone."
+    answer_summary: "$35k/school/yr (half the cost of hiring) across ~80k schools."
+    why_notable: "Price anchored to the customer's alternative cost."
+    source_url: https://shizune.co/yc-application-examples/mimir
+  - company: Mimir
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: users_customers
+    answer_excerpt: "350"
+    answer_summary: "350 student users, 100% term-over-term growth, undisclosed recurring semester revenue."
+    why_notable: "Bare number answer where a number is what's asked."
+    source_url: https://shizune.co/yc-application-examples/mimir
+  - company: Mimir
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "We have known each other for more than 5 years since we all met in High School... the three of us ran a small freelance development studio called In0v8."
+    answer_summary: "Three cofounders from high school who ran a freelance studio and shipped a language-learning app together; all Purdue students."
+    why_notable: "Relationship + joint-project evidence merged."
+    source_url: https://shizune.co/yc-application-examples/mimir
+
+  # ---------------- Shotput (S15) ----------------
+  - company: Shotput
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Stripe for managing Supply Chains. We handle the post-manufacturing supply chain to the customer for small to mid-size product companies"
+    answer_summary: "API-first fulfillment alternative to traditional 3PL warehousing."
+    why_notable: "Stripe-for-X analogy signaling API-simplicity in a legacy industry."
+    source_url: https://shizune.co/yc-application-examples/shotput
+  - company: Shotput
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We have a web app with a beta customer and a beta warehouse. In the warehouse, our software manages 50,000 orders per month."
+    answer_summary: "One prepaid beta customer; software running a real warehouse at 50k orders/mo."
+    why_notable: "Operational proof (live warehouse) despite one customer."
+    source_url: https://shizune.co/yc-application-examples/shotput
+  - company: Shotput
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: revenue_monthly
+    answer_excerpt: "$110.30"
+    answer_summary: "Total revenue of $110.30 at application."
+    why_notable: "Comically precise tiny-revenue honesty, to the cent."
+    source_url: https://shizune.co/yc-application-examples/shotput
+  - company: Shotput
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "We want to make it as easy as setting up an API account with us to get started with fulfillment. No one else has made it that easy"
+    answer_summary: "Substitutes require phone negotiations and custom 3PL contracts; Shotput is sign-up-and-ship."
+    why_notable: "Novelty measured in onboarding friction removed."
+    source_url: https://shizune.co/yc-application-examples/shotput
+  - company: Shotput
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "Competitors: ShipWire, SymphonyCommerce, JaggedPeak, Amazon. Fear the most: Amazon"
+    answer_summary: "Listed 3PL incumbents; Amazon as the existential threat."
+    why_notable: "Terse list format; no hedging."
+    source_url: https://shizune.co/yc-application-examples/shotput
+  - company: Shotput
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_get_users
+    answer_excerpt: "We currently get customers by reaching out to recently over-subscribed, crowd-funded projects on KickStarter & Indiegogo"
+    answer_summary: "Target freshly overfunded Kickstarter/Indiegogo campaigns who suddenly must fulfill at scale."
+    why_notable: "Sharp trigger-event targeting; the customer's need has a timestamp."
+    source_url: https://shizune.co/yc-application-examples/shotput
+  - company: Shotput
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We charge 10 cents per order. The average crowd-funded customer has 2000-3000 orders in the first month"
+    answer_summary: "Per-order pricing with unit economics per customer cohort."
+    why_notable: "Price times observed volume equals honest revenue math."
+    source_url: https://shizune.co/yc-application-examples/shotput
+  - company: Shotput
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: surprising_discovery
+    answer_excerpt: "Have you seen how many bathrooms some warehouses have?? ... every employee must be less than 90 feet from a toilet"
+    answer_summary: "Union rules mandate bathroom density in warehouses."
+    why_notable: "Domain-specific trivia proving they actually walk warehouses."
+    source_url: https://shizune.co/yc-application-examples/shotput
+
+  # ---------------- 80,000 Hours (S15) ----------------
+  - company: 80,000 Hours
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "We help graduates choose careers that make a difference. Currently we provide an online career guide and one-on-one coaching."
+    answer_summary: "Career guide + coaching, moving toward a web app automating impact-oriented career advice."
+    why_notable: "Nonprofit admitted to YC; product framing identical to a startup's."
+    source_url: https://shizune.co/yc-application-examples/80,000-hours
+  - company: 80,000 Hours
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "We've written an online career guide that receives over 20,000 unique views monthly... we've tracked over 170 significant career shifts."
+    answer_summary: "20k monthly readers, 200+ coached, 170 tracked career changes; prototype app saved users 70% of time."
+    why_notable: "Impact metrics (career shifts) treated as traction."
+    source_url: https://shizune.co/yc-application-examples/80,000-hours
+  - company: 80,000 Hours
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: revenue_growth_notes
+    answer_excerpt: "Since 2012, we've raised over $700,000 in donations... Last month we earned about $1000."
+    answer_summary: "Donor-funded ($700k, incl. Jaan Tallinn); just started charging for advice."
+    why_notable: "Donations framed within the revenue question without pretense."
+    source_url: https://shizune.co/yc-application-examples/80,000-hours
+  - company: 80,000 Hours
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "It's the advice we wish we'd had. When we graduated we wanted to use our careers to make a difference."
+    answer_summary: "Own problem plus three years of systematic career research."
+    why_notable: "Scratch-your-own-itch plus accumulated research moat."
+    source_url: https://shizune.co/yc-application-examples/80,000-hours
+  - company: 80,000 Hours
+    batch: S15
+    year: 2015
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_apply_yc
+    answer_excerpt: "After three years in research mode, we want to scale massively."
+    answer_summary: "Explicit mode-switch: research done, now scale."
+    why_notable: "Frames YC as the scaling instrument, not validation."
+    source_url: https://shizune.co/yc-application-examples/80,000-hours
+
+  # ---------------- Apptimize (S13) ----------------
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Apptimize lets you AB test mobile applications. You keep the native experience without needing to push changes blindly or rely on users to update."
+    answer_summary: "Mobile A/B testing with programmatic API and no-code WYSIWYG editor."
+    why_notable: "Names the two constraints (blind pushes, update lag) it removes."
+    source_url: https://shizune.co/yc-application-examples/apptimize
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Jeremy had looked for a mobile AB testing solution when working on Drawchat, but couldn't find one."
+    answer_summary: "Founder needed the tool himself; validated with 50+ person companies, YC startups, indies all wanting beta access; cofounder's statistics expertise."
+    why_notable: "Need discovered personally, then validated across segments."
+    source_url: https://shizune.co/yc-application-examples/apptimize
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "Existing solutions ignore complexity whereas we view handling it as our core business."
+    answer_summary: "Competitors ship buggy half-solutions (randomization errors, poor offline handling); mobile-specific hard problems are the moat."
+    why_notable: "Positions the hard part competitors avoid as the business."
+    source_url: https://shizune.co/yc-application-examples/apptimize
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "If we charge premium customers $1K per month and get 200 customers... we'd make ~$2.4MM per year 2 years in."
+    answer_summary: "Subscription targeting enterprises; explicit price x customers arithmetic."
+    why_notable: "Shows the multiplication instead of asserting a TAM."
+    source_url: https://shizune.co/yc-application-examples/apptimize
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_get_users
+    answer_excerpt: "Our first customers are our friends' startups... we downloaded their apps and their competitors' apps and are designing experiments for them."
+    answer_summary: "Seed via friends' startups; pre-designed experiments as the onboarding hook; referrals and dev-community presence."
+    why_notable: "Doing unscalable prep work (designing experiments for prospects) as acquisition."
+    source_url: https://shizune.co/yc-application-examples/apptimize
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "Private beta (launched that week), ~8K lines of code, 100+ signups with 2 accepted"
+    answer_summary: "Beta just launched; 100+ signups gated to 2 accepted."
+    why_notable: "Waitlist gating as early-demand signal."
+    source_url: https://shizune.co/yc-application-examples/apptimize
+
+  # ---------------- Standard Treasury (S13) ----------------
+  - company: Standard Treasury
+    batch: S13
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "We are building APIs for commercial banking services by building on top of multiple large banks."
+    answer_summary: "Twilio-style middleware abstracting ACH, FX, wires across partner banks with smart routing."
+    why_notable: "Pre-development acceptance on the strength of thesis and founders."
+    source_url: https://shizune.co/yc-application-examples/standard-treasury
+  - company: Standard Treasury
+    batch: S13
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Zac sees how hard it is for even Stripe to deal with Wells Fargo."
+    answer_summary: "Direct exposure to ACH pain and bank friction from payments jobs."
+    why_notable: "Evidence cites the strongest possible reference customer's struggle."
+    source_url: https://shizune.co/yc-application-examples/standard-treasury
+  - company: Standard Treasury
+    batch: S13
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "People who run banks don't care about providing high quality technology services, and the people who care about technology don't want to work with (or buy) a bank."
+    answer_summary: "Structural insight: mutual disinterest between banks and technologists leaves the middleware layer uncontested."
+    why_notable: "One of the cleanest \"what do you understand that others don't\" formulations in the corpus."
+    source_url: https://shizune.co/yc-application-examples/standard-treasury
+  - company: Standard Treasury
+    batch: S13
+    year: 2013
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: impressive_achievement
+    answer_excerpt: "one reorganized NYC child welfare systems, the other built Giftly's stored-value product"
+    answer_summary: "Founders (friends since 16) cite large-system reorganization and shipped fintech product."
+    why_notable: "Non-startup public-sector achievement treated as equal evidence."
+    source_url: https://shizune.co/yc-application-examples/standard-treasury
+
+  # ---------------- One Month (S13) ----------------
+  - company: One Month
+    batch: S13
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "A 30-day online crash course in web development."
+    answer_summary: "Compressed project-first coding education."
+    why_notable: "Nine-word product answer."
+    source_url: https://shizune.co/yc-application-examples/one-month
+  - company: One Month
+    batch: S13
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "The web app is live... and serves around 500 unique users per day."
+    answer_summary: "Live app, $80k+ revenue from 6,000+ students, 40% WoW growth via Skillshare/Udemy/GA."
+    why_notable: "Distribution through other platforms counted as traction."
+    source_url: https://shizune.co/yc-application-examples/one-month
+  - company: One Month
+    batch: S13
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "People are lazy and get frustrated or bored quickly. They want to learn how to code because they want to build something."
+    answer_summary: "Ship-first pedagogy: students deploy a working app in 30 minutes vs concept-first competitors."
+    why_notable: "The insight is a blunt statement about user psychology."
+    source_url: https://shizune.co/yc-application-examples/one-month
+  - company: One Month
+    batch: S13
+    year: 2013
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "In less than 5 months of existence, One Month Rails has made over $80,000 in revenue by selling our product across platforms like Skillshare, Udemy, and General Assembly."
+    answer_summary: "Course sales via marketplaces; future upsells (hosting, tools) for non-technical builders."
+    why_notable: "Answers \"how will you make money\" with how they already do."
+    source_url: https://shizune.co/yc-application-examples/one-month
+
+  # ---------------- Lollipuff (W13) ----------------
+  - company: Lollipuff
+    batch: W13
+    year: 2012
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Lollipuff is an online auction site dedicated exclusively to *authentic* designer clothing and accessories."
+    answer_summary: "Authenticated designer-goods auctions with proprietary verification plus human review."
+    why_notable: "The single differentiating word (authentic) is emphasized in the first sentence."
+    source_url: https://shizune.co/yc-application-examples/lollipuff
+  - company: Lollipuff
+    batch: W13
+    year: 2012
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "We met in AP Chemistry in high school. We've known each other for 12 years, been a couple for 11, and married for 3."
+    answer_summary: "Married cofounders (12 years) plus a third met via Sandia National Labs."
+    why_notable: "Married-couple founding team disclosed matter-of-factly."
+    source_url: https://shizune.co/yc-application-examples/lollipuff
+  - company: Lollipuff
+    batch: W13
+    year: 2012
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: impressive_achievement
+    answer_excerpt: "During my PhD I designed, constructed, and/or programmed three human-scale mobile robots... and was an early contributor to the open-source Robot Operating System (ROS)."
+    answer_summary: "Robotics/ROS work; youngest regional sales director; rebuilt counterintelligence software at Sandia."
+    why_notable: "Three founders, three distinct concrete achievements."
+    source_url: https://shizune.co/yc-application-examples/lollipuff
+  - company: Lollipuff
+    batch: W13
+    year: 2012
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "The test blog is 1.5 years old. The blog has facilitated over 200 sales, with approximately 750 bidders/buyers/sellers."
+    answer_summary: "Proof-of-concept blog (HerveLegerObsessed.com) did $60k+ in transactions before any product existed."
+    why_notable: "A blog as MVP; market proven before writing the platform."
+    source_url: https://shizune.co/yc-application-examples/lollipuff
+  - company: Lollipuff
+    batch: W13
+    year: 2012
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Fei is a respected authentication expert for several brands... completed more than 200 successful transactions (>$60,000)."
+    answer_summary: "Founder's authentication reputation was the asset; blog demand pulled the business into existence."
+    why_notable: "Domain expertise that is literally the product's trust layer."
+    source_url: https://shizune.co/yc-application-examples/lollipuff
+  - company: Lollipuff
+    batch: W13
+    year: 2012
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "We have a unique technique (patent in the works) to help verify an item's authenticity and the seller's physical possession of it."
+    answer_summary: "Patent-pending authentication + possession verification vs eBay's feedback-only trust (50%+ of designer items possibly fake)."
+    why_notable: "Novelty backed by an IP artifact and a damning incumbent statistic."
+    source_url: https://shizune.co/yc-application-examples/lollipuff
+  - company: Lollipuff
+    batch: W13
+    year: 2012
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "eBay, Bonanza, HipSwap, ThreadFlip. We fear eBay the most. However, Ebay is built around a broad, general audience."
+    answer_summary: "eBay feared but structurally uninterested in the luxury-authentication niche."
+    why_notable: "Fear plus the reason the feared party won't act."
+    source_url: https://shizune.co/yc-application-examples/lollipuff
+  - company: Lollipuff
+    batch: W13
+    year: 2012
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We charge a 7% commission on each sale... there is more $77 Million in annual transactions ($5 Million revenue based on our commission)."
+    answer_summary: "7% take rate; niche sized bottom-up from three designer brands."
+    why_notable: "Small honest TAM instead of an inflated one."
+    source_url: https://shizune.co/yc-application-examples/lollipuff
+  - company: Lollipuff
+    batch: W13
+    year: 2012
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_get_users
+    answer_excerpt: "Based on user participation on the blog, we anticipate a few hundred users from the test site will immediately join Lollipuff... Fei has an impressive personal collection... (roughly $35,000 MSRP)."
+    answer_summary: "Seed marketplace liquidity with existing blog users, founder's own $35k inventory, and recruited eBay power sellers."
+    why_notable: "Chicken-and-egg answered with owned inventory."
+    source_url: https://shizune.co/yc-application-examples/lollipuff
+  - company: Lollipuff
+    batch: W13
+    year: 2012
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: surprising_discovery
+    answer_excerpt: "Scammers and fakers hate us. We helped uncover a scam ring (selling counterfeit designer clothes) that was honeypotting Google servers."
+    answer_summary: "~70% of eBay Herve Leger sales counterfeit; counterfeiters actively fought their authentication work."
+    why_notable: "Discovery doubles as market-size evidence for the fraud problem."
+    source_url: https://shizune.co/yc-application-examples/lollipuff
+
+  # ---------------- The Muse (W12) ----------------
+  - company: The Muse
+    batch: W12
+    year: 2011
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "The Daily Muse is building a massive community of job-seeking women to rival The Ladders."
+    answer_summary: "Values-aligned job marketplace for women, plus career content and courses."
+    why_notable: "Positions against a named incumbent with a distinct audience."
+    source_url: https://shizune.co/yc-application-examples/the-muse
+  - company: The Muse
+    batch: W12
+    year: 2011
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "We picked this idea because we are our customer: ambitious, confident women who don't want to find our next job on Monster.com"
+    answer_summary: "Founders are the demographic; a year of women's-career content work validated demand."
+    why_notable: "\"We are our customer\" stated verbatim."
+    source_url: https://shizune.co/yc-application-examples/the-muse
+  - company: The Muse
+    batch: W12
+    year: 2011
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We have a clear step-by-step sense of how we could make $40M/year"
+    answer_summary: "Three streams: recruiter newsletters/job boards ($250 CPM, $2,500/hire), resume database ($1,000/mo), courses ($15-250)."
+    why_notable: "Ceiling claim immediately itemized into priced streams."
+    source_url: https://shizune.co/yc-application-examples/the-muse
+  - company: The Muse
+    batch: W12
+    year: 2011
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "All three founders met while working together at McKinsey & Company in the summer of 2008."
+    answer_summary: "Met at McKinsey; previously cofounded PYP Media together."
+    why_notable: "Prior venture together, including its failures, as bonding evidence."
+    source_url: https://shizune.co/yc-application-examples/the-muse
+  - company: The Muse
+    batch: W12
+    year: 2011
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: users_customers
+    answer_excerpt: "Beta with 22,000 users; first revenue deal signed with Uber"
+    answer_summary: "22k beta users; first paying customer was Uber."
+    why_notable: "A famous logo as the first revenue line."
+    source_url: https://shizune.co/yc-application-examples/the-muse
+
+  # ---------------- Make School (W12) ----------------
+  - company: Make School
+    batch: W12
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "We will build a matchmaking website that allows engineers and artists to make mobile games together."
+    answer_summary: "Platform matching devs and artists, handling contracts and publishing with cross-promotion. (Company later pivoted to education.)"
+    why_notable: "Accepted application idea differs entirely from what the company became."
+    source_url: https://shizune.co/yc-application-examples/make-school
+  - company: Make School
+    batch: W12
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Ashu's experience with Helicopter and Jeremy's experience with Manifold Studios have given us a good understanding of the mobile games market."
+    answer_summary: "Own game-dev experience; they were the underserved solo developers themselves."
+    why_notable: "Young dropouts leveraging authentic niche experience."
+    source_url: https://shizune.co/yc-application-examples/make-school
+  - company: Make School
+    batch: W12
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We will make money by taking a portion of the revenue from the games we publish."
+    answer_summary: "Revenue share; projected $450k in 2 years from 300 apps at $5k average and 30% share."
+    why_notable: "Small honest projections at pre-launch."
+    source_url: https://shizune.co/yc-application-examples/make-school
+  - company: Make School
+    batch: W12
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_get_users
+    answer_excerpt: "Similar to how Craigslist began, we will first manually play matchmaker for our network of developers and artists."
+    answer_summary: "Manual matchmaking to seed the marketplace, recruiting from art schools and forums."
+    why_notable: "Chicken-and-egg answered with manual concierge work."
+    source_url: https://shizune.co/yc-application-examples/make-school
+
+  # ---------------- FamilyLeaf (W12) ----------------
+  # NOTE: shizune's FamilyLeaf page shows the application content for a sports-team
+  # website builder idea; the accepted company shipped a family network. Records
+  # reflect the application as published.
+  - company: FamilyLeaf
+    batch: W12
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "A website builder for sports teams/leagues. The first feature we will build is an about.me for athletes."
+    answer_summary: "Athlete profiles first, then team/league site management for coaches."
+    why_notable: "Wedge-then-expand product sequencing; accepted pre-launch with no development started."
+    source_url: https://shizune.co/yc-application-examples/familyleaf
+  - company: FamilyLeaf
+    batch: W12
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "Ajay and I have been best friends since 4th grade... We bonded over nerd stuff, got into tech together in high school."
+    answer_summary: "Best friends since elementary school with multiple joint projects."
+    why_notable: "Maximum relationship-duration answer in the corpus."
+    source_url: https://shizune.co/yc-application-examples/familyleaf
+  - company: FamilyLeaf
+    batch: W12
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "My sister (a high-school softball star) told me the issues she was having with her online athletic recruitment profile and asked me to make her a better one."
+    answer_summary: "Direct family user request revealed a widespread recruitment-profile problem."
+    why_notable: "The demand evidence is one named real user who asked."
+    source_url: https://shizune.co/yc-application-examples/familyleaf
+  - company: FamilyLeaf
+    batch: W12
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We will use a freemium model and make money by charging coaches/organizers $10/mo... and charging recruiters $100 for unlimited queries."
+    answer_summary: "Multi-sided freemium: coaches, premium athlete profiles, recruiter database access."
+    why_notable: "Each side of the marketplace given a price."
+    source_url: https://shizune.co/yc-application-examples/familyleaf
+
+  # ---------------- Proxino (S11) ----------------
+  - company: Proxino
+    batch: S11
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Taazr detects bugs in live web applications through statistical inference."
+    answer_summary: "JS instrumentation collecting request/response data to flag anomalous behavior for developers. (Applied under the name Taazr.)"
+    why_notable: "Technical thesis in one sentence; accepted pre-launch on research strength."
+    source_url: https://shizune.co/yc-application-examples/proxino
+  - company: Proxino
+    batch: S11
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "Ethan was Muzzammil's TA. While working on a problem set, Muzzammil mentioned his interest in startups."
+    answer_summary: "TA-student relationship of 1.5 years that turned into cofounding."
+    why_notable: "Short-relationship answer with the origin story intact."
+    source_url: https://shizune.co/yc-application-examples/proxino
+  - company: Proxino
+    batch: S11
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Finding and fixing software bugs is expensive. Taazr will save companies time and money."
+    answer_summary: "Both founders had program-analysis and secure-web-framework research backgrounds."
+    why_notable: "Academic research as the domain-expertise claim."
+    source_url: https://shizune.co/yc-application-examples/proxino
+  - company: Proxino
+    batch: S11
+    year: 2011
+    stage_at_application: pre_launch
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "Taazr will charge clients monthly. We see a market opportunity in the tens of millions."
+    answer_summary: "Monthly subscription; modest tens-of-millions market estimate."
+    why_notable: "Honest small-market ceiling; not every accepted app claims billions."
+    source_url: https://shizune.co/yc-application-examples/proxino
+
+  # ---------------- OwnLocal (W10) ----------------
+  - company: OwnLocal
+    batch: W10
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "A local business directory sold through small-town newspapers... Think the Yellowpages plus Yahoo! Merchant Solutions divided by Angie's List"
+    answer_summary: "Branded directory platform distributed through newspaper partnerships, transitioning papers online."
+    why_notable: "Triple-analogy formula (\"A plus B divided by C\") as positioning."
+    source_url: https://shizune.co/yc-application-examples/ownlocal
+  - company: OwnLocal
+    batch: W10
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "Our first product is nearly ramen profitable... Our second product is weeks away from its first release"
+    answer_summary: "First product (print-to-web ad conversion) generating revenue; second product pre-sold ahead of release."
+    why_notable: "\"Ramen profitable\" as a YC-native traction milestone."
+    source_url: https://shizune.co/yc-application-examples/ownlocal
+  - company: OwnLocal
+    batch: W10
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_founders_met
+    answer_excerpt: "14 years and we met in high school"
+    answer_summary: "Cofounders with a 14-year friendship."
+    why_notable: "Seven-word answer to a medium-weight question."
+    source_url: https://shizune.co/yc-application-examples/ownlocal
+  - company: OwnLocal
+    batch: W10
+    year: 2009
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "We are already making money... grosses several thousand dollars per month"
+    answer_summary: "Newspaper clients pay for services now; tiered $20-200/mo business subscriptions later."
+    why_notable: "Present-tense revenue opening the business-model answer."
+    source_url: https://shizune.co/yc-application-examples/ownlocal

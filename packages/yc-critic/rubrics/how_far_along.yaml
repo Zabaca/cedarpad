@@ -1,0 +1,207 @@
+# Rubric: how_far_along (progress / traction headline)
+# Distilled 2026-07-12 from local corpus only (shizune.yaml, famous-apps.yaml,
+# founder-annotated.yaml, rejections.yaml, reviewer-criteria.yaml, rfs.md).
+
+question_id: how_far_along
+question_text: "How far along are you?"
+section: progress
+weight: critical
+
+yc_intent: >
+  The traction headline: evidence you make something people want (YC's core motto,
+  ycombinator.com/apply) and that you move fast. Reviewers process ~100 applications
+  a day (PG, How to Apply), so this answer must convey state in plain factual numbers
+  in the first sentence. What is actually scored is velocity, progress relative to
+  time invested (the paired how_long_working question), not absolute scale: Cruise
+  was accepted two weeks in with a partly-fitted Audi S4, Metlo with 15 interviews
+  and an MVP dated to a specific Saturday. Seibel/Caldwell add that the strongest
+  edge is measurable progress between applying and interviewing, so the answer also
+  sets the baseline reviewers will measure momentum against. Fluently's guide (built
+  from reviewing 100+ applications) says misleading metrics (installs as users,
+  uncontextualized retention) read as dishonesty.
+
+structural_pattern: >
+  3-5 short factual clauses, each carrying a number, a date, or a name; zero
+  adjectives doing the work. Strong answers lead with the single strongest fact for
+  their stage (Prolific: "We're already profitable."; InEvent: "$1.1M ARR... 120%
+  per year"; Metlo: interviews + a dated MVP + pre-sales) and pick the traction
+  currency honestly: revenue if it exists, else usage volume (MagicBell: 1M
+  notifications/mo), engagement intensity (Dendron: 28 multiple-times-daily users),
+  waitlist/demand gating (Paystack, Apptimize), or operational proof (Shotput: live
+  warehouse at 50k orders/mo). Weakening caveats are volunteered, not hidden
+  (Metlo: one pre-sale buyer was a friend; bxblue: declining revenue with the
+  reason) - PG's disclose-flaws rule applies. Velocity is made explicit by pairing
+  state with elapsed time (Apptimize: end-to-end product ~2 months from
+  incorporation; Dropbox: working beta in 3 months part-time, "Version I can charge
+  for: 6-8 weeks?").
+
+positive_examples:
+  - company: Metlo
+    batch: S21
+    answer_excerpt: "We came up with the idea ~2 weeks ago, have done 15 user interviews since then and should have our MVP up and running by Saturday (3/26)."
+    why_strong: >
+      Pre-launch progress measured in counted interviews, a hard calendar date, and
+      3 pre-sales worth $150 - facts instead of code or vision.
+    source_url: https://shizune.co/yc-application-examples/metlo
+  - company: MagicBell
+    batch: W21
+    answer_excerpt: "We have a stable MVP delivering over a million notifications a month for two B2B apps."
+    why_strong: >
+      Usage volume as the honest traction headline when revenue was $999/mo;
+      accepted anyway on radical small-number honesty.
+    source_url: https://shizune.co/yc-application-examples/magicbell
+  - company: Prolific
+    batch: S19
+    answer_excerpt: "We're already profitable."
+    why_strong: >
+      Leads with the single strongest word available, then backs it: 200% YoY,
+      2,000+ paying researchers, 30,000+ MAU, dozens of $10k+/yr customers.
+    source_url: https://shizune.co/yc-application-examples/prolific
+  - company: Cruise
+    batch: W14
+    answer_excerpt: "We've acquired an Audi S4... and have started fitting it with cameras and drive-by-wire equipment... it will be just a demo."
+    why_strong: >
+      Accepted with essentially zero progress two weeks in: concrete physical steps
+      plus honest scoping ("just a demo"); shows the bar scales with founder track
+      record (Vogt had founded Justin.tv/Twitch).
+    source_url: https://shizune.co/yc-application-examples/cruise
+
+failure_modes:
+  - name: buzzword_soup
+    detection: >
+      Adjective/claim density with no numbers, dates, or names ("gaining significant
+      traction", "strong early interest"). Per Caldwell: "Cut to the chase";
+      directness beats polish.
+    example: "We're seeing tremendous momentum with key stakeholders across the ecosystem."
+  - name: research_padding
+    detection: >
+      Minimal build progress padded with research or planning artifacts. Fluently's
+      guide names the anti-pattern explicitly: a bad example lists "832 studies
+      reviewed" as progress.
+    example: "We've reviewed 832 studies and completed a comprehensive market analysis."
+  - name: metric_inflation
+    detection: >
+      Installs counted as users, cumulative or GMV figures where recurring is asked,
+      retention without a cohort/timeframe. Fluently: misleading metrics read as
+      dishonesty; distinguish installs from active users.
+    example: "10,000 users!" (app installs, unknown actives)
+  - name: percentage_growth_off_tiny_base
+    detection: >
+      Relative growth headline hiding tiny absolutes without a ceiling story.
+      Calibration: Buffer's rejected S11 app had ~400% monthly growth on $280 MRR;
+      honest small numbers alone did not clear the bar when the perceived ceiling
+      read small.
+    example: "Growing 400% month over month" (from 3 to 12 users)
+  - name: hidden_caveat
+    detection: >
+      Revenue or users whose provenance would weaken the story is left undisclosed
+      (friends, discounts, one-off lifetime deals). Contrast Metlo, which volunteered
+      that a pre-sale buyer was a friend; PG: unstated flaws are assumed unnoticed by
+      you, which is worse.
+    example: "$450 in pre-sales" (all three buyers are the founders' friends, unsaid)
+  - name: no_velocity_anchor
+    detection: >
+      State described with no elapsed-time reference, so velocity (the actual score)
+      cannot be computed; also contradicts or floats free of how_long_working.
+    example: "We have a working MVP and some beta users." (since when? built in what time?)
+  - name: vision_instead_of_state
+    detection: >
+      Answer describes what will be built rather than what exists today; future tense
+      dominates, no launched/shipped/measured event named.
+    example: "We are building the platform that will transform how clinics engage patients."
+
+interrogation_prompts:
+  - "What is launched today, and on what date did it launch?"
+  - "How many active users (not signups, not installs) used it in the last 30 days, and how do you define active?"
+  - "How much revenue last month, the month before, and the month before that - not cumulative, not GMV?"
+  - "Name your largest customer or most engaged user and what they pay or how often they use it."
+  - "How long, in weeks of full-time work, did the current state take to reach? (This is the velocity denominator.)"
+  - "Which of your numbers has a caveat a diligent reviewer would find - friends, discounts, one-offs, a single channel? State it now."
+
+critique_checklist:
+  - check: leads_with_strongest_fact
+    type: binary
+    note: "First sentence carries the best number/state for the stage (Prolific, InEvent pattern)."
+  - check: has_number_or_fact_per_clause
+    type: scored
+    note: "Count clauses with a number/date/name vs total clauses; strong answers approach 1.0 (InEvent: 'every claim a number')."
+  - check: has_specific_customer_or_usage_unit
+    type: binary
+    note: "Names a customer, a count of payers, or a concrete usage unit (notifications/mo, orders/mo, daily actives)."
+  - check: has_date_or_elapsed_time
+    type: binary
+    note: "Launch date, start date, or weeks-of-work present so velocity is computable."
+  - check: metric_honesty
+    type: binary
+    note: "Actives distinguished from installs/signups; recurring vs cumulative vs GMV labeled; caveats volunteered."
+  - check: jargon_count
+    type: scored
+    note: "Count of hype words (traction, momentum, significant, revolutionary...); target 0."
+  - check: future_tense_ratio
+    type: scored
+    note: "Share of sentences about what will exist vs what does; should be near 0 except a dated next milestone."
+  - check: char_count
+    type: scored
+    note: "No hard limit, but corpus-strong answers are 1-4 sentences; Fluently recommends 3-5 factual bullets."
+
+stage_variants:
+  pre_launch: >
+    Expected currency: build state with dates (Cruise's fitted car, Dropbox's beta),
+    counted user interviews, pre-sales, waitlists (Paystack: dozen pilot merchants +
+    hundreds waitlisted; Flex: 20k signups at zero CAC), or a market proven by proxy
+    (Lollipuff's blog doing $60k in transactions pre-product). Do not apologize for
+    no revenue; do not pad with research. A dated next milestone ("MVP by Saturday
+    3/26") substitutes for traction.
+  launched_no_revenue: >
+    Usage intensity and demand evidence: actives sliced by engagement depth
+    (Dendron's 28 multiple-times-daily users), gated waitlists (Apptimize: 100+
+    signups, 2 accepted), named largest account (Slite/ABTasty pattern from
+    users_customers).
+  revenue: >
+    Revenue, growth rate, payer counts, and largest contract, stated plainly however
+    small (Virtually: 5 payers ~$1.5k; Shotput: $110.30; MagicBell: $999/mo - all
+    accepted). Profitability or a multi-period revenue ladder (InEvent) is the top
+    tier. Buffer's rejection calibrates the floor: tiny absolutes need a ceiling
+    story elsewhere in the application, not inflation here.
+
+cross_checks:
+  must_align_with:
+    - how_long_working    # velocity = this answer's state / that answer's time
+    - users_customers     # counts and largest-payer claims must match
+    - revenue_monthly     # any revenue claim here must reconcile with the monthly fields
+    - revenue_growth_notes # caveats (pre-sales, friends, discounts) belong there if not here
+    - how_get_users       # where the claimed users came from must be explainable
+    - previous_application # re-applicants: growth since last application IS the answer (InEvent: $8k -> $1.1M ARR)
+
+recency_notes: >
+  Weight pre-2015 examples at 0.5: the bar and form have shifted (Dropbox S07,
+  Mixpanel S09, Cruise W14, GitLab W15 are illustrative of structure, not of the
+  current scale bar). Post-2023 the RFS (Summer 2026) matters only as a modest
+  "why now" signal - most funded companies fit no RFS, and forcing traction framing
+  into an RFS category reads as weak. The freshest guidance in-corpus is Fluently
+  (W24): 3-5 factual bullets, lead with revenue/users/LOIs, never inflate metrics.
+  Also note questions.yaml is reconstructed, not verified against the live form.
+
+sources:
+  - packages/yc-critic/questions.yaml
+  - packages/yc-critic/corpus/shizune.yaml
+  - packages/yc-critic/corpus/famous-apps.yaml
+  - packages/yc-critic/corpus/founder-annotated.yaml
+  - packages/yc-critic/corpus/rejections.yaml
+  - packages/yc-critic/corpus/reviewer-criteria.yaml
+  - packages/yc-critic/rfs.md
+
+corpus_gaps: >
+  (1) Only one written-form rejection exists in-corpus (Buffer S11), and its
+  users_customers answer is the sole rejected traction datapoint, so the failure
+  modes lean on accepted-side contrast and the Fluently guide's named
+  anti-patterns rather than a rejected-answer sample. (2) No corpus record shows a
+  rejected buzzword_soup / vision_instead_of_state answer verbatim; those examples
+  are synthesized illustrations of patterns named by reviewers (Caldwell, Fluently),
+  not quotes. (3) Post-2021 accepted how_far_along answers are thin: the newest
+  full accepted application excerpts are W21 (MagicBell, Dendron) and S21 (Metlo);
+  W24 signal comes via Fluently's guide examples, not their actual application.
+  (4) questions.yaml itself is unverified against the live login-gated form, so
+  exact wording/ordering may drift. (5) No AI-era (2024-2026) traction-scale
+  calibration exists in-corpus; whether the Buffer-era "too small" bar has moved
+  is unknown from local files.

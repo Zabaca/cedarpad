@@ -1,0 +1,64 @@
+# Tier 4 inventory: YC application-video sources (v2 prep, NO analysis).
+# Purpose: catalog of known application videos + the official guidelines, so a
+# future v2 pass can fetch/watch/transcribe and score them. Do not treat
+# entries here as corpus records; no answer content was extracted.
+source_group: tier4-video-inventory
+fetch_date: 2026-07-12
+
+official_guidelines:
+  source_url: https://www.ycombinator.com/video
+  page_title: "The Application Video | Y Combinator"
+  summary: >
+    YC's founder video exists so partners can evaluate how founders
+    communicate, not to pitch the product. Guidelines: exactly ~1 minute;
+    all co-founders appear (screen-record a video call if not co-located);
+    only founders talking; speak conversationally from bullet points, never
+    recite a written script; explicitly NOT the place for a demo or
+    promotional video (the demo has its own separate application field).
+    The page references example videos from companies such as Campus Job,
+    Flip, Zenefits, and Teespring. Emphasis is authentic communication over
+    production quality.
+  maps_to_question_ids: [founder_video, demo_url]
+
+# Monster list of YC application videos (Alexander Jarvis).
+# Note: the page presents these as embedded videos under company-name
+# headings; the markdown fetch strips embeds, so per-company video URLs
+# are mostly not recoverable without a browser/HTML pass (v2 task).
+# Only NeedMinder exposed a plain link.
+video_list_source:
+  source_url: https://www.alexanderjarvis.com/monster-list-of-yc-application-video/
+  page_title: "Monster list of YC Application Video"
+  fetch_note: >
+    Videos are embedded, not hyperlinked; text extraction yielded company
+    names but only one direct URL. v2 needs an HTML/iframe scrape (or
+    manual browse) to recover the YouTube IDs.
+  companies:
+    - {company: Aptible, video_url: null}
+    - {company: Lanyard, video_url: null}
+    - {company: Community Capital, video_url: null}
+    - {company: Lollipuff, video_url: null}
+    - {company: Purple Squirrel, video_url: null}
+    - {company: CityGrows, video_url: null}
+    - {company: Hippo Home, video_url: null}
+    - {company: Campus Job, video_url: null}
+    - {company: Flip, video_url: null}
+    - {company: Zenefits, video_url: null}
+    - {company: Teespring, video_url: null}
+    - {company: Mention, video_url: null}
+    - {company: ME&D App, batch: W22, video_url: null}
+    - {company: Harmodious, video_url: null}
+    - {company: Hugecity, video_url: null}
+    - {company: Leaf, video_url: null}
+    - {company: Karu, video_url: null}
+    - {company: NeedMinder, video_url: "https://youtu.be/yCeLMimI9Io"}
+    - {company: Night Flyer, video_url: null}
+    - {company: Mobile Health Software, video_url: null}
+    - {company: Counter Culture Labs, video_url: null}
+    - {company: Stock Searches, video_url: null}
+
+# Additional third-party video guides surfaced during search (untapped, for v2):
+supplementary_sources_unfetched:
+  - https://www.startupgrind.com/blog/y-combinator-application-video-tutorial/
+  - https://zyner.io/blog/yc-application-video-guide
+  - https://pilot.com/blog/how-prepare-yc-application-video
+  - https://www.youtube.com/watch?v=ia6dMP-8Vgc  # "YC Application Tips: The Founder Video"

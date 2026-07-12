@@ -1,0 +1,178 @@
+# Rubric: founder impressiveness / "something impressive each founder has built or achieved"
+# Distilled 2026-07-12 from local corpus only (corpus/*.yaml, questions.yaml, rfs.md).
+
+question_id: impressive_achievement
+question_text: "Please tell us in one or two sentences about something impressive that each founder has built or achieved."
+section: founders
+weight: critical
+
+yc_intent: >
+  PG calls this the most important question on the application: reviewers look for
+  MAGNITUDE of achievement, not category, and generic character claims carry no
+  weight (reviewer-criteria: impressive_achievement_is_the_key_question). Jared
+  Friedman: a single concrete example beats any generic claim. Dalton Caldwell:
+  the team is the first thing read, screening for technical excellence and
+  founder-market fit; Fluently's partner reportedly accepted them "80% because of
+  our team, not the idea." The question is the primary written proxy for founder
+  quality, which also scales the traction bar (Cruise was two weeks old at
+  application; Vogt's Justin.tv/Twitch track record carried it).
+
+structural_pattern: >
+  1-2 sentences PER FOUNDER, each a concrete, verifiable, ideally quantified
+  proof point (a thing built, a business run, a system owned), stated with no
+  adjectives and no character claims. The strongest answers either (a) quantify
+  magnitude (Mixpanel: 1M installs; Dendron: Fortune 50 clients at $320/hour;
+  Dropbox: profitable SAT-prep company), (b) are wildly non-obvious but concrete
+  (GitLab: founded the world's largest recreational-submarine manufacturer;
+  Cruise: built first-ever safe-cracking devices), or (c) are chosen for
+  relevance to the product domain (Apptimize: quant-strategy team lead + Chrome
+  IndexedDB owner, both feeding an experimentation SDK). Category is free-range:
+  public-sector reorganization (Standard Treasury) and robotics PhD work
+  (Lollipuff) score the same as startup exits. Prior founding, especially prior
+  YC, is among the strongest answers (Basedash: "I cofounded Scholarly... part
+  of YC S19").
+
+positive_examples:
+  - company: Cruise
+    batch: W14
+    answer_excerpt: "kvogt: Built various devices that were the first ever to crack certain kinds of high-security safes... jebagu: I helped to build a self-driving car."
+    why_strong: One or two concrete sentences each, directly relevant to the product domain; this founder strength let a two-week-old company clear the traction bar.
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Apptimize
+    batch: S13
+    answer_excerpt: "Nancy: ran the Fixed Income Quantitative Strategies team at GETCO. Jeremy: owned IndexedDB within Chrome; edited the spec, worked closely with Mozilla and Microsoft."
+    why_strong: Achievements selected for relevance to the product (experimentation math + client-side infrastructure), not just prestige.
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+  - company: GitLab
+    batch: W15
+    answer_excerpt: "Sytse has build recreational manned submarines from scratch... currently the largest producer of them in the world."
+    why_strong: The canonical wildly-non-obvious-but-concrete answer; verifiable, memorable, proves building capability outside software entirely.
+    source_url: https://shizune.co/yc-application-examples/gitlab
+  - company: Dendron
+    batch: W21
+    answer_excerpt: "Build a one man AWS consulting company... with fortune 50 clients and a standard rate of $320/hour"
+    why_strong: Rate and client tier quantify credibility in one sentence; a solo founder compensating with individual evidence (same pattern as Dropbox S07, weighted 0.5 for age).
+    source_url: https://shizune.co/yc-application-examples/dendron
+
+failure_modes:
+  - name: generic_character_claim
+    detection: Adjectives about traits ("passionate", "hard-working", "serial entrepreneur") with no built artifact, number, or named outcome attached.
+    example: "We are relentless, passionate builders who never give up."
+  - name: buzzword_soup
+    detection: Domain jargon or prestige-signaling words substituting for a concrete event; Dalton Caldwell's "cut to the chase" test fails.
+    example: "Deep expertise driving AI-first transformation across the innovation ecosystem."
+  - name: credential_dump_no_magnitude
+    detection: Degrees, employer names, or titles listed without anything built or achieved AT them (PG scores magnitude, not category or affiliation).
+    example: "MBA from a top school; worked at Google and McKinsey."
+  - name: unverifiable_vagueness
+    detection: Achievement stated without a name, number, date, or checkable artifact ("led a large project", "grew a big team").
+    example: "Managed a major initiative that significantly increased revenue."
+  - name: this_startup_as_achievement
+    detection: The only achievement cited is the company being applied with; the question asks for prior evidence of founder caliber (all corpus positives cite pre-company work).
+    example: "We built [this product] in three months."
+  - name: missing_founder
+    detection: Cofounder(s) named on the application with no achievement line each; the question says "each founder".
+    example: "Our CEO sold his last company." (nothing for the CTO)
+  - name: essay_length
+    detection: Runs well past the 1-2 sentences per founder soft limit; violates PG's ruthless-editing and Basedash's TL;DR-first guidance.
+    example: A 200-word biography per founder.
+  - name: irrelevant_prestige
+    detection: Impressive-but-orthogonal accolade with no bridge to why it makes THIS company more likely to win; weaker than Apptimize-style domain-relevant picks (partial penalty only, since GitLab's submarines show pure magnitude can carry).
+    example: "Won a national piano competition" for a fintech infrastructure team.
+
+interrogation_prompts:
+  - "For each founder, what is the single most impressive thing you have BUILT or ACHIEVED before this company? Name it, date it, and give one number (users, revenue, rate, scale)."
+  - "Who can verify this achievement, and where would a reviewer check it (URL, product name, employer, publication)?"
+  - "What did YOU specifically own in that achievement, versus the team around you?"
+  - "Which of your achievements is most relevant to the product you're now building, and why did you pick this one instead?"
+  - "Have any of you founded a company, run a P&L, or shipped something with real usage before? Give the numbers."
+  - "Strip every adjective from your answer. What facts remain?"
+
+critique_checklist:
+  - check: covers_each_founder
+    type: binary
+    detail: One achievement per named founder.
+  - check: has_number_or_named_artifact
+    type: binary
+    detail: At least one quantified magnitude (installs, revenue, rate, scale) or named verifiable artifact per founder.
+  - check: is_pre_company
+    type: binary
+    detail: Achievement predates / is external to the startup being applied with.
+  - check: verifiable
+    type: binary
+    detail: A reviewer could check it (named company, product, URL, institution).
+  - check: domain_relevance
+    type: scored_0_2
+    detail: 2 = directly feeds the product domain (Apptimize pattern); 1 = pure magnitude, orthogonal (GitLab submarines); 0 = neither relevant nor high-magnitude.
+  - check: adjective_count
+    type: count
+    detail: Trait adjectives about founders; target 0.
+  - check: jargon_count
+    type: count
+    detail: Buzzwords ("visionary", "disruptive", "ecosystem", "AI-first" unanchored); target 0.
+  - check: sentence_count_per_founder
+    type: count
+    detail: Soft limit 2 per founder (questions.yaml notes).
+  - check: char_count
+    type: count
+    detail: No hard limit; flag if any founder's entry exceeds ~350 chars (violates 1-2 sentence norm).
+
+stage_variants:
+  pre_launch: >
+    This question does the heaviest lifting pre-launch: with no traction, founder
+    caliber IS the application (Cruise W14 accepted at two weeks old on founder
+    track record; Standard Treasury pre-launch on public-sector + fintech
+    achievements). Expect prior built things, quantified professional wins, or
+    non-obvious magnitude; hold the bar HIGHER here than for revenue-stage
+    companies.
+  revenue: >
+    With real traction the question corroborates rather than carries (GitLab
+    applied at $1M ARR; Basedash at $30/mo leaned on prior YC founding).
+    Achievements should still be pre-company and concrete; a revenue-stage
+    applicant answering only with the current company's traction is double-
+    counting (see this_startup_as_achievement).
+
+cross_checks:
+  must_align_with:
+    - technical_work        # claimed technical achievements must match who actually writes the code
+    - why_this_idea         # domain expertise claimed there should echo an achievement here (founder-market fit; Dalton: "built related tools in the past")
+    - project_together      # joint-project story should be consistent with each founder's individual capability claims
+    - hacked_system         # resourcefulness anecdotes shouldn't contradict the achievement narrative
+    - how_long_working      # velocity implied by past achievements should be consistent with progress-per-time on this company
+    - founder_video         # the video should feature the same founders and be consistent with the claims
+
+recency_notes: >
+  Pre-2015 examples (Dropbox S07, Mixpanel S09, Lollipuff W13, Apptimize S13,
+  Standard Treasury S13, Cruise W14, GitLab W15) weight 0.5: the structural
+  lesson (concrete, quantified, per-founder) holds, but the bar has risen with
+  application volume. Post-2020 datapoints (Basedash S20, Dendron W21, Fluently
+  W24) confirm the same pattern and add the team-over-idea acceptance signal
+  (Fluently W24 HN thread). RFS relevance (Summer 2026) is indirect for this
+  question: RFS fit is a signal not a requirement, but the S26 tilt toward hard
+  tech and AI-native plays raises the value of achievements proving hard-tech /
+  ML / infrastructure capability when the company claims an RFS-adjacent space;
+  a forced RFS framing with no matching founder capability is a cross-check
+  failure against why_this_idea.
+
+corpus_gaps: >
+  No corpus record shows a REJECTED application's impressive_achievement answer:
+  Buffer's published S11 rejection has no record for this question, and the
+  Giveit100/CodeAnt rejections are interview-stage with no form answers. So the
+  failure modes above are inferred from reviewer criteria (PG's "generic claims
+  carry no weight", Dalton's buzzword warning, Friedman's concrete-example rule)
+  plus contrast with accepted answers, not from observed failing answers. Also
+  thin: no accepted example of a truly weak-credential founder answering well
+  (closest is Fluently's Rebryk noting his rural Pennsylvania state school, but
+  his answer text is not in the corpus), and no corpus example of the current
+  form's exact wording verified against the live application
+  (questions.yaml: verified_against_live_form: false). Failure-mode examples
+  marked here are illustrative constructions, not corpus quotes.
+
+sources:
+  - corpus/reviewer-criteria.yaml (PG How to Apply; PG What We Look for in Founders; Dalton Caldwell TechCrunch 2022; Jared Friedman; Seibel/Caldwell Wharton FinTech)
+  - corpus/famous-apps.yaml (Dropbox S07, GitLab W15, Apptimize S13)
+  - corpus/shizune.yaml (GitLab, Cruise, Mixpanel, Dropbox, Dendron, Standard Treasury, Lollipuff)
+  - corpus/founder-annotated.yaml (Basedash S20, Fluently W24)
+  - corpus/rejections.yaml (Buffer S11, CodeAnt W24, Fluently reapplication, Giveit100)
+  - questions.yaml (question text, weight, section, notes)
+  - rfs.md (Summer 2026 RFS framing for recency_notes)

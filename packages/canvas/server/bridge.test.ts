@@ -139,7 +139,7 @@ describe('turnFlavor: the token decides the turn’s Conversation kind + skill a
     const f = turnFlavor(undefined);
     expect(f.kind).toBe('chat');
     expect(f.workspaceId).toBe('default');
-    expect(f.skills).toEqual(['impeccable', 'tdd']);
+    expect(f.skills).toEqual(['impeccable', 'tdd', 'yc-interrogate', 'yc-critique']);
   });
 });
 

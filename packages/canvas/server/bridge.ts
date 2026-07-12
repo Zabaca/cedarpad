@@ -373,7 +373,7 @@ export const aborters = new Map<string, AbortController>();
 export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId: string; kind: 'chat' | 'dev-agent'; skills: string[] } {
   return devAgentGitToken
     ? { workspaceId: WORKSPACE, kind: DEV_AGENT_KIND, skills: ['impeccable', 'tdd', 'improve-codebase-architecture'] }
-    : { workspaceId: WORKSPACE, kind: 'chat', skills: ['impeccable', 'tdd'] };
+    : { workspaceId: WORKSPACE, kind: 'chat', skills: ['impeccable', 'tdd', 'yc-interrogate', 'yc-critique'] };
 }
 
 /** ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id

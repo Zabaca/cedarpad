@@ -1,0 +1,197 @@
+# Rubric: what_will_you_make
+# Distilled 2026-07-12 from local corpus only (questions.yaml, rfs.md, corpus/*)
+
+question_id: what_will_you_make
+question_text: "What is your company going to make? Please describe your product and what it does or will do."
+weight: critical
+
+yc_intent: >
+  Expands the 50-char one-liner into concrete product mechanics: what the thing
+  is, who uses it, and what it replaces. Scored against PG's clarity filter
+  (reviewers read ~100 apps/day; unclear writing, not weakness, is the top
+  rejection cause) and his "describe the idea factually, never marketing-speak"
+  rule; anchoring to known concepts ("like Wikipedia, but within an
+  organization") is explicitly endorsed. Dalton Caldwell: "Cut to the chase.
+  Tell me what you're trying to say." Jared Friedman: the core idea must land in
+  the first sentence in the simplest possible terms. Basedash's founder calls
+  this the most important question in the application; a reviewer with no
+  context must understand the value proposition.
+
+structural_pattern: >
+  Strong answers across the corpus share: (1) product named and defined in
+  sentence one, plain nouns and verbs; (2) a concrete mechanism, not a vision
+  ("bolts on like a roof rack", "automatic, integrated into Windows"); (3) the
+  substitute behavior or incumbent it beats, often quantified ("much better
+  than uploading or email"; bxblue: "20 minutes" vs 3-4 business days; Kash:
+  card fees "eat up to 50% of their profits"); (4) an optional well-known
+  analogy only when the reference is universal (GitLab: "run your own GitHub";
+  Basedash: Airtable-for-your-database); (5) short: Fluently's guide (from
+  reviewing 100+ apps) says under 5 sentences, expanding the one-liner with
+  customer/problem/solution plus at most one sentence of long-term vision.
+
+positive_examples:
+  - company: Dropbox
+    batch: S07
+    answer_excerpt: "Dropbox synchronizes files across your/your team's computers. It's much better than uploading or email, because it's automatic, integrated into Windows, and fits into the way you already work."
+    why_strong: >
+      Names the substitute behaviors (uploading, email) and the mechanism
+      (automatic, OS-integrated) in two sentences; held up by Fluently's W24
+      guide as the model answer for this question. (2007: recency weight 0.5,
+      but corpus treats it as the canonical structural template.)
+    source_url: https://www.ycombinator.com/apply/dropbox
+  - company: Cruise
+    batch: W14
+    answer_excerpt: "Cruise builds a system that inexpensively turns your car into a self-driving vehicle... bolts on like a roof rack."
+    why_strong: >
+      Hugely ambitious idea made concrete via a mundane analogy and a price
+      point (under $3,000, 90% of driving scenarios); accepted pre-launch,
+      two weeks in.
+    source_url: https://shizune.co/yc-application-examples/cruise
+  - company: Basedash
+    batch: S20
+    answer_excerpt: "Basedash is a collaborative database interface that lets team members view and edit data directly from their production database."
+    why_strong: >
+      "Airtable for your existing database" pattern makes a technical product
+      instantly legible; founder annotation calls this the most important
+      question and says to test it on people with zero context.
+    source_url: https://www.basedash.com/blog/how-to-write-a-successful-yc-application
+  - company: bxblue
+    batch: S17
+    answer_excerpt: "We are making a platform where users in Brazil can compare, choose, and get an online payroll-deductible loans in under 20 minutes"
+    why_strong: >
+      Value quantified as a time-to-loan delta (20 minutes vs 3-4 business
+      days) inside the product sentence; customer, geography, and mechanism
+      all present.
+    source_url: https://shizune.co/yc-application-examples/bxblue
+
+failure_modes:
+  - name: buzzword_soup
+    detection: >
+      Abstraction stacked on abstraction ("platform", "ecosystem", "empower",
+      "revolutionize", "AI-powered" with no mechanism); Dalton Caldwell
+      explicitly penalizes buzzwords and length; PG bans marketing-speak.
+    example: "'We are building an AI-powered platform that revolutionizes how enterprises unlock synergies' (synthetic; corpus has no verbatim rejected answer for this question, pattern from reviewer criteria)."
+  - name: no_mechanism
+    detection: >
+      Describes outcome or vision but never what the product literally does or
+      how a user interacts with it. Test: could an engineer sketch the product
+      from this answer? Contrast Dropbox's "automatic, integrated into Windows".
+    example: "'We help people live healthier lives' with no artifact, interface, or workflow named."
+  - name: obscure_analogy
+    detection: >
+      "X for Y" where X is not universally known. Fluently's guide (100+
+      reviewed apps): analogies only work with universal references; his bad
+      example: "Tynker for B2B creative thinking mLearning".
+    example: "'Tynker for B2B creative thinking mLearning' (Fluently guide's cited bad one-liner)."
+  - name: missing_user
+    detection: >
+      No identifiable customer or user in the answer; strong corpus answers
+      name the user in-sentence (small teams, non-technical users, small-town
+      newspapers, guaranteed-income borrowers in Brazil).
+    example: "A feature description with no 'for whom': 'a marketplace with smart matching and analytics'."
+  - name: feature_laundry_list
+    detection: >
+      Enumerates many features instead of one core action + benefit; violates
+      the under-5-sentences norm and PG's ruthless-editing rule. Strong answers
+      pick one wedge (FamilyLeaf: "the first feature we will build is an
+      about.me for athletes").
+    example: "Ten bullet features spanning dashboards, integrations, notifications, and reporting with no primary use case."
+  - name: category_claim_without_substance
+    detection: >
+      Claims a category or market position ("the leading...", "first ever...")
+      instead of describing the product; PG: "well-designed and easy to use"
+      is assumed, not an edge. Related risk: a narrow utility framed with no
+      wedge to something bigger reads as a feature, not a company (Buffer S11
+      rejection pattern, drawn from its one-liner/traction records).
+    example: "'We are the first end-to-end solution for the $80B wellness market' with no product mechanics."
+
+interrogation_prompts:
+  - "Describe, in one sentence, what a user literally does with the product on day one. What screen, device, or physical object are they touching?"
+  - "What do your target users do TODAY instead (name the tool, email chain, spreadsheet, or manual process), and what exactly breaks about it?"
+  - "Who is the user, by name or role? Name one real person or company that has used it or asked for it, and on what date."
+  - "What is the one number in this answer a reviewer could check: a price, a time saved, a percentage, a scenario coverage? (Cruise: <$3,000, 90% of scenarios; bxblue: 20 minutes vs 3-4 days.)"
+  - "If you use an analogy ('X for Y'), would a reviewer who has never heard of X still understand? Replace it with plain words and see if the answer survives."
+  - "Read only your first sentence: does it carry the whole idea? What is lost if everything after it is deleted?"
+
+critique_checklist:
+  - check: first_sentence_carries_idea
+    type: binary
+    rule: "The product and what it does are both in sentence one (Friedman: idea in the first sentence, simplest terms)."
+  - check: has_mechanism
+    type: binary
+    rule: "Names a concrete mechanism/interaction, not just an outcome."
+  - check: has_specific_customer
+    type: binary
+    rule: "An identifiable user/customer segment appears in the answer."
+  - check: names_substitute
+    type: binary
+    rule: "States what people use today instead (Dropbox: uploading/email)."
+  - check: has_number_or_fact
+    type: binary
+    rule: "At least one checkable number: price, time delta, quantified pain."
+  - check: analogy_universally_known
+    type: binary
+    rule: "If an X-for-Y analogy is used, X is a household/founder-household name; else fail."
+  - check: jargon_count
+    type: scored
+    rule: "Count buzzwords (platform, ecosystem, empower, revolutionize, AI-powered-without-mechanism, seamless, leverage); 0 = pass, 1-2 = warn, 3+ = fail."
+  - check: sentence_count
+    type: scored
+    rule: "<=5 sentences per Fluently guide; 6-8 warn; 9+ fail (ruthless-editing violation)."
+  - check: vision_ratio
+    type: scored
+    rule: "At most 1 sentence of long-term vision; more vision than mechanics = fail."
+
+stage_variants:
+  pre_launch: >
+    "Will do" phrasing acceptable; the bar is concreteness of the planned
+    mechanics, not existence. Cruise (2 weeks in, demo-only plan), Standard
+    Treasury (pre-development), and FamilyLeaf (no development started) were
+    all accepted on a crisp mechanical description plus a wedge-first sequence.
+    Vague futures ("we will explore...") fail regardless of stage.
+  revenue: >
+    Describe the product as it actually operates for paying users; align claims
+    with users_customers/revenue numbers. GitLab (W15, $1M ARR) described
+    concrete shipped capabilities ("run your own GitHub", merge requests, CI),
+    not roadmap. A revenue-stage company still pitching in future tense is a
+    coherence flag.
+
+cross_checks:
+  must_align_with:
+    - description_50_chars   # this answer must expand, not contradict, the one-liner (Basedash: the one-liner frames everything)
+    - demo_url               # the described product must be what the demo shows
+    - whats_new              # substitute behaviors named here should reappear as the substitutes clause
+    - how_far_along          # tense (do vs will do) must match stated progress
+    - users_customers        # the user named here should be the one paying/using there
+    - technical_work         # founders must plausibly be able to build the mechanism described
+
+recency_notes: >
+  Pre-2015 examples (Dropbox S07, Mixpanel S09, OwnLocal W10, The Muse W12,
+  Apptimize S13, Cruise W14) weight 0.5: structural templates remain valid but
+  legacy form wording and era-specific analogies (Yellowpages, Ladders) don't.
+  Post-2023 answers should also be read against the Summer 2026 RFS posture
+  ("AI has stopped being a feature and started being the foundation"): RFS
+  alignment is a signal, not a requirement; a genuine fit modestly strengthens
+  "why now", a forced fit is a negative. questions.yaml is reconstructed, not
+  verified against the live form (verified_against_live_form: false).
+
+corpus_gaps: >
+  No verbatim REJECTED answer to this specific question exists in the corpus:
+  rejections.yaml has Buffer S11 records for other questions (one-liner,
+  users, competitors) and interview-stage rejections (CodeAnt, Giveit100) with
+  no written product answer, so failure-mode examples are pattern-derived from
+  reviewer criteria and the Fluently guide's bad examples rather than real
+  failed answers. Buffer's why_notable ("reads as a feature, not a company")
+  is inferred from its one-liner record, not a product-question record. Only
+  one post-2020 positive example exists (Dendron W21; Basedash S20 is the most
+  recent full application), so recent-batch, AI-era exemplars are missing.
+  char limits for this question are unknown (null in questions.yaml).
+
+sources:
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/questions.yaml
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/rfs.md
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/corpus/reviewer-criteria.yaml
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/corpus/famous-apps.yaml
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/corpus/shizune.yaml
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/corpus/founder-annotated.yaml
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/corpus/rejections.yaml

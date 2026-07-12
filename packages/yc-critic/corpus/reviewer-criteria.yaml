@@ -1,0 +1,274 @@
+# YC reviewer criteria + commentary (rubric backbone, not per-company records)
+source_group: "YC's own criteria + reviewer commentary"
+fetch_date: 2026-07-12
+schema_note: "Looser schema than corpus records: theme, guidance, who_said_it, source_url, quote_excerpt"
+failed_sources: []
+
+records:
+  # ---- YC official ----
+  - theme: core_motto
+    guidance: >
+      YC's stated core investment principle is that a startup must make something
+      people want; everything in the application is scored against evidence of that.
+    who_said_it: "Y Combinator (official apply page)"
+    source_url: https://www.ycombinator.com/apply
+    quote_excerpt: "Make something people want."
+
+  - theme: submit_early
+    guidance: >
+      YC encourages applying as soon as ready rather than polishing to the deadline;
+      late applications are read but without guaranteed timelines.
+    who_said_it: "Y Combinator (official apply page)"
+    source_url: https://www.ycombinator.com/apply
+    quote_excerpt: "We encourage you to submit your application as soon as you're ready to apply."
+
+  # ---- PG: How to Apply ----
+  - theme: clarity_is_the_filter
+    guidance: >
+      Readers process ~100 applications a day; the top failure mode is not weakness
+      but failing to convey quality. One or two equally qualified groups are rejected
+      for every group invited, purely on unclear writing.
+    who_said_it: "Paul Graham (How to Apply to Y Combinator)"
+    source_url: https://www.ycombinator.com/howtoapply
+    quote_excerpt: "Exceptional clarity and conciseness."
+
+  - theme: describe_idea_factually
+    guidance: >
+      Describe the idea in plain, factual language, never marketing-speak; anchoring
+      to known concepts ("like Wikipedia, but within an organization") helps readers
+      grasp it fast.
+    who_said_it: "Paul Graham (How to Apply to Y Combinator)"
+    source_url: https://www.ycombinator.com/howtoapply
+    quote_excerpt: "It's like Wikipedia, but within an organization."
+
+  - theme: impressive_achievement_is_the_key_question
+    guidance: >
+      PG calls the "something impressive each founder has built or achieved" question
+      the most important on the application; magnitude of achievement matters, category
+      does not, and generic character claims carry no weight.
+    who_said_it: "Paul Graham (How to Apply to Y Combinator)"
+    source_url: https://www.ycombinator.com/howtoapply
+    quote_excerpt: "Look for magnitude of achievement, not category."
+
+  - theme: disclose_flaws
+    guidance: >
+      Name the problems with your own idea. If reviewers spot a flaw you did not
+      mention, they assume you have not thought of it, which damages credibility more
+      than the flaw itself.
+    who_said_it: "Paul Graham (How to Apply to Y Combinator)"
+    source_url: https://www.ycombinator.com/howtoapply
+    quote_excerpt: "They'll assume you haven't considered them."
+
+  - theme: no_generic_edge_claims
+    guidance: >
+      "Well-designed and easy to use" is assumed, not an edge. Show specific
+      understanding of the competitive landscape and at least a theory for overcoming
+      obstacles.
+    who_said_it: "Paul Graham (How to Apply to Y Combinator)"
+    source_url: https://www.ycombinator.com/howtoapply
+    quote_excerpt: "At least a theory about how to overcome."
+
+  - theme: hacked_system_as_salvage
+    guidance: >
+      The non-computer-system-hack question can rescue an otherwise weak application
+      by demonstrating resourcefulness and a productive rule-bending mentality.
+    who_said_it: "Paul Graham (How to Apply to Y Combinator)"
+    source_url: https://www.ycombinator.com/howtoapply
+    quote_excerpt: "Hacking some (non-computer) system to your advantage."
+
+  - theme: ruthless_editing
+    guidance: >
+      Cut every unneeded word, lead with substance, skip sweeping industry
+      introductions, and remember reviewers are optimists who want to believe you.
+    who_said_it: "Paul Graham (How to Apply to Y Combinator)"
+    source_url: https://www.ycombinator.com/howtoapply
+    quote_excerpt: "Print it out and take a red pen and cross out every word you don't need."
+
+  # ---- PG: What We Look for in Founders ----
+  - theme: founder_determination
+    guidance: >
+      Determination ranks first among founder qualities; founders must not
+      demoralize easily under repeated obstacles.
+    who_said_it: "Paul Graham (What We Look for in Founders)"
+    source_url: https://www.paulgraham.com/founders.html
+    quote_excerpt: "You can't be the sort of person who gets demoralized easily."
+
+  - theme: founder_flexibility
+    guidance: >
+      Determination must combine with flexibility: hold direction loosely, adapt
+      strategy while keeping forward momentum (PG's running-back metaphor).
+    who_said_it: "Paul Graham (What We Look for in Founders)"
+    source_url: https://www.paulgraham.com/founders.html
+    quote_excerpt: "The best metaphor... is a running back."
+
+  - theme: founder_imagination_and_naughtiness
+    guidance: >
+      YC values surprising new ideas over fast solving of predefined problems, and
+      founders who delight in breaking rules that don't matter.
+    who_said_it: "Paul Graham (What We Look for in Founders)"
+    source_url: https://www.paulgraham.com/founders.html
+    quote_excerpt: "They delight in breaking rules, but not rules that matter."
+
+  - theme: cofounder_friendship
+    guidance: >
+      Cofounder relationship strength is screened because startups stress it to
+      breaking; genuine rapport is a selection criterion.
+    who_said_it: "Paul Graham (What We Look for in Founders)"
+    source_url: https://www.paulgraham.com/founders.html
+    quote_excerpt: "Startups do to the relationship between the founders what a dog does to a sock."
+
+  # ---- Sam Altman ----
+  - theme: stage_agnostic
+    guidance: >
+      YC funds idea-stage through revenue-stage; "too early or too late" is the most
+      common false self-disqualification.
+    who_said_it: "Sam Altman (Applying to YC)"
+    source_url: https://blog.samaltman.com/applying-to-yc
+    quote_excerpt: "We think we can help companies at any stage up to Series B."
+
+  - theme: no_intro_needed_reapply
+    guidance: >
+      No warm intro is needed and rejection is not final; many successful founders
+      (e.g. Drew Houston) applied multiple times before acceptance.
+    who_said_it: "Sam Altman (Applying to YC)"
+    source_url: https://blog.samaltman.com/applying-to-yc
+    quote_excerpt: "Many (perhaps most) of the best companies get started by unknowns."
+
+  # ---- Dalton Caldwell ----
+  - theme: team_read_first
+    guidance: >
+      The first thing read in an application is the team, screening for technical
+      excellence and founder/market fit with the chosen problem; multiple cofounders
+      materially improve odds.
+    who_said_it: "Dalton Caldwell (TechCrunch interview, 2022)"
+    source_url: https://techcrunch.com/2022/04/27/how-to-get-into-y-combinator-dalton-caldwell/
+    quote_excerpt: "If you've built related tools in the past, that's great to see."
+
+  - theme: cut_to_the_chase
+    guidance: >
+      Directness beats polish: avoid buzzwords and length. Effort spent obsessing
+      over the application does not correlate with acceptance; workarounds like cold
+      emails and reference-stuffing are ignored.
+    who_said_it: "Dalton Caldwell (TechCrunch interview, 2022)"
+    source_url: https://techcrunch.com/2022/04/27/how-to-get-into-y-combinator-dalton-caldwell/
+    quote_excerpt: "Cut to the chase. Get to the point. Tell me what you're trying to say."
+
+  - theme: tar_pit_ideas
+    guidance: >
+      Crowded "tar pit" ideas (music discovery, restaurant discovery, social hangout
+      apps) need evidence you understand why thousands of prior attempts failed;
+      originality matters less than founder-market fit.
+    who_said_it: "Dalton Caldwell (TechCrunch interview, 2022)"
+    source_url: https://techcrunch.com/2022/04/27/how-to-get-into-y-combinator-dalton-caldwell/
+    quote_excerpt: "Does not mean there has not been probably tens of thousands of founders that have tried."
+
+  - theme: rejection_reasons
+    guidance: >
+      Common rejection causes: low-effort trend-chasing submissions, no demonstrated
+      commitment to building, insufficient technical skill for the proposed solution,
+      crowded ideas without differentiation, or simply stronger competing applications.
+    who_said_it: "Dalton Caldwell (TechCrunch interview, 2022)"
+    source_url: https://techcrunch.com/2022/04/27/how-to-get-into-y-combinator-dalton-caldwell/
+    quote_excerpt: "Over half recent batch companies had been rejected before." # paraphrased stat from the interview summary
+
+  # ---- Michael Seibel / Dalton (joint) ----
+  - theme: door_default_open
+    guidance: >
+      YC's process is deliberately open: no warm intro, no insider access; authentic
+      founder communication beats polished marketing video.
+    who_said_it: "Michael Seibel (Wharton FinTech interview with Dalton Caldwell)"
+    source_url: https://medium.com/wharton-fintech/y-combinators-michael-seibel-dalton-caldwell-lessons-from-5000-entrepreneurs-be77ba6a6970
+    quote_excerpt: "YC's door is default open. You don't have to know us."
+
+  - theme: momentum_between_apply_and_interview
+    guidance: >
+      The strongest edge is measurable progress between submitting the application
+      and the interview; demonstrated speed impresses more than a perfected form.
+    who_said_it: "Michael Seibel & Dalton Caldwell (Wharton FinTech interview)"
+    source_url: https://medium.com/wharton-fintech/y-combinators-michael-seibel-dalton-caldwell-lessons-from-5000-entrepreneurs-be77ba6a6970
+    quote_excerpt: "Have your startup improve between the time that you applied and the time that you interview."
+
+  # ---- Jared Friedman ----
+  - theme: first_sentence_carries_the_idea
+    guidance: >
+      Partners read ~100 applications a day; give the core idea in the first sentence
+      in the simplest possible terms. A single concrete example beats any generic
+      claim on the impressive-achievement question. Applications with founder videos
+      are statistically much more likely to get an interview (~1 min, all founders,
+      no script).
+    who_said_it: "Jared Friedman (YC partner, public advice via YC library/talks)"
+    source_url: https://www.ycombinator.com/library/8g-how-to-get-startup-ideas
+    quote_excerpt: "A single concrete example beats any generic claim." # paraphrase of Friedman's advice
+
+  - theme: solution_in_search_of_a_problem
+    guidance: >
+      A common idea-stage mistake is starting from a solution instead of a problem
+      ("SISP"); such founders usually never find the problem. Think critically before
+      committing years to the first idea that comes to mind.
+    who_said_it: "Jared Friedman (How to Get Startup Ideas)"
+    source_url: https://www.ycombinator.com/library/8g-how-to-get-startup-ideas
+    quote_excerpt: "Solution In Search of a Problem."
+
+  # ---- Garry Tan ----
+  - theme: you_are_raising_money
+    guidance: >
+      Treat the application as raising investment, not joining a program: the implicit
+      contract is returning investors their money plus a healthy return.
+    who_said_it: "Garry Tan (Super Last Minute Advice)"
+    source_url: https://blog.garrytan.com/super-last-minute-advice-for-s
+    quote_excerpt: "Returning investors their money, plus a healthy return."
+
+  - theme: hair_on_fire_problems
+    guidance: >
+      Solve a real, urgent problem or execute dramatically better than incumbents;
+      technology only matters insofar as it solves people's problems.
+    who_said_it: "Garry Tan (Super Last Minute Advice)"
+    source_url: https://blog.garrytan.com/super-last-minute-advice-for-s
+    quote_excerpt: "Technology is only useful for solving people's problems."
+
+  - theme: edit_mercilessly_and_get_feedback
+    guidance: >
+      Write copiously, then cut until no word can be removed without losing meaning;
+      get outside feedback from experienced founders before submitting; keep building
+      whether or not YC says yes.
+    who_said_it: "Garry Tan (Super Last Minute Advice)"
+    source_url: https://blog.garrytan.com/super-last-minute-advice-for-s
+    quote_excerpt: "Edit mercilessly until there is not a single word you could remove without losing significant meaning."
+
+  - theme: cofounders_are_a_marriage
+    guidance: >
+      The team should cover coding, design, and hustle; cofounder choice is treated
+      as a long-term survival bond, not a convenience.
+    who_said_it: "Garry Tan (Super Last Minute Advice)"
+    source_url: https://blog.garrytan.com/super-last-minute-advice-for-s
+    quote_excerpt: "You're literally getting out onto a life raft in the ocean with them."
+
+  # ---- Alexander Jarvis collection follow-ons ----
+  - theme: questions_have_hidden_meanings
+    guidance: >
+      Each application question maps to a hidden evaluation: the 50-char line tests
+      clarity of communication, competitors tests depth of industry understanding,
+      user acquisition tests repeatable scaling, business model tests unit economics.
+      Avoid "X for Y" framings (they mean different things to different readers) and
+      emphasize the customer-by-customer acquisition process over top-down TAM math.
+    who_said_it: "Zachary Reitano (The YC Application: Broken Down and Translated; via alexanderjarvis.com collection)"
+    source_url: https://medium.com/@zreitano/the-yc-application-broken-down-and-translated-e4c0f5235081
+    quote_excerpt: "The process of getting the first customer, then the second, then the third and so on."
+
+  - theme: bullshit_detector
+    guidance: >
+      Do not craft answers you think reviewers want to hear; YC's pattern-matching
+      across thousands of applications punishes performed authenticity.
+    who_said_it: "Zachary Reitano (via alexanderjarvis.com collection)"
+    source_url: https://medium.com/@zreitano/the-yc-application-broken-down-and-translated-e4c0f5235081
+    quote_excerpt: "Probably the best bullshit detector."
+
+  - theme: collection_index
+    guidance: >
+      The Alexander Jarvis YC resource collection indexes successful/unsuccessful
+      application examples (Proxino S10, OpenPhone S18, Simple Habit W17, Buffer S11,
+      Outsight F24), reviewer advice (Tan, Altman, Reitano), and interview-prep
+      guides; useful as a crawl frontier for the per-company corpus.
+    who_said_it: "Alexander Jarvis (resource collection)"
+    source_url: https://www.alexanderjarvis.com/resources/collections/y-combinator-resource-collection
+    quote_excerpt: ""

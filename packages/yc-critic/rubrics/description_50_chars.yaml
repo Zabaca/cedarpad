@@ -1,0 +1,217 @@
+# Rubric: the 50-character company one-liner
+# Distilled 2026-07-12 from local corpus only (packages/yc-critic/corpus/*, rfs.md, questions.yaml)
+
+question_id: description_50_chars
+question_text: "Describe what your company does in 50 characters or less."
+weight: critical  # per questions.yaml: the one hard char limit; multiple guides call it the most important sentence
+
+yc_intent: >
+  Per the reviewer-criteria corpus, this line is a clarity-of-communication test,
+  not a slogan contest. Reitano ("questions have hidden meanings"): the 50-char
+  line tests clarity of communication. PG ("clarity_is_the_filter"): readers
+  process ~100 applications/day and reject equally-qualified groups purely on
+  unclear writing; describe the idea factually, never in marketing-speak,
+  anchoring to known concepts when it helps ("like Wikipedia, but within an
+  organization"). Jared Friedman: give the core idea in the first sentence in
+  the simplest possible terms. Dalton Caldwell: "Cut to the chase. Get to the
+  point." The one-liner also frames every subsequent answer for the reviewer
+  (Basedash founder commentary).
+
+structural_pattern: >
+  Strong corpus answers are plain-language category or verb statements, usually
+  4-9 words, that name (a) what the thing is and (b) who it is for or what
+  incumbent/substitute it displaces. Recurring shapes: bare category
+  ("AB test mobile applications", Apptimize), category + customer ("Collaborative
+  database interface for teams", Basedash; "The first note app designed for
+  teams", Slite; "Phone system meets CRM built for small businesses", OpenPhone),
+  verb-led with the differentiator embedded ("Quickly find research participants
+  you can trust", Prolific), incumbent-naming ("a more comfortable alternative
+  to tampons", Flex), geography/segment wedge ("...accept payments in African
+  Markets", Paystack), and X-for-Y only when X is universally known ("Spotify
+  for meditation", Simple Habit; the Fluently guide warns X-for-Y fails on
+  obscure references, and Reitano warns X-for-Y means different things to
+  different readers). No adjectives of quality, no vision language, no jargon.
+
+positive_examples:
+  - company: Apptimize
+    batch: S13
+    answer_excerpt: "AB test mobile applications"
+    why_strong: >
+      Four-word category statement, well under the limit; plain naming over
+      cleverness. Corpus flags it as the model of factual compression.
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+  - company: OpenPhone
+    batch: S18
+    answer_excerpt: "Phone system meets CRM built for small businesses"
+    why_strong: "Names the category mashup and the customer in nine words."
+    source_url: https://shizune.co/yc-application-examples/openphone
+  - company: Prolific
+    batch: S19
+    answer_excerpt: "Quickly find research participants you can trust."
+    why_strong: "Verb-led one-liner embedding the differentiator (trust) without jargon."
+    source_url: https://shizune.co/yc-application-examples/prolific
+  - company: Goodly
+    batch: S18
+    answer_excerpt: "Student Loan Repayment as an Employee Benefit."
+    why_strong: "The whole business model fits in the one-liner."
+    source_url: https://shizune.co/yc-application-examples/goodly
+
+failure_modes:
+  - name: buzzword_soup
+    detection: >
+      Marketing adjectives or stacked jargon in place of a plain noun/verb
+      description; unfamiliar acronyms or niche brand references a generalist
+      reviewer won't parse in 2 seconds.
+    example: >
+      "Dynamic, smart and piracy-proof ebooks" (Prusth, rejected W17: an
+      adjective stack in place of a claim; https://medium.com/@seadhart/my-rejected-yc-w17-application-ad85aa8851e5).
+      Also "Tynker for B2B creative thinking mLearning" (Fluently guide's cited
+      bad example; reviewer of 100+ apps says most one-liners fail on jargon
+      and obscure references).
+  - name: obscure_x_for_y
+    detection: >
+      "X for Y" analogy where X is not universally known, or where the analogy
+      carries the whole meaning. Reitano: avoid X-for-Y framings, they mean
+      different things to different readers. Acceptable only when X is a
+      household brand and a literal descriptor accompanies it (Simple Habit
+      paired "Spotify for meditation" WITH "5-minute meditation app").
+    example: "Superhuman for note taking (Dendron, accepted W21, but leans entirely on knowing Superhuman; borderline case in corpus)."
+  - name: small_ceiling_framing
+    detection: >
+      One-liner scopes the company as a narrow convenience utility on someone
+      else's platform, or a feature rather than a company. Clarity alone does
+      not clear the bar when the perceived ceiling is small.
+    example: >
+      Buffer, rejected S11: "an application for Twitter which helps people Tweet
+      consistently without spending all day on Twitter" - clear, real revenue,
+      still read as "a Twitter app" (why_notable in rejections.yaml).
+  - name: over_limit_or_full_sentence
+    detection: >
+      Answer exceeds 50 characters or spends chars on filler ("We are building
+      a platform that..."). Buffer's published line was also far over the modern
+      50-char limit. Count characters; every strong example is a fragment.
+    example: >
+      "Programming system that uses direct manipulation and visualisation of
+      data." (Spreadsheet Magic, rejected S14: over the limit and abstract;
+      http://spreadsheets-on-steroids.tumblr.com/post/82903500034/my-failed-application-to-yc-summer-2014).
+      Also Buffer's 111-char sentence vs Apptimize's 27-char fragment.
+  - name: vision_not_product
+    detection: >
+      Describes mission/outcome ("democratizing X", "the future of Y") instead
+      of what the product literally does. PG: describe the idea factually,
+      never marketing-speak; "well-designed and easy to use" carries no weight.
+    example: "Any line where a reader cannot tell what the user does with the product."
+  - name: mechanism_first_no_user
+    detection: >
+      Line describes HOW the product works (the mechanism/technology) rather
+      than what it does for whom; a non-technical reviewer cannot name the
+      user or the outcome after one pass.
+    example: >
+      "Programming system that uses direct manipulation and visualisation of
+      data." (Spreadsheet Magic, rejected S14: mechanism-first framing that
+      never names who it is for;
+      http://spreadsheets-on-steroids.tumblr.com/post/82903500034/my-failed-application-to-yc-summer-2014).
+  - name: category_claim_unearned
+    detection: >
+      Superlative/category-creation claims ("the first X", "the only Y") without
+      the rest of the application substantiating them. Slite's "The first note
+      app designed for teams" worked because the claim was checkable and the
+      app backed it; flag when it isn't.
+    example: "'The first AI-powered wellness OS' with no substantiation elsewhere."
+
+interrogation_prompts:
+  - "Read your 50 chars to a stranger: can they say back what the product does and who uses it? What exact words would they use?"
+  - "Which noun in your line is the product category, and which named incumbent or substitute behavior does it displace (Dropbox named 'uploading or email')?"
+  - "How many characters is it exactly, and which word could you delete without losing meaning (PG's red-pen test)?"
+  - "If you use an X-for-Y analogy: would 9 out of 10 people outside your industry recognize X by name? Name the 9."
+  - "Does the line match, word for word, the customer and product named in your what_will_you_make answer? Where does it diverge?"
+  - "Is this a company or a feature? What does the line imply your ceiling is (Buffer's 'application for Twitter' read as a small ceiling despite revenue)?"
+
+critique_checklist:
+  - check: char_count_le_50
+    type: binary
+    note: "Hard limit; strong examples run 27-50 chars."
+  - check: names_product_category_or_action
+    type: binary
+    note: "A concrete noun or verb for what it does (not a mission)."
+  - check: names_customer_or_displaced_incumbent
+    type: binary
+    note: "Who it's for, or what it replaces (tampons, GitHub, email-upload)."
+  - check: jargon_count
+    type: scored
+    note: "Count acronyms/insider terms a generalist won't know; 0 is the bar."
+  - check: adjective_of_quality_count
+    type: scored
+    note: "'Best/seamless/powerful/easy' = filler; 0 is the bar."
+  - check: analogy_universally_known
+    type: binary
+    note: "Only if X-for-Y is used; X must be a household brand and ideally paired with a literal descriptor."
+  - check: implies_company_not_feature
+    type: binary
+    note: "Buffer failure mode: platform-appendage framing."
+  - check: passes_stranger_readback
+    type: binary
+    note: "Reviewer at 100 apps/day gets it in one pass."
+
+stage_variants:
+  pre_launch: >
+    Same bar. The one-liner describes the product, not the stage; The Flex
+    Company (pre-launch, S16) still named the physical product and the
+    incumbent ("a more comfortable alternative to tampons"). No corpus evidence
+    that pre-launch applicants get slack on clarity here.
+  revenue: >
+    Same bar, plus a coherence check: at revenue stage the one-liner should
+    scope a business big enough to matter. Buffer shows a clear line + real
+    revenue still rejected when the framing capped the ceiling. GitLab-style
+    positioning against the category leader ("run your own GitHub", from its
+    what_will_you_make) shows how a revenue-stage line can carry ambition.
+
+cross_checks:
+  must_align_with:
+    - what_will_you_make   # the one-liner is the compression of this answer; nouns and customer must match
+    - whats_new            # the differentiator embedded in the line must be the same novelty claimed here
+    - competitors_insight  # if the line names/implies an incumbent, this answer must name it too
+    - users_customers      # the customer named in the line should be who is actually paying/using
+
+recency_notes: >
+  Weight pre-2015 examples at 0.5: Apptimize (2013) predates today's exact
+  form wording, and Dropbox/GitLab-era applications had no 50-char field in
+  the same shape (Dropbox has no description_50_chars record in the corpus).
+  The densest evidence is 2016-2021 (Flex, OpenPhone, Slite, Prolific, Goodly,
+  Dendron, MagicBell). Post-2023, an RFS-aligned line (rfs.md, Summer 2026:
+  AI-native services, company brain, SaaS challengers, etc.) is a modest
+  positive only when genuine; rfs.md is explicit that a forced RFS fit reads
+  as weak and absence is neutral. Do not reward buzzword "AI" insertion into
+  the 50 chars; it triggers buzzword_soup unless AI is literally the product
+  mechanism.
+
+corpus_gaps: >
+  (1) Verbatim REJECTED one-liners now exist in the corpus (2026-07-12 sweep):
+  Prusth W17 ("Dynamic, smart and piracy-proof ebooks", adjective stack under
+  the limit), Spreadsheet Magic S14 (mechanism-first, over the limit), and
+  Outsight AI F24 ("AI Agents to migrate legacy code & fix tech debt.", a
+  crisp 49-char line in a hot category still rejected, calibrating that
+  one-liner quality alone is not the gate). Buffer's 111-char rejected line
+  predates the current field format. Failure modes vision_not_product and
+  category_claim_unearned remain grounded in reviewer guidance (Fluently
+  guide, PG, Reitano), not observed rejected answers.
+  (2) No post-2021 accepted 50-char example in the corpus (newest is Dendron
+  W21; Fluently's W24 record is reviewer guidance, not their own line), so
+  AI-era phrasing norms are inferred from rfs.md + reviewer criteria.
+  (3) questions.yaml itself is triangulated, not verified against the live
+  form (verified_against_live_form: false).
+
+sources:
+  - packages/yc-critic/questions.yaml
+  - packages/yc-critic/rfs.md
+  - packages/yc-critic/corpus/reviewer-criteria.yaml
+  - packages/yc-critic/corpus/famous-apps.yaml
+  - packages/yc-critic/corpus/shizune.yaml
+  - packages/yc-critic/corpus/founder-annotated.yaml
+  - packages/yc-critic/corpus/rejections.yaml
+  - https://www.ycombinator.com/howtoapply
+  - https://medium.com/@zreitano/the-yc-application-broken-down-and-translated-e4c0f5235081
+  - https://getfluently.notion.site/Y-Combinator-Application-Guide-1286a9ce04d98004b4dac50cf66fb883
+  - https://shizune.co/yc-application-examples
+  - https://buffer.com/resources/buffers-y-combinator-application/
+  - https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/

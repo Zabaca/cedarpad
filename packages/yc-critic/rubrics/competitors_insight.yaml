@@ -1,0 +1,250 @@
+# Rubric: competitors_insight
+# Distilled 2026-07-12 from local corpus only (questions.yaml, rfs.md, corpus/*).
+
+question_id: competitors_insight
+question_text: "Who are your competitors? What do you understand about your business that they don't?"
+
+yc_intent: >
+  Two-part screen. Part one tests honesty and depth of industry understanding:
+  reviewer-criteria "questions_have_hidden_meanings" (Reitano) maps the competitors
+  question to "depth of industry understanding"; questions.yaml notes "'Nobody' is a
+  red flag; the second clause (secret/insight) is what gets scored." Part two hunts
+  for an earned secret: PG's "no_generic_edge_claims" says "well-designed and easy to
+  use" is assumed, not an edge, and expects specific competitive-landscape knowledge
+  plus "at least a theory about how to overcome" obstacles. PG's "disclose_flaws"
+  also applies: omitting an obvious giant (Google, Amazon) reads as not having
+  thought of it. Dalton Caldwell's "tar_pit_ideas" adds: crowded categories demand
+  evidence you understand why thousands of prior attempts failed.
+
+weight: critical
+
+structural_pattern: >
+  Strong answers in the corpus share a three-move shape, usually in 2-5 sentences:
+  (1) NAME 2-4 real competitors, including the scariest incumbent, often ranked
+  ("we fear X the most": Cruise/Google, Mixpanel/Google Analytics, Shotput/Amazon,
+  Mimir/Google, Kash/Google+Apple, Metlo/Databricks); the competitor set may be
+  offline or behavioral, not just startups (bxblue's bank correspondents, Buffer-era
+  substitutes). (2) EXPLAIN why the feared party has not / will not win: a specific
+  structural reason, not a feature list (Lollipuff: eBay is built for a broad general
+  audience; Dropbox: competitors work at the wrong abstraction layer). (3) STATE one
+  crisp, earned insight, typically a market-structure or business-model mechanism
+  rather than a feature edge: GitLab (open source markets itself, but a proprietary
+  edition is required for scalable revenue), Standard Treasury (banks and
+  technologists mutually disinterested, leaving middleware uncontested), Prolific
+  ("TRUST" clears the market, not price), Metlo (the notebook is the beachhead),
+  Basedash ("software is built by teams, not individuals"), Relationship Hero (the
+  incumbents' success created the new problem). The Fluently W24 guide gives the
+  reviewer-calibrated recipe: list 2-3 primary competitors, state how users solve the
+  problem today, then the differentiation and why it wins.
+
+positive_examples:
+  - company: Dropbox
+    batch: S07
+    answer_excerpt: "Competing products work at the wrong layer of abstraction and/or force the user to constantly think and do things. The 'online disk drive' abstraction sucks, because you can't work offline."
+    why_strong: >
+      Names a crowded category and dismisses it with one opinionated architectural
+      insight (everyone else is wrong at the abstraction layer); corpus calls it the
+      textbook answer to the insight clause.
+    source_url: https://www.ycombinator.com/apply/dropbox
+  - company: GitLab
+    batch: W15
+    answer_excerpt: "GitHub Enterprise and Atlassian Stash are our primary competitors... An open source development process allows you to market your product for free."
+    why_strong: >
+      Names the giants, ranks which one it fears (Stash), calls GitHub Enterprise
+      ~4x overpriced, and states a contrarian distribution thesis with a memorable
+      Netflix DVD-vs-streaming analogy; the insight is a business-model mechanism,
+      not a feature comparison.
+    source_url: https://about.gitlab.com/blog/gitlabs-application-for-y-combinator-winter-2015/
+  - company: Standard Treasury
+    batch: S13
+    answer_excerpt: "People who run banks don't care about providing high quality technology services, and the people who care about technology don't want to work with (or buy) a bank."
+    why_strong: >
+      Corpus flags it as one of the cleanest "what do you understand that others
+      don't" formulations: a structural mutual-disinterest claim that explains why
+      the middleware layer is uncontested.
+    source_url: https://shizune.co/yc-application-examples/standard-treasury
+  - company: Apptimize
+    batch: S13
+    answer_excerpt: "Swrve... focused on games. Pathmapp... overall analytics... Artisan and Arise.io... buggy, immature products."
+    why_strong: >
+      Names four competitors and dismisses each with a distinct, specific reason;
+      the model of per-rival differentiation instead of a blanket claim, and the
+      claimed edge (correct randomization) matches the founders' quant credentials.
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+failure_modes:
+  - name: no_competitors_claim
+    detection: >
+      Answer contains "no competitors", "nobody is doing this", or names zero
+      companies/substitutes. questions.yaml: "'Nobody' is a red flag." Exception
+      pattern: Metlo said "we don't have any real competitors right now except..."
+      and then immediately named Deepnote, Naas, and the Databricks threat; the claim
+      is only fatal when unaccompanied by names.
+    example: "We have no direct competitors; this market is untapped."
+  - name: missing_the_giant
+    detection: >
+      Obvious platform incumbent (Google, Amazon, Apple, Microsoft, an offline
+      incumbent) absent from the list. Accepted apps consistently name and fear the
+      giant (Cruise, Mixpanel, Shotput, Mimir, Kash); per PG's disclose_flaws, an
+      unnamed obvious threat reads as unconsidered.
+    example: >
+      "Our competitors are two other seed-stage startups." (in a market Google
+      plays in)
+  - name: feature_list_not_insight
+    detection: >
+      Second clause is a feature comparison or generic quality claim ("better UX",
+      "easier to use", "more affordable") with no structural/market/business-model
+      mechanism. PG: "well-designed and easy to use" is assumed. Buffer's rejected
+      S11 answer is the corpus case: honest competitor list (TweetDeck, Hootsuite,
+      SocialOomph...) but the insight leaned on scheduling-UX, reading as "a feature,
+      not a company."
+    example: >
+      "Unclear differentiator from Datadog except price" (Checkly, rejected
+      W20 after interview: YC's stated reason per the founder's own summary,
+      founder-paraphrased rather than answer text; price is not a structural
+      insight; https://www.checklyhq.com/blog/just-did-the-ycombinator-interview-here-are-my-notes/).
+      Synthesized variant: "Unlike Hootsuite, our interface is cleaner and simpler."
+  - name: buzzword_soup
+    detection: >
+      Jargon density high, concrete nouns low; no named company, no mechanism.
+      Dalton: "Cut to the chase"; Reitano's bullshit_detector punishes performed
+      answers.
+    example: "We leverage AI-native synergies to disrupt legacy incumbents holistically."
+  - name: unearned_secret
+    detection: >
+      Insight stated with no evidence trail (no prior job, user observation, or data
+      backing it). Contrast Mixpanel, whose secret was earned at Slide ("Working at
+      Slide, known for being data-driven, inspired me to build Mixpanel"); Basedash's
+      founder commentary says the insight should validate the moat and "ideally be
+      backed by user evidence."
+    example: >
+      "We believe enterprises secretly hate dashboards." (no basis given)
+  - name: tar_pit_blindness
+    detection: >
+      Crowded/tar-pit category (per Dalton: music discovery, restaurant discovery,
+      social apps) with no acknowledgment of why thousands of prior attempts failed
+      or why this attempt differs structurally.
+    example: "There are many social discovery apps, but none focus on authenticity."
+  - name: substitutes_without_insight
+    detection: >
+      Names a competent list of competitors/substitutes but the "what do you
+      understand that they don't" clause is missing entirely, or is replaced
+      by an unprompted admission of fear with no structural reason the feared
+      party won't win. The list proves awareness, not depth.
+    example: >
+      "Google Spreadsheets. Zapier. Unix pipes. Traditional programming
+      languages... My biggest fear is Stoic doing good general purpose
+      programming." (Spreadsheet Magic, rejected S14: category-spanning
+      substitutes named, no articulated insight, plus volunteered fear of a
+      tiny rival;
+      http://spreadsheets-on-steroids.tumblr.com/post/82903500034/my-failed-application-to-yc-summer-2014).
+  - name: fear_dodge
+    detection: >
+      Refuses to admit fearing anyone, or names only weak/dead rivals to look
+      unthreatened. Strong corpus answers do the opposite ("We are most afraid of
+      Google"); InEvent's variant ("our biggest fear is us not being able to meet our
+      potential") works only because incumbents were already named.
+    example: "None of our competitors worry us; they are all legacy players."
+
+interrogation_prompts:
+  - "Name your three closest competitors and, for each, the single specific reason a customer picks you instead. If you can't name three, name the substitute behavior customers use today."
+  - "Which competitor do you fear most, and what specific asset (data, distribution, price, regulation) makes them dangerous? (Cruise named Google's Streetview data; what's the equivalent here?)"
+  - "State your insight in one sentence with no product features in it. Is it a claim about market structure, buyer behavior, or a business-model mechanism, like GitLab's 'open source markets itself but needs a proprietary edition'?"
+  - "How did you earn this insight: what job, customer conversation, dataset, or failed attempt taught it to you, and when? (Mixpanel's came from Slide.)"
+  - "If your insight is true, why haven't the incumbents acted on it? What structurally prevents them (eBay's broad-audience design, banks' disinterest in technology)?"
+  - "What would prove your insight wrong, and what have you already observed (numbers, named customers, churn events) that supports it?"
+
+critique_checklist:
+  - check: names_competitors_count
+    type: scored
+    rule: "Count distinct real competitors/substitutes named; 0 = fail, 1 = weak, 2-4 = strong (Fluently guide: list 2-3 primary)."
+  - check: names_the_giant
+    type: binary
+    rule: "The obvious platform/offline incumbent for this market appears in the list."
+  - check: fear_is_ranked
+    type: binary
+    rule: "Answer says which competitor it fears most, or explicitly why none qualify."
+  - check: has_structural_insight
+    type: binary
+    rule: "Second clause contains a market-structure, buyer-behavior, or business-model claim, not a feature/quality comparison."
+  - check: insight_is_earned
+    type: binary
+    rule: "Answer (or cross-referenced why_this_idea) traces the insight to lived experience, users, or data."
+  - check: per_rival_differentiation
+    type: binary
+    rule: "Each named competitor gets a distinct dismissal reason (Apptimize pattern), not one blanket claim."
+  - check: has_number_or_fact
+    type: binary
+    rule: "At least one verifiable fact: pricing multiple ('~4x overpriced'), named asset, count, date."
+  - check: jargon_count
+    type: scored
+    rule: "Count buzzwords (AI-native, disrupt, synergy, revolutionary, seamless, holistic); >2 = penalize per Dalton's cut-to-the-chase."
+  - check: char_count
+    type: scored
+    rule: "No hard limit, but strong corpus answers resolve in 2-5 sentences (~200-600 chars); >1000 chars suggests padding (PG: ruthless_editing)."
+  - check: substitute_behavior_named
+    type: binary
+    rule: "If few direct competitors, the current substitute behavior is named (bxblue's offline correspondents; whats_new's substitutes clause)."
+
+stage_variants:
+  pre_launch: >
+    Insight must stand on earned knowledge (domain expertise, prior job, user
+    research) since no traction can validate it; Cruise (pre-launch, W14) and Metlo
+    (pre-launch, S21) both passed on structural claims plus honest giant-fear.
+    Competitor list quality is weighted MORE heavily pre-launch: it is the main
+    evidence of industry depth.
+  revenue: >
+    Insight should be corroborated by observed data: conversion, retention, or
+    named-customer behavior proving the secret is real (Basedash commentary: insight
+    "ideally backed by user evidence"). A revenue-stage company with only a
+    theoretical insight scores like a pre-launch one. Buffer's rejection shows
+    revenue + honest competitor list without a structural secret still reads as
+    "a feature, not a company."
+
+cross_checks:
+  must_align_with:
+    - whats_new            # the substitutes clause is the same landscape; contradictions (novel here, crowded there) are a flag
+    - why_this_idea        # the insight's provenance should trace to the domain-expertise story (Mixpanel/Slide pattern)
+    - how_make_money       # business-model insights (GitLab open-core) must match the stated revenue model
+    - what_will_you_make   # the claimed differentiator must exist in the product description
+    - how_get_users        # distribution insights ("open source markets itself") must match the acquisition answer
+
+recency_notes: >
+  Weight pre-2015 examples at 0.5: Dropbox (2007), Mixpanel (2009), Buffer (2011),
+  Apptimize/Standard Treasury (2013), Cruise/Kash/SketchDeck (2013-14) predate the
+  modern form and the AI-era landscape. Post-2019 records (Prolific S19, InEvent S19,
+  Basedash S20, Dendron W21, Metlo S21, Fluently W24 guidance) are the best structure
+  calibration. Post-2023 answers should also be checked against Summer 2026 RFS
+  framing ("AI has stopped being a feature and started being the foundation"): in
+  AI-crowded categories the giant to name is often a foundation-model lab or an
+  RFS-named incumbent category (SaaS Challengers targets: chip design software,
+  ERPs, industrial control systems). RFS alignment is a signal, not a requirement;
+  a forced fit is a negative per rfs.md.
+
+corpus_gaps: >
+  Rejected evidence for this question grew in the 2026-07-12 sweep: alongside
+  Buffer S11, the corpus now holds Spreadsheet Magic S14 (verbatim answer:
+  substitutes listed, insight clause missing) and Checkly W20 (YC's stated
+  rejection reason, founder-paraphrased: unclear differentiation from Datadog
+  beyond price, plus solo founder; Checkly later raised a Series A+, a
+  false-negative calibration point). Dashibase's 2022 rejection email
+  ("we didn't have a clear differentiation in a crowded space",
+  rejection_feedback in rejections.yaml) corroborates feature_list_not_insight
+  and tar_pit_blindness. Failure modes no_competitors_claim, missing_the_giant,
+  buzzword_soup, unearned_secret, and fear_dodge remain inferred from reviewer
+  criteria rather than observed rejections; no corpus record shows a rejection
+  caused specifically by a "no competitors" claim. All shizune excerpts are
+  short republished snippets, not full answers, so char_count guidance is estimated.
+  No post-2021 full accepted answer to this question exists in the corpus (Fluently
+  W24 contributes guide advice citing GitLab, not its own answer); AI-era (2023+)
+  positive examples are absent. Question wording is triangulated, not verified
+  against the live login-gated form (questions.yaml caveat).
+
+sources:
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/questions.yaml
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/rfs.md
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/corpus/reviewer-criteria.yaml
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/corpus/famous-apps.yaml
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/corpus/founder-annotated.yaml
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/corpus/rejections.yaml
+  - /Users/uptown/Projects/zabaca/ceo/packages/yc-critic/corpus/shizune.yaml

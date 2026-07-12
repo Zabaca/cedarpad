@@ -1,0 +1,442 @@
+# Famous standalone YC applications: Dropbox, GitLab, Apptimize
+source_group: famous-apps
+fetch_date: 2026-07-12
+notes: >
+  Batch corrections vs the task brief: Dropbox is Summer 2007 (S07) despite some
+  YC library pages titling it W07; Apptimize is S13 per Nancy Hua's own blog post
+  title and YC's company page, not W14 as some third-party writeups claim. The
+  cloudpdf.io Apptimize writeup contained no actual application content, so the
+  Apptimize records come from Nancy Hua's published application. Question ids
+  mapped from legacy 2007/2013/2015 forms onto current questions.yaml ids.
+  All excerpts are short illustrative snippets, not full answers.
+
+records:
+  # ---------------- DROPBOX (S07, accepted) ----------------
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Dropbox synchronizes files across your/your team's computers. It's much better than uploading or email, because it's automatic, integrated into Windows, and fits into the way you already work."
+    answer_summary: >
+      Automatic file sync integrated into the OS, backed up to Amazon S3;
+      positioned as combining the best of subversion, trac and rsync for
+      non-technical users. Concrete mechanics, not vision language.
+    why_notable: >
+      Canonical example of a product description that names the substitute
+      behaviors (uploading, email) and the mechanism (automatic, OS-integrated)
+      in two sentences.
+    source_url: https://www.ycombinator.com/apply/dropbox
+
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Most small teams have a few basic needs: (1) team members need their important stuff in front of them wherever they are, (2) everyone needs to be working on the latest version of a given document."
+    answer_summary: >
+      Grounds the idea in universal, personally observed workflow pain rather
+      than market sizing; Houston famously built it after forgetting his USB
+      drive.
+    why_notable: "Problem framed as needs everyone recognizes, stated plainly."
+    source_url: https://www.ycombinator.com/apply/dropbox
+
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "Competing products work at the wrong layer of abstraction and/or force the user to constantly think and do things. The 'online disk drive' abstraction sucks, because you can't work offline."
+    answer_summary: >
+      Names the whole crowded category (online storage/sync) and dismisses it
+      with a specific architectural insight: competitors make users upload
+      manually; Dropbox works in the background after you hit save.
+    why_notable: >
+      The textbook answer to 'what do you understand that they don't': a crowded
+      market plus one sharp, opinionated insight about why everyone else is
+      wrong at the abstraction layer.
+    source_url: https://www.ycombinator.com/apply/dropbox
+
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "The current plan is a freemium approach, where we give away free 1GB accounts and charge for additional storage (maybe ~$5/mo or less for 10GB)."
+    answer_summary: >
+      Freemium consumer tiers plus ~$20+/mo team plans; hedged with 'maybe',
+      showing a plausible model without false precision.
+    why_notable: "Honest, lightly-held pricing hypothesis that turned out roughly right."
+    source_url: https://www.ycombinator.com/apply/dropbox
+
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "Prototype - done in Feb. Beta - in people's hands now. Version I can charge for: 6-8 weeks?"
+    answer_summary: >
+      ~5KLOC client + ~2KLOC server (Python, C++) built in about three months of
+      part-time work; working beta with users, adding batches every few days.
+    why_notable: >
+      Velocity signal: a working, distributed beta from one part-time founder in
+      three months, quantified in lines of code and a dated timeline.
+    source_url: https://www.ycombinator.com/apply/dropbox
+
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: impressive_achievement
+    answer_excerpt: "Programming since age 5; startups since age 14; 1600 on SAT; started profitable online SAT prep company in college."
+    answer_summary: >
+      Compressed list of concrete, verifiable proof points spanning technical
+      depth and prior entrepreneurial success (accoladeprep.com).
+    why_notable: "Dense, specific, no adjectives; the format guides still cite."
+    source_url: https://www.ycombinator.com/apply/dropbox
+
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: technical_work
+    answer_excerpt: "All code by the founder; Jeff Mancuso (Stanford, creator of Sftpdrive) putting together a Mac port and Tom Hoover (MIT) helping out."
+    answer_summary: >
+      Solo founder wrote everything; two named helpers could not join as
+      cofounders due to employment constraints, disclosed openly.
+    why_notable: >
+      Famous case of a solo-founder application succeeding despite YC's
+      cofounder preference; PG pushed Houston to find a cofounder (Arash
+      Ferdowsi) before the batch.
+    source_url: https://www.ycombinator.com/apply/dropbox
+
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: surprising_discovery
+    answer_excerpt: "The ridiculous things people name their documents to do versioning, like 'proposal v2 good revised NEW 11-15-06.doc', continue to crack me up."
+    answer_summary: >
+      A user-behavior observation that doubles as evidence for the product's
+      core problem (manual versioning is broken).
+    why_notable: >
+      The surprising-discovery answer loops back to validate the idea itself,
+      not random trivia.
+    source_url: https://www.ycombinator.com/apply/dropbox
+
+  - company: Dropbox
+    batch: S07
+    year: 2007
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: other_ideas
+    answer_excerpt: "One click screen sharing; a wiki with version-controlled drawing canvases; ideas surrounding better web analytics for newbies."
+    answer_summary: "Three concrete alternate ideas listed in one line."
+    why_notable: "Shows breadth of idea generation without diluting the main pitch."
+    source_url: https://www.ycombinator.com/apply/dropbox
+
+  # ---------------- GITLAB (W15, accepted) ----------------
+  - company: GitLab
+    batch: W15
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Open source software enabling code collaboration; 'run your own GitHub' deployable on private servers."
+    answer_summary: >
+      Version control, merge requests, wikis, issue tracking, plus GitLab CI for
+      distributed testing; on-premise open source as the wedge.
+    why_notable: "Positions against the category leader in four words ('run your own GitHub')."
+    source_url: https://about.gitlab.com/blog/gitlabs-application-for-y-combinator-winter-2015/
+
+  - company: GitLab
+    batch: W15
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "Over 100,000 organizations are using GitLab... It is the most popular open source version control software."
+    answer_summary: >
+      Launched 2011, 10k+ commits, 600+ open source contributors, estimated 1M+
+      users; named customers include Qualcomm, NASA, Nasdaq OMX, Interpol.
+    why_notable: >
+      Applied with massive existing traction; the named-logos list does heavy
+      credibility work.
+    source_url: https://about.gitlab.com/blog/gitlabs-application-for-y-combinator-winter-2015/
+
+  - company: GitLab
+    batch: W15
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: users_customers
+    answer_excerpt: "We estimate more than 1M active users; $1m annual Revenue Run Rate."
+    answer_summary: >
+      100k+ organizations self-hosting, 15k MAU on GitLab.com SaaS, real
+      enterprise customers paying subscriptions.
+    why_notable: "Rare application with seven-figure run rate already in place."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+
+  - company: GitLab
+    batch: W15
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: revenue_growth_notes
+    answer_excerpt: "Growing 60% in revenue each month."
+    answer_summary: >
+      $1M ARR with 60% month-over-month revenue growth; also disclosed having
+      declined a $10M acquisition offer to build a larger company.
+    why_notable: >
+      The declined-acquisition line signals ambition and a concrete external
+      valuation datapoint in one stroke.
+    source_url: https://about.gitlab.com/blog/gitlabs-application-for-y-combinator-winter-2015/
+
+  - company: GitLab
+    batch: W15
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Dmitriy wanted a solution he could use at his previous job."
+    answer_summary: >
+      Founder scratched his own itch in 2011; Sytse joined by email in 2012 to
+      build GitLab.com; incorporated 2013.
+    why_notable: "Domain expertise shown through years of already having built and operated the product."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+
+  - company: GitLab
+    batch: W15
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "We offer a better way of collaborating on digital products (the feature branch workflow) to organizations that prefer to work on open source tools."
+    answer_summary: >
+      Open source + integrated toolchain (no separate Jira/Confluence) +
+      inspectable code + lower price for the on-premise segment SaaS-focused
+      competitors neglect.
+    why_notable: "Novelty framed as a segment/distribution insight, not a technology claim."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+
+  - company: GitLab
+    batch: W15
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "GitHub Enterprise and Atlassian Stash are our primary competitors... An open source development process allows you to market your product for free."
+    answer_summary: >
+      Feared Stash most; called GitHub Enterprise weak and ~4x overpriced.
+      Strategy framed as 'emulating the Netflix strategy, shipping DVD's
+      (on-premise) when competitors focus on video-on-demand (SaaS)'. Core
+      insight: open source markets itself, but a proprietary enterprise edition
+      is required because support income alone is not enough.
+    why_notable: >
+      Names the giants directly, ranks which one it fears, and states a
+      contrarian distribution thesis with a memorable analogy.
+    source_url: https://about.gitlab.com/blog/gitlabs-application-for-y-combinator-winter-2015/
+
+  - company: GitLab
+    batch: W15
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "Mostly by selling subscriptions that entitle our customers to support and our proprietary GitLab Enterprise Edition."
+    answer_summary: >
+      Open-core model; most popular subscription $49/user/year, targeting
+      organizations with 100+ developers.
+    why_notable: "Precise price point and target segment instead of TAM hand-waving."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+
+  - company: GitLab
+    batch: W15
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: how_get_users
+    answer_excerpt: "Word-of-mouth amplified through Twitter."
+    answer_summary: >
+      Organic/community distribution via the open source project; growth plans
+      were expanding marketing, growing GitLab CI, and scaling GitLab.com SaaS.
+    why_notable: "Distribution already proven at 100k-organization scale with zero paid acquisition."
+    source_url: https://about.gitlab.com/blog/gitlabs-application-for-y-combinator-winter-2015/
+
+  - company: GitLab
+    batch: W15
+    year: 2014
+    stage_at_application: revenue
+    outcome: accepted
+    question_id: surprising_discovery
+    answer_excerpt: "Before GitLab Sytse has build recreational manned submarines from scratch... U-Boat Worx is now the largest producer of them in the world."
+    answer_summary: >
+      Cofounder previously founded the world's largest recreational-submarine
+      manufacturer.
+    why_notable: "Memorable, verifiable founder-capability signal disguised as trivia."
+    source_url: https://shizune.co/yc-application-examples/gitlab
+
+  # ---------------- APPTIMIZE (S13, accepted) ----------------
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: description_50_chars
+    answer_excerpt: "AB test mobile applications"
+    answer_summary: "Four-word category statement; the expansion targets non-programmers running experiments on native apps."
+    why_notable: "Well under the 50-char limit; plain category naming over cleverness."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: what_will_you_make
+    answer_excerpt: "Apptimize lets you AB test mobile applications... makes optimization as easy for mobile as it is for web."
+    answer_summary: >
+      Mobile A/B testing SDK bringing web-style experimentation to native apps,
+      usable by non-programmers.
+    why_notable: "Anchors an unfamiliar product to a familiar web analogy."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: impressive_achievement
+    answer_excerpt: "Nancy: ran the Fixed Income Quantitative Strategies team at GETCO. Jeremy: owned IndexedDB within Chrome; edited the spec, worked closely with Mozilla and Microsoft."
+    answer_summary: >
+      Elite quant-trading leadership plus browser-infrastructure ownership at
+      Google; both directly relevant to a data/SDK product.
+    why_notable: "Achievements chosen for relevance to the product domain (experimentation math + client-side infrastructure)."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: hacked_system
+    answer_excerpt: "Nancy posed as a consultant without disclosing her sophomore status to secure an internship in Israel."
+    answer_summary: >
+      Nancy talked her way into a consulting internship abroad as a sophomore;
+      Jeremy leveraged datacenter expertise to get funded global travel.
+    why_notable: "Both anecdotes show social resourcefulness, the trait the question screens for."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: why_this_idea
+    answer_excerpt: "Jeremy had looked for a mobile AB testing solution when working on Drawchat, but couldn't find one."
+    answer_summary: >
+      Firsthand unmet need from a prior project, plus early beta-signup demand
+      as market validation.
+    why_notable: "Personal experience of the gap, then corroborated with signup evidence."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: whats_new
+    answer_excerpt: "Competitors offered incomplete solutions with randomization mistakes."
+    answer_summary: >
+      Handles mobile-specific problems others ignore: intermittent connectivity,
+      no cookies, correct experiment randomization.
+    why_notable: "Novelty claimed via technical correctness others get wrong, matching the founders' quant/infra credentials."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: competitors_insight
+    answer_excerpt: "Swrve... focused on games. Pathmapp... overall analytics... Artisan and Arise.io... buggy, immature products."
+    answer_summary: >
+      Names four competitors and dismisses each with a specific, distinct reason
+      rather than a blanket claim.
+    why_notable: "Model competitor answer: names names, one sharp differentiator per rival."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_make_money
+    answer_excerpt: "Monthly subscription... premium customers $1K per month and get 200 customers... ~$2.4MM per year 2 years in."
+    answer_summary: >
+      SaaS subscription with an explicit back-of-envelope: price x customer
+      count x timeframe to a revenue estimate.
+    why_notable: "Shows the arithmetic, making the ceiling estimate checkable."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: how_far_along
+    answer_excerpt: "~8K lines of code... works end-to-end."
+    answer_summary: >
+      Working end-to-end product, private beta just launched roughly two months
+      after incorporation; applied two months after starting.
+    why_notable: "Velocity: end-to-end product in ~2 months from incorporation to application."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: users_customers
+    answer_excerpt: "3 fifty+ people companies, 3 YC companies, and 10+ indie developers signed up."
+    answer_summary: >
+      100+ beta signups with only 2 initially accepted into the private beta;
+      demand deliberately gated.
+    why_notable: "Frames a waitlist (demand exceeding access) as traction before any revenue."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: other_ideas
+    answer_excerpt: "EEG machine for reading babies' minds; page-less browser using crowdsourcing."
+    answer_summary: "Two deliberately wild alternate ideas."
+    why_notable: "Shows range and ambition in the question YC says it sometimes funds from."
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
+
+  - company: Apptimize
+    batch: S13
+    year: 2013
+    stage_at_application: launched_no_revenue
+    outcome: accepted
+    question_id: surprising_discovery
+    answer_excerpt: "People think it's red, but no one knows the best button color."
+    answer_summary: >
+      A domain observation (nobody actually knows optimal UI choices) that
+      argues for the product's existence.
+    why_notable: "Like Dropbox's, the trivia answer doubles as a pitch for why the product must exist."
+    founder_commentary: >
+      Nancy Hua published the application on her blog as an example of a
+      successful YC application, noting they incorporated in Feb 2013 and
+      applied about two months later.
+    source_url: https://www.nancyhua.com/2014/10/08/successful-y-combinator-s13-application/
