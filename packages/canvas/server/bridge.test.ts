@@ -60,6 +60,19 @@ describe('/api/chat/:id/send: subscribe-before-send (425)', () => {
     expect(dispatched).toEqual([]);
   });
 
+  test('x-headless-send bypasses the guard: no subscriber, still 202 and dispatched (#177 MCP sends)', async () => {
+    const req = new Request('http://localhost/api/chat/mcp_headless/send', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-headless-send': '1' },
+      body: JSON.stringify({ message: 'from mcp' }),
+    });
+
+    const res = await handleRequest(req);
+
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'mcp_headless', message: 'from mcp', images: [] }]);
+  });
+
   test('with an active subscription → 202 Accepted and the turn IS dispatched', async () => {
     const sub = fakeSubscriber();
     chatClients.add(sub);

@@ -51,7 +51,13 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       proxySend: async (workspaceId, chatId, message, canvasId) => {
         const target = new Request(`${new URL(req.url).origin}/api/chat/${encodeURIComponent(chatId)}/send`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json', ...(canvasId ? { 'x-canvas-id': canvasId } : {}) },
+          // x-headless-send: no SSE subscriber exists for an MCP send BY DESIGN (callers
+          // poll read_conversation) — the bridge skips its subscribe-before-send 425.
+          headers: {
+            'content-type': 'application/json',
+            'x-headless-send': '1',
+            ...(canvasId ? { 'x-canvas-id': canvasId } : {}),
+          },
           body: JSON.stringify({ message }),
         });
         return serveWorkspace(await withMcpTokensHeader(target, env, workspaceId), env, coordsForWorkspace(workspaceId));
