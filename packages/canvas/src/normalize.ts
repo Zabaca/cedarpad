@@ -54,14 +54,18 @@ function dataObject(v: unknown): Record<string, unknown> {
   return v as Record<string, unknown>;
 }
 
+/** A shape parented to a frame carries the frame's `shape:` id; anything else is dropped. */
+export function parseParentId(raw: Record<string, unknown>): string | undefined {
+  return typeof raw.parentId === 'string' && raw.parentId.startsWith('shape:') ? raw.parentId : undefined;
+}
+
 /**
  * Validate + normalize a raw shape. `id` is preserved if given (so the agent can
  * update an existing shape) else minted.
  */
 export function normalizeShape(raw: Record<string, unknown>): CanvasShape {
   const id = typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : mintId();
-  // A shape parented to a frame carries the frame's shape id.
-  const parentId = typeof raw.parentId === 'string' && raw.parentId.startsWith('shape:') ? raw.parentId : undefined;
+  const parentId = parseParentId(raw);
   const shape = buildShape(raw, id, color(raw.color));
   if (parentId) shape.parentId = parentId;
   return shape;
@@ -182,7 +186,7 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
     // `src` data URL. A missing src is tolerated (the asset can lag the shape by a
     // tick) — the node still appears; read_image just has nothing to show yet.
     if (typeof raw.id !== 'string' || raw.id.length === 0) throw new Error('image shape requires an id');
-    const parentId = typeof raw.parentId === 'string' && raw.parentId.startsWith('shape:') ? raw.parentId : undefined;
+    const parentId = parseParentId(raw);
     const shape: CanvasShape = {
       id: raw.id,
       type: 'image',
@@ -202,7 +206,7 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
     // id and the embed url. The agent has no embed-authoring tool, so embeds only
     // ever enter through this browser path.
     if (typeof raw.id !== 'string' || raw.id.length === 0) throw new Error('embed shape requires an id');
-    const parentId = typeof raw.parentId === 'string' && raw.parentId.startsWith('shape:') ? raw.parentId : undefined;
+    const parentId = parseParentId(raw);
     const shape: CanvasShape = {
       id: raw.id,
       type: 'embed',
