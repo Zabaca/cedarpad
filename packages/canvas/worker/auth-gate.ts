@@ -38,7 +38,12 @@ export function isPublicPath(pathname: string): boolean {
     pathname === '/api/buildrev' ||
     pathname === '/api/auth' ||
     pathname.startsWith('/api/auth/') ||
-    /^\/invite\/[^/]+$/.test(pathname)
+    /^\/invite\/[^/]+$/.test(pathname) ||
+    // #177 inbound MCP: clients fetch OAuth discovery at the origin root before they hold
+    // any token, and /mcp self-gates (bearer → 401 + WWW-Authenticate, never the login page).
+    pathname === '/.well-known/oauth-authorization-server' ||
+    pathname === '/.well-known/oauth-protected-resource' ||
+    pathname === '/mcp'
   );
 }
 
@@ -56,7 +61,9 @@ export function decideGate(pathname: string, session: ResolvedSession): Gate {
  * Memoized per isolate: the db client is already shared (createDbForWorker caches), and
  * rebuilding the Better Auth wrapper per request was pure waste on the hot gate path. */
 let cachedAuth: { db: unknown; auth: ReturnType<typeof createAuth> } | null = null;
-function edgeAuth(env: Env) {
+/** Exported for the inbound-MCP surface (#177): /mcp bearer validation (withMcpAuth) and
+ * the root OAuth discovery routes need the same memoized instance the gate uses. */
+export function edgeAuth(env: Env) {
   const db = createDbForWorker(env as unknown as Bindings);
   if (cachedAuth?.db !== db) cachedAuth = { db, auth: createAuth(db, env as unknown as Bindings) };
   return cachedAuth.auth;

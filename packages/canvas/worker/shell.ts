@@ -182,7 +182,14 @@ document.getElementById('f').onsubmit=async(e)=>{
   try{
     const r=await fetch('/api/auth/sign-in/email',{method:'POST',credentials:'same-origin',
       headers:{'content-type':'application/json'},body:JSON.stringify({email,password})});
-    if(r.ok){location.href='/';return;}
+    if(r.ok){
+      // #177: an interrupted OAuth authorize (/api/auth/mcp/authorize with no session)
+      // redirected HERE with its query intact — continue it instead of landing on '/'.
+      const q=new URLSearchParams(location.search);
+      location.href=(q.has('client_id')&&q.has('redirect_uri')&&q.has('response_type'))
+        ?'/api/auth/mcp/authorize'+location.search:'/';
+      return;
+    }
     const d=await r.json().catch(()=>null);
     err.textContent=(d&&(d.message||d.error))||'Sign in failed';
   }catch(_){err.textContent='Something went wrong';}

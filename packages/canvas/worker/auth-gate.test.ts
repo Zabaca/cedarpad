@@ -11,6 +11,17 @@ describe('isPublicPath — served without a session so a user can authenticate a
     expect(isPublicPath('/api/buildrev')).toBe(true);
   });
 
+  test('inbound-MCP surfaces are public (#177): OAuth discovery + /mcp (self-authed via bearer)', () => {
+    // Clients fetch discovery at the ORIGIN ROOT before they have any token.
+    expect(isPublicPath('/.well-known/oauth-authorization-server')).toBe(true);
+    expect(isPublicPath('/.well-known/oauth-protected-resource')).toBe(true);
+    // /mcp answers 401 + WWW-Authenticate itself — the session gate must not swallow it
+    // into the login page.
+    expect(isPublicPath('/mcp')).toBe(true);
+    // No blanket well-known escape hatch.
+    expect(isPublicPath('/.well-known/other')).toBe(false);
+  });
+
   test('invite links are public (#179 — the token is the credential; an invitee has no session yet)', () => {
     expect(isPublicPath('/invite/wi_abc123')).toBe(true);
     // The bare prefix carries no token — nothing to serve, stays gated.

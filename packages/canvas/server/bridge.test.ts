@@ -8,7 +8,8 @@
 // consults — one connected stream carries every chat, so a single fake controller
 // represents "a subscriber exists".
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { readFileSync, rmSync } from 'node:fs';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
 import { aborters, chatClients, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, turnFlavor, webPocDb } from './bridge.ts';
@@ -629,5 +630,47 @@ describe('POST /api/inbox/:id/attach-canvas', () => {
   test('unknown conversation → 404', async () => {
     const res = await handleRequest(attachReq('conv_ghost'));
     expect(res.status).toBe(404);
+  });
+});
+
+// #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
+// proxies here. Content only (ADR-0013): plain files under .claude/skills/<name>/,
+// path rules enforced server-side, persisted by the skills sink at flush.
+describe('PUT /api/skills/:name — workspace-skill upload (#177)', () => {
+  const SKILL = `zz-test-skill-${crypto.randomUUID().slice(0, 8)}`;
+  const skillsRoot = new URL('../.claude/skills/', import.meta.url).pathname;
+  afterAll(() => {
+    rmSync(`${skillsRoot}${SKILL}`, { recursive: true, force: true });
+  });
+
+  const putSkill = (name: string, body: unknown) =>
+    handleRequest(
+      new Request(`http://localhost/api/skills/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  test('writes the skill files under .claude/skills/<name>/ and reports them', async () => {
+    const res = await putSkill(SKILL, {
+      files: [
+        { path: 'SKILL.md', content: '---\nname: t\n---\nbody' },
+        { path: 'data/corpus.yaml', content: 'a: 1' },
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect(readFileSync(`${skillsRoot}${SKILL}/SKILL.md`, 'utf8')).toContain('body');
+    expect(readFileSync(`${skillsRoot}${SKILL}/data/corpus.yaml`, 'utf8')).toBe('a: 1');
+  });
+
+  test('rejects traversal in the skill name and in file paths — nothing written', async () => {
+    expect((await putSkill('../evil', { files: [{ path: 'SKILL.md', content: 'x' }] })).status).toBe(400);
+    expect((await putSkill(SKILL, { files: [{ path: '../outside.md', content: 'x' }] })).status).toBe(400);
+    expect((await putSkill(SKILL, { files: [{ path: '/etc/absolute', content: 'x' }] })).status).toBe(400);
+  });
+
+  test('rejects an empty body', async () => {
+    expect((await putSkill(SKILL, { files: [] })).status).toBe(400);
   });
 });

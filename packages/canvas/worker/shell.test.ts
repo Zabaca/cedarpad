@@ -123,6 +123,14 @@ describe('renderLogin — the post-cutover deny page (edge Better Auth is the so
     expect(html).not.toContain('?key=');
     expect(html).not.toContain('cs_gate');
   });
+
+  test('continues an interrupted OAuth authorize after sign-in (#177: /mcp/authorize redirected here with its query)', async () => {
+    const html = await renderLogin().text();
+    // The client-side success handler must bounce back to the authorize endpoint,
+    // carrying the original OAuth query, instead of always landing on '/'.
+    expect(html).toContain('/api/auth/mcp/authorize');
+    expect(html).toContain('client_id');
+  });
 });
 
 // Canvas pairing: the Inbox attach panel lists the CONVERSATION's workspace's canvases, not
