@@ -61,12 +61,13 @@ describe('parsePadRoute — /w/:ws/canvas/:id/pad (the Render Pad, iframed)', ()
 });
 
 describe('decideCanvasRoute — owned ws + canvas-in-ws ⇒ select, else 404 (never proxy)', () => {
-  test("'default' workspace + a canvas that belongs to it ⇒ select both", () => {
-    expect(decideCanvasRoute('default', 'cv_1', null, { workspaceId: 'default' })).toEqual({
+  test("'default' workspace needs an access-checked row like any other (#179); with one, its canvas selects", () => {
+    expect(decideCanvasRoute('default', 'cv_1', { id: 'default' }, { workspaceId: 'default' })).toEqual({
       decision: 'select',
       workspaceId: 'default',
       canvasId: 'cv_1',
     });
+    expect(decideCanvasRoute('default', 'cv_1', null, { workspaceId: 'default' })).toEqual({ decision: 'not-found' });
     expect(DEFAULT_CANVAS_ID).toBe('default');
   });
 
@@ -124,8 +125,13 @@ describe('selectInitialWorkspace — default on first login', () => {
 });
 
 describe('decideWorkspaceRoute — owned ⇒ serve, unknown ⇒ 404 (never proxy)', () => {
-  test("'default' always serves the legacy workspace (no registry row)", () => {
-    const d = decideWorkspaceRoute('default', null);
+  test("'default' with an access-checked row serves the LEGACY coords; without one it 404s (#179 — the hole is closed)", () => {
+    // Post-#179 the default workspace has a real owned row (seed script) and the
+    // caller's lookup is owner-OR-member like any workspace. No row (non-member,
+    // or an unseeded environment) fails CLOSED.
+    expect(decideWorkspaceRoute('default', null).decision).toBe('not-found');
+
+    const d = decideWorkspaceRoute('default', { id: 'default' });
     expect(d.decision).toBe('serve');
     if (d.decision === 'serve') {
       // Legacy coords + CANVAS_WORKSPACE='default' — the prod container, unchanged.

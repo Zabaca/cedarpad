@@ -4,7 +4,8 @@ import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
-import { authenticate, decideGate, handleAuth } from './auth-gate.ts';
+import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
+import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
 import { dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
@@ -135,6 +136,21 @@ export default {
     // container. Notebook's /v1/* verifies the SAME Better Auth session (same Turso,
     // same secret, same cookie) in-container, so one auth system spans the platform.
     const session = await authenticate(request, env);
+
+    // #179: the invite accept flow — reachable WITHOUT a session (the email-bound,
+    // single-use token is the credential; the deny branch below would render the login
+    // page). Routed like /api/auth: ahead of the gate, never proxied to a container.
+    const inviteMatch = /^\/invite\/([^/]+)$/.exec(url.pathname);
+    if (inviteMatch) {
+      return handleInviteAccept(
+        request,
+        createDbForWorker(env as unknown as Bindings),
+        session?.user ?? null,
+        inviteMatch[1],
+        { signUp: inviteSignUp(env) },
+      );
+    }
+
     const gate = decideGate(url.pathname, session);
     if (gate.decision === 'deny' || !gate.user) {
       // Sole-gate deny: serve the edge Better Auth login (#47 cutover) so an
@@ -185,8 +201,20 @@ export default {
     // container is proxied to for either — so listing/creating a workspace never wakes
     // one. Only opening a workspace (/w/:id) routes to a container.
 
-    // Registry API the launcher calls (owner-scoped list/create).
+    // Registry API the launcher calls (owner-OR-member list, owner create).
     if (url.pathname === '/api/workspaces') return handleWorkspacesApi(request, env, user);
+
+    // Workspace invitations (#179): owner-only issuance/list/revoke, served at the edge.
+    const invitationsMatch = /^\/api\/workspaces\/([^/]+)\/invitations(?:\/([^/]+))?$/.exec(url.pathname);
+    if (invitationsMatch) {
+      return handleInvitationsApi(
+        request,
+        createDbForWorker(env as unknown as Bindings),
+        user,
+        invitationsMatch[1],
+        invitationsMatch[2],
+      );
+    }
 
     // Canvas registry API (Canvas app index), scoped to the active workspace via the
     // cs_workspace cookie. Served at the edge like /api/workspaces — no container woken.
@@ -244,8 +272,9 @@ export default {
     // so an unauthenticated request can never reach it — nor cold-boot a container.
     const ownedCanvas = async (workspaceId: string, canvasId: string) => {
       const workerDb = createDbForWorker(env as unknown as Bindings);
-      const wsRecord =
-        workspaceId === DEFAULT_WORKSPACE_ID ? null : await getWorkspace(workerDb, workspaceId, user.id);
+      // #179: EVERY workspace — `default` included (it has a seeded row) — is looked up
+      // owner-OR-member; a missing row fails closed. No bypass.
+      const wsRecord = await getWorkspace(workerDb, workspaceId, user.id);
       const cvRecord = canvasId === DEFAULT_CANVAS_ID ? null : await getCanvas(workerDb, canvasId);
       return decideCanvasRoute(workspaceId, canvasId, wsRecord, cvRecord);
     };
@@ -298,10 +327,8 @@ export default {
     // absolute-path assets (/src, /api) that can't live under a /w/:id prefix.
     const route = parseWorkspaceRoute(url.pathname);
     if (route) {
-      const record =
-        route.workspaceId === DEFAULT_WORKSPACE_ID
-          ? null
-          : await getWorkspace(createDbForWorker(env as unknown as Bindings), route.workspaceId, user.id);
+      // #179: `default` is access-checked like any workspace (seeded row; owner-OR-member).
+      const record = await getWorkspace(createDbForWorker(env as unknown as Bindings), route.workspaceId, user.id);
       if (decideWorkspaceRoute(route.workspaceId, record).decision === 'not-found') {
         return new Response('workspace not found', { status: 404 });
       }

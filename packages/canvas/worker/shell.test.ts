@@ -37,6 +37,8 @@ beforeAll(async () => {
   for (const stmt of migrationStatements()) await client.execute(stmt);
   // Owners must exist — `workspaces.owner_user_id` FK-references `user`.
   await db.insert(schema.user).values({ id: USER.id, name: USER.id, email: `${USER.id}@example.com` });
+  // #179: `default` has a real owned row (prod: the seed script); access is owner-OR-member.
+  await db.insert(schema.workspaces).values({ id: 'default', name: 'Default', ownerUserId: USER.id });
 });
 
 // The Canvas app's registry API (ADR-0007, #54): GET/POST/PATCH/DELETE scoped to the
@@ -109,10 +111,11 @@ describe('renderLogin — the post-cutover deny page (edge Better Auth is the so
     await res.text(); // drain
   });
 
-  test('posts credentials to the PUBLIC edge Better Auth endpoints (so login needs no container)', async () => {
+  test('posts credentials to the PUBLIC edge Better Auth sign-in — and offers NO public signup (#179: invite-only)', async () => {
     const html = await renderLogin().text();
     expect(html).toContain('/api/auth/sign-in/email');
-    expect(html).toContain('/api/auth/sign-up/email');
+    // The only account-creation door is the /invite/<token> accept flow.
+    expect(html).not.toContain('/api/auth/sign-up/email');
   });
 
   test('is the Better Auth login, NOT the deleted cs_gate ?key= page', async () => {

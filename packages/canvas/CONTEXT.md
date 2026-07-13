@@ -15,6 +15,20 @@ deploy that preserves the dev stack is **designed** in [ADR 0001](./docs/decisio
 library + the app code) and one bridge process. In the deploy it maps 1:1 to a
 **container**; locally it is the single dev checkout. _Avoid_: "sandbox", "instance".
 
+**Owner / member**: the two workspace roles (Better Auth `member.role`). A **member**
+gets full workspace *use* (chat, agent, canvases, Inbox, notebook); the **owner** keeps
+workspace *administration* (invite/remove members, rename/delete). Deliberately no
+finer grain: the container is one shared trusted runtime — anyone who can chat can do
+anything the agent can, so the admission decision is binary. Access checks are
+owner-OR-member (`getWorkspace`/`listWorkspaces`); the legacy `default` workspace has a
+real owned row, no bypass. Only the owner invites — admission is a capability grant.
+
+**Invitation**: an email-bound, single-use, expiring copyable link (Better Auth
+`invitation` row; no outbound email infra). Accepting is the ONLY account-creation
+door: `AUTH_DISABLE_SIGNUP` stays on forever, and the accept endpoint creates the
+account server-side (per-request auth instance) for exactly the invited address.
+_Avoid_: any public signup path, or an invite link that works for a different email.
+
 **Canvas**: one drawing surface (one `CanvasStore`: its own shapes and chats)
 inside a workspace. Multiple canvases in a workspace share the same component
 library. Today the bridge hosts exactly **one** canvas; multi-canvas-per-workspace
