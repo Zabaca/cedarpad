@@ -77,12 +77,14 @@ describe('sign-out actually clears the edge session (repro for "signout doesn\'t
     const beforeSignOut = await sessionFor(cookie);
     expect(beforeSignOut?.user).toBeTruthy();
 
-    // Exactly what the Shell's `signOut()` does (Shell.tsx): POST /api/auth/sign-out,
-    // same-origin (browser sends the Origin header + the session cookie automatically).
+    // Exactly what the Shell's `signOut()` does (Shell.tsx): a JSON POST — production
+    // Better Auth 415s a body-less send with no content-type (the original bug), so the
+    // client always sends `{}` with the header and this test mirrors that contract.
     const signOut = await handleAuth(
       new Request(`${ORIGIN}/api/auth/sign-out`, {
         method: 'POST',
-        headers: { origin: ORIGIN, cookie },
+        headers: { origin: ORIGIN, cookie, 'content-type': 'application/json' },
+        body: '{}',
       }),
       env,
     );
