@@ -30,8 +30,9 @@ const DEV_AGENT_REPO_NAME = 'cedarpad';
 
 // Minimum permissions for clone + push + open-PR. `metadata:read` is implicit. `workflows`
 // is included because a pushed branch that touches `.github/workflows/*` is rejected without
-// it, and the dev-agent may edit CI.
-const DEV_AGENT_PERMISSIONS = { contents: 'write', pull_requests: 'write', workflows: 'write' } as const;
+// it, and the dev-agent may edit CI. `issues` closes the explore loop: a run files its
+// findings as ready-for-agent issues itself (requires Issues R/W granted on the App).
+const DEV_AGENT_PERMISSIONS = { contents: 'write', pull_requests: 'write', workflows: 'write', issues: 'write' } as const;
 
 export interface GithubAppConfig {
   appId: string;

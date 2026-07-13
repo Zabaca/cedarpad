@@ -92,7 +92,7 @@ describe('appConfigFromEnv', () => {
 describe('mintDevAgentGitToken — the coords-free mint core (ADR-0010)', () => {
   const env = { GITHUB_APP_ID: '4257337', GITHUB_APP_INSTALLATION_ID: '145473731', GITHUB_APP_PRIVATE_KEY: privateKey } as Env;
 
-  test('mints a cedarpad-scoped token (contents/PRs/workflows write) via the injected fetch', async () => {
+  test('mints a cedarpad-scoped token (contents/PRs/workflows/issues write) via the injected fetch', async () => {
     let captured: { url: string; body: unknown } | null = null;
     const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
       captured = { url: String(url), body: JSON.parse((init?.body as string) ?? 'null') };
@@ -105,7 +105,7 @@ describe('mintDevAgentGitToken — the coords-free mint core (ADR-0010)', () => 
     expect(captured!.url).toBe('https://api.github.com/app/installations/145473731/access_tokens');
     expect(captured!.body).toEqual({
       repositories: ['cedarpad'],
-      permissions: { contents: 'write', pull_requests: 'write', workflows: 'write' },
+      permissions: { contents: 'write', pull_requests: 'write', workflows: 'write', issues: 'write' },
     });
   });
 
