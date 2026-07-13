@@ -233,3 +233,57 @@ describe('the request canvas: routing vs edge claim', () => {
     expect(claimed).toEqual([undefined, undefined]);
   });
 });
+
+// ADR-0013 train 2 (#176): external MCP is CHAT FLAVOR ONLY. `input.mcpTokens` is whatever rode
+// the request (decoded from the edge's x-mcp-tokens header, server/bridge.ts); this turn must
+// only ever hand it to runChat when `flavor.kind === 'chat'` — a dev-agent turn gets none, no
+// matter what the request carried (defense in depth alongside the edge's own gating).
+describe('mcpTokens: dropped for a dev-agent turn regardless of what rode the request', () => {
+  test('a chat-flavor turn passes mcpTokens through to runChat', async () => {
+    let seen: Record<string, string> | undefined;
+    const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
+      seen = args[16] as Record<string, string> | undefined;
+      yield { kind: 'init', sessionId: 'sess_1' } satisfies ChatEvent;
+      yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
+    }) as unknown as TurnDeps['runChat'];
+    const { deps } = recordingDeps({
+      flavor: () => ({ workspaceId: 'default', kind: 'chat' as const }),
+      runChat,
+    });
+
+    await runTurnAsync(input({ mcpTokens: { ledgerbot: 'tok_a' } }), deps);
+
+    expect(seen).toEqual({ ledgerbot: 'tok_a' });
+  });
+
+  test('a dev-agent-flavor turn never passes mcpTokens to runChat, even if the request carried some', async () => {
+    let seen: Record<string, string> | undefined = { should: 'not-see-this' };
+    const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
+      seen = args[16] as Record<string, string> | undefined;
+      yield { kind: 'init', sessionId: 'sess_1' } satisfies ChatEvent;
+      yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
+    }) as unknown as TurnDeps['runChat'];
+    const { deps } = recordingDeps({
+      flavor: () => ({ workspaceId: 'default', kind: 'dev-agent' as const, skills: ['impeccable'] }),
+      runChat,
+    });
+
+    await runTurnAsync(input({ mcpTokens: { ledgerbot: 'tok_a' }, devAgentGitToken: 'ghs_x' }), deps);
+
+    expect(seen).toBeUndefined();
+  });
+
+  test('no mcpTokens on the request ⇒ undefined reaches runChat for a chat turn too', async () => {
+    let seen: Record<string, string> | undefined = { should: 'not-see-this' };
+    const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
+      seen = args[16] as Record<string, string> | undefined;
+      yield { kind: 'init', sessionId: 'sess_1' } satisfies ChatEvent;
+      yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
+    }) as unknown as TurnDeps['runChat'];
+    const { deps } = recordingDeps({ flavor: () => ({ workspaceId: 'default', kind: 'chat' as const }), runChat });
+
+    await runTurnAsync(input(), deps);
+
+    expect(seen).toBeUndefined();
+  });
+});

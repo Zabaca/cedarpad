@@ -13,6 +13,8 @@ import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 import { handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
+import { handleMcpTokenApi } from './mcp-tokens-api.ts';
+import { IS_CHAT_SEND, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import {
   DEFAULT_CANVAS_ID,
   DEFAULT_WORKSPACE_ID,
@@ -234,6 +236,14 @@ export default {
       return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
     }
 
+    // External MCP owner consent (ADR-0013 train 2, #176): connect/disconnect a registry
+    // server's per-workspace bearer token. Edge-only (no container woken) — the token is read
+    // back out only when a chat send is proxied (below / worker/inbox-bridge.ts).
+    const mcpTokenApiMatch = /^\/api\/workspaces\/([^/]+)\/mcp\/([^/]+)\/token$/.exec(url.pathname);
+    if (mcpTokenApiMatch) {
+      return handleMcpTokenApi(request, env, user, mcpTokenApiMatch[1] as string, mcpTokenApiMatch[2] as string);
+    }
+
     // Jobs trigger: run the dev-agent NOW on demand (Jobs stage "Run now" / API). Auth-gated (we're
     // below the session gate, so `user` is signed in) but NOT DEV_AGENT_ENABLED-gated — that flag
     // only kills the daily CRON; a manual trigger is an explicit user action. ADR-0011: the kick
@@ -372,6 +382,12 @@ export default {
       return new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
 
-    return serveWorkspace(request, env, coords);
+    // ADR-0013 train 2 (#176): the same-origin chat send path (the pad's <ChatView>, which is
+    // not inbox-adopted) gets the workspace's connected external-MCP tokens exactly like the
+    // Inbox proxy does (worker/inbox-bridge.ts) — same header, same "no tokens ⇒ untouched".
+    const isChatSend = request.method === 'POST' && IS_CHAT_SEND.test(url.pathname);
+    const proxied = isChatSend ? await withMcpTokensHeader(request, env, workspace.id) : request;
+
+    return serveWorkspace(proxied, env, coords);
   },
 };
