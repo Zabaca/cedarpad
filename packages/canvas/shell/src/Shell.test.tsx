@@ -54,6 +54,7 @@ function stubEdge() {
     if (url.endsWith('/api/auth/get-session')) {
       return Response.json({ session: { id: 'sess_1' }, user: { id: 'u_1', email: 'demo@example.com' } });
     }
+    if (url.endsWith('/api/auth/sign-out')) return Response.json({ success: true });
     return new Response('not found', { status: 404 });
   }) as typeof fetch;
 }
@@ -270,6 +271,31 @@ describe('the avatar signs out through the edge Better Auth endpoint', () => {
     await click(container.querySelector('.lp-signout'));
 
     expect(calls).toContain('POST /api/auth/sign-out');
+  });
+
+  // Regression: a failed sign-out (network error or non-2xx) used to still navigate to `/`
+  // unconditionally — the gate still saw the (uncleared) session cookie and handed back the
+  // authenticated shell, which read to the user as "sign out did nothing".
+  test('a failed sign-out does NOT navigate away (so it never silently looks like a no-op)', async () => {
+    const failing = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('/api/auth/sign-out')) return new Response('nope', { status: 500 });
+      return failing(input as never, init);
+    }) as typeof fetch;
+
+    const originalHref = window.location.href;
+    const alerts: string[] = [];
+    const originalAlert = window.alert;
+    window.alert = ((msg: string) => alerts.push(msg)) as typeof window.alert;
+
+    await click(byTitle('Account'));
+    await click(container.querySelector('.lp-signout'));
+
+    expect(window.location.href).toBe(originalHref);
+    expect(alerts).toEqual(['Could not sign out — try again.']);
+
+    window.alert = originalAlert;
   });
 });
 
