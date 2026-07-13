@@ -312,7 +312,7 @@ describe('/api/chat/:id/send: 409 turn_in_flight while the chat’s turn runs', 
 // design — the Inbox attaches mid-stream later), single-flighted with JOIN semantics.
 describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
   let restore: () => void = () => {};
-  let dispatched: Array<{ chatId: string; message: string; sessionId: string | null; devAgentGitToken?: string }> = [];
+  let dispatched: Array<{ chatId: string; message: string; sessionId: string | null; model?: string; devAgentGitToken?: string }> = [];
   const kicked: string[] = [];
 
   const kick = async (token = 'ghs_run') => {
@@ -328,8 +328,8 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     dispatched = [];
     // NO chatClients subscriber — the kick is headless by design.
     for (const c of [...chatClients]) chatClients.delete(c);
-    restore = setChatTurnDispatcher((chatId, message, sessionId, _images, _model, _fork, _effort, _canvasId, devAgentGitToken) => {
-      dispatched.push({ chatId, message, sessionId, devAgentGitToken });
+    restore = setChatTurnDispatcher((chatId, message, sessionId, _images, model, _fork, _effort, _canvasId, devAgentGitToken) => {
+      dispatched.push({ chatId, message, sessionId, model, devAgentGitToken });
     });
   });
 
@@ -354,6 +354,32 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     expect(dispatched[0]!.message).toContain('docs/adr/declined/');
     expect(dispatched[0]!.message).toContain('end_turn');
     expect(dispatched[0]!.devAgentGitToken).toBe('ghs_run');
+  });
+
+  // Issue #184: the run turn judges (triage + implementation), so it's pinned to Opus;
+  // exploration fans out to Sonnet `explorer` subagents (repo .claude/agents, PR-reviewed).
+  test('the run turn is pinned to opus (#184 §4)', async () => {
+    await kick();
+    expect(dispatched[0]!.model).toBe('opus');
+  });
+
+  // Issue #184 §1–§3: the prompt IS the policy (prompt-law, no harness). Pin the
+  // load-bearing sentences so a prompt edit that drops one is a visible test change.
+  test('the prompt carries the execute/grill/drop triage law (#184)', async () => {
+    await kick();
+    const p = dispatched[0]!.message;
+    expect(p).toContain('EXECUTE');
+    expect(p).toContain('GRILL');
+    expect(p).toContain('DROP');
+    // The anti-manufacture guard — the single most load-bearing sentence.
+    expect(p).toContain('Executing zero is a fully successful run');
+    expect(p).toContain('no schema, auth, deploy, or public-contract changes');
+    // Decline markers: the human-decline dedup loop.
+    expect(p).toContain('docs/adr/declined/');
+    // Decision record in the closing end_turn.
+    expect(p).toContain('decision record');
+    // Exploration fans out to the repo-defined Sonnet subagent.
+    expect(p).toContain('explorer');
   });
 
   test('join semantics: a kick during a running run returns THAT run, dispatching nothing new', async () => {

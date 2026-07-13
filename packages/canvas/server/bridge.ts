@@ -521,13 +521,25 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
 // discipline degrades, the designed fallback is a tool-side filter inside end_turn — never a
 // resurrected harness. The ending itself is MECHANICALLY gated (ADR-0012: every turn must
 // declare its ending via end_turn — needs_human or done).
+// The run's policy IS this prompt (issue #184: prompt-law, no harness). The bridge.test.ts
+// prompt-pin test names the load-bearing sentences — edit them consciously.
 const DEV_AGENT_RUN_PROMPT = [
   'Architecture explore: survey this repo for deepening opportunities.',
-  'Run the Explore and Present-candidates phases of the /improve-codebase-architecture skill. Do NOT propose interfaces or make any edits.',
-  'Then read docs/adr/declined/ and DROP every candidate that matches a declined marker.',
-  'If candidates survive, call end_turn ONCE with outcome "needs_human" — a short summary plus a question listing every surviving candidate (title, rationale, severity) so the human can grill and choose from the thread. Then stop.',
-  'If none survive, call end_turn with outcome "done" (summary: no candidates survived) — a quiet run must not ping the human.',
+  'Explore: run the Explore phase of the /improve-codebase-architecture skill. Fan the reading out to `explorer` subagents (the Agent tool; defined in this repo’s .claude/agents/) so the survey is parallel and cheap — they read, you judge. No edits during explore.',
+  'Then read docs/adr/declined/ and DROP every candidate that matches a declined marker (human declines are final until the marker is removed).',
+  [
+    'Triage every surviving candidate with exactly ONE verdict:',
+    '- EXECUTE, only when ALL hold: mechanical/consolidation work with no open design tension; reversible in one revert; touched behavior test-covered (or the change adds coverage); no schema, auth, deploy, or public-contract changes (absolute — never rationalize an exception); and you can write a PR decision record that lets the human verify the change without reading every line (what was found, why it is mechanical, how tests pin it) — if you cannot write that record, the candidate is a GRILL. Action: implement in this worktree, tests green, then open_pr — one PR per candidate, each PR body carrying its own decision record. Every PR must trace to a candidate found in THIS run’s explore; a PR created to have something to show is a policy violation. Executing zero is a fully successful run.',
+    '- GRILL when a real design tension exists, or the EXECUTE bar fails but the finding is substantial enough to be worth the human’s attention.',
+    '- DROP when it is not: record it in the decision record only (no marker — markers are reserved for HUMAN declines).',
+  ].join('\n'),
+  'Decline markers: when, in a later turn of this conversation, the human declines a candidate, write docs/adr/declined/<candidate-slug>.md (title, date, one-line reason, match hints) in the worktree and ship it — piggybacked on an open run PR if one exists, else as a marker-only micro-PR.',
+  'Close the run with end_turn ONCE. Outcome "needs_human" only if GRILL verdicts exist (the question lists each grilled candidate: title, rationale, severity); otherwise outcome "done" — a run with nothing to grill must not ping the human, even if it executed PRs. Either way the summary carries the decision record: every candidate with verdict, one-line why, and risk class.',
 ].join('\n\n');
+
+// #184 §4: the run turn judges (triage + implementation), so it runs on Opus; the cheap
+// parallel reading is what fans out to Sonnet `explorer` subagents.
+const DEV_AGENT_RUN_MODEL = 'opus';
 
 // The in-flight dev-agent run's chatId (ADR-0011): one run at a time, with JOIN semantics —
 // a kick while one runs returns the RUNNING run instead of piling up a second explore.
@@ -710,10 +722,13 @@ export async function handleRequest(req: Request): Promise<Response> {
       }
       const chatId = `dev-agent-run-${crypto.randomUUID()}`;
       devAgentRunChatId = chatId;
+      // #184 §4: the whole run CONVERSATION judges on Opus — later grill replies resume
+      // through the normal /send path, which reads the model from ChatMeta.
+      chatMeta.set(chatId, { model: DEV_AGENT_RUN_MODEL });
       const token = req.headers.get('x-dev-agent-git-token') ?? undefined;
       // A fresh session every run (sessionId null); the run's later grill turns resume it
       // through the normal conversation path.
-      dispatchChatTurn(chatId, DEV_AGENT_RUN_PROMPT, null, [], undefined, undefined, undefined, undefined, token);
+      dispatchChatTurn(chatId, DEV_AGENT_RUN_PROMPT, null, [], DEV_AGENT_RUN_MODEL, undefined, undefined, undefined, token);
       return json({ chatId, joined: false }, 202);
     }
     // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
