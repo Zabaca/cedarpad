@@ -613,6 +613,33 @@ export const conversations = sqliteTable(
 export type ConversationRow = typeof conversations.$inferSelect;
 export type NewConversationRow = typeof conversations.$inferInsert;
 
+/* ------------------------------------------------------------------ *
+ * External MCP tokens (ADR-0013 train 2, #176) — per-workspace owner consent
+ *
+ * Enablement of an approved remote MCP server (the code-side registry,
+ * `server/mcp-registry.ts`) is a pasted per-workspace bearer token, stored HERE
+ * at the edge only. It rides as a header on the proxied `/send` for that
+ * workspace and is used for exactly one turn's `mcpServers` option — the
+ * container and R2 never store it (the ADR-0008 dev-agent git-token pattern).
+ * One row per (workspace, server name); deleting the row is "disconnect".
+ * ------------------------------------------------------------------ */
+export const workspaceMcpTokens = sqliteTable(
+  "workspace_mcp_tokens",
+  {
+    /** Platform workspace id (registry / `cs_workspace`). Plain text, no FK — same as
+     * `conversations.workspace_id` (the legacy `default` workspace has no registry row). */
+    workspaceId: text("workspace_id").notNull(),
+    /** The registry entry's name (`server/mcp-registry.ts`), e.g. `ledgerbot`. */
+    mcpName: text("mcp_name").notNull(),
+    token: text("token").notNull(),
+    ...timestamps,
+  },
+  (t) => [primaryKey({ columns: [t.workspaceId, t.mcpName] })],
+);
+
+export type WorkspaceMcpTokenRow = typeof workspaceMcpTokens.$inferSelect;
+export type NewWorkspaceMcpTokenRow = typeof workspaceMcpTokens.$inferInsert;
+
 export type Workspace = typeof workspace.$inferSelect;
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;

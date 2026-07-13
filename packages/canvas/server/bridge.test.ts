@@ -124,6 +124,61 @@ describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispa
   });
 });
 
+// ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens ride the send as the
+// x-mcp-tokens header (server/mcp-registry.ts's shared contract); the bridge decodes it and
+// hands it to the dispatched turn. `server/turn.ts` is what drops this for a dev-agent turn
+// (pinned in server/turn.test.ts) — here we only pin the header → decode → dispatch wiring.
+describe('/api/chat/:id/send: the x-mcp-tokens header reaches the dispatched turn (decoded)', () => {
+  let restore: () => void = () => {};
+  let dispatched: Array<{ chatId: string; mcpTokens?: Record<string, string> }> = [];
+
+  beforeEach(() => {
+    dispatched = [];
+    chatClients.add(fakeSubscriber());
+    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, _devAgentGitToken, mcpTokens) => {
+      dispatched.push({ chatId, mcpTokens });
+    });
+  });
+
+  afterEach(() => {
+    restore();
+    for (const c of [...chatClients]) chatClients.delete(c);
+  });
+
+  test('a send WITH the header dispatches the turn carrying the decoded tokens', async () => {
+    const req = new Request('http://localhost/api/chat/chat_mcp/send', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-mcp-tokens': JSON.stringify({ ledgerbot: 'tok_a' }) },
+      body: JSON.stringify({ message: 'ping ledgerbot' }),
+    });
+
+    const res = await handleRequest(req);
+
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'chat_mcp', mcpTokens: { ledgerbot: 'tok_a' } }]);
+  });
+
+  test('a send WITHOUT the header dispatches with an empty object (no tokens connected)', async () => {
+    const res = await handleRequest(sendReq('chat_plain_mcp'));
+
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'chat_plain_mcp', mcpTokens: {} }]);
+  });
+
+  test('a malformed header decodes to empty — never fails the send', async () => {
+    const req = new Request('http://localhost/api/chat/chat_bad_mcp/send', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-mcp-tokens': 'not json' },
+      body: JSON.stringify({ message: 'hi' }),
+    });
+
+    const res = await handleRequest(req);
+
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'chat_bad_mcp', mcpTokens: {} }]);
+  });
+});
+
 // ADR-0011 / 6a: the token header is the COMPLETE definition of a dev-agent turn — it also
 // drives the workspace tag (so the row + ask_human file under 'dev-agent', which is what the
 // edge's routing and per-send token mint key on) and the skill policy (ADR-0013).

@@ -19,9 +19,11 @@ let workspaceRecord: { id: string } | null = null;
 let canvasRecord: { workspaceId: string } | null = null;
 let served: SandboxCoords[] = [];
 let servedReqs: Array<{ path: string; method: string }> = [];
+let servedMcpTokenHeaders: Array<string | null> = [];
 let assets: string[] = [];
 let inboxCalls: Array<{ id?: string; action?: string }> = [];
 let conv: ConversationRow | null = null;
+let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
 
 mock.module('@cloudflare/sandbox', () => ({ Sandbox: class {} }));
 mock.module('./sandbox-runtime.ts', () => ({
@@ -29,6 +31,7 @@ mock.module('./sandbox-runtime.ts', () => ({
     served.push(coords);
     const u = new URL(req.url);
     servedReqs.push({ path: u.pathname + u.search, method: req.method });
+    servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     return new Response('pad-html');
   },
   sandboxFor: () => ({}),
@@ -59,6 +62,15 @@ mock.module('./inbox.ts', () => ({
 // Conversation lookup and the stubbed serveWorkspace above.
 mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
   get: () => Promise.resolve(conv),
+}));
+// ADR-0013 train 2 (#176): both proxy points (this fallthrough and the inbox bridge above)
+// read a workspace's connected external-MCP tokens before attaching them to a chat send —
+// stubbed by workspaceId so a test can assert connect/no-connect/isolation. See
+// mcp-tokens-api.test.ts for the owner-consent API's ownership check.
+mock.module('../web-poc/lib/db/queries/mcp-tokens.ts', () => ({
+  listTokens: (_db: unknown, workspaceId: string) => Promise.resolve(mcpTokensByWorkspace[workspaceId] ?? {}),
+  setToken: () => Promise.resolve(),
+  clearToken: () => Promise.resolve(),
 }));
 
 const worker = (await import('./index.ts')).default;
@@ -132,9 +144,11 @@ beforeEach(() => {
   canvasRecord = null;
   served = [];
   servedReqs = [];
+  servedMcpTokenHeaders = [];
   assets = [];
   inboxCalls = [];
   conv = null;
+  mcpTokensByWorkspace = {};
 });
 
 const convRow = (o: Partial<ConversationRow>): ConversationRow =>
@@ -426,5 +440,29 @@ describe('dispatch order regressions', () => {
     const res = await GET('/api/buildrev');
     expect(res.status).toBe(200);
     expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
+  });
+});
+
+// ADR-0013 train 2 (#176): the same-origin chat send (the pad's <ChatView>, not inbox-adopted)
+// falls through to this bottom proxy — it must attach the workspace's connected external-MCP
+// tokens exactly like the Inbox proxy does, since it's the primary path most chat sends take.
+const POST = (path: string) => worker.fetch(new Request(`https://poc.cedarpad.com${path}`, { method: 'POST' }), env);
+
+describe('the same-origin chat send attaches the workspace’s connected MCP tokens (ADR-0013 train 2)', () => {
+  test('a connected token attaches x-mcp-tokens to the proxied send', async () => {
+    mcpTokensByWorkspace = { default: { ledgerbot: 'tok_default' } };
+    await POST('/api/chat/chat_1/send');
+    expect(servedMcpTokenHeaders).toEqual([JSON.stringify({ ledgerbot: 'tok_default' })]);
+  });
+
+  test('no connected token ⇒ no header at all', async () => {
+    await POST('/api/chat/chat_1/send');
+    expect(servedMcpTokenHeaders).toEqual([null]);
+  });
+
+  test('a non-send request never attaches the header even if the workspace has a token', async () => {
+    mcpTokensByWorkspace = { default: { ledgerbot: 'tok_default' } };
+    await GET('/api/chat/chat_1/transcript');
+    expect(servedMcpTokenHeaders).toEqual([null]);
   });
 });

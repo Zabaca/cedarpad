@@ -1,6 +1,8 @@
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
+import { listTokens } from '../web-poc/lib/db/queries/mcp-tokens.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
+import { MCP_TOKENS_HEADER, encodeMcpTokens } from '../server/mcp-registry.ts';
 import type { GateUser } from './auth-gate.ts';
 import { isDevAgentConversation } from '../server/dev-agent-workflow.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
@@ -92,6 +94,14 @@ export async function handleInboxBridge(
   // runs against the chat's own canvas store (the agent reads/draws the canvas it lives on).
   // Sends only — reads route by path, not by canvas claim.
   if (isChatSend && conv.canvasId) proxied.headers.set('x-canvas-id', conv.canvasId);
+
+  // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens ride a single JSON
+  // header on the send — mirrors x-dev-agent-git-token above. `server/turn.ts` drops this for a
+  // dev-agent turn regardless (chat flavor only), but no tokens connected ⇒ no header either way.
+  if (isChatSend) {
+    const tokens = await listTokens(database, conv.workspaceId);
+    if (Object.keys(tokens).length > 0) proxied.headers.set(MCP_TOKENS_HEADER, encodeMcpTokens(tokens));
+  }
 
   return serveWorkspace(proxied, env, coordsForWorkspace(conv.workspaceId));
 }

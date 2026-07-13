@@ -4,7 +4,7 @@
 // syncs to, so anything the agent draws appears live on the canvas. All tool
 // logic lives in src/canvas-ops.ts (pure, tested); these are thin wrappers.
 
-import { type SDKUserMessage, createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk';
+import { type McpHttpServerConfig, type SDKUserMessage, createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
 import { SHAPE_COLORS } from '../src/shapes.ts';
@@ -28,6 +28,7 @@ import { editComponent, isShared, listComponents, readComponent, writeComponent 
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { type EndTurnDeps, type EndTurnInput, endTurn } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
+import { type McpRegistryEntry, MCP_REGISTRY } from './mcp-registry.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 
 const MODEL = process.env.CANVAS_MODEL ?? 'sonnet';
@@ -418,6 +419,28 @@ function buildPrompt(message: string, images: CanvasImage[]): string | AsyncIter
   return once();
 }
 
+/** ADR-0013 train 2 (#176): this turn's external MCP servers — one entry per registry server
+ * the request actually named a token for (`server/mcp-registry.ts`'s decoded `x-mcp-tokens`
+ * header). A registry entry with no token in `tokens` is simply absent — no connection
+ * attempt, ever, and an unreachable server just degrades this turn's toolset (the SDK's
+ * concern, not ours). No `tokens` at all (dev-agent turns never pass any) ⇒ no servers. */
+export function buildExternalMcpServers(
+  tokens: Record<string, string> | undefined,
+  // Default-parameter test seam: production always reads the real registry; tests inject a
+  // fake one (MCP_REGISTRY is fixed at module load from process.env, which a test can't retarget).
+  registry: Readonly<Record<string, McpRegistryEntry>> = MCP_REGISTRY,
+): Record<string, McpHttpServerConfig> {
+  if (!tokens) return {};
+  return Object.fromEntries(
+    Object.entries(registry)
+      .filter(([name]) => tokens[name])
+      .map(([name, entry]) => [
+        name,
+        { type: 'http' as const, url: entry.url, headers: { authorization: `Bearer ${tokens[name]}` } },
+      ]),
+  );
+}
+
 /**
  * Drive the agent for one user turn. Yields text + tool events as they stream,
  * then a final `done` carrying the sessionId to resume the next turn.
@@ -439,6 +462,10 @@ export async function* runChat(
   openPr?: OpenPr,
   cwd?: string,
   skills?: string[],
+  // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, keyed by registry
+  // server name (already decoded from the proxied `x-mcp-tokens` header). CHAT FLAVOR ONLY —
+  // `server/turn.ts` never passes this for a dev-agent turn. Absent/empty ⇒ no external server.
+  mcpTokens?: Record<string, string>,
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn; end_turn reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
@@ -486,7 +513,7 @@ export async function* runChat(
       options: {
         model: resolveModelForSdk(model ?? MODEL),
         ...(effort ? { effort: effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}), // guide thinking depth; omitted = adaptive default
-        mcpServers: { canvas },
+        mcpServers: { canvas, ...buildExternalMcpServers(mcpTokens) },
         permissionMode: 'bypassPermissions',
         includePartialMessages: true, // stream text deltas + tool starts for live feedback
         forwardSubagentText: true, // stream Task-subagent text/thinking inline (parent_tool_use_id-tagged) so the UI can nest it

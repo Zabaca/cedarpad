@@ -30,6 +30,10 @@ export interface TurnInput {
   canvasId?: string;
   /** Edge-minted, per dev-agent send: arms open_pr + the worktree cwd for THIS turn only. */
   devAgentGitToken?: string;
+  /** ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, decoded from the
+   * proxied `x-mcp-tokens` header. Dropped below unless `flavor.kind === 'chat'` — dev-agent
+   * turns get no external MCP servers no matter what rode the request. */
+  mcpTokens?: Record<string, string>;
 }
 
 /** The stable collaborators a turn sequences. bridge.ts binds each to its singleton; every one
@@ -89,7 +93,7 @@ export interface TurnDeps {
  * first await) so a concurrent /send sees the in-flight turn.
  */
 export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<void> {
-  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken } = input;
+  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken, mcpTokens } = input;
   const ac = new AbortController();
   deps.aborters.set(chatId, ac);
   const flavor = deps.flavor(devAgentGitToken);
@@ -123,6 +127,10 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       devAgent?.openPr,
       devAgent?.cwd,
       flavor.skills,
+      // Chat flavor only (ADR-0013 train 2): a dev-agent turn is `flavor.kind === 'dev-agent'`
+      // (the edge-minted git token decides that), so it never sees mcpTokens even if a stray
+      // header somehow rode the request.
+      flavor.kind === 'chat' ? mcpTokens : undefined,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
       // Row-at-start: index the session the moment its id lands (the init event). Tracked (not

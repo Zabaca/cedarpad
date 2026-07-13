@@ -18,9 +18,11 @@ let conv: ConversationRow | null = null;
 let served: SandboxCoords[] = [];
 let servedTokens: Array<string | null> = [];
 let servedCanvasIds: Array<string | null> = [];
+let servedMcpTokenHeaders: Array<string | null> = [];
 let replyCalls: string[] = [];
 let mintCalls = 0;
 let mintResult: string | null = 'ghs_minted';
+let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
 
 mock.module('@cloudflare/sandbox', () => ({ Sandbox: class {} }));
 mock.module('../web-poc/worker/runtime.ts', () => ({ createDbForWorker: () => ({}) }));
@@ -29,6 +31,7 @@ mock.module('./sandbox-runtime.ts', () => ({
     served.push(coords);
     servedTokens.push(req.headers.get('x-dev-agent-git-token'));
     servedCanvasIds.push(req.headers.get('x-canvas-id'));
+    servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     return new Response('proxied');
   },
 }));
@@ -38,6 +41,11 @@ mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
     replyCalls.push(id);
     return Promise.resolve(conv);
   },
+}));
+// ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens (per-workspace, not
+// per-conversation) — stubbed by workspaceId so a test can assert isolation between workspaces.
+mock.module('../web-poc/lib/db/queries/mcp-tokens.ts', () => ({
+  listTokens: (_db: unknown, workspaceId: string) => Promise.resolve(mcpTokensByWorkspace[workspaceId] ?? {}),
 }));
 
 const { handleInboxBridge } = await import('./inbox-bridge.ts');
@@ -89,9 +97,11 @@ beforeEach(() => {
   served = [];
   servedTokens = [];
   servedCanvasIds = [];
+  servedMcpTokenHeaders = [];
   replyCalls = [];
   mintCalls = 0;
   mintResult = 'ghs_minted';
+  mcpTokensByWorkspace = {};
 });
 
 describe('handleInboxBridge: the inbox triage flip on a proxied send', () => {
@@ -224,5 +234,39 @@ describe('handleInboxBridge: a linked Conversation’s send carries its canvas t
     conv = row({ canvasId: 'cv_home' });
     await proxy('GET', '/api/chat/chat_1/transcript');
     expect(servedCanvasIds).toEqual([null]);
+  });
+});
+
+// ADR-0013 train 2 (#176): a workspace's connected external-MCP tokens ride the send as a
+// single JSON header (server/mcp-registry.ts's MCP_TOKENS_HEADER), mirroring x-dev-agent-git-
+// token — edge custody, per-send, never persisted container-side. No connected tokens ⇒ no
+// header at all (not connected = no attempt).
+describe('handleInboxBridge: the workspace’s external-MCP tokens ride the send (ADR-0013 train 2)', () => {
+  test('a connected token attaches x-mcp-tokens to the proxied send', async () => {
+    conv = row({ workspaceId: 'ws_a' });
+    mcpTokensByWorkspace = { ws_a: { ledgerbot: 'tok_a' } };
+    await proxy('POST', '/api/chat/chat_1/send');
+    expect(servedMcpTokenHeaders).toEqual([JSON.stringify({ ledgerbot: 'tok_a' })]);
+  });
+
+  test('no connected token ⇒ no header at all', async () => {
+    conv = row({ workspaceId: 'ws_a' });
+    mcpTokensByWorkspace = {};
+    await proxy('POST', '/api/chat/chat_1/send');
+    expect(servedMcpTokenHeaders).toEqual([null]);
+  });
+
+  test('a second workspace is isolated — its send never sees the first workspace’s token', async () => {
+    mcpTokensByWorkspace = { ws_a: { ledgerbot: 'tok_a' } };
+    conv = row({ workspaceId: 'ws_b' });
+    await proxy('POST', '/api/chat/chat_1/send');
+    expect(servedMcpTokenHeaders).toEqual([null]);
+  });
+
+  test('a transcript GET never attaches the header (routing the turn, not the read)', async () => {
+    conv = row({ workspaceId: 'ws_a' });
+    mcpTokensByWorkspace = { ws_a: { ledgerbot: 'tok_a' } };
+    await proxy('GET', '/api/chat/chat_1/transcript');
+    expect(servedMcpTokenHeaders).toEqual([null]);
   });
 });

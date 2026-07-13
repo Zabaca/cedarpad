@@ -25,6 +25,7 @@ import { DEFAULT_REPO, branchName, createRepoWorktreeManager } from './repo-work
 import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
+import { MCP_TOKENS_HEADER, decodeMcpTokens } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
@@ -508,8 +509,8 @@ export function setTurnRunChat(fn: TurnDeps['runChat']): () => void {
  * Conversation (an inbox reply must never link a chat to the Default canvas by default).
  * `devAgentGitToken` (edge-minted, per dev-agent send) arms the `open_pr` tool for THIS turn
  * only — see prepareDevAgentTurn. The lifecycle itself lives in `server/turn.ts`. */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string): void {
-  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken }, turnDeps);
+function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string, mcpTokens?: Record<string, string>): void {
+  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken, mcpTokens }, turnDeps);
 }
 
 // The dev-agent run's prompt — this IS the workflow now (ADR-0011: the harness dissolved
@@ -746,7 +747,11 @@ export async function handleRequest(req: Request): Promise<Response> {
       // EXPLICIT canvas only (no default): the pad stamps x-canvas-id; an unaddressed send
       // (inbox thread) routes to the default store without claiming a canvas edge.
       const requestCanvasId = req.headers.get('x-canvas-id') ?? url.searchParams.get('canvas') ?? undefined;
-      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort, requestCanvasId, devAgentGitToken);
+      // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, set by the edge
+      // proxy (worker/inbox-bridge.ts, worker/index.ts) on this send only. `server/turn.ts` drops
+      // this for a dev-agent turn regardless — chat flavor only.
+      const mcpTokens = decodeMcpTokens(req.headers.get(MCP_TOKENS_HEADER));
+      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort, requestCanvasId, devAgentGitToken, mcpTokens);
       return json({ ok: true }, 202);
     }
     // POST /api/chat/:id/config — update server-owned ChatMeta (model/effort/forkNext),
