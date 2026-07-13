@@ -6,6 +6,7 @@ import {
   real,
   sqliteTable,
   text,
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import { EMBEDDING_DIMENSIONS } from "../config/index.js";
 import { float32Array } from "./vector.js";
@@ -528,6 +529,62 @@ export const workspaces = sqliteTable(
 
 export type WorkspaceRow = typeof workspaces.$inferSelect;
 export type NewWorkspaceRow = typeof workspaces.$inferInsert;
+
+/* ------------------------------------------------------------------ *
+ * Workspace membership + invitations (#179) — on the REGISTRY
+ *
+ * Membership belongs to the platform `workspaces` registry above, NOT the
+ * dormant Better Auth organization tables (`workspace`/`member`/`invitation`)
+ * — the platform workspace is not the Better Auth organization (see
+ * worker/middleware.ts). Roles: the owner stays on `workspaces.owner_user_id`;
+ * this table holds non-owner members ("member" role — full use, no admin).
+ * An invitation is email-bound and single-use: its id IS the invite-link
+ * token (crypto-random), status pending|accepted|revoked, expiring.
+ * ------------------------------------------------------------------ */
+export const workspaceMembers = sqliteTable(
+  "workspace_members",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [
+    uniqueIndex("workspace_members_ws_user_idx").on(t.workspaceId, t.userId),
+    index("workspace_members_user_idx").on(t.userId),
+  ],
+);
+
+export const workspaceInvitations = sqliteTable(
+  "workspace_invitations",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: text("role").notNull().default("member"),
+    status: text("status").notNull().default("pending"),
+    inviterUserId: text("inviter_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [index("workspace_invitations_ws_idx").on(t.workspaceId)],
+);
+
+export type WorkspaceMemberRow = typeof workspaceMembers.$inferSelect;
+export type WorkspaceInvitationRow = typeof workspaceInvitations.$inferSelect;
 
 /* ------------------------------------------------------------------ *
  * Canvas registry (ADR-0007, PRD #48) — the per-workspace index of canvases

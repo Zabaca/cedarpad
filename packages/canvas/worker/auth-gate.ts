@@ -10,9 +10,11 @@ import type { Env } from './index.ts';
 // auth system across the platform. Session lookup (Turso + crypto) is integration-only;
 // the PURE gate DECISION (`decideGate`) is split out so it's unit-testable off a DB.
 
-/** A resolved Better Auth user (the only field the gate needs). */
+/** A resolved Better Auth user. The gate needs only `id`; the invite accept flow
+ * (#179) also reads `email` to verify the invitation's binding. */
 export interface GateUser {
   id: string;
+  email?: string;
 }
 
 /** A resolved session, or null when there is none / it is expired / it is invalid. */
@@ -23,8 +25,10 @@ export type Gate = { decision: 'allow'; user: GateUser | null } | { decision: 'd
 /**
  * Paths served WITHOUT a session so a user can authenticate at the edge:
  * `/health` (unauthenticated probe), the Better Auth endpoints themselves
- * (`/api/auth/*` — login/logout/session), and `/api/buildrev` (#74 — the container's
- * public build stamp deploy.sh polls to confirm a rollout, no session available).
+ * (`/api/auth/*` — login/logout/session), `/api/buildrev` (#74 — the container's
+ * public build stamp deploy.sh polls to confirm a rollout, no session available),
+ * and `/invite/<token>` (#179 — the invitee has no session yet; the email-bound
+ * single-use token IS the credential, validated by the handler).
  * Everything else — including the sensitive/mutating `/api/status`, `/__recycle`,
  * `/__bootlog` — is behind the gate.
  */
@@ -33,7 +37,8 @@ export function isPublicPath(pathname: string): boolean {
     pathname === '/health' ||
     pathname === '/api/buildrev' ||
     pathname === '/api/auth' ||
-    pathname.startsWith('/api/auth/')
+    pathname.startsWith('/api/auth/') ||
+    /^\/invite\/[^/]+$/.test(pathname)
   );
 }
 
@@ -65,7 +70,25 @@ export async function authenticate(request: Request, env: Env): Promise<Resolved
   const session = await edgeAuth(env)
     .api.getSession({ headers: request.headers })
     .catch(() => null);
-  return session?.user ? { user: { id: session.user.id } } : null;
+  return session?.user ? { user: { id: session.user.id, email: session.user.email } } : null;
+}
+
+/**
+ * #179: the guarded account-creation door. Builds a per-request Better Auth instance
+ * with signup ENABLED — while the global AUTH_DISABLE_SIGNUP stays "true" — so an
+ * account can be created ONLY through the invite-accept handler, after the email-bound
+ * token has been validated. Never expose this outside that path.
+ */
+export function inviteSignUp(env: Env) {
+  return async (input: { email: string; name: string; password: string }): Promise<{ userId: string; setCookie: string }> => {
+    const db = createDbForWorker(env as unknown as Bindings);
+    const auth = createAuth(db, { ...(env as unknown as Bindings), AUTH_DISABLE_SIGNUP: 'false' });
+    const { headers, response } = await auth.api.signUpEmail({
+      body: { email: input.email, name: input.name, password: input.password },
+      returnHeaders: true,
+    });
+    return { userId: response.user.id, setCookie: headers.get('set-cookie') ?? '' };
+  };
 }
 
 /** Serve the Better Auth endpoints at the edge (login/logout/session), so auth relocates here. */

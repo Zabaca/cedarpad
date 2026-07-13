@@ -11,6 +11,13 @@ describe('isPublicPath — served without a session so a user can authenticate a
     expect(isPublicPath('/api/buildrev')).toBe(true);
   });
 
+  test('invite links are public (#179 — the token is the credential; an invitee has no session yet)', () => {
+    expect(isPublicPath('/invite/wi_abc123')).toBe(true);
+    // The bare prefix carries no token — nothing to serve, stays gated.
+    expect(isPublicPath('/invite')).toBe(false);
+    expect(isPublicPath('/invite/')).toBe(false);
+  });
+
   test('app routes and the workspace proxy are NOT public', () => {
     expect(isPublicPath('/')).toBe(false);
     expect(isPublicPath('/api/observations')).toBe(false);

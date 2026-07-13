@@ -109,6 +109,8 @@ const database = db as never;
 beforeAll(async () => {
   for (const stmt of migrationStatements()) await client.execute(stmt);
   await db.insert(schema.user).values({ id: USER.id, name: USER.id, email: `${USER.id}@example.com` });
+  // #179: `default` has a real owned row (prod: the seed script); access is owner-OR-member.
+  await db.insert(schema.workspaces).values({ id: 'default', name: 'Default', ownerUserId: USER.id });
 });
 
 mock.module('./sandbox-runtime.ts', () => ({ serveWorkspace: () => new Response('pad-html'), sandboxFor: () => ({}) }));
