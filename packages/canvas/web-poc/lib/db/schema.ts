@@ -587,6 +587,58 @@ export type WorkspaceMemberRow = typeof workspaceMembers.$inferSelect;
 export type WorkspaceInvitationRow = typeof workspaceInvitations.$inferSelect;
 
 /* ------------------------------------------------------------------ *
+ * Inbound MCP OAuth provider (ADR-0013 train 3, #177) — Better Auth `mcp` plugin
+ *
+ * cedarpad as an OAuth provider for outside agents (Claude Code, claude.ai).
+ * Column shapes mirror better-auth's oidc-provider schema exactly (its drizzle
+ * adapter reads these models by name): dynamically-registered clients, issued
+ * access/refresh tokens, and per-user consent records.
+ * ------------------------------------------------------------------ */
+export const oauthApplication = sqliteTable("oauthApplication", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  icon: text("icon"),
+  metadata: text("metadata"),
+  clientId: text("client_id").notNull().unique(),
+  clientSecret: text("client_secret"),
+  redirectUrls: text("redirect_urls").notNull(),
+  type: text("type").notNull(),
+  disabled: integer("disabled", { mode: "boolean" }).default(false),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const oauthAccessToken = sqliteTable("oauthAccessToken", {
+  id: text("id").primaryKey(),
+  accessToken: text("access_token").notNull().unique(),
+  refreshToken: text("refresh_token").notNull().unique(),
+  accessTokenExpiresAt: integer("access_token_expires_at", { mode: "timestamp_ms" }).notNull(),
+  refreshTokenExpiresAt: integer("refresh_token_expires_at", { mode: "timestamp_ms" }).notNull(),
+  clientId: text("client_id")
+    .notNull()
+    .references(() => oauthApplication.clientId, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  scopes: text("scopes").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const oauthConsent = sqliteTable("oauthConsent", {
+  id: text("id").primaryKey(),
+  clientId: text("client_id")
+    .notNull()
+    .references(() => oauthApplication.clientId, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  scopes: text("scopes").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  consentGiven: integer("consent_given", { mode: "boolean" }).notNull(),
+});
+
+/* ------------------------------------------------------------------ *
  * Canvas registry (ADR-0007, PRD #48) — the per-workspace index of canvases
  *
  * A workspace owns many canvases. This table is the edge-queryable INDEX only:

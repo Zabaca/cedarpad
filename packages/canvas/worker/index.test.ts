@@ -117,6 +117,34 @@ const env = {
 } as unknown as Parameters<typeof worker.fetch>[1];
 const GET = (path: string) => worker.fetch(new Request(`https://poc.cedarpad.com${path}`), env);
 
+// #177 dispatch order: OAuth discovery is public at the origin root, and /mcp self-gates
+// on its bearer — an unauthenticated request gets the OAuth 401 challenge, never the login
+// page, and never touches a container.
+describe('inbound MCP dispatch (#177)', () => {
+  test('UNAUTHENTICATED discovery routes serve metadata JSON, never the login page', async () => {
+    session = null;
+    const res = await GET('/.well-known/oauth-authorization-server');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type') ?? '').toContain('json');
+    expect(served).toEqual([]);
+  });
+
+  test('UNAUTHENTICATED /mcp answers the OAuth bearer challenge (401 + WWW-Authenticate), never login, never a container', async () => {
+    session = null;
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1 }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate') ?? '').not.toBe('');
+    expect(served).toEqual([]);
+  });
+});
+
 // #179 dispatch order: /invite/<token> is the one page an invitee can reach with no
 // session (the token is the credential) — it must serve the invite flow, never the
 // login page, and never touch a container. The owner-side invitations API stays

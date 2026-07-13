@@ -6,6 +6,7 @@ import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
+import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
@@ -137,6 +138,16 @@ export default {
     // unauthenticated request never reaches serveWorkspace, so it never reaches the
     // container. Notebook's /v1/* verifies the SAME Better Auth session (same Turso,
     // same secret, same cookie) in-container, so one auth system spans the platform.
+    // #177 inbound MCP: OAuth discovery at the origin root (public — clients fetch these
+    // before they hold any token) and the /mcp endpoint itself, which self-gates on its
+    // bearer (401 + WWW-Authenticate, never the login page, never the session cookie).
+    if (url.pathname === '/.well-known/oauth-authorization-server' || url.pathname === '/.well-known/oauth-protected-resource') {
+      return handleOAuthDiscovery(request, env, url.pathname);
+    }
+    if (url.pathname === '/mcp') {
+      return handleMcp(request, env);
+    }
+
     const session = await authenticate(request, env);
 
     // #179: the invite accept flow — reachable WITHOUT a session (the email-bound,

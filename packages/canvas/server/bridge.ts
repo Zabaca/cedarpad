@@ -4,6 +4,7 @@
 
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
@@ -29,6 +30,7 @@ import { MCP_TOKENS_HEADER, decodeMcpTokens } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
+import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
 
 // Build stamp: scripts/deploy.sh writes the git SHA to build-rev.txt right before
@@ -713,6 +715,26 @@ export async function handleRequest(req: Request): Promise<Response> {
       // through the normal conversation path.
       dispatchChatTurn(chatId, DEV_AGENT_RUN_PROMPT, null, [], undefined, undefined, undefined, undefined, token);
       return json({ chatId, joined: false }, 202);
+    }
+    // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
+    // proxies here (never writes R2 itself; no second writer of skills.tar). Content only
+    // (ADR-0013): plain files under .claude/skills/<name>/, persisted by the skills sink.
+    const skillRoute = /^\/api\/skills\/([^/]+)$/.exec(path);
+    if (skillRoute && req.method === 'PUT') {
+      const name = SkillName.safeParse(decodeURIComponent(skillRoute[1] as string));
+      const body = UploadSkillInput.safeParse(await req.json().catch(() => null));
+      if (!name.success || !body.success) return json({ error: 'invalid skill upload' }, 400);
+      const dir = resolve(SKILLS_DIR, name.data);
+      for (const f of body.data.files) {
+        // Belt and braces on top of the contract's path rules: the resolved target must
+        // stay inside this skill's dir.
+        if (!resolve(dir, f.path).startsWith(`${dir}/`)) return json({ error: 'invalid file path' }, 400);
+      }
+      for (const f of body.data.files) {
+        await Bun.write(resolve(dir, f.path), f.content); // creates parent dirs
+      }
+      await flushIfDirty('skills', SKILLS_DIR);
+      return json({ ok: true, skill: name.data, files: body.data.files.length });
     }
     const chatRoute = /^\/api\/chat\/([^/]+)\/send$/.exec(path);
     if (chatRoute && req.method === 'POST') {
