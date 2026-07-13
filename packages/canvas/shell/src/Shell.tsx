@@ -168,7 +168,22 @@ function Rail({
   });
 
   const signOut = async () => {
-    await fetch('/api/auth/sign-out', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    // Only navigate away once the session cookie is actually cleared: a swallowed failure
+    // here previously still redirected to `/`, where the gate still saw a valid session and
+    // handed back the authenticated shell — indistinguishable from "sign out did nothing".
+    // Better Auth requires a JSON POST — a body-less send with no content-type is rejected
+    // 415 Unsupported Media Type in production (observed live), which is what "sign out
+    // does nothing" actually was.
+    const r = await fetch('/api/auth/sign-out', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }).catch(() => null);
+    if (!r?.ok) {
+      window.alert('Could not sign out — try again.');
+      return;
+    }
     window.location.href = '/';
   };
 
