@@ -745,7 +745,12 @@ export async function handleRequest(req: Request): Promise<Response> {
       // subscribed, the turn's events would broadcast into the void (there is no
       // replay), so reject early with 425 Too Early and dispatch nothing. Only a
       // race-losing / misbehaving client reaches here; the client gates on `subscribed`.
-      if (chatClients.size === 0) return json({ error: 'no_subscribers', chatId }, 425);
+      // EXCEPT a headless send (#177: the edge MCP proxy stamps x-headless-send): like
+      // /api/dev-agent/run above, no subscriber exists BY DESIGN — the caller polls
+      // read_conversation instead of watching the stream, the turn persists to the
+      // session JSONL regardless, and the Inbox attaches live if opened mid-turn.
+      const headless = req.headers.get('x-headless-send') === '1';
+      if (!headless && chatClients.size === 0) return json({ error: 'no_subscribers', chatId }, 425);
       // One turn per chat, enforced at the wire (ADR-0011): a send while this chat's turn
       // runs would resume the SAME session concurrently (two SDK queries, one JSONL). The
       // client re-queues on 409 and drains on the turn's done frame; Stop-then-send is the

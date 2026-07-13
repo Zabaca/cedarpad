@@ -134,6 +134,26 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     await expect(tools.sendMessage({ workspace_id: WS, message: 'x', chat_id: 'mcp_devagent' })).rejects.toThrow(/chat/);
   });
 
+  test("send_message continuing a canvas-paired conversation addresses that canvas (the agent's canvas tools bind to it)", async () => {
+    sends = [];
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'Board' });
+    await conversations.create(database, {
+      sessionId: 's_paired',
+      userId: 'u_1',
+      workspaceId: WS,
+      ownerRef: 'mcp_paired',
+      canvasId: board.id,
+    } as never);
+
+    await tools.sendMessage({ workspace_id: WS, message: 'about the board', chat_id: 'mcp_paired' });
+    expect(sends).toEqual([{ workspaceId: WS, chatId: 'mcp_paired', message: 'about the board', canvasId: board.id }]);
+
+    // An explicit canvas_id wins over the pairing.
+    sends = [];
+    await tools.sendMessage({ workspace_id: WS, message: 'elsewhere', chat_id: 'mcp_paired', canvas_id: 'other_canvas' });
+    expect(sends[0]?.canvasId).toBe('other_canvas');
+  });
+
   test('upload_skill is access-checked and proxies to the bridge (single writer of the tree)', async () => {
     skillUploads = [];
     const res = await tools.uploadSkill({

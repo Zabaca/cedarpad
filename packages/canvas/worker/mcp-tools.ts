@@ -116,15 +116,20 @@ export function buildMcpTools(deps: McpToolDeps) {
     async sendMessage(input: z.infer<typeof SendMessageInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       let chatId = input.chat_id;
+      let canvasId = input.canvas_id;
       if (chatId) {
         const existing = await conversations.getByOwnerRef(deps.db, chatId);
         if (!existing || existing.userId !== deps.userId || existing.workspaceId !== ws.id || existing.kind !== 'chat') {
           throw new Error(`no chat conversation ${chatId} in workspace ${ws.id}`);
         }
+        // A canvas-paired conversation stays addressed to its canvas (the row's canvasId —
+        // what the pad stamps as x-canvas-id): otherwise the turn's canvas tools would bind
+        // to the DEFAULT canvas store and the agent reads the wrong board. Explicit wins.
+        canvasId ??= existing.canvasId ?? undefined;
       } else {
         chatId = `mcp_${crypto.randomUUID()}`;
       }
-      const res = await deps.proxySend(ws.id, chatId, input.message, input.canvas_id);
+      const res = await deps.proxySend(ws.id, chatId, input.message, canvasId);
       if (!res.ok) throw new Error(`send failed (${res.status}): ${await res.text().catch(() => '')}`);
       return { chat_id: chatId, status: 'running' as const, poll: 'read_conversation' as const };
     },
