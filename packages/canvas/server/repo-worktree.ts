@@ -138,6 +138,9 @@ export function createRepoWorktreeManager(config: RepoWorktreeConfig) {
     await mkdir(config.workspaceRoot, { recursive: true });
 
     if (existsSync(join(hub, '.git')) || existsSync(join(hub, 'HEAD'))) {
+      // Re-point origin at THIS manager's URL first: the URL embeds the turn's short-lived
+      // token, and a hub cloned by an earlier turn still carries that turn's (expired) one.
+      await git(hub, ['remote', 'set-url', 'origin', remoteUrl]);
       await git(hub, ['fetch', 'origin', '--prune']);
     } else {
       await git(config.workspaceRoot, ['clone', remoteUrl, hub]);
@@ -155,7 +158,13 @@ export function createRepoWorktreeManager(config: RepoWorktreeConfig) {
   // origin/main. (A worktree's `.git` is a FILE pointing at the hub, so existsSync covers it.)
   async function ensureWorktree(branch: string): Promise<Worktree> {
     const path = join(config.workspaceRoot, 'worktrees', worktreeDirName(branch));
-    if (existsSync(join(path, '.git'))) return { path, branch, hub };
+    if (existsSync(join(path, '.git'))) {
+      // Reuse — but refresh origin's URL: it embeds the token of the turn that CLONED the
+      // hub, which a multi-turn thread outlives (~1h). Every git auth (fetch/push/ls-remote)
+      // reads this URL, so a stale one 401s the whole turn's GitHub access.
+      await git(hub, ['remote', 'set-url', 'origin', remoteUrl]);
+      return { path, branch, hub };
+    }
     return prepareWorktree(branch);
   }
 

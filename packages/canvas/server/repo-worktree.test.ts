@@ -169,6 +169,48 @@ describe('ensureWorktree — reuse-or-create for the multi-turn dev-agent grill 
   });
 });
 
+// ── Integration: a reused hub re-points origin at THIS turn's remote URL ───────────────
+//
+// The remote URL embeds the turn's short-lived token (cfg). A dev-agent thread outlives the
+// ~1h token: turn 2's manager carries a FRESH token, but the hub cloned on turn 1 still has
+// turn 1's (expired) token in its origin URL — fetch/push would 401. ensureWorktree must
+// re-point origin at the current manager's remoteUrl on every reuse.
+describe('ensureWorktree — the reused hub gets the CURRENT remote URL (fresh token per turn)', () => {
+  test('a second manager with a different remoteUrl re-points origin on reuse', async () => {
+    const root = join(tmpdir(), `RemoteRefreshIT_${process.pid}_${Date.now()}`);
+    const remote = join(root, 'remote.git');
+    const seed = join(root, 'seed');
+    const workspace = join(root, 'ws');
+    try {
+      mkdirSync(root, { recursive: true });
+      await runGit(root, ['init', '--bare', '-b', 'main', remote]);
+      await runGit(root, ['clone', remote, seed]);
+      await Bun.write(join(seed, 'README.md'), '# seed\n');
+      await runGit(seed, ['add', '-A']);
+      await runGit(seed, ['commit', '-m', 'seed']);
+      await runGit(seed, ['push', 'origin', 'main']);
+
+      const branch = branchName('dev-agent', 'chat_2');
+      // Turn 1: clone with the "old token" URL.
+      const mgr1 = createRepoWorktreeManager({ repo: 'Zabaca/cedarpad', workspaceRoot: workspace, remoteUrl: remote });
+      const wt1 = await mgr1.ensureWorktree(branch);
+
+      // Turn 2 (hours later): a fresh manager with a NEW remote URL (fresh token). The same
+      // bare repo via a symlink-free alternate path stands in for "same repo, new token URL".
+      const remote2 = join(root, 'remote2.git');
+      await runGit(root, ['clone', '--bare', remote, remote2]);
+      const mgr2 = createRepoWorktreeManager({ repo: 'Zabaca/cedarpad', workspaceRoot: workspace, remoteUrl: remote2 });
+      const wt2 = await mgr2.ensureWorktree(branch);
+      expect(wt2.path).toBe(wt1.path);
+
+      // The hub's origin now points at turn 2's URL — fetch/push use the fresh credential.
+      expect(await runGit(wt2.hub, ['remote', 'get-url', 'origin'])).toBe(remote2);
+    } finally {
+      if (existsSync(root)) rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // ── Guard: real push+PR requires the token; unit suite must never hit GitHub ───────────
 
 describe('pushAndOpenPR is gated on the GitHub token', () => {
