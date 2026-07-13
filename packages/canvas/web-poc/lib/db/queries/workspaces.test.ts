@@ -4,7 +4,7 @@ import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { beforeAll, describe, expect, it } from "vitest";
 import * as schema from "../schema.js";
-import { createWorkspace, getWorkspace, listWorkspaces, r2Prefix, sandboxId } from "./workspaces.js";
+import { addWorkspaceMember, createWorkspace, getWorkspace, listWorkspaces, r2Prefix, sandboxId } from "./workspaces.js";
 
 /** In-memory DB built from the real migrations (mirrors the other query tests). */
 const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url));
@@ -26,7 +26,7 @@ const db = drizzle(client, { schema });
 beforeAll(async () => {
   for (const stmt of migrationStatements()) await client.execute(stmt);
   // Owners must exist — `workspaces.owner_user_id` FK-references `user`.
-  for (const id of ["user_a", "owner_1", "owner_2"]) {
+  for (const id of ["user_a", "owner_1", "owner_2", "member_1", "stranger_1"]) {
     await db.insert(schema.user).values({ id, name: id, email: `${id}@example.com` });
   }
 });
@@ -83,5 +83,37 @@ describe("workspace registry — per-owner isolation", () => {
     const theirs = await createWorkspace(db, { name: "secret", ownerUserId: "owner_2" });
     const fetched = await getWorkspace(db, theirs.id, "owner_1");
     expect(fetched).toBeNull();
+  });
+});
+
+describe("workspace membership (#179) — access is owner-OR-member", () => {
+  it("an added member can get the workspace; a stranger still cannot", async () => {
+    const ws = await createWorkspace(db, { name: "shared", ownerUserId: "owner_1" });
+    await addWorkspaceMember(db, { workspaceId: ws.id, userId: "member_1" });
+
+    const asMember = await getWorkspace(db, ws.id, "member_1");
+    expect(asMember?.id).toBe(ws.id);
+    expect(await getWorkspace(db, ws.id, "stranger_1")).toBeNull();
+  });
+
+  it("list includes workspaces the caller is a member of, alongside owned ones", async () => {
+    const own = await createWorkspace(db, { name: "member1-own", ownerUserId: "member_1" });
+    const shared = await createWorkspace(db, { name: "shared-2", ownerUserId: "owner_2" });
+    await addWorkspaceMember(db, { workspaceId: shared.id, userId: "member_1" });
+
+    const ids = (await listWorkspaces(db, "member_1")).map((w) => w.id);
+    expect(ids).toContain(own.id);
+    expect(ids).toContain(shared.id);
+    // and membership never leaks the other direction
+    expect((await listWorkspaces(db, "owner_2")).map((w) => w.id)).not.toContain(own.id);
+  });
+
+  it("adding the same member twice is idempotent (no duplicate rows, list stays clean)", async () => {
+    const ws = await createWorkspace(db, { name: "idem", ownerUserId: "owner_1" });
+    await addWorkspaceMember(db, { workspaceId: ws.id, userId: "member_1" });
+    await addWorkspaceMember(db, { workspaceId: ws.id, userId: "member_1" });
+
+    const ids = (await listWorkspaces(db, "member_1")).map((w) => w.id).filter((id) => id === ws.id);
+    expect(ids).toHaveLength(1);
   });
 });

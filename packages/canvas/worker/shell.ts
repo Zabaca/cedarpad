@@ -22,19 +22,19 @@ const WorkspaceView = z.object({ id: z.string(), name: z.string() });
 export type WorkspaceView = z.infer<typeof WorkspaceView>;
 
 /**
- * The Shell's workspace registry API (owner-scoped):
+ * The Shell's workspace registry API (owner-OR-member — #179):
  *   GET  /api/workspaces           → { workspaces: WorkspaceView[] }
  *   POST /api/workspaces {name}     → the created WorkspaceView
- * The legacy `default` workspace is always presented first — it has no registry row
- * but is a real, openable workspace (the prod container).
+ * The legacy `default` workspace has a real seeded row since #179 and appears only
+ * for its owner/members (presented first when accessible) — no hardcoded entry.
  */
 export async function handleWorkspacesApi(request: Request, env: Env, user: GateUser): Promise<Response> {
   if (request.method === 'GET') {
     const rows = await listWorkspaces(db(env), user.id);
     const workspaces: WorkspaceView[] = [
-      { id: DEFAULT_WORKSPACE_ID, name: 'Default' },
-      ...rows.map((w) => ({ id: w.id, name: w.name })),
-    ];
+      ...rows.filter((w) => w.id === DEFAULT_WORKSPACE_ID),
+      ...rows.filter((w) => w.id !== DEFAULT_WORKSPACE_ID),
+    ].map((w) => ({ id: w.id, name: w.name }));
     return Response.json({ workspaces });
   }
   if (request.method === 'POST') {
@@ -55,14 +55,13 @@ export type CanvasView = z.infer<typeof CanvasView>;
 
 /**
  * Resolve the active workspace for a request from the `cs_workspace` cookie (set by
- * /w/:id), enforcing ownership. Returns the workspace id to scope by, or null when the
- * selection is an unknown/non-owned workspace (⇒ the caller 404s). The `default` id
- * needs no registry row (the legacy prod workspace). Shared with the edge Inbox list
- * (worker/inbox.ts), which scopes to the same active workspace as `/api/canvases`.
+ * /w/:id), enforcing access (owner-OR-member — #179; `default` has a seeded row and is
+ * checked like any other). Returns the workspace id to scope by, or null when the
+ * selection is unknown/inaccessible (⇒ the caller 404s). Shared with the edge Inbox
+ * list (worker/inbox.ts), which scopes to the same active workspace as `/api/canvases`.
  */
 export async function activeWorkspaceId(request: Request, database: Database, user: GateUser): Promise<string | null> {
   const selected = readWorkspaceCookie(request.headers.get('cookie')) ?? DEFAULT_WORKSPACE_ID;
-  if (selected === DEFAULT_WORKSPACE_ID) return DEFAULT_WORKSPACE_ID;
   const ws = await getWorkspace(database, selected, user.id);
   return ws ? ws.id : null;
 }
@@ -159,47 +158,33 @@ button{width:100%;margin-top:18px;background:#4b6bff;border:0;color:#fff;padding
 button:disabled{opacity:.5;cursor:default}
 .err{color:#ff6b6b;font-size:13px;margin-top:12px;min-height:16px}
 .toggle{margin-top:16px;text-align:center;font-size:13px;color:#8a8a92}
-.toggle a{color:#4b6bff;cursor:pointer}
-#nameRow{display:none}
 </style></head><body>
 <div class=card>
   <h1>cedarpad</h1>
   <p class=sub id=sub>Sign in to continue.</p>
   <form id=f>
-    <div id=nameRow><label for=name>Name</label><input id=name autocomplete=name></div>
     <label for=email>Email</label><input id=email type=email autocomplete=email required>
     <label for=pw>Password</label><input id=pw type=password autocomplete=current-password required>
     <button id=go type=submit>Log in</button>
     <div class=err id=err></div>
   </form>
-  <div class=toggle id=toggle>No account yet? <a id=swap>Sign up</a></div>
+  <div class=toggle>Accounts are created by invitation.</div>
 </div>
 <script>
-let signup=false;
+// #179: no public signup — AUTH_DISABLE_SIGNUP stays on and the ONLY account-creation
+// door is the /invite/<token> accept flow, so the old Sign-up toggle (dead in prod,
+// server-rejected) is gone.
 const err=document.getElementById('err'),go=document.getElementById('go');
-document.getElementById('swap').onclick=()=>{
-  signup=!signup;
-  document.getElementById('nameRow').style.display=signup?'block':'none';
-  document.getElementById('sub').textContent=signup?'Create your account.':'Sign in to continue.';
-  go.textContent=signup?'Sign up':'Log in';
-  document.getElementById('toggle').innerHTML=signup
-    ?'Already have an account? <a id=swap>Log in</a>':'No account yet? <a id=swap>Sign up</a>';
-  document.getElementById('swap').onclick=arguments.callee;
-  err.textContent='';
-};
 document.getElementById('f').onsubmit=async(e)=>{
   e.preventDefault();err.textContent='';go.disabled=true;
   const email=document.getElementById('email').value.trim();
   const password=document.getElementById('pw').value;
-  const name=document.getElementById('name').value.trim();
-  const path=signup?'/api/auth/sign-up/email':'/api/auth/sign-in/email';
-  const body=signup?{email,password,name:name||email}:{email,password};
   try{
-    const r=await fetch(path,{method:'POST',credentials:'same-origin',
-      headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    const r=await fetch('/api/auth/sign-in/email',{method:'POST',credentials:'same-origin',
+      headers:{'content-type':'application/json'},body:JSON.stringify({email,password})});
     if(r.ok){location.href='/';return;}
     const d=await r.json().catch(()=>null);
-    err.textContent=(d&&(d.message||d.error))||(signup?'Sign up failed':'Sign in failed');
+    err.textContent=(d&&(d.message||d.error))||'Sign in failed';
   }catch(_){err.textContent='Something went wrong';}
   go.disabled=false;
 };

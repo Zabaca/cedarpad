@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import * as realAuthGate from './auth-gate.ts';
 import * as realCanvases from '../web-poc/lib/db/queries/canvases.ts';
@@ -37,11 +37,32 @@ mock.module('./auth-gate.ts', () => ({
   ...realAuthGate,
   authenticate: () => Promise.resolve(session),
 }));
-mock.module('../web-poc/worker/runtime.ts', () => ({ createDbForWorker: () => ({}) }));
+// A minimal chainable query stub: every builder call returns itself and it awaits to
+// an empty row set — enough for handlers that only need "no rows found" (e.g. the
+// invite accept flow resolving an unknown token to its 404 page).
+const emptyQuery: Record<string, unknown> = {};
+for (const m of ['select', 'from', 'where', 'limit', 'orderBy', 'insert', 'values', 'returning', 'update', 'set']) {
+  emptyQuery[m] = () => emptyQuery;
+}
+(emptyQuery as { then: (resolve: (rows: never[]) => void) => void }).then = (resolve) => resolve([]);
+mock.module('../web-poc/worker/runtime.ts', () => ({ createDbForWorker: () => emptyQuery }));
+// Delegate through a swappable impl and RESTORE after this file: bun's mock.module
+// rebinds the module for every later test file in the same process (#170's leak class),
+// so a canned getWorkspace here would silently break real-DB tests (e.g.
+// invitations.test.ts) that run after this one in a full-suite pass.
+// CAPTURE BY VALUE before mock.module below: `realWorkspaces` is a LIVE namespace —
+// after the mock installs, `realWorkspaces.getWorkspace` IS the delegating wrapper, and
+// restoring from it would make the wrapper call itself (a proper-tail-call infinite
+// loop that hangs the whole test process, no stack overflow).
+const realGetWorkspace = realWorkspaces.getWorkspace;
+let getWorkspaceImpl: typeof realGetWorkspace = () => Promise.resolve(workspaceRecord as never);
 mock.module('../web-poc/lib/db/queries/workspaces.ts', () => ({
   ...realWorkspaces,
-  getWorkspace: () => Promise.resolve(workspaceRecord),
+  getWorkspace: (...args: Parameters<typeof realGetWorkspace>) => getWorkspaceImpl(...args),
 }));
+afterAll(() => {
+  getWorkspaceImpl = realGetWorkspace;
+});
 mock.module('../web-poc/lib/db/queries/canvases.ts', () => ({
   ...realCanvases,
   get: () => Promise.resolve(canvasRecord),
@@ -83,6 +104,34 @@ const env = {
   },
 } as unknown as Parameters<typeof worker.fetch>[1];
 const GET = (path: string) => worker.fetch(new Request(`https://poc.cedarpad.com${path}`), env);
+
+// #179 dispatch order: /invite/<token> is the one page an invitee can reach with no
+// session (the token is the credential) — it must serve the invite flow, never the
+// login page, and never touch a container. The owner-side invitations API stays
+// behind the gate and its owner-only check.
+describe('invitations dispatch (#179)', () => {
+  test('UNAUTHENTICATED /invite/<token> reaches the invite flow (unknown token ⇒ its own 404 page), never login, never a container', async () => {
+    session = null;
+    const res = await GET('/invite/wi_unknown');
+    expect(res.status).toBe(404); // the flow's "not valid" page — NOT the 401 login
+    expect(res.headers.get('content-type') ?? '').toContain('text/html');
+    expect(served).toEqual([]);
+  });
+
+  test('/api/workspaces/:id/invitations dispatches to the owner-only API behind the gate, never proxied', async () => {
+    workspaceRecord = { id: 'ws_abc' }; // a visible record that does NOT carry the caller as owner
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/workspaces/ws_abc/invitations', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: 'a@b.co' }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(403); // routed + access-checked (owner-only), not 404/405/login
+    expect(served).toEqual([]);
+  });
+});
 
 describe('POST /api/jobs/dev-agent/run — manual Jobs trigger (ADR-0011: a proxied kick)', () => {
   test('proxies the kick to the warm default container’s bridge and returns its answer through', async () => {
@@ -257,11 +306,20 @@ describe('GET /w/:ws/canvas/:id/pad — serve the Render Pad in place, no redire
     expect(cookies).not.toContain('cs_canvas');
   });
 
-  test('the legacy `default` workspace + canvas resolve to the legacy container', async () => {
+  test('the legacy `default` workspace (with its seeded, access-checked row — #179) + canvas resolve to the legacy container', async () => {
+    workspaceRecord = { id: 'default' };
     const res = await GET('/w/default/canvas/default/pad');
 
     expect(res.status).toBe(200);
     expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
+  });
+
+  test('the `default` workspace WITHOUT a row (non-member) ⇒ 404, never proxied (#179 closes the hole)', async () => {
+    workspaceRecord = null;
+    const res = await GET('/w/default/canvas/default/pad');
+
+    expect(res.status).toBe(404);
+    expect(served).toEqual([]);
   });
 
   test('a canvas that belongs to another workspace ⇒ 404, never proxied', async () => {

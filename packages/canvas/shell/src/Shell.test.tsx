@@ -222,6 +222,48 @@ describe('the workspace popover is backed by /api/workspaces', () => {
   });
 });
 
+// #179: the popover's owner-only invite affordance. The server is the authority on
+// "owner": the pending-invitations GET returns 200 only for the owner (403 member,
+// 404 stranger) — a non-200 leaves the popover invite-free.
+describe('the workspace popover invites (owner-only, #179)', () => {
+  test('an owner sees Invite; clicking it POSTs the email and surfaces the link', async () => {
+    const prompts: string[] = [];
+    let promptCount = 0;
+    (globalThis as { prompt?: (msg?: string, def?: string) => string | null }).prompt = (msg?: string, def?: string) => {
+      prompts.push(`${msg ?? ''}|${def ?? ''}`);
+      return promptCount++ === 0 ? 'jae@example.com' : null; // first prompt: the email; second: the link display
+    };
+    const inviteUrl = '/api/workspaces/ws_abc/invitations';
+    const stubbed = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url === inviteUrl && (init?.method ?? 'GET') === 'GET') {
+        calls.push(`GET ${url}`);
+        return Response.json({ invitations: [] });
+      }
+      if (url === inviteUrl && init?.method === 'POST') {
+        calls.push(`POST ${url}`);
+        return Response.json({ token: 'wi_t1', email: 'jae@example.com', url: '/invite/wi_t1', expiresAt: 1 }, { status: 201 });
+      }
+      return stubbed(input as never, init);
+    }) as typeof fetch;
+
+    await click(container.querySelector('.lp-z'));
+    const invite = container.querySelector('.lp-ws-invite');
+    expect(invite).not.toBeNull();
+
+    await click(invite);
+    expect(calls).toContain(`POST ${inviteUrl}`);
+    // The second prompt shows the copyable absolute link.
+    expect(prompts[1]).toContain('/invite/wi_t1');
+  });
+
+  test('a non-owner (403 on the pending list) gets no invite affordance', async () => {
+    await click(container.querySelector('.lp-z')); // stubEdge 404s the invitations GET
+    expect(container.querySelector('.lp-ws-invite')).toBeNull();
+  });
+});
+
 describe('the avatar signs out through the edge Better Auth endpoint', () => {
   test('Sign out POSTs /api/auth/sign-out', async () => {
     await click(byTitle('Account'));

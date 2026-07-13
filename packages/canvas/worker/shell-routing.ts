@@ -79,18 +79,19 @@ export type WorkspaceRouteDecision =
   | { decision: 'not-found' };
 
 /**
- * Given a requested workspace id and the ownership-checked registry lookup (null when
- * the id is unknown or owned by someone else), decide whether to serve it or 404.
- * The `default` id is always served as the legacy workspace (it has no row); a real id
- * is served only when the lookup found an owned record — otherwise 404, never proxied.
+ * Given a requested workspace id and the access-checked registry lookup (null when the
+ * id is unknown or the caller is neither owner nor member — #179), decide whether to
+ * serve it or 404. Every id — INCLUDING `default`, which has a real seeded row since
+ * #179 — requires a record; a missing row fails closed. `default` still resolves to
+ * the LEGACY runtime coords (that's routing, not access).
  */
 export function decideWorkspaceRoute(
   workspaceId: string,
   record: { id: string } | null,
 ): WorkspaceRouteDecision {
+  if (!record) return { decision: 'not-found' };
   if (workspaceId === DEFAULT_WORKSPACE_ID) return { decision: 'serve', workspace: DEFAULT_WORKSPACE };
-  if (record) return { decision: 'serve', workspace: { id: record.id } };
-  return { decision: 'not-found' };
+  return { decision: 'serve', workspace: { id: record.id } };
 }
 
 export type CanvasRouteDecision =
@@ -98,11 +99,12 @@ export type CanvasRouteDecision =
   | { decision: 'not-found' };
 
 /**
- * Decide `/w/:ws/canvas/:id` from the ownership-checked lookups: `workspaceRecord`
- * is null unless the workspace is owned (the `default` id needs no row); `canvasRecord`
- * is the registry row or null. Select only when the workspace is servable AND the canvas
- * exists AND it belongs to that workspace — otherwise 404, never proxied. Pure: the DB
- * lookups happen in the caller so this stays unit-testable off a live runtime.
+ * Decide `/w/:ws/canvas/:id` from the access-checked lookups: `workspaceRecord` is
+ * null unless the caller is owner or member (#179 — `default` included, seeded row);
+ * `canvasRecord` is the registry row or null. Select only when the workspace is
+ * servable AND the canvas exists AND it belongs to that workspace — otherwise 404,
+ * never proxied. Pure: the DB lookups happen in the caller so this stays
+ * unit-testable off a live runtime.
  */
 export function decideCanvasRoute(
   workspaceId: string,
@@ -110,8 +112,7 @@ export function decideCanvasRoute(
   workspaceRecord: { id: string } | null,
   canvasRecord: { workspaceId: string } | null,
 ): CanvasRouteDecision {
-  const workspaceServable = workspaceId === DEFAULT_WORKSPACE_ID || !!workspaceRecord;
-  if (!workspaceServable) return { decision: 'not-found' };
+  if (!workspaceRecord) return { decision: 'not-found' };
   // The legacy `default` canvas has no registry row (like the default workspace); it is
   // always selectable within a servable workspace so the index can switch back to it.
   if (canvasId === DEFAULT_CANVAS_ID) return { decision: 'select', workspaceId, canvasId };

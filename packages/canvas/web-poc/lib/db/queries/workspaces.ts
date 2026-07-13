@@ -1,6 +1,6 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, exists, or } from "drizzle-orm";
 import type { Database } from "../client.js";
-import { type WorkspaceRow, workspaces } from "../schema.js";
+import { type WorkspaceRow, workspaceMembers, workspaces } from "../schema.js";
 
 /**
  * Workspace registry (ADR-0007). The single source of truth for which
@@ -47,19 +47,28 @@ export async function createWorkspace(
   return toRecord(row);
 }
 
-/** List the caller's workspaces (owner-scoped), oldest first. */
+/** A membership subquery: the caller has a `workspace_members` row for this workspace. */
+const isMember = (db: Database, userId: string) =>
+  exists(
+    db
+      .select({ id: workspaceMembers.id })
+      .from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, workspaces.id), eq(workspaceMembers.userId, userId))),
+  );
+
+/** List the caller's workspaces — owned OR member-of (#179) — oldest first. */
 export async function listWorkspaces(db: Database, userId: string): Promise<WorkspaceRecord[]> {
   const rows = await db
     .select()
     .from(workspaces)
-    .where(eq(workspaces.ownerUserId, userId))
+    .where(or(eq(workspaces.ownerUserId, userId), isMember(db, userId)))
     .orderBy(asc(workspaces.createdAt));
   return rows.map(toRecord);
 }
 
 /**
- * Get a workspace by id, enforcing ownership: returns null if it does not exist
- * or is owned by another user (PRD #42, story 22).
+ * Get a workspace by id, enforcing access: returns null unless the caller is the
+ * owner or an accepted member (#179; ownership PRD #42, story 22).
  */
 export async function getWorkspace(
   db: Database,
@@ -69,7 +78,24 @@ export async function getWorkspace(
   const [row] = await db
     .select()
     .from(workspaces)
-    .where(and(eq(workspaces.id, workspaceId), eq(workspaces.ownerUserId, userId)))
+    .where(and(eq(workspaces.id, workspaceId), or(eq(workspaces.ownerUserId, userId), isMember(db, userId))))
     .limit(1);
   return row ? toRecord(row) : null;
+}
+
+/** Add (idempotently) a non-owner member. Role vocabulary: owner (on the workspace row) /
+ *  member (here) — full use, no admin. */
+export async function addWorkspaceMember(
+  db: Database,
+  input: { workspaceId: string; userId: string; role?: string },
+): Promise<void> {
+  await db
+    .insert(workspaceMembers)
+    .values({
+      id: `wm_${crypto.randomUUID()}`,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      role: input.role ?? "member",
+    })
+    .onConflictDoNothing();
 }

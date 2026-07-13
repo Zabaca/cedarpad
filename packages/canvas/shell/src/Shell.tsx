@@ -231,11 +231,16 @@ function Rail({
   );
 }
 
-// The owner's workspaces, from the edge registry (`GET /api/workspaces`, which always leads
-// with the legacy `default`). Opening one navigates to /w/:id — the Worker pins the
-// cs_workspace cookie and bounces back to `/`. Fetched lazily: the closed rail costs nothing.
+// The caller's workspaces — owned or member-of (#179) — from the edge registry
+// (`GET /api/workspaces`; `default` leads when accessible). Opening one navigates to
+// /w/:id — the Worker pins the cs_workspace cookie and bounces back to `/`. Fetched
+// lazily: the closed rail costs nothing.
 function WorkspacePopover({ activeWorkspace }: { activeWorkspace: string }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
+  // #179 owner-only invite. The server decides "owner": the pending-invitations GET is
+  // 200 for the owner only (403 member / 404 stranger) — non-200 hides the affordance.
+  const [canInvite, setCanInvite] = useState(false);
+  const invitationsUrl = `/api/workspaces/${encodeURIComponent(activeWorkspace)}/invitations`;
 
   useEffect(() => {
     void (async () => {
@@ -245,6 +250,33 @@ function WorkspacePopover({ activeWorkspace }: { activeWorkspace: string }) {
       setWorkspaces(d.workspaces);
     })();
   }, []);
+
+  useEffect(() => {
+    if (!activeWorkspace) return;
+    void (async () => {
+      const r = await fetch(invitationsUrl, { credentials: 'same-origin' }).catch(() => null);
+      setCanInvite(r?.ok ?? false);
+    })();
+  }, [activeWorkspace, invitationsUrl]);
+
+  const invite = async () => {
+    const email = window.prompt('Invite to this workspace by email — the link works only for that address:');
+    if (!email) return;
+    const r = await fetch(invitationsUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email }),
+    }).catch(() => null);
+    if (!r?.ok) {
+      window.alert('Could not create the invitation.');
+      return;
+    }
+    const d = (await r.json()) as { url: string };
+    const link = `${window.location.origin}${d.url}`;
+    await navigator.clipboard?.writeText(link).catch(() => {});
+    window.prompt('Invite link (copied to clipboard) — send it over your own channel. Expires in 48h, single-use:', link);
+  };
 
   return (
     <div className="lp-ws-popover" role="menu">
@@ -274,6 +306,12 @@ function WorkspacePopover({ activeWorkspace }: { activeWorkspace: string }) {
           </div>
         );
       })}
+      {canInvite && (
+        <div className="lp-ws-row lp-ws-invite" role="menuitem" onClick={() => void invite()}>
+          <span className="lp-ws-glyph">+</span>
+          <span className="lp-ws-name">Invite to workspace…</span>
+        </div>
+      )}
     </div>
   );
 }
