@@ -18,3 +18,5 @@ dist
 graphify-out/
 # Workspace skills are workspace content (R2 skills.tar, ADR-0013), never repo content.
 packages/canvas/.claude/
+# Fredrin per-ticket wrapper — carries a scoped API token, never commit.
+.fredrin/
