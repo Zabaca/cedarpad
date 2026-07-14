@@ -127,3 +127,51 @@ export async function discoverJobs(
   );
   return perRepo.flat();
 }
+
+// ---- The cron evaluator (#196) ------------------------------------------------
+
+// Due = never stamped, or stamped ≥20h ago: tolerant of tick jitter and retried ticks
+// (idempotent), while a daily tick can never double-fire a job within its day.
+const DAILY_DEBOUNCE_MS = 20 * 3600_000;
+
+/**
+ * One tick of the scheduled-jobs evaluator (ADR-0015: reconcile, don't register): discover
+ * the workspace's repo jobs fresh, kick every `daily` job that is due per its lastRunAt
+ * stamp, stamp on a real start. A JOINED kick (the bridge's one-at-a-time run was already
+ * busy) is NOT stamped — the job stays due and retries next tick. Sequential kicks: the
+ * bridge single-flights runs anyway; parallel kicks would just join each other.
+ */
+export async function evaluateScheduledJobs(
+  database: Database,
+  workspaceId: string,
+  deps: {
+    nowMs: number;
+    discover: () => Promise<RepoJob[]>;
+    kick: (repo: string, job: { name: string; prompt: string }) => Promise<Response>;
+  },
+): Promise<{ kicked: string[] }> {
+  const { getJobRunStamp, stampJobRun } = await import('../web-poc/lib/db/queries/job-stamps.ts');
+  const kicked: string[] = [];
+  const jobs = await deps.discover();
+  for (const job of jobs) {
+    if (job.schedule !== 'daily') continue;
+    const key = { workspaceId, repo: job.repo, job: job.name };
+    const last = await getJobRunStamp(database, key);
+    if (last && deps.nowMs - last.getTime() < DAILY_DEBOUNCE_MS) continue;
+    try {
+      const res = await deps.kick(job.repo, { name: job.name, prompt: job.prompt });
+      const body = res.status === 202 ? ((await res.json().catch(() => null)) as { joined?: boolean } | null) : null;
+      if (body && !body.joined) {
+        await stampJobRun(database, { ...key, nowMs: deps.nowMs });
+        kicked.push(`${job.repo}#${job.name}`);
+      } else if (body?.joined) {
+        console.log(`[jobs] ${job.repo}#${job.name} due but a run is in flight — retrying next tick`);
+      } else {
+        console.error(`[jobs] scheduled kick failed for ${job.repo}#${job.name}: ${res.status}`);
+      }
+    } catch (e: unknown) {
+      console.error(`[jobs] scheduled kick threw for ${job.repo}#${job.name}: ${String(e)}`);
+    }
+  }
+  return { kicked };
+}
