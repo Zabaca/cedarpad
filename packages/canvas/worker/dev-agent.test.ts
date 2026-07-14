@@ -81,6 +81,24 @@ describe('kickDevAgentRun — mint + proxy the kick to the warm bridge', () => {
     expect(calls[0]!.repo).toBeNull();
   });
 
+  test('a job kick forwards the job (name + prompt) as the request body to the bridge (#195)', async () => {
+    const bodies: unknown[] = [];
+    const serve = async (req: Request, _env: Env, _coords: SandboxCoords) => {
+      bodies.push(await req.json().catch(() => null));
+      return Response.json({ chatId: 'dev-agent-run-x', joined: false }, { status: 202 });
+    };
+
+    const res = await kickDevAgentRun(
+      env,
+      { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN },
+      'Zabaca/cedarpad',
+      { name: 'deps-audit', prompt: 'Audit the dependencies.' },
+    );
+
+    expect(res.status).toBe(202);
+    expect(bodies).toEqual([{ job: { name: 'deps-audit', prompt: 'Audit the dependencies.' } }]);
+  });
+
   test('an explicitly requested repo outside the selected set is a 400 — never silently re-targeted', async () => {
     const { calls, serve } = record();
 

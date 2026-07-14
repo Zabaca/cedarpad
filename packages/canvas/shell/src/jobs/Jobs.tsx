@@ -13,33 +13,44 @@ import { useEffect, useState } from 'react';
 // (`/api/workspaces/default/github`) names the selectable set.
 
 type RunState = 'idle' | 'starting' | 'started' | 'joined' | 'error';
+type RepoJobView = { repo: string; name: string; description: string; schedule: string };
 
 export function JobsStage() {
   const [state, setState] = useState<RunState>('idle');
   const [repos, setRepos] = useState<string[]>([]);
   const [repo, setRepo] = useState<string | null>(null);
+  const [repoJobs, setRepoJobs] = useState<RepoJobView[]>([]);
 
   useEffect(() => {
     void (async () => {
       const r = await fetch('/api/workspaces/default/github', { credentials: 'same-origin' }).catch(() => null);
-      if (!r?.ok) return;
-      const d = (await r.json()) as { selectedRepos?: string[] };
-      setRepos(d.selectedRepos ?? []);
+      if (r?.ok) {
+        const d = (await r.json()) as { selectedRepos?: string[] };
+        setRepos(d.selectedRepos ?? []);
+      }
+      // Repo-defined jobs (#195): whatever the selected repos' default branches define.
+      const j = await fetch('/api/workspaces/default/jobs', { credentials: 'same-origin' }).catch(() => null);
+      if (j?.ok) {
+        const d = (await j.json()) as { jobs?: RepoJobView[] };
+        setRepoJobs(d.jobs ?? []);
+      }
     })();
   }, []);
 
-  const run = async () => {
+  const kick = async (body: Record<string, string>) => {
     setState('starting');
     const r = await fetch('/api/jobs/dev-agent/run', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(repos.length > 1 && repo ? { repo } : {}),
+      body: JSON.stringify(body),
     }).catch(() => null);
     if (r?.status !== 202) return setState('error');
-    const body = (await r.json().catch(() => null)) as { joined?: boolean } | null;
-    setState(body?.joined ? 'joined' : 'started');
+    const resBody = (await r.json().catch(() => null)) as { joined?: boolean } | null;
+    setState(resBody?.joined ? 'joined' : 'started');
   };
+
+  const run = () => kick(repos.length > 1 && repo ? { repo } : {});
 
   return (
     <div className="shell-stage stage-jobs">
@@ -70,6 +81,25 @@ export function JobsStage() {
             {state === 'starting' ? 'Starting…' : 'Run now'}
           </button>
         </div>
+        {repoJobs.map((j) => (
+          <div key={`${j.repo}:${j.name}`} className="jobs-card">
+            <div className="jobs-card-main">
+              <b>{j.name}</b>
+              <span className="jobs-card-sub">
+                {j.repo} · {j.schedule}
+                {j.description ? ` — ${j.description}` : ''}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="jobs-run"
+              onClick={() => void kick({ repo: j.repo, job: j.name })}
+              disabled={state === 'starting'}
+            >
+              {state === 'starting' ? 'Starting…' : 'Run now'}
+            </button>
+          </div>
+        ))}
         {state === 'started' && (
           <div className="jobs-note" role="status">
             Started. It’s in your Inbox under “All sessions” — open it to watch live; it’ll ping you when it needs a decision.

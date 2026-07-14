@@ -22,6 +22,7 @@ let nextStatus = 202;
 
 let nextBody: Record<string, unknown> = { chatId: 'dev-agent-run-1', joined: false };
 let selectedRepos: string[] = ['Zabaca/cedarpad'];
+let repoJobs: unknown[] = [];
 let runBodies: unknown[] = [];
 
 beforeEach(() => {
@@ -29,11 +30,15 @@ beforeEach(() => {
   nextStatus = 202;
   nextBody = { chatId: 'dev-agent-run-1', joined: false };
   selectedRepos = ['Zabaca/cedarpad'];
+  repoJobs = [];
   runBodies = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push(`${init?.method ?? 'GET'} ${String(input)}`);
     if (String(input) === '/api/workspaces/default/github') {
       return Response.json({ connected: true, source: 'workspace', selectedRepos });
+    }
+    if (String(input) === '/api/workspaces/default/jobs') {
+      return Response.json({ jobs: repoJobs });
     }
     if (init?.body) runBodies.push(JSON.parse(init.body as string));
     return new Response(JSON.stringify(nextBody), { status: nextStatus, headers: { 'content-type': 'application/json' } });
@@ -109,5 +114,22 @@ describe('JobsStage', () => {
     await clickRun();
 
     expect(runBodies).toEqual([{ repo: 'Zabaca/ledgerbot' }]);
+  });
+
+  // #195: repo-defined jobs render as their own cards; Run names the job — the edge re-reads
+  // its body off the default branch (the card is a trigger, never a prompt channel).
+  test('discovered repo jobs render as cards and Run POSTs the job name + home repo', async () => {
+    repoJobs = [{ repo: 'Zabaca/cedarpad', name: 'deps-audit', description: 'Audit deps', schedule: 'daily' }];
+    await mount();
+
+    const cards = [...container.querySelectorAll('.jobs-card')];
+    expect(cards.length).toBe(2); // the built-in + the discovered job
+    expect(container.textContent).toContain('deps-audit');
+    expect(container.textContent).toContain('Zabaca/cedarpad');
+    expect(container.textContent).toContain('daily');
+
+    const btn = cards[1]?.querySelector('.jobs-run') as HTMLButtonElement;
+    await act(async () => btn.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    expect(runBodies).toEqual([{ repo: 'Zabaca/cedarpad', job: 'deps-audit' }]);
   });
 });

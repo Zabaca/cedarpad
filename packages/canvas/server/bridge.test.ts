@@ -402,6 +402,33 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     expect(p).toContain('If it defines none, do the reading yourself without fan-out');
   });
 
+  // ADR-0015 (#195): a repo-defined job is PR-gated content; its body becomes the run's TASK,
+  // wrapped by the platform's non-negotiable triage law. A job can steer WHAT, never the rules.
+  test('a job-carrying kick runs the job body inside the platform wrapper', async () => {
+    const res = await handleRequest(
+      new Request('http://localhost/api/dev-agent/run', {
+        method: 'POST',
+        headers: {
+          'x-dev-agent-git-token': 'ghs_run',
+          'x-dev-agent-repo': 'Zabaca/cedarpad',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ job: { name: 'deps-audit', prompt: 'Audit the dependencies. Report stale ones.' } }),
+      }),
+    );
+    const body = (await res.json()) as { chatId: string };
+    kicked.push(body.chatId);
+
+    const p = dispatched[0]!.message;
+    // The job body LEADS (its first sentence titles the Conversation row)…
+    expect(p.startsWith('Audit the dependencies.')).toBe(true);
+    // …and the platform wrapper is still around it — not opt-out-able.
+    expect(p).toContain('Executing zero is a fully successful run');
+    expect(p).toContain('end_turn');
+    // The default explore task is NOT included when a job supplies the task.
+    expect(p).not.toContain('Architecture explore:');
+  });
+
   test('join semantics: a kick during a running run returns THAT run, dispatching nothing new', async () => {
     const first = await kick();
     aborters.set(first.body.chatId, new AbortController()); // the spy doesn't run a real turn — simulate in-flight
