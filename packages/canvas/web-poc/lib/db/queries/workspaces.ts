@@ -83,6 +83,34 @@ export async function getWorkspace(
   return row ? toRecord(row) : null;
 }
 
+/** Persist the workspace's GitHub App installation (repository connection, ADR-0015).
+ *  Connecting resets the repo selection — the new grant defines what's selectable. */
+export async function setWorkspaceGithubInstallation(
+  db: Database,
+  input: { workspaceId: string; installationId: string },
+): Promise<void> {
+  await db
+    .update(workspaces)
+    .set({ githubInstallationId: input.installationId, selectedRepos: [] })
+    .where(eq(workspaces.id, input.workspaceId));
+}
+
+/** Replace the workspace's selected-repo set (validated against the grant by the caller). */
+export async function setWorkspaceSelectedRepos(
+  db: Database,
+  input: { workspaceId: string; repos: string[] },
+): Promise<void> {
+  await db.update(workspaces).set({ selectedRepos: input.repos }).where(eq(workspaces.id, input.workspaceId));
+}
+
+/** Disconnect: clear the installation and the selection. */
+export async function clearWorkspaceGithubConnection(db: Database, workspaceId: string): Promise<void> {
+  await db
+    .update(workspaces)
+    .set({ githubInstallationId: null, selectedRepos: null })
+    .where(eq(workspaces.id, workspaceId));
+}
+
 /** One roster row: the owner (from the workspace row) or an accepted member. */
 export type WorkspaceMemberView = { userId: string; name: string; email: string; role: "owner" | "member" };
 

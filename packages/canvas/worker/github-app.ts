@@ -64,7 +64,9 @@ export function buildAppJwt(cfg: GithubAppConfig, nowSec: number): string {
 export async function mintInstallationToken(
   cfg: GithubAppConfig,
   opts: {
-    repositories: string[];
+    /** Bare repo NAMES to scope to; omit for a token covering every granted repo
+     *  (needed to LIST the grant itself, #193). */
+    repositories?: string[];
     permissions: Record<string, string>;
     nowSec: number;
     fetchImpl?: typeof fetch;
@@ -81,7 +83,10 @@ export async function mintInstallationToken(
       'User-Agent': 'cedarpad-dev-agent',
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ repositories: opts.repositories, permissions: opts.permissions }),
+    body: JSON.stringify({
+      ...(opts.repositories ? { repositories: opts.repositories } : {}),
+      permissions: opts.permissions,
+    }),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
