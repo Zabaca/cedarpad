@@ -3,7 +3,7 @@ import { schema } from "../lib/db/index.js";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { apiKey } from "@better-auth/api-key";
-import { mcp, organization } from "better-auth/plugins";
+import { admin, mcp, organization } from "better-auth/plugins";
 import type { Bindings } from "./context.js";
 
 /**
@@ -38,6 +38,11 @@ export function createAuth(db: Database, env: Bindings) {
     // sets AUTH_DISABLE_SIGNUP="true" in prod, leaves it unset in dev.
     emailAndPassword: { enabled: true, disableSignUp: env.AUTH_DISABLE_SIGNUP === "true" },
     plugins: [
+      // ADR-0014: admin lives inside the app, gated on `user.role === "admin"`.
+      // Supplies the operator verbs (create-user = the manual invite, list-users,
+      // ban) without a second auth surface. Roles are assigned by data update,
+      // never by any signup path.
+      admin(),
       organization({
         schema: {
           organization: { modelName: "workspace" },

@@ -63,6 +63,15 @@
   "durable_objects": {
     "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }]
   },
+  // The www worker's waitlist D1, ALSO bound here so /admin gets a waitlist view
+  // (ADR-0014). Read-only from this worker; www owns the schema + migrations.
+  "d1_databases": [
+    {
+      "binding": "WAITLIST",
+      "database_name": "cedarpad-waitlist",
+      "database_id": "eb4a65d7-6e26-4d98-b893-3b52f901726c"
+    }
+  ],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }],
   // Preview environment (zbc: `apply preview canvas` -> `wrangler deploy --env
   // preview`). A SEPARATE worker `agent-canvas-preview` in the same account, on a
@@ -104,6 +113,14 @@
       "durable_objects": {
         "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }]
       },
+      // Preview shares production's waitlist D1, matching Turso/R2 sharing.
+      "d1_databases": [
+        {
+          "binding": "WAITLIST",
+          "database_name": "cedarpad-waitlist",
+          "database_id": "eb4a65d7-6e26-4d98-b893-3b52f901726c"
+        }
+      ],
       "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }]
     }
   }

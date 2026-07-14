@@ -7,6 +7,7 @@ import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
 import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo } from './github-connection.ts';
+import { handleAdminApi } from './admin.ts';
 import { handleMembersApi } from './members.ts';
 import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
@@ -89,6 +90,9 @@ export interface Env {
   // silently never appear in the Inbox. Revisit when #98 (multi-user) lands — a single
   // static id can't represent "whichever of N users is calling."
   CANVAS_USER?: string;
+  // The www worker's waitlist D1, also bound here for the admin view (ADR-0014).
+  // Unset in local dev ⇒ /api/admin/waitlist answers 503.
+  WAITLIST?: D1Database;
 }
 
 // Notebook's Hono API (web-poc's `buildApp`), mounted AT THE EDGE (ADR-0007, #56). No
@@ -276,6 +280,11 @@ export default {
         membersMatch[1],
         membersMatch[2],
       );
+    }
+
+    // Admin surface (ADR-0014): waitlist view, role=admin only. Edge-served.
+    if (url.pathname === '/api/admin/waitlist') {
+      return handleAdminApi(request, createDbForWorker(env as unknown as Bindings), user, env.WAITLIST);
     }
 
     // Repository connection (#193, ADR-0015): status / connect redirect / repo selection /

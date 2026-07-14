@@ -33,6 +33,7 @@ const realFetch = globalThis.fetch;
 let calls: string[] = [];
 let ownerView = true;
 let githubStatus: unknown = GITHUB_CONNECTED;
+let adminWaitlist: Array<{ email: string; createdAt: string }> | null = null; // null = not admin (403)
 
 function stubEdge() {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -46,6 +47,10 @@ function stubEdge() {
     if (url.startsWith('/api/workspaces/ws_abc/members/') && method === 'DELETE') return new Response(null, { status: 204 });
     if (url.startsWith('/api/workspaces/ws_abc/invitations/') && method === 'DELETE') return new Response(null, { status: 204 });
     if (url === '/api/workspaces/ws_abc/github' && method === 'GET') return Response.json(githubStatus as never);
+    if (url === '/api/admin/waitlist' && method === 'GET') {
+      return adminWaitlist ? Response.json({ entries: adminWaitlist }) : Response.json({ error: 'admin only' }, { status: 403 });
+    }
+    if (url === '/api/auth/admin/create-user' && method === 'POST') return Response.json({ user: { id: 'u_new' } });
     if (url === '/api/workspaces/ws_abc/github/repos' && method === 'PUT') {
       return Response.json({ selectedRepos: JSON.parse((init?.body as string) ?? '{}').selected });
     }
@@ -60,6 +65,7 @@ beforeEach(() => {
   calls = [];
   ownerView = true;
   githubStatus = GITHUB_CONNECTED;
+  adminWaitlist = null;
   stubEdge();
   host = document.createElement('div');
   document.body.appendChild(host);
@@ -138,6 +144,43 @@ describe('SettingsStage — members (#192)', () => {
     const link = host.querySelector('.settings-connect') as HTMLAnchorElement | null;
     expect(link).not.toBeNull();
     expect(link?.getAttribute('href')).toBe('/api/workspaces/ws_abc/github/connect');
+  });
+
+  test('a non-admin sees no Admin section at all (the 403 probe hides it)', async () => {
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    expect(host.textContent).not.toContain('Waitlist');
+  });
+
+  test('an admin sees the waitlist entries (ADR-0014: the waitlist tab)', async () => {
+    adminWaitlist = [
+      { email: 'second@x.com', createdAt: '2026-07-15 09:00:00' },
+      { email: 'first@x.com', createdAt: '2026-07-14 19:00:00' },
+    ];
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    expect(host.textContent).toContain('Waitlist');
+    const rows = [...host.querySelectorAll('.settings-waitlist-row')].map((r) => r.textContent);
+    expect(rows[0]).toContain('second@x.com');
+    expect(rows[1]).toContain('first@x.com');
+  });
+
+  test('the admin creates a user (manual invite): posts email+name+password to the auth admin endpoint', async () => {
+    adminWaitlist = [{ email: 'invitee@x.com', createdAt: '2026-07-14 19:00:00' }];
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    const prompts = ['invitee@x.com', 'Invitee'];
+    const promptReal = window.prompt;
+    const alertReal = window.alert;
+    window.prompt = () => prompts.shift() ?? null;
+    window.alert = () => {};
+    await act(async () => {
+      (host.querySelector('.settings-create-user') as HTMLButtonElement).click();
+    });
+    await flush();
+    window.prompt = promptReal;
+    window.alert = alertReal;
+    expect(calls).toContain('POST /api/auth/admin/create-user');
   });
 
   test('removing a member DELETEs and reloads the roster', async () => {

@@ -17,22 +17,27 @@ type GithubStatus = {
   grantedRepos?: GrantedRepo[];
   canConnect?: boolean;
 };
+type WaitlistEntry = { email: string; createdAt: string };
 
 export function SettingsStage({ workspaceId }: { workspaceId: string }) {
   const [members, setMembers] = useState<MemberView[]>([]);
   const [invitations, setInvitations] = useState<InvitationView[] | null>(null); // null = not owner
   const [github, setGithub] = useState<GithubStatus | null>(null);
+  const [waitlist, setWaitlist] = useState<WaitlistEntry[] | null>(null); // null = not admin
   const base = `/api/workspaces/${encodeURIComponent(workspaceId)}`;
 
   const reload = useCallback(async () => {
-    const [m, i, g] = await Promise.all([
+    const [m, i, g, w] = await Promise.all([
       fetch(`${base}/members`, { credentials: 'same-origin' }).catch(() => null),
       fetch(`${base}/invitations`, { credentials: 'same-origin' }).catch(() => null),
       fetch(`${base}/github`, { credentials: 'same-origin' }).catch(() => null),
+      // The admin probe (ADR-0014): 200 only for role=admin; anything else hides the section.
+      fetch('/api/admin/waitlist', { credentials: 'same-origin' }).catch(() => null),
     ]);
     if (m?.ok) setMembers(((await m.json()) as { members: MemberView[] }).members);
     setInvitations(i?.ok ? ((await i.json()) as { invitations: InvitationView[] }).invitations : null);
     if (g?.ok) setGithub((await g.json()) as GithubStatus);
+    setWaitlist(w?.ok ? ((await w.json()) as { entries: WaitlistEntry[] }).entries : null);
   }, [base]);
 
   useEffect(() => {
@@ -88,6 +93,28 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
   const disconnect = async () => {
     if (!window.confirm('Disconnect GitHub from this workspace? The dev-agent loses repo access until reconnected.')) return;
     await fetch(`${base}/github`, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
+    void reload();
+  };
+
+  // The manual invite (ADR-0014): admin creates the user with a temp password and
+  // sends it over their own channel — no email infrastructure yet (Resend later).
+  const createUser = async () => {
+    const email = window.prompt('Create a user — email (from the waitlist, usually):');
+    if (!email) return;
+    const name = window.prompt('Display name:', email.split('@')[0] ?? '') ?? '';
+    if (!name) return;
+    const password = crypto.randomUUID();
+    const r = await fetch('/api/auth/admin/create-user', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, name, password }),
+    }).catch(() => null);
+    if (!r?.ok) {
+      window.alert('Could not create the user.');
+      return;
+    }
+    window.prompt('User created. Temporary password (send it over your own channel):', password);
     void reload();
   };
 
@@ -242,6 +269,33 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
             </>
           )}
         </section>
+
+        {waitlist !== null && (
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <h3>Waitlist</h3>
+              <button type="button" className="settings-create-user" onClick={() => void createUser()}>
+                Create user…
+              </button>
+            </div>
+            {waitlist.length === 0 ? (
+              <p className="settings-row-sub">No signups yet.</p>
+            ) : (
+              <ul className="settings-list">
+                {waitlist.map((e) => (
+                  <li key={e.email} className="settings-row settings-waitlist-row">
+                    <span className="settings-row-name">{e.email}</span>
+                    <span className="settings-row-sub">{e.createdAt} UTC</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="settings-row-sub">
+              Signups from cedarpad.com. Invites are manual: create the user with the generated temporary password and
+              send it over your own channel.
+            </p>
+          </section>
+        )}
       </div>
     </div>
   );
