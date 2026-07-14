@@ -37,6 +37,13 @@ describe('projectDirForCwd', () => {
     expect(projectDirForCwd('/workspace/app')).toBe('-workspace-app');
     expect(projectDirForCwd('/home/u/.claude/x')).toBe('-home-u--claude-x');
   });
+
+  test('T2b every non-alphanumeric maps to - (the SDK sanitizes _ too — the per-repo worktree root Zabaca__cedarpad)', () => {
+    // Verified empirically against the CLI: cwd `.../under_score_test` → project dir `...-under-score-test`.
+    expect(projectDirForCwd('/app/x/.dev-agent/Zabaca__cedarpad/worktrees/run-1')).toBe(
+      '-app-x--dev-agent-Zabaca--cedarpad-worktrees-run-1',
+    );
+  });
 });
 
 describe('backup → read round-trip', () => {
