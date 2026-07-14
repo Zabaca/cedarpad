@@ -217,7 +217,8 @@ describe('the workspace popover is backed by /api/workspaces', () => {
 
     expect(calls).toContain('GET /api/workspaces');
     const rows = [...container.querySelectorAll('.lp-ws-row')];
-    expect(rows.map((r) => r.querySelector('.lp-ws-name')?.textContent)).toEqual(['Default', 'Zabaca']);
+    // The trailing row is the always-present settings link (#192).
+    expect(rows.map((r) => r.querySelector('.lp-ws-name')?.textContent)).toEqual(['Default', 'Zabaca', 'Workspace settings…']);
     // /api/canvases reported ws_abc as the active scope.
     expect(rows[1]?.className).toContain('active');
   });

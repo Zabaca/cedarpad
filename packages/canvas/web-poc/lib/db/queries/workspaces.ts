@@ -1,6 +1,6 @@
 import { and, asc, eq, exists, or } from "drizzle-orm";
 import type { Database } from "../client.js";
-import { type WorkspaceRow, workspaceMembers, workspaces } from "../schema.js";
+import { type WorkspaceRow, user, workspaceMembers, workspaces } from "../schema.js";
 
 /**
  * Workspace registry (ADR-0007). The single source of truth for which
@@ -81,6 +81,42 @@ export async function getWorkspace(
     .where(and(eq(workspaces.id, workspaceId), or(eq(workspaces.ownerUserId, userId), isMember(db, userId))))
     .limit(1);
   return row ? toRecord(row) : null;
+}
+
+/** One roster row: the owner (from the workspace row) or an accepted member. */
+export type WorkspaceMemberView = { userId: string; name: string; email: string; role: "owner" | "member" };
+
+/** The workspace roster, owner first then members by join date. No access check —
+ *  callers gate with getWorkspace first. */
+export async function listWorkspaceMembers(db: Database, workspaceId: string): Promise<WorkspaceMemberView[]> {
+  const [ownerRow] = await db
+    .select({ userId: user.id, name: user.name, email: user.email })
+    .from(workspaces)
+    .innerJoin(user, eq(user.id, workspaces.ownerUserId))
+    .where(eq(workspaces.id, workspaceId))
+    .limit(1);
+  const memberRows = await db
+    .select({ userId: user.id, name: user.name, email: user.email })
+    .from(workspaceMembers)
+    .innerJoin(user, eq(user.id, workspaceMembers.userId))
+    .where(eq(workspaceMembers.workspaceId, workspaceId))
+    .orderBy(asc(workspaceMembers.createdAt));
+  return [
+    ...(ownerRow ? [{ ...ownerRow, role: "owner" as const }] : []),
+    ...memberRows.map((m) => ({ ...m, role: "member" as const })),
+  ];
+}
+
+/** Remove a member row. Returns false when no such membership existed. */
+export async function removeWorkspaceMember(
+  db: Database,
+  input: { workspaceId: string; userId: string },
+): Promise<boolean> {
+  const rows = await db
+    .delete(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)))
+    .returning({ id: workspaceMembers.id });
+  return rows.length > 0;
 }
 
 /** Add (idempotently) a non-owner member. Role vocabulary: owner (on the workspace row) /

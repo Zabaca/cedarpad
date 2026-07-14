@@ -20,6 +20,11 @@ describe('stage ↔ URL', () => {
     expect(urlForStage('notebook')).toBe('/?stage=notebook');
   });
 
+  test('settings is a stage (#192) and round-trips', () => {
+    expect(STAGES).toContain('settings');
+    expect(stageFromUrl('?stage=settings')).toBe('settings');
+  });
+
   test('an unknown stage falls back to canvas rather than rendering nothing', () => {
     expect(stageFromUrl('?stage=wat')).toBe('canvas');
   });

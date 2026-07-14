@@ -8,6 +8,7 @@ import { clampWidth, MAX_PANE_WIDTH, MIN_PANE_WIDTH } from './inbox/inbox-panes'
 import { canvasFromUrl, urlWithCanvas } from './canvas-url';
 import { InboxStage } from './inbox/Inbox';
 import { JobsStage } from './jobs/Jobs';
+import { SettingsStage } from './settings/Settings';
 import { type Stage, stageFromUrl } from './stage';
 import { createStageMemory } from './stage-memory';
 
@@ -63,6 +64,17 @@ function IconInbox() {
       strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M3 13h4l2 3h6l2-3h4" />
       <path d="M5 5h14l2 8v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4z" />
+    </svg>
+  );
+}
+
+// A gear glyph for workspace Settings (#192).
+function IconSettings() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M18.5 5.5l-2.1 2.1M7.6 16.4l-2.1 2.1" />
     </svg>
   );
 }
@@ -143,6 +155,7 @@ export function Shell() {
       )}
       {stage === 'inbox' && <InboxStage />}
       {stage === 'jobs' && <JobsStage />}
+      {stage === 'settings' && <SettingsStage workspaceId={registry.workspaceId} />}
     </div>
   );
 }
@@ -218,6 +231,7 @@ function Rail({
       {railBtn('canvas', 'Canvases', <IconCanvases />)}
       {railBtn('notebook', 'Notebook', <IconNotebook />)}
       {railBtn('jobs', 'Jobs', <IconJobs />)}
+      {railBtn('settings', 'Settings', <IconSettings />)}
       <div className="lp-rail-bottom">
         <button
           type="button"
@@ -234,7 +248,15 @@ function Rail({
         </button>
       </div>
 
-      {wsOpen && <WorkspacePopover activeWorkspace={activeWorkspace} />}
+      {wsOpen && (
+        <WorkspacePopover
+          activeWorkspace={activeWorkspace}
+          onOpenSettings={() => {
+            setWsOpen(false);
+            onSelectStage('settings');
+          }}
+        />
+      )}
       {meOpen && (
         <div className="lp-me-popover" role="menu">
           <button type="button" className="lp-signout" role="menuitem" onClick={() => void signOut()}>
@@ -250,7 +272,7 @@ function Rail({
 // (`GET /api/workspaces`; `default` leads when accessible). Opening one navigates to
 // /w/:id — the Worker pins the cs_workspace cookie and bounces back to `/`. Fetched
 // lazily: the closed rail costs nothing.
-function WorkspacePopover({ activeWorkspace }: { activeWorkspace: string }) {
+function WorkspacePopover({ activeWorkspace, onOpenSettings }: { activeWorkspace: string; onOpenSettings: () => void }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
   // #179 owner-only invite. The server decides "owner": the pending-invitations GET is
   // 200 for the owner only (403 member / 404 stranger) — non-200 hides the affordance.
@@ -327,6 +349,10 @@ function WorkspacePopover({ activeWorkspace }: { activeWorkspace: string }) {
           <span className="lp-ws-name">Invite to workspace…</span>
         </div>
       )}
+      <div className="lp-ws-row lp-ws-settings" role="menuitem" onClick={onOpenSettings}>
+        <span className="lp-ws-glyph">⚙</span>
+        <span className="lp-ws-name">Workspace settings…</span>
+      </div>
     </div>
   );
 }
