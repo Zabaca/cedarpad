@@ -1,0 +1,241 @@
+---
+import Logo from '../components/Logo.astro'
+import PadMock from '../components/PadMock.astro'
+import WaitlistForm from '../components/WaitlistForm.astro'
+import Layout from '../layouts/Layout.astro'
+---
+
+<Layout>
+  <div class="room">
+    <div class="wrap">
+      <nav aria-label="Main">
+        <Logo />
+        <div class="navlinks">
+          <a href="#surface">Canvas</a>
+          <a href="#repo">Repos</a>
+          <a href="#access">Access</a>
+        </div>
+      </nav>
+
+      <main id="main">
+        <div class="hero">
+          <div>
+            <p class="label">Invitation only</p>
+            <h1>The pad you and your agent both draw on.</h1>
+            <p class="sub">
+              An infinite canvas with an agent on the same surface. It reads what you sketched,
+              arranges shapes, and writes live React components beside the conversation.
+            </p>
+            <WaitlistForm id="hero" />
+          </div>
+          <PadMock />
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <section id="surface">
+      <p class="label">The surface</p>
+      <h2>Same canvas. Same state. No handoff.</h2>
+      <p class="lede">
+        You draw a box and a stroke. The agent reads them — the actual shapes, not a screenshot —
+        and answers on the board. Every edit streams to your screen as it happens, because there is
+        one store and both of you write to it.
+      </p>
+      <div class="cols">
+        <div class="col">
+          <h3>Draws</h3>
+          <p>Creates, moves, aligns, and connects shapes on the surface you're already working on.</p>
+        </div>
+        <div class="col">
+          <h3>Reads</h3>
+          <p>Sees the whole board, follows the arrows out from a chat card, opens the screenshot you pasted.</p>
+        </div>
+        <div class="col">
+          <h3>Builds</h3>
+          <p>Authors React components against a real library, places live instances, hot-reloads on edit.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="repo">
+      <p class="label">The repo</p>
+      <h2>It doesn't suggest the change. It opens the PR.</h2>
+      <p class="lede">
+        Attach your GitHub repos to a workspace. An agent works them the way you would: its own
+        worktree off <code>main</code>, a branch per conversation, a commit, a pull request you
+        review on GitHub like any other. Its runs land in the same inbox, stream live, and can be
+        interrupted mid-thought.
+      </p>
+      <div class="strip">
+        <span class="chip">worktree ← origin/main</span>
+        <span class="chip">branch: chat/1f4c</span>
+        <span class="chip">OPEN_PR <span class="t">→ #212</span></span>
+        <span class="chip">END_TURN <span class="t">needs_human</span></span>
+      </div>
+    </section>
+
+    <section id="access">
+      <p class="label">Access</p>
+      <h2>Seats open in batches.</h2>
+      <p class="lede">
+        A workspace is a real isolated runtime with an unsandboxed agent inside it — so we hand
+        them out deliberately, and we sit with the people we hand them to. Leave an email. We'll
+        tell you when a seat is yours.
+      </p>
+      <div class="cta-form">
+        <WaitlistForm id="access" />
+      </div>
+    </section>
+
+    <footer>
+      <div>cedarpad — a spatial workspace where you and an agent share the same pad.</div>
+      <div>© 2026 Zabaca</div>
+    </footer>
+  </div>
+</Layout>
+
+<style>
+  /* The one warm work-light: a soft pool over the pad — a light source in the
+     room, not a glow on an element. */
+  .room {
+    position: relative;
+    overflow: hidden;
+  }
+  .room::before {
+    content: '';
+    position: absolute;
+    top: -30%;
+    left: 50%;
+    width: 120vw;
+    height: 90vh;
+    transform: translateX(-50%);
+    background: radial-gradient(ellipse at center, oklch(0.28 0.014 60) 0%, transparent 65%);
+    pointer-events: none;
+  }
+  .room .wrap {
+    position: relative;
+  }
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .navlinks {
+    display: flex;
+    gap: 22px;
+    font-size: 0.8125rem;
+  }
+  .navlinks a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .navlinks a:hover {
+    color: var(--text);
+  }
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 56px;
+    align-items: center;
+    padding: 76px 0 84px;
+  }
+  h1 {
+    font-size: clamp(2rem, 4vw, 3.1rem);
+    font-weight: 600;
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    margin: 14px 0 18px;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1.6;
+    max-width: 46ch;
+    margin: 0 0 28px;
+  }
+  section {
+    padding: 72px 0;
+    border-top: 1px solid var(--line);
+  }
+  h2 {
+    font-size: clamp(1.5rem, 2.4vw, 2rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 12px 0 14px;
+  }
+  .lede {
+    color: var(--muted);
+    max-width: 62ch;
+    font-size: 0.95rem;
+    margin: 0;
+  }
+  .cols {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 28px;
+    margin-top: 40px;
+  }
+  .col {
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+  }
+  .col h3 {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    margin: 0 0 7px;
+    letter-spacing: -0.005em;
+  }
+  .col p {
+    color: var(--muted);
+    margin: 0;
+  }
+  .strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 26px;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.06em;
+    background: var(--raised);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 3px 7px;
+  }
+  .chip .t {
+    color: var(--faint);
+  }
+  .cta-form {
+    margin-top: 24px;
+  }
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 32px 0 48px;
+    color: var(--faint);
+    font-size: 0.8125rem;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  @media (max-width: 860px) {
+    .hero {
+      grid-template-columns: 1fr;
+      gap: 40px;
+      padding: 48px 0 56px;
+    }
+    .cols {
+      grid-template-columns: 1fr;
+      gap: 22px;
+    }
+    .navlinks {
+      display: none;
+    }
+  }
+</style>

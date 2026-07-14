@@ -1,0 +1,165 @@
+---
+// The hero visual: a static mock of the pad — a chat card mid-turn (tool chips,
+// one live), the human's stroke, and the component the agent placed. Pure
+// CSS/inline-SVG so there is nothing to load and nothing to shift.
+---
+
+<div
+  class="pad"
+  role="img"
+  aria-label="A canvas with a chat card streaming tool calls and a live component the agent built"
+>
+  <div class="card">
+    <div class="card-h"><span class="dot"></span> agent · working</div>
+    <div class="card-b">
+      Read the board. Building the usage panel you sketched.
+      <div class="chips">
+        <span class="chip">READ_CANVAS <span class="t">0.2s</span></span>
+        <span class="chip">CREATE_SHAPES <span class="t">0.4s</span></span>
+        <span class="chip live">WRITE_COMPONENT</span>
+      </div>
+    </div>
+  </div>
+  <div class="hand">↳ your stroke</div>
+  <div class="comp">
+    <div class="t">UsagePanel.tsx · live</div>
+    <div class="bars">
+      <i style="height: 40%"></i><i style="height: 72%"></i><i style="height: 52%"></i><i
+        style="height: 90%"></i><i style="height: 61%"></i><i style="height: 34%"></i>
+    </div>
+  </div>
+</div>
+
+<style>
+  .pad {
+    position: relative;
+    background: var(--surface);
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-lift);
+    padding: 16px;
+    min-height: 380px;
+    background-image: radial-gradient(var(--line) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  .card {
+    background: var(--raised);
+    border-radius: 14px;
+    box-shadow: var(--shadow-float);
+    width: 232px;
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .card-h {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--accent);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .dot {
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+  }
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+  .card-b {
+    padding: 10px;
+    font-size: 0.8125rem;
+    color: var(--text);
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 9px;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.06em;
+    background: var(--surface);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 3px 7px;
+  }
+  .chip.live {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .chip .t {
+    color: var(--faint);
+  }
+  .comp {
+    position: absolute;
+    right: 18px;
+    bottom: 18px;
+    width: 226px;
+    background: var(--raised);
+    border-radius: 14px;
+    box-shadow: var(--shadow-float);
+    padding: 12px;
+  }
+  .comp .t {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-bottom: 8px;
+    font-family: var(--mono);
+  }
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 5px;
+    height: 54px;
+  }
+  .bars i {
+    flex: 1;
+    background: var(--line-strong);
+    border-radius: 3px 3px 0 0;
+  }
+  /* A placed component renders in full colour — the chrome stays neutral so the
+     pad's own colour reads true (DESIGN.md: The True-Color Rule). */
+  .bars i:nth-child(2) {
+    background: oklch(0.62 0.13 220);
+  }
+  .bars i:nth-child(4) {
+    background: oklch(0.66 0.13 150);
+  }
+  .hand {
+    position: absolute;
+    left: 26px;
+    bottom: 40px;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    color: var(--faint);
+  }
+  @media (max-width: 460px) {
+    .comp {
+      position: static;
+      width: auto;
+      margin-top: 14px;
+    }
+    .pad {
+      min-height: 0;
+    }
+    .hand {
+      display: none;
+    }
+  }
+</style>

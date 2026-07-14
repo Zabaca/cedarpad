@@ -1,0 +1,194 @@
+---
+// The waitlist form — the page's one dynamic surface. A native form that works
+// with no JS at all (POST → 303 → /waitlist/<state>); the inline script upgrades
+// it to fetch + inline states: idle → submitting → (joined | invalid | error |
+// offline). Success REPLACES the form; failure preserves the typed email.
+interface Props {
+  id: string
+}
+const { id } = Astro.props
+---
+
+<div class="waitlist" data-waitlist>
+  <form method="POST" action="/api/waitlist" novalidate>
+    <label class="sr-only" for={`${id}-email`}>Email</label>
+    <input
+      id={`${id}-email`}
+      name="email"
+      type="email"
+      required
+      maxlength="254"
+      placeholder="you@company.com"
+      autocomplete="email"
+      aria-describedby={`${id}-hint`}
+    />
+    <button type="submit">Request an invite</button>
+  </form>
+  <p class="hint" id={`${id}-hint`}>Invite-only. One email when a seat opens.</p>
+  <p class="msg" role="alert" hidden></p>
+  <div class="done" role="status" tabindex="-1" hidden>
+    <p class="done-title">You're on the list.</p>
+    <p class="done-sub">We'll email you when a seat opens. Nothing else.</p>
+  </div>
+</div>
+
+<style>
+  form {
+    display: flex;
+    gap: 8px;
+    max-width: 420px;
+  }
+  input {
+    flex: 1;
+    min-width: 0;
+    background: var(--void);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font: inherit;
+    text-overflow: ellipsis;
+  }
+  input::placeholder {
+    color: var(--faint);
+  }
+  input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  input[aria-invalid='true'] {
+    border-color: var(--danger);
+  }
+  button {
+    background: var(--accent);
+    color: var(--on-accent);
+    border: 0;
+    border-radius: 10px;
+    padding: 10px 16px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover {
+    background: var(--accent-hi);
+  }
+  button:disabled {
+    background: var(--accent-quiet);
+    cursor: default;
+  }
+  .hint {
+    color: var(--faint);
+    font-size: 0.78rem;
+    margin: 10px 0 0;
+  }
+  .msg {
+    color: var(--danger);
+    font-size: 0.8125rem;
+    margin: 10px 0 0;
+    overflow-wrap: break-word;
+  }
+  .done {
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+    max-width: 420px;
+  }
+  .done-title {
+    margin: 0 0 4px;
+    font-weight: 600;
+    color: var(--success);
+  }
+  .done-sub {
+    margin: 0;
+    color: var(--muted);
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  @media (max-width: 860px) {
+    form {
+      flex-direction: column;
+      max-width: none;
+    }
+    button {
+      width: 100%;
+    }
+  }
+</style>
+
+<script>
+  import { WaitlistRequest, WaitlistResponse } from '../lib/waitlist'
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-waitlist]')) {
+    const form = root.querySelector('form')
+    const input = root.querySelector('input')
+    const button = root.querySelector('button')
+    const msg = root.querySelector<HTMLElement>('.msg')
+    const hint = root.querySelector<HTMLElement>('.hint')
+    const done = root.querySelector<HTMLElement>('.done')
+    if (!form || !input || !button || !msg || !hint || !done) continue
+
+    const fail = (text: string) => {
+      // Failure preserves the form and the typed email — only the message changes.
+      msg.textContent = text
+      msg.hidden = false
+      input.setAttribute('aria-invalid', 'true')
+      input.disabled = false
+      button.disabled = false
+      button.textContent = 'Request an invite'
+      input.focus()
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      msg.hidden = true
+      input.removeAttribute('aria-invalid')
+
+      const parsed = WaitlistRequest.safeParse({ email: input.value })
+      if (!parsed.success) {
+        fail("That address doesn't look right. Check it and send again.")
+        return
+      }
+
+      input.disabled = true
+      button.disabled = true
+      button.textContent = 'Joining…'
+      form.setAttribute('aria-busy', 'true')
+
+      let outcome: 'joined' | 'invalid' | 'error' | 'offline'
+      try {
+        const res = await fetch(form.action, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(parsed.data),
+        })
+        const body = WaitlistResponse.safeParse(await res.json())
+        outcome = body.success ? body.data.status : 'error'
+      } catch {
+        outcome = navigator.onLine === false ? 'offline' : 'error'
+      }
+      form.removeAttribute('aria-busy')
+
+      if (outcome === 'joined') {
+        // Success replaces the form — it's done; don't leave a dead input around.
+        // Move focus with it, or it silently drops to <body>.
+        form.hidden = true
+        hint.hidden = true
+        done.hidden = false
+        done.focus()
+      } else if (outcome === 'invalid') {
+        fail("That address doesn't look right. Check it and send again.")
+      } else if (outcome === 'offline') {
+        fail("You're offline. We'll hold the form — send it when you're back.")
+      } else {
+        fail("Didn't go through. Our end, not yours — try again in a moment.")
+      }
+    })
+  }
+</script>

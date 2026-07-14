@@ -1,0 +1,74 @@
+---
+// Prerendered result pages for the no-JS form path: POST /api/waitlist with a
+// form body 303s here. JS-enabled visitors render these states inline instead
+// and never see this page.
+import Logo from '../../components/Logo.astro'
+import Layout from '../../layouts/Layout.astro'
+
+export function getStaticPaths() {
+  return [{ params: { state: 'ok' } }, { params: { state: 'invalid' } }, { params: { state: 'error' } }]
+}
+
+const { state } = Astro.params
+
+const content = {
+  ok: {
+    title: "You're on the list.",
+    body: "We'll email you when a seat opens. Nothing else.",
+    ok: true,
+  },
+  invalid: {
+    title: "That address doesn't look right.",
+    body: 'Go back, check it, and send again.',
+    ok: false,
+  },
+  error: {
+    title: "Didn't go through.",
+    body: 'Our end, not yours. Go back and try again in a moment.',
+    ok: false,
+  },
+}[state as 'ok' | 'invalid' | 'error']
+---
+
+<Layout title={`cedarpad — ${content.title}`} noindex>
+  <div class="wrap">
+    <nav><a href="/" class="home"><Logo /></a></nav>
+    <main id="main">
+      <p class="label">Waitlist</p>
+      <h1 class:list={{ ok: content.ok }}>{content.title}</h1>
+      <p class="body">{content.body}</p>
+      <a class="back" href="/">← Back to cedarpad.com</a>
+    </main>
+  </div>
+</Layout>
+
+<style>
+  nav {
+    padding: 20px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .home {
+    text-decoration: none;
+  }
+  main {
+    padding: 96px 0;
+    max-width: 560px;
+  }
+  h1 {
+    font-size: clamp(1.6rem, 3vw, 2.2rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 12px 0 10px;
+  }
+  h1.ok {
+    color: var(--success);
+  }
+  .body {
+    color: var(--muted);
+    margin: 0 0 28px;
+  }
+  .back {
+    color: var(--text);
+    font-size: 0.8125rem;
+  }
+</style>
