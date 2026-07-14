@@ -131,6 +131,15 @@ describe('SettingsStage — members (#192)', () => {
     expect(link?.getAttribute('href')).toBe('/api/workspaces/ws_abc/github/connect');
   });
 
+  test('the env-fallback (transitional) state still offers Connect GitHub — the way OUT of it', async () => {
+    githubStatus = { connected: true, source: 'env', selectedRepos: ['Zabaca/cedarpad'], canConnect: true };
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    const link = host.querySelector('.settings-connect') as HTMLAnchorElement | null;
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute('href')).toBe('/api/workspaces/ws_abc/github/connect');
+  });
+
   test('removing a member DELETEs and reloads the roster', async () => {
     await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
     await flush();
