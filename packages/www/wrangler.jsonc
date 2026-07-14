@@ -28,7 +28,7 @@
     {
       "binding": "DB",
       "database_name": "cedarpad-waitlist",
-      "database_id": "TODO-paste-uuid-from-wrangler-d1-create",
+      "database_id": "eb4a65d7-6e26-4d98-b893-3b52f901726c",
       "migrations_dir": "migrations"
     }
   ],
@@ -54,7 +54,7 @@
         {
           "binding": "DB",
           "database_name": "cedarpad-waitlist",
-          "database_id": "TODO-paste-uuid-from-wrangler-d1-create",
+          "database_id": "eb4a65d7-6e26-4d98-b893-3b52f901726c",
           "migrations_dir": "migrations"
         }
       ]
