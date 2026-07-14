@@ -297,6 +297,17 @@ A small mono UPPERCASE chip naming a tool the agent invoked, in Surface Raised /
 Text Muted, 6px radius, with an optional Text-Faint elapsed time. This is the
 instrument's heartbeat made visible; keep it small and quiet.
 
+### Logo (decided 2026-07-14, from the CedarpadLogos/CedarpadLogoTest studies)
+- **Mark: the pad + spark** — a rounded-square pad outline (48×48 viewBox:
+  `rect x=5 y=5 w=38 h=38 rx=11`, stroke-width 4, Text Muted) with a single Cedar
+  Ember dot in the upper-right (`circle cx=30.5 cy=17.5 r=5.5`). The pad is the
+  chrome's voice (quiet, neutral); the ember dot is the one live spark.
+- **Wordmark: the split** — `cedar` in Text, `pad` in Cedar Ember, same weight
+  (600), no gap. The wordmark carries the accent so the mark stays quiet; together
+  they still read as one signal, not decoration.
+- Reference implementation: `packages/www/src/components/Logo.astro` and
+  `packages/www/public/favicon.svg`.
+
 ## 6. Do's and Don'ts
 
 ### Do:
