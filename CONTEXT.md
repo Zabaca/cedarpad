@@ -6,6 +6,15 @@
 > [canvas/CONTEXT.md](./packages/canvas/CONTEXT.md) + ADR-0001 once implemented.
 > Per-app internals stay in each app's own `CONTEXT.md`.
 
+## Domains (ADR-0014)
+
+**`cedarpad.com`** = the marketing site (`packages/www`, waitlist; signup is
+invitation-only). **`app.cedarpad.com`** = the product (the canvas app worker; graduated
+from `poc.cedarpad.com`, which 301s). **`app.cedarpad.com/admin`** = the operator surface
+(Better Auth admin plugin + waitlist + read-only workspace/canvas/chat inventory, no
+transcript viewing). There is no `admin.` subdomain. Admin UI says "chats", never
+"sessions".
+
 ## Runtime & frames
 
 **Workspace**: an isolated runtime **and project/working context** — one Cloudflare

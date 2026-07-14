@@ -10,6 +10,7 @@
 - [Canvas](./packages/canvas/CONTEXT.md) — tldraw canvas with a built-in Claude chat agent that draws on it and reads from it
 - [Infra](./packages/infra/CONTEXT.md) — module instances and environments managed by `zbc apply`
 - [Web POC](./packages/web-poc/CONTEXT.md) — single Cloudflare Worker serving a Vite/React SPA + Hono `/api/*`
+- [WWW](./packages/www/CONTEXT.md) — Astro marketing site + waitlist at `cedarpad.com` (ADR-0014; not yet built)
 
 ## Relationships
 
