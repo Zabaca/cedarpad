@@ -11,13 +11,16 @@ import type { Env } from './index.ts';
 describe('kickDevAgentRun — mint + proxy the kick to the warm bridge', () => {
   const env = { CANVAS_USER: 'u' } as Env;
 
+  const CONN = { installationId: '145473731', repoFullName: 'Zabaca/cedarpad' };
+
   const record = () => {
-    const calls: Array<{ path: string; method: string; token: string | null; coords: SandboxCoords }> = [];
+    const calls: Array<{ path: string; method: string; token: string | null; repo: string | null; coords: SandboxCoords }> = [];
     const serve = async (req: Request, _env: Env, coords: SandboxCoords) => {
       calls.push({
         path: new URL(req.url).pathname,
         method: req.method,
         token: req.headers.get('x-dev-agent-git-token'),
+        repo: req.headers.get('x-dev-agent-repo'),
         coords,
       });
       return Response.json({ chatId: 'dev-agent-run-x', joined: false }, { status: 202 });
@@ -25,29 +28,70 @@ describe('kickDevAgentRun — mint + proxy the kick to the warm bridge', () => {
     return { calls, serve };
   };
 
-  test('mints and proxies POST /api/dev-agent/run to the warm default container with the token header', async () => {
+  test('resolves the workspace repo, mints for it, and proxies the kick with token + repo headers', async () => {
     const { calls, serve } = record();
+    const minted: Array<{ installationId: string; repoFullName: string }> = [];
 
-    const res = await kickDevAgentRun(env, { mint: async () => 'ghs_run', serve });
+    const res = await kickDevAgentRun(env, {
+      mint: async (_e, opts) => {
+        minted.push({ installationId: opts.installationId, repoFullName: opts.repoFullName });
+        return 'ghs_run';
+      },
+      serve,
+      resolveRepo: async () => CONN,
+    });
 
     expect(res.status).toBe(202);
+    // The mint is scoped to the RESOLVED (installation, repo) — never a hardcoded repo (ADR-0015).
+    expect(minted).toEqual([CONN]);
     expect(calls).toEqual([
       {
         path: DEV_AGENT_RUN_PATH,
         method: 'POST',
         token: 'ghs_run',
+        repo: 'Zabaca/cedarpad',
         coords: resolve({ id: 'default', legacy: true }), // the warm default container — no separate instance
       },
     ]);
   });
 
-  test('a failed mint (null) kicks token-less — the run still happens, best-effort (no open_pr)', async () => {
+  test('a failed mint (null) kicks token-less but still repo-tagged — best-effort (no open_pr)', async () => {
     const { calls, serve } = record();
 
-    const res = await kickDevAgentRun(env, { mint: async () => null, serve });
+    const res = await kickDevAgentRun(env, { mint: async () => null, serve, resolveRepo: async () => CONN });
 
     expect(res.status).toBe(202);
     expect(calls[0]!.token).toBeNull();
+    expect(calls[0]!.repo).toBe('Zabaca/cedarpad');
+  });
+
+  test('no connection resolved ⇒ token-less, repo-less kick (the run explores the default cwd)', async () => {
+    const { calls, serve } = record();
+
+    const res = await kickDevAgentRun(env, {
+      mint: async () => {
+        throw new Error('mint must not be called with no repo');
+      },
+      serve,
+      resolveRepo: async () => null,
+    });
+
+    expect(res.status).toBe(202);
+    expect(calls[0]!.token).toBeNull();
+    expect(calls[0]!.repo).toBeNull();
+  });
+
+  test('an explicitly requested repo outside the selected set is a 400 — never silently re-targeted', async () => {
+    const { calls, serve } = record();
+
+    const res = await kickDevAgentRun(
+      env,
+      { mint: async () => 'ghs_run', serve, resolveRepo: async (_e, requested) => (requested === 'Zabaca/cedarpad' ? CONN : null) },
+      'Evil/other',
+    );
+
+    expect(res.status).toBe(400);
+    expect(calls).toEqual([]); // nothing proxied
   });
 });
 

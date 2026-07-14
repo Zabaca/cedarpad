@@ -23,6 +23,7 @@ export async function create(
     kind?: (typeof conversations.kind.enumValues)[number];
     ownerRef?: string | null;
     canvasId?: string | null;
+    repo?: string | null;
     summary?: string | null;
     lastMessagePreview?: string | null;
   },
@@ -37,6 +38,7 @@ export async function create(
       kind: input.kind ?? "chat",
       ownerRef: input.ownerRef ?? null,
       canvasId: input.canvasId ?? null,
+      repo: input.repo ?? null,
       summary: input.summary ?? null,
       lastMessagePreview: input.lastMessagePreview ?? null,
     })
@@ -177,6 +179,17 @@ export async function attachCanvas(db: Database, id: string, canvasId: string): 
     .update(conversations)
     .set({ canvasId })
     .where(and(eq(conversations.id, id), isNull(conversations.canvasId)));
+  return get(db, id);
+}
+
+/** Set the run→repo edge, first-wins (mirrors attachCanvas): only when the row has no
+ * repo yet — a dev-agent conversation operates on exactly one repo for its lifetime
+ * (ADR-0015: one run = one repo). */
+export async function attachRepo(db: Database, id: string, repo: string): Promise<ConversationRow | null> {
+  await db
+    .update(conversations)
+    .set({ repo })
+    .where(and(eq(conversations.id, id), isNull(conversations.repo)));
   return get(db, id);
 }
 

@@ -83,6 +83,14 @@ export async function getWorkspace(
   return row ? toRecord(row) : null;
 }
 
+/** Get a workspace row by id with NO access check — edge-internal resolution only
+ *  (repo-connection lookups keyed off an already-authorized artifact, e.g. a
+ *  Conversation the caller owns). Never expose through a user-facing route. */
+export async function getWorkspaceRecord(db: Database, workspaceId: string): Promise<WorkspaceRecord | null> {
+  const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+  return row ? toRecord(row) : null;
+}
+
 /** Persist the workspace's GitHub App installation (repository connection, ADR-0015).
  *  Connecting resets the repo selection — the new grant defines what's selectable. */
 export async function setWorkspaceGithubInstallation(

@@ -710,6 +710,9 @@ export const conversations = sqliteTable(
     ownerRef: text("owner_ref"),
     /** Nullable chat→canvas edge: the canvas this chat's card lives on (at most one). */
     canvasId: text("canvas_id"),
+    /** Nullable run→repo edge (ADR-0015): the repo a dev-agent conversation operates on.
+     *  One run = one repo; replies re-mint for exactly this repo. First-wins like canvasId. */
+    repo: text("repo"),
     /** Platform workspace id (registry / `cs_workspace`). Plain text, no FK. */
     workspaceId: text("workspace_id").notNull(),
     userId: text("user_id").notNull(),

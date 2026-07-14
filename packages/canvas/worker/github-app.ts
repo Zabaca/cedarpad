@@ -23,11 +23,6 @@ import type { Env } from './index.ts';
 // lives in a Bun-only module we don't want to bundle into the edge worker).
 export const DEV_AGENT_GITHUB_TOKEN_ENV = 'DEV_AGENT_GITHUB_TOKEN';
 
-// The single repo the dev-agent operates on today (mirrors DEFAULT_REPO in repo-worktree.ts).
-// The installation token is scoped to just this repo's NAME (the installation is already
-// org-scoped, so GitHub wants the bare name, not `owner/repo`).
-const DEV_AGENT_REPO_NAME = 'cedarpad';
-
 // Minimum permissions for clone + push + open-PR. `metadata:read` is implicit. No `workflows`
 // scope: a pushed branch that touches `.github/workflows/*` is rejected by GitHub without it,
 // which enforces the dev-agent's "no CI changes" triage law rather than just stating it as a
@@ -108,27 +103,35 @@ export function appConfigFromEnv(env: Env): GithubAppConfig | null {
   return { appId, installationId, privateKey };
 }
 
-// The coords-free mint core (ADR-0010): a freshly-minted, cedarpad-scoped installation token
-// for ONE dev-agent turn — the edge mints it per dev-agent send and rides it on the proxied
-// request as a header (worker/inbox-bridge.ts). Best-effort: returns `null` (logging, never
-// throwing) when the App is unconfigured or the mint fails, so a send still proxies — the
-// turn just runs without `open_pr` and the push/PR path surfaces its own clear error.
+// The coords-free mint core (ADR-0010 → ADR-0015): a freshly-minted installation token
+// scoped to ONE repo for ONE dev-agent turn — the edge mints it per dev-agent send and rides
+// it on the proxied request as a header (worker/inbox-bridge.ts). The installation + repo come
+// from the workspace's repository connection (github-connection.ts resolveDevAgentRepo) — no
+// hardcoded repo remains here. Best-effort: returns `null` (logging, never throwing) when the
+// App is unconfigured or the mint fails, so a send still proxies — the turn just runs without
+// `open_pr` and the push/PR path surfaces its own clear error.
 export async function mintDevAgentGitToken(
   env: Env,
-  opts: { nowSec: number; fetchImpl?: typeof fetch },
+  opts: { nowSec: number; installationId: string; repoFullName: string; fetchImpl?: typeof fetch },
 ): Promise<string | null> {
-  const cfg = appConfigFromEnv(env);
-  if (!cfg) {
+  const appId = env.GITHUB_APP_ID;
+  const privateKey = env.GITHUB_APP_PRIVATE_KEY;
+  if (!appId || !privateKey) {
     console.log('[dev-agent] GitHub App not configured (GITHUB_APP_* unset) — no git token minted');
     return null;
   }
+  // The installation is org-scoped, so the token request wants the bare repo NAME.
+  const repoName = opts.repoFullName.split('/')[1] ?? opts.repoFullName;
   try {
-    const { token } = await mintInstallationToken(cfg, {
-      repositories: [DEV_AGENT_REPO_NAME],
-      permissions: { ...DEV_AGENT_PERMISSIONS },
-      nowSec: opts.nowSec,
-      fetchImpl: opts.fetchImpl,
-    });
+    const { token } = await mintInstallationToken(
+      { appId, installationId: opts.installationId, privateKey },
+      {
+        repositories: [repoName],
+        permissions: { ...DEV_AGENT_PERMISSIONS },
+        nowSec: opts.nowSec,
+        fetchImpl: opts.fetchImpl,
+      },
+    );
     return token;
   } catch (e: unknown) {
     console.error(`[dev-agent] installation-token mint failed — no git token minted: ${String(e)}`);

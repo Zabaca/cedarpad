@@ -6,6 +6,7 @@ import { MCP_TOKENS_HEADER, encodeMcpTokens } from '../server/mcp-registry.ts';
 import type { GateUser } from './auth-gate.ts';
 import { isDevAgentConversation } from '../server/dev-agent-workflow.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
+import { resolveDevAgentRepo } from './github-connection.ts';
 import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolver.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
@@ -53,8 +54,9 @@ export async function handleInboxBridge(
   user: GateUser,
   convId: string,
   subPath: string,
-  // Default-parameter test seam: production always mints for real; tests inject a recorder.
+  // Default-parameter test seams: production always mints/resolves for real; tests inject recorders.
   mint: typeof mintDevAgentGitToken = mintDevAgentGitToken,
+  resolveRepo: typeof resolveDevAgentRepo = resolveDevAgentRepo,
 ): Promise<Response> {
   const database = db(env);
   const conv = await conversations.get(database, convId);
@@ -79,14 +81,20 @@ export async function handleInboxBridge(
   target.pathname = subPath;
   const proxied = new Request(target, request);
 
-  // ADR-0010: a dev-agent Conversation's SEND — and only a send — carries a freshly-minted,
-  // ~1h, cedarpad-scoped git token as a request header; the bridge arms `open_pr` for exactly
-  // that turn (server/bridge.ts prepareDevAgentTurn). The App private key never leaves the
-  // edge (ADR-0008); the token is per-turn, never env-injected, never persisted. Best-effort:
-  // a failed mint (null) proxies the send token-less rather than blocking the reply.
+  // ADR-0010 → ADR-0015: a dev-agent Conversation's SEND — and only a send — carries a
+  // freshly-minted, ~1h git token scoped to the conversation's OWN repo (`conv.repo`, the
+  // run→repo edge stamped at run start; legacy rows without one fall back to the workspace's
+  // first selected repo). The bridge arms `open_pr` for exactly that turn against exactly
+  // that repo (`x-dev-agent-repo`). The App private key never leaves the edge (ADR-0008);
+  // the token is per-turn, never env-injected, never persisted. Best-effort: a failed
+  // resolve/mint proxies the send token-less rather than blocking the reply.
   if (isChatSend && isDevAgentConversation(conv)) {
-    const token = await mint(env, { nowSec: Math.floor(Date.now() / 1000) });
-    if (token) proxied.headers.set('x-dev-agent-git-token', token);
+    const resolved = await resolveRepo(env, database, conv.workspaceId, conv.repo ?? undefined);
+    if (resolved) {
+      proxied.headers.set('x-dev-agent-repo', resolved.repoFullName);
+      const token = await mint(env, { nowSec: Math.floor(Date.now() / 1000), ...resolved });
+      if (token) proxied.headers.set('x-dev-agent-git-token', token);
+    }
   }
 
   // Canvas pairing: the Inbox surface is not a pad, so its ChatView stamps no x-canvas-id.

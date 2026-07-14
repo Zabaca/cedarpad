@@ -21,13 +21,21 @@ let calls: string[] = [];
 let nextStatus = 202;
 
 let nextBody: Record<string, unknown> = { chatId: 'dev-agent-run-1', joined: false };
+let selectedRepos: string[] = ['Zabaca/cedarpad'];
+let runBodies: unknown[] = [];
 
 beforeEach(() => {
   calls = [];
   nextStatus = 202;
   nextBody = { chatId: 'dev-agent-run-1', joined: false };
+  selectedRepos = ['Zabaca/cedarpad'];
+  runBodies = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push(`${init?.method ?? 'GET'} ${String(input)}`);
+    if (String(input) === '/api/workspaces/default/github') {
+      return Response.json({ connected: true, source: 'workspace', selectedRepos });
+    }
+    if (init?.body) runBodies.push(JSON.parse(init.body as string));
     return new Response(JSON.stringify(nextBody), { status: nextStatus, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
   container = document.createElement('div');
@@ -76,5 +84,30 @@ describe('JobsStage', () => {
 
     expect(container.querySelector('.jobs-note')?.textContent).toContain('Already running');
     expect(container.querySelector('.jobs-error')).toBeNull();
+  });
+
+  // ADR-0015: a platform job picks its target at trigger. One selected repo ⇒ no picker
+  // (the server defaults); several ⇒ the picker names the run's repo in the POST body.
+  test('a single selected repo shows no picker and POSTs no repo', async () => {
+    await mount();
+    await clickRun();
+
+    expect(container.querySelector('.jobs-repo-picker')).toBeNull();
+    expect(runBodies).toEqual([{}]);
+  });
+
+  test('multiple selected repos render the picker; the chosen repo rides the POST body', async () => {
+    selectedRepos = ['Zabaca/cedarpad', 'Zabaca/ledgerbot'];
+    await mount();
+
+    const picker = container.querySelector('.jobs-repo-picker') as HTMLSelectElement | null;
+    expect(picker).not.toBeNull();
+    await act(async () => {
+      picker!.value = 'Zabaca/ledgerbot';
+      picker!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await clickRun();
+
+    expect(runBodies).toEqual([{ repo: 'Zabaca/ledgerbot' }]);
   });
 });
