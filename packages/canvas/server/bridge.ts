@@ -528,9 +528,14 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
 // declare its ending via end_turn — needs_human or done).
 // The run's policy IS this prompt (issue #184: prompt-law, no harness). The bridge.test.ts
 // prompt-pin test names the load-bearing sentences — edit them consciously.
-const DEV_AGENT_RUN_PROMPT = [
+// The platform's built-in job: the architecture explore. Repo-defined jobs (#195) replace
+// only THIS task text; the wrapper below stays around every run.
+const DEV_AGENT_DEFAULT_TASK = [
   'Architecture explore: survey this repo for deepening opportunities.',
   'Explore: run the Explore phase of the /improve-codebase-architecture skill. If this repo defines an `explorer` agent (.claude/agents/), fan the reading out to `explorer` subagents (the Agent tool) so the survey is parallel and cheap — they read, you judge. If it defines none, do the reading yourself without fan-out. No edits during explore.',
+].join('\n\n');
+
+const DEV_AGENT_RUN_WRAPPER = [
   'Then read docs/adr/declined/ and DROP every candidate that matches a declined marker (human declines are final until the marker is removed).',
   [
     'Triage every surviving candidate with exactly ONE verdict:',
@@ -541,6 +546,13 @@ const DEV_AGENT_RUN_PROMPT = [
   'Decline markers: when, in a later turn of this conversation, the human declines a candidate, write docs/adr/declined/<candidate-slug>.md (title, date, one-line reason, match hints) in the worktree and ship it — piggybacked on an open run PR if one exists, else as a marker-only micro-PR.',
   'Close the run with end_turn ONCE. Outcome "needs_human" only if GRILL verdicts exist (the question lists each grilled candidate: title, rationale, severity); otherwise outcome "done" — a run with nothing to grill must not ping the human, even if it executed PRs. Either way the summary carries the decision record: every candidate with verdict, one-line why, and risk class.',
 ].join('\n\n');
+
+/** The run prompt: the TASK (a repo-defined job's body, else the built-in explore) inside the
+ * platform wrapper (triage law, decline markers, decision record, end_turn — ADR-0015: a job
+ * steers WHAT, never under which rules). The task leads so its first sentence titles the row. */
+const composeRunPrompt = (task: string = DEV_AGENT_DEFAULT_TASK): string => `${task}\n\n${DEV_AGENT_RUN_WRAPPER}`;
+
+const DEV_AGENT_RUN_PROMPT = composeRunPrompt();
 
 // #184 §4: the run turn judges (triage + implementation), so it runs on Opus; the cheap
 // parallel reading is what fans out to Sonnet `explorer` subagents.
@@ -734,9 +746,13 @@ export async function handleRequest(req: Request): Promise<Response> {
       // The run's target repo (ADR-0015: one run = one repo), resolved and stamped by the
       // edge next to the token. It binds the Conversation (row repo edge) and the worktree.
       const repo = req.headers.get('x-dev-agent-repo') ?? undefined;
+      // A repo-defined job (#195): the edge read its body off the repo's DEFAULT branch (the
+      // merge armed it) and forwards it as the run's task — wrapped, never replacing the law.
+      const kickBody = (await req.json().catch(() => null)) as { job?: { name?: string; prompt?: string } } | null;
+      const jobPrompt = typeof kickBody?.job?.prompt === 'string' && kickBody.job.prompt.trim() ? kickBody.job.prompt.trim() : undefined;
       // A fresh session every run (sessionId null); the run's later grill turns resume it
       // through the normal conversation path.
-      dispatchChatTurn(chatId, DEV_AGENT_RUN_PROMPT, null, [], DEV_AGENT_RUN_MODEL, undefined, undefined, undefined, token, undefined, repo);
+      dispatchChatTurn(chatId, composeRunPrompt(jobPrompt), null, [], DEV_AGENT_RUN_MODEL, undefined, undefined, undefined, token, undefined, repo);
       return json({ chatId, joined: false }, 202);
     }
     // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`

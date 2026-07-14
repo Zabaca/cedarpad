@@ -8,6 +8,7 @@ import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
 import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo } from './github-connection.ts';
 import { handleMembersApi } from './members.ts';
+import { discoverJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
@@ -316,15 +317,40 @@ export default {
     // bridge single-flights runs with JOIN semantics; repeated clicks answer with the same run.
     if (url.pathname === '/api/jobs/dev-agent/run') {
       if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
-      // Optional body { repo }: the Jobs picker's explicit target (ADR-0015 — a platform
-      // job picks a repo at trigger; repo-defined jobs carry their own). Must be within
-      // the workspace's selected set (kickDevAgentRun 400s otherwise).
-      const body = (await request.json().catch(() => null)) as { repo?: string } | null;
+      // Optional body { repo, job }: `repo` is the Jobs picker's explicit target (ADR-0015 —
+      // a platform job picks a repo at trigger; must be within the selected set, 400
+      // otherwise). `job` names a repo-defined job (#195): its body is (re-)read off the
+      // repo's DEFAULT branch here — the merge armed it; a caller can never inject a prompt.
+      const body = (await request.json().catch(() => null)) as { repo?: string; job?: string } | null;
+      let repoArg = typeof body?.repo === 'string' ? body.repo : undefined;
+      let job: { name: string; prompt: string } | undefined;
+      if (typeof body?.job === 'string') {
+        const jobs = await discoverJobs(env, createDbForWorker(env as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
+          nowSec: Math.floor(Date.now() / 1000),
+        });
+        const found = jobs.find((j) => j.name === body.job && (!repoArg || j.repo === repoArg));
+        if (!found) return Response.json({ error: `job not found on a selected repo's default branch: ${body.job}` }, { status: 404 });
+        repoArg = found.repo; // a repo job always runs against its home repo
+        job = { name: found.name, prompt: found.prompt };
+      }
       return kickDevAgentRun(
         env,
         { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo },
-        typeof body?.repo === 'string' ? body.repo : undefined,
+        repoArg,
+        job,
       );
+    }
+
+    // Repo-defined jobs (#195, ADR-0015): what `.claude/jobs/` on the selected repos' default
+    // branches define, discovered live (SHA-cached). Edge-only; access-checked; prompt omitted
+    // (the run path re-reads it — the list is a rendering surface, not a prompt channel).
+    const jobsMatch = /^\/api\/workspaces\/([^/]+)\/jobs$/.exec(url.pathname);
+    if (jobsMatch && request.method === 'GET') {
+      const database = createDbForWorker(env as unknown as Bindings);
+      const ws = await getWorkspace(database, jobsMatch[1] as string, user.id);
+      if (!ws) return Response.json({ error: 'workspace not found' }, { status: 404 });
+      const jobs = await discoverJobs(env, database, ws.id, { nowSec: Math.floor(Date.now() / 1000) });
+      return Response.json({ jobs: jobs.map(({ prompt, ...j }) => j) });
     }
 
     // Edge chat proxy (ADR-0009, PRD #119 slice #122): a Shell-mounted <ChatView> targets

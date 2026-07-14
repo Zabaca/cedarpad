@@ -36,7 +36,14 @@ export interface DevAgentKickDeps {
  * JOIN semantics. An explicitly requested repo that is NOT in the workspace's selected set
  * is a 400 — never silently re-targeted.
  */
-export async function kickDevAgentRun(env: Env, deps: DevAgentKickDeps, requestedRepo?: string): Promise<Response> {
+export async function kickDevAgentRun(
+  env: Env,
+  deps: DevAgentKickDeps,
+  requestedRepo?: string,
+  // A repo-defined job's (name, body) — discovered off the repo's DEFAULT branch by the
+  // caller (#195); forwarded to the bridge, which wraps the body in the platform law.
+  job?: { name: string; prompt: string },
+): Promise<Response> {
   const repo = await deps.resolveRepo(env, requestedRepo);
   if (requestedRepo && !repo) {
     return Response.json({ error: `repo not selected for this workspace: ${requestedRepo}` }, { status: 400 });
@@ -47,7 +54,12 @@ export async function kickDevAgentRun(env: Env, deps: DevAgentKickDeps, requeste
     const token = await deps.mint(env, { nowSec: Math.floor(Date.now() / 1000), ...repo });
     if (token) headers.set('x-dev-agent-git-token', token);
   }
-  const request = new Request(`https://bridge.internal${DEV_AGENT_RUN_PATH}`, { method: 'POST', headers });
+  const init: RequestInit = { method: 'POST', headers };
+  if (job) {
+    headers.set('content-type', 'application/json');
+    init.body = JSON.stringify({ job });
+  }
+  const request = new Request(`https://bridge.internal${DEV_AGENT_RUN_PATH}`, init);
   return deps.serve(request, env, resolve(DEFAULT_WORKSPACE));
 }
 
