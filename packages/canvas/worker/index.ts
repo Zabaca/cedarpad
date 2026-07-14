@@ -6,6 +6,7 @@ import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
+import { handleGithubApi, handleGithubSetup } from './github-connection.ts';
 import { handleMembersApi } from './members.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
@@ -76,6 +77,9 @@ export interface Env {
   GITHUB_APP_ID?: string;
   GITHUB_APP_INSTALLATION_ID?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
+  // The App's public slug (github.com/apps/<slug>) for the workspace connect flow (#193,
+  // ADR-0015). Plain var, not a secret. Unset ⇒ the Settings UI hides "Connect GitHub".
+  GITHUB_APP_SLUG?: string;
   // The single-tenant owner of everything the bridge files under a user id (Inbox
   // Conversations via `ask_human`, the dev-agent's promoted items): must be this
   // deployment's Better Auth user.id, NOT an email or display name — the Inbox query
@@ -241,6 +245,24 @@ export default {
         membersMatch[1],
         membersMatch[2],
       );
+    }
+
+    // Repository connection (#193, ADR-0015): status / connect redirect / repo selection /
+    // disconnect, plus GitHub's post-install setup callback. Edge-only.
+    const githubMatch = /^\/api\/workspaces\/([^/]+)\/github(?:\/(connect|repos))?$/.exec(url.pathname);
+    if (githubMatch) {
+      return handleGithubApi(
+        request,
+        env,
+        createDbForWorker(env as unknown as Bindings),
+        user,
+        githubMatch[1],
+        githubMatch[2] as 'connect' | 'repos' | undefined,
+        { nowMs: Date.now() },
+      );
+    }
+    if (url.pathname === '/api/github/setup') {
+      return handleGithubSetup(request, env, createDbForWorker(env as unknown as Bindings), user, { nowMs: Date.now() });
     }
 
     // Canvas registry API (Canvas app index), scoped to the active workspace via the

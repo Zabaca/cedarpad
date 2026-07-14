@@ -517,6 +517,12 @@ export const workspaces = sqliteTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     repo: text("repo"),
+    // Repository connection (ADR-0015): the workspace's GitHub App installation and the
+    // owner-selected repos in scope for this workspace's agents. The App identity stays
+    // platform env; these are workspace config. Null installation ⇒ not connected (the
+    // default workspace transitionally falls back to the env installation, #193).
+    githubInstallationId: text("github_installation_id"),
+    selectedRepos: text("selected_repos", { mode: "json" }).$type<string[]>(),
     ownerUserId: text("owner_user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
