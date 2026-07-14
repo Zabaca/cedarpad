@@ -25,9 +25,6 @@ import { join } from 'node:path';
 // test runs fully offline against a local scratch remote.
 export const GITHUB_TOKEN_ENV = 'DEV_AGENT_GITHUB_TOKEN';
 
-/** The upstream repo the dev-agent works against (ADR-0007). */
-export const DEFAULT_REPO = 'Zabaca/cedarpad';
-
 export interface RepoWorktreeConfig {
   /** GitHub `owner/name` slug (or, in tests, an absolute path to a local scratch repo). */
   repo: string;

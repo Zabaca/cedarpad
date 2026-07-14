@@ -906,3 +906,15 @@ body,
 .settings-empty p {
   margin: 0 0 6px;
 }
+
+/* Jobs: the platform-job repo picker (ADR-0015, shown only when >1 repo is selected). */
+.jobs-repo-picker {
+  flex: none;
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 12.5px;
+}

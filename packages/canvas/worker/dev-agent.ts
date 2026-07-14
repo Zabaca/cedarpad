@@ -15,23 +15,38 @@ export const DEV_AGENT_RUN_PATH = '/api/dev-agent/run';
 
 export interface DevAgentKickDeps {
   /** The per-turn git-token mint (worker/github-app.ts). Best-effort: null ⇒ token-less kick. */
-  mint: (env: Env, opts: { nowSec: number }) => ReturnType<typeof mintDevAgentGitToken>;
+  mint: (
+    env: Env,
+    opts: { nowSec: number; installationId: string; repoFullName: string },
+  ) => ReturnType<typeof mintDevAgentGitToken>;
   /** The container proxy (sandbox-runtime's serveWorkspace) — injected so this module stays
    *  free of the `cloudflare:workers`-coupled sandbox layer. */
   serve: (request: Request, env: Env, coords: SandboxCoords) => Promise<Response>;
+  /** The workspace's repository connection, resolved to one (installation, repo) pair
+   *  (github-connection.ts resolveDevAgentRepo, ADR-0015). Null ⇒ token-less kick. */
+  resolveRepo: (env: Env, requested?: string) => Promise<{ installationId: string; repoFullName: string } | null>;
 }
 
 /**
- * Kick one dev-agent run (ADR-0011): mint the ~1h repo-scoped token (best-effort — a failed
- * mint kicks token-less; the run explores but can't open PRs) and proxy the kick to the warm
- * default container's bridge, which dispatches it as a headless, token-armed chat turn. The
- * bridge single-flights runs with JOIN semantics, so concurrent kicks (cron + clicks) answer
- * with the one running run's chatId. Returns the bridge's response ({ chatId, joined }).
+ * Kick one dev-agent run (ADR-0011 / ADR-0015): resolve the workspace's repo (the explicit
+ * `requestedRepo` from the Jobs picker, else the first selected), mint the ~1h token scoped
+ * to exactly that repo (best-effort — a failed mint kicks token-less; the run explores but
+ * can't open PRs), and proxy the kick to the warm default container's bridge, which
+ * dispatches it as a headless, token-armed chat turn. The bridge single-flights runs with
+ * JOIN semantics. An explicitly requested repo that is NOT in the workspace's selected set
+ * is a 400 — never silently re-targeted.
  */
-export async function kickDevAgentRun(env: Env, deps: DevAgentKickDeps): Promise<Response> {
-  const token = await deps.mint(env, { nowSec: Math.floor(Date.now() / 1000) });
+export async function kickDevAgentRun(env: Env, deps: DevAgentKickDeps, requestedRepo?: string): Promise<Response> {
+  const repo = await deps.resolveRepo(env, requestedRepo);
+  if (requestedRepo && !repo) {
+    return Response.json({ error: `repo not selected for this workspace: ${requestedRepo}` }, { status: 400 });
+  }
   const headers = new Headers();
-  if (token) headers.set('x-dev-agent-git-token', token);
+  if (repo) {
+    headers.set('x-dev-agent-repo', repo.repoFullName);
+    const token = await deps.mint(env, { nowSec: Math.floor(Date.now() / 1000), ...repo });
+    if (token) headers.set('x-dev-agent-git-token', token);
+  }
   const request = new Request(`https://bridge.internal${DEV_AGENT_RUN_PATH}`, { method: 'POST', headers });
   return deps.serve(request, env, resolve(DEFAULT_WORKSPACE));
 }

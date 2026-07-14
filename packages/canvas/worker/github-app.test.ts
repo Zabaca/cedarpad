@@ -89,20 +89,23 @@ describe('appConfigFromEnv', () => {
   });
 });
 
-describe('mintDevAgentGitToken — the coords-free mint core (ADR-0010)', () => {
-  const env = { GITHUB_APP_ID: '4257337', GITHUB_APP_INSTALLATION_ID: '145473731', GITHUB_APP_PRIVATE_KEY: privateKey } as Env;
+describe('mintDevAgentGitToken — the per-turn, per-repo mint core (ADR-0010 → ADR-0015)', () => {
+  const env = { GITHUB_APP_ID: '4257337', GITHUB_APP_PRIVATE_KEY: privateKey } as Env;
+  const repo = { installationId: '145473731', repoFullName: 'Zabaca/cedarpad' };
 
-  test('mints a cedarpad-scoped token (contents/PRs/issues write) via the injected fetch', async () => {
+  test('mints a token scoped to the RESOLVED repo (contents/PRs/issues write) via the injected fetch', async () => {
     let captured: { url: string; body: unknown } | null = null;
     const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
       captured = { url: String(url), body: JSON.parse((init?.body as string) ?? 'null') };
       return new Response(JSON.stringify({ token: 'ghs_minted', expires_at: 'x' }), { status: 201 });
     }) as unknown as typeof fetch;
 
-    const token = await mintDevAgentGitToken(env, { nowSec: 1_700_000_000, fetchImpl: fakeFetch });
+    const token = await mintDevAgentGitToken(env, { nowSec: 1_700_000_000, ...repo, fetchImpl: fakeFetch });
 
     expect(token).toBe('ghs_minted');
+    // The INSTALLATION comes from the workspace's connection, not env (ADR-0015).
     expect(captured!.url).toBe('https://api.github.com/app/installations/145473731/access_tokens');
+    // GitHub wants the bare repo NAME (the installation is org-scoped).
     expect(captured!.body).toEqual({
       repositories: ['cedarpad'],
       permissions: { contents: 'write', pull_requests: 'write', issues: 'write' },
@@ -110,18 +113,18 @@ describe('mintDevAgentGitToken — the coords-free mint core (ADR-0010)', () => 
   });
 
   test('best-effort: unconfigured App ⇒ null (a send proxies token-less, never throws)', async () => {
-    expect(await mintDevAgentGitToken({} as Env, { nowSec: 1 })).toBeNull();
+    expect(await mintDevAgentGitToken({} as Env, { nowSec: 1, ...repo })).toBeNull();
   });
 
   test('best-effort: a mint failure ⇒ null (never throws into the proxy path)', async () => {
     const boom = (async () => new Response('nope', { status: 500 })) as unknown as typeof fetch;
-    expect(await mintDevAgentGitToken(env, { nowSec: 1, fetchImpl: boom })).toBeNull();
+    expect(await mintDevAgentGitToken(env, { nowSec: 1, ...repo, fetchImpl: boom })).toBeNull();
   });
 
   test('the token is the ONLY credential produced — the private key never leaves the mint', async () => {
     const okFetch = (async () =>
       new Response(JSON.stringify({ token: 'ghs_minted', expires_at: 'x' }), { status: 201 })) as unknown as typeof fetch;
-    const token = await mintDevAgentGitToken(env, { nowSec: 1, fetchImpl: okFetch });
+    const token = await mintDevAgentGitToken(env, { nowSec: 1, ...repo, fetchImpl: okFetch });
     expect(token).toBe('ghs_minted');
     expect(token).not.toContain('PRIVATE KEY');
   });

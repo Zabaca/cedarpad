@@ -196,14 +196,18 @@ describe('POST /api/jobs/dev-agent/run — manual Jobs trigger (ADR-0011: a prox
 
 describe('scheduled — the cron kicks the same bridge run (ADR-0011)', () => {
   test('an enabled scheduled run proxies the kick to the warm default container', async () => {
+    // Await the waitUntil'd work: the kick is multi-hop async now (repo resolution before
+    // mint, ADR-0015), so asserting without draining it is a race.
+    const pending: Promise<unknown>[] = [];
     const ctx = {
-      waitUntil: (p: Promise<unknown>) => void (p as Promise<unknown>).catch(() => {}),
+      waitUntil: (p: Promise<unknown>) => void pending.push((p as Promise<unknown>).catch(() => {})),
     } as unknown as ExecutionContext;
     await worker.scheduled(
       { cron: '0 9 * * *', scheduledTime: 0 } as ScheduledController,
       { ...(env as object), DEV_AGENT_ENABLED: 'true' } as Parameters<typeof worker.fetch>[1],
       ctx,
     );
+    await Promise.all(pending);
     expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
     expect(servedReqs).toEqual([{ path: '/api/dev-agent/run', method: 'POST' }]);
   });

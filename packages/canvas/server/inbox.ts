@@ -29,7 +29,7 @@ export type Notify = (conversation: ConversationRow, question: string) => void |
  */
 export async function findOrCreateConversation(
   db: Database,
-  input: { sessionId: string; userId: string; workspaceId: string; kind?: 'chat' | 'dev-agent'; summary?: string | null; ownerRef?: string; canvasId?: string },
+  input: { sessionId: string; userId: string; workspaceId: string; kind?: 'chat' | 'dev-agent'; summary?: string | null; ownerRef?: string; canvasId?: string; repo?: string },
 ): Promise<ConversationRow> {
   // The chat→canvas edge is first-wins (attachCanvas only fills a null edge): a turn that
   // carries a canvas backfills chats born before capture, but never re-homes a linked chat.
@@ -37,6 +37,7 @@ export async function findOrCreateConversation(
     const byChat = await conversations.getByOwnerRef(db, input.ownerRef);
     if (byChat) {
       if (input.canvasId && !byChat.canvasId) await conversations.attachCanvas(db, byChat.id, input.canvasId);
+      if (input.repo && !byChat.repo) await conversations.attachRepo(db, byChat.id, input.repo);
       if (byChat.sessionId !== input.sessionId) {
         return (await conversations.rebindSession(db, byChat.id, input.sessionId)) ?? byChat;
       }
@@ -47,6 +48,7 @@ export async function findOrCreateConversation(
   if (existing) {
     if (input.ownerRef && !existing.ownerRef) await conversations.setOwnerRef(db, existing.id, input.ownerRef);
     if (input.canvasId && !existing.canvasId) await conversations.attachCanvas(db, existing.id, input.canvasId);
+    if (input.repo && !existing.repo) await conversations.attachRepo(db, existing.id, input.repo);
     return (await conversations.touch(db, existing.id)) ?? existing;
   }
   return conversations.create(db, {
@@ -56,6 +58,7 @@ export async function findOrCreateConversation(
     kind: input.kind,
     ownerRef: input.ownerRef ?? null,
     canvasId: input.canvasId ?? null,
+    repo: input.repo ?? null,
     summary: input.summary ?? null,
     lastMessagePreview: input.summary ?? null,
   });

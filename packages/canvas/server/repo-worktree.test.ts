@@ -7,7 +7,6 @@ import {
   branchName,
   composePr,
   createRepoWorktreeManager,
-  DEFAULT_REPO,
   GITHUB_TOKEN_ENV,
   sanitizeRefComponent,
   worktreeDirName,
@@ -56,10 +55,6 @@ describe('PR assembly — title/body/base/head composed correctly', () => {
 
   test('explicit base is respected', () => {
     expect(composePr('br', { title: 'T', body: 'B', base: 'develop' }).base).toBe('develop');
-  });
-
-  test('default upstream repo is Zabaca/cedarpad', () => {
-    expect(DEFAULT_REPO).toBe('Zabaca/cedarpad');
   });
 });
 

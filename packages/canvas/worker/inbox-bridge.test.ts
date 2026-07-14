@@ -18,6 +18,7 @@ let conv: ConversationRow | null = null;
 let served: SandboxCoords[] = [];
 let servedTokens: Array<string | null> = [];
 let servedCanvasIds: Array<string | null> = [];
+let servedRepos: Array<string | null> = [];
 let servedMcpTokenHeaders: Array<string | null> = [];
 let replyCalls: string[] = [];
 let mintCalls = 0;
@@ -31,6 +32,7 @@ mock.module('./sandbox-runtime.ts', () => ({
     served.push(coords);
     servedTokens.push(req.headers.get('x-dev-agent-git-token'));
     servedCanvasIds.push(req.headers.get('x-canvas-id'));
+    servedRepos.push(req.headers.get('x-dev-agent-repo'));
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     return new Response('proxied');
   },
@@ -87,6 +89,9 @@ const proxy = (method: string, subPath: string, convId = 'conv_1') =>
     convId,
     subPath,
     mint,
+    // The repo resolver seam (ADR-0015): a fixed connection so the mint/no-mint assertions
+    // stay about the SEND rules; conv.repo-vs-fallback precedence is pinned separately below.
+    async (_env, _db, _ws, requested) => ({ installationId: 'inst_1', repoFullName: requested ?? 'Zabaca/cedarpad' }),
   );
 
 // Let the fire-and-forget flip (a microtask) settle before asserting.
@@ -97,6 +102,7 @@ beforeEach(() => {
   served = [];
   servedTokens = [];
   servedCanvasIds = [];
+  servedRepos = [];
   servedMcpTokenHeaders = [];
   replyCalls = [];
   mintCalls = 0;
@@ -160,6 +166,22 @@ describe('handleInboxBridge: the dev-agent git token is minted onto a proxied se
 
     expect(mintCalls).toBe(1);
     expect(servedTokens).toEqual(['ghs_minted']);
+  });
+
+  test('the send re-mints for the conversation’s OWN repo (conv.repo → x-dev-agent-repo, ADR-0015)', async () => {
+    conv = row({ kind: DEV_AGENT_KIND, repo: 'Zabaca/ledgerbot' } as never);
+    await proxy('POST', '/api/chat/chat_home/send');
+
+    // The resolver seam echoes the requested repo — conv.repo is what must be requested.
+    expect(servedRepos).toEqual(['Zabaca/ledgerbot']);
+    expect(servedTokens).toEqual(['ghs_minted']);
+  });
+
+  test('a legacy dev-agent row with no repo edge falls back to the workspace’s selection', async () => {
+    conv = row({ kind: DEV_AGENT_KIND });
+    await proxy('POST', '/api/chat/chat_home/send');
+
+    expect(servedRepos).toEqual(['Zabaca/cedarpad']);
   });
 
   test('a PRODUCT send never mints — no token header reaches the bridge', async () => {

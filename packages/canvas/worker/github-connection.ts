@@ -4,6 +4,7 @@ import type { Database } from '../web-poc/lib/db/index.ts';
 import {
   clearWorkspaceGithubConnection,
   getWorkspace,
+  getWorkspaceRecord,
   setWorkspaceGithubInstallation,
   setWorkspaceSelectedRepos,
 } from '../web-poc/lib/db/queries/workspaces.ts';
@@ -115,6 +116,27 @@ export function workspaceGithub(
     return { connected: true, source: 'env', installationId: env.GITHUB_APP_INSTALLATION_ID, selectedRepos: [ENV_FALLBACK_REPO] };
   }
   return { connected: false };
+}
+
+/** The (installation, repo) a dev-agent run against `workspaceId` should use.
+ *  `requested` (the Jobs picker / kick body) must be within the selected set; absent ⇒
+ *  the first selected repo. Null ⇒ no connection or nothing selected — the run kicks
+ *  token-less. Resolution is edge-internal (getWorkspaceRecord): callers key off an
+ *  already-authorized artifact (the auth-gated kick route / an owned Conversation). */
+export async function resolveDevAgentRepo(
+  env: Env,
+  database: Database,
+  workspaceId: string,
+  requested?: string,
+): Promise<{ installationId: string; repoFullName: string } | null> {
+  const ws = await getWorkspaceRecord(database, workspaceId);
+  if (!ws) return null;
+  const conn = workspaceGithub(env, ws);
+  if (!conn.connected || conn.selectedRepos.length === 0) return null;
+  if (requested && !conn.selectedRepos.includes(requested)) return null;
+  const repoFullName = requested ?? conn.selectedRepos[0];
+  if (!repoFullName) return null;
+  return { installationId: conn.installationId, repoFullName };
 }
 
 // ---- API handlers -----------------------------------------------------------

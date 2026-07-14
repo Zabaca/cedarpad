@@ -102,13 +102,13 @@ describe('/api/chat/:id/send: subscribe-before-send (425)', () => {
 // per-container IS_DEV_AGENT_BRIDGE gate this replaces.
 describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispatched turn', () => {
   let restore: () => void = () => {};
-  let dispatched: Array<{ chatId: string; devAgentGitToken?: string }> = [];
+  let dispatched: Array<{ chatId: string; devAgentGitToken?: string; devAgentRepo?: string }> = [];
 
   beforeEach(() => {
     dispatched = [];
     chatClients.add(fakeSubscriber());
-    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, devAgentGitToken) => {
-      dispatched.push({ chatId, devAgentGitToken });
+    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, devAgentGitToken, _mcpTokens, devAgentRepo) => {
+      dispatched.push({ chatId, devAgentGitToken, devAgentRepo });
     });
   });
 
@@ -120,21 +120,22 @@ describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispa
   test('a send WITH the header dispatches the turn carrying the token', async () => {
     const req = new Request('http://localhost/api/chat/chat_da/send', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-dev-agent-git-token': 'ghs_minted' },
+      headers: { 'content-type': 'application/json', 'x-dev-agent-git-token': 'ghs_minted', 'x-dev-agent-repo': 'Zabaca/ledgerbot' },
       body: JSON.stringify({ message: 'grill me' }),
     });
 
     const res = await handleRequest(req);
 
     expect(res.status).toBe(202);
-    expect(dispatched).toEqual([{ chatId: 'chat_da', devAgentGitToken: 'ghs_minted' }]);
+    // The repo rides beside the token (ADR-0015): the turn worktrees + PRs against exactly it.
+    expect(dispatched).toEqual([{ chatId: 'chat_da', devAgentGitToken: 'ghs_minted', devAgentRepo: 'Zabaca/ledgerbot' }]);
   });
 
   test('a send WITHOUT the header dispatches with undefined (product sends never see a token)', async () => {
     const res = await handleRequest(sendReq('chat_plain'));
 
     expect(res.status).toBe(202);
-    expect(dispatched).toEqual([{ chatId: 'chat_plain', devAgentGitToken: undefined }]);
+    expect(dispatched).toEqual([{ chatId: 'chat_plain', devAgentGitToken: undefined, devAgentRepo: undefined }]);
   });
 });
 
@@ -214,21 +215,29 @@ describe('turnFlavor: the token decides the turn’s Conversation kind + skill p
 
 describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-worktree cwd (ADR-0010 slice 6)', () => {
   test('no token ⇒ undefined — the turn gets NO open_pr tool and keeps the default cwd', async () => {
-    expect(await prepareDevAgentTurn(undefined, 'chat_1', 'sess_1')).toBeUndefined();
+    expect(await prepareDevAgentTurn(undefined, 'Zabaca/cedarpad', 'chat_1', 'sess_1')).toBeUndefined();
+  });
+
+  test('a token WITHOUT a repo ⇒ undefined — a token cannot arm open_pr with no target (ADR-0015)', async () => {
+    expect(await prepareDevAgentTurn('ghs_minted', undefined, 'chat_1', 'sess_1')).toBeUndefined();
   });
 
   test('a token ⇒ the per-chat worktree is ensured, the session JSONL adopted to it, and cwd = the worktree', async () => {
     const ensured: string[] = [];
     const adopted: Array<{ sessionId: string; cwd: string }> = [];
     const worktree = { path: '/wt/dev-agent-chat-1', branch: branchName(DEV_AGENT_KIND, 'chat_1'), hub: '/wt/hub' };
-    const fakeManager = (() => ({
-      ensureWorktree: async (branch: string) => {
-        ensured.push(branch);
-        return worktree;
-      },
-    })) as unknown as typeof createRepoWorktreeManager;
+    const configs: Array<{ repo: string; workspaceRoot: string }> = [];
+    const fakeManager = ((config: { repo: string; workspaceRoot: string }) => {
+      configs.push({ repo: config.repo, workspaceRoot: config.workspaceRoot });
+      return {
+        ensureWorktree: async (branch: string) => {
+          ensured.push(branch);
+          return worktree;
+        },
+      };
+    }) as unknown as typeof createRepoWorktreeManager;
 
-    const turn = await prepareDevAgentTurn('ghs_minted', 'chat_1', 'sess_1', {
+    const turn = await prepareDevAgentTurn('ghs_minted', 'Zabaca/cedarpad', 'chat_1', 'sess_1', {
       manager: fakeManager,
       adopt: async (_dir, sessionId, cwd) => {
         adopted.push({ sessionId, cwd });
@@ -239,6 +248,10 @@ describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-work
     // The worktree is keyed by the dev-agent tag + chatId — deterministic per conversation,
     // so every turn of one grill flow lands in the same tree.
     expect(ensured).toEqual([branchName(DEV_AGENT_KIND, 'chat_1')]);
+    // The manager targets the TURN'S repo (ADR-0015), with a per-repo hub dir so multi-repo
+    // workspaces' clones never collide.
+    expect(configs[0]?.repo).toBe('Zabaca/cedarpad');
+    expect(configs[0]?.workspaceRoot.endsWith('/.dev-agent/Zabaca__cedarpad')).toBe(true);
     // The SDK resume is cwd-scoped (#133): the session JSONL must move to the worktree's dir.
     expect(adopted).toEqual([{ sessionId: 'sess_1', cwd: worktree.path }]);
     // The SDK turn runs IN the worktree — edits land there, never in the live app tree.
@@ -252,7 +265,7 @@ describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-work
       ensureWorktree: async (branch: string) => ({ path: '/wt/x', branch, hub: '/wt/hub' }),
     })) as unknown as typeof createRepoWorktreeManager;
 
-    const turn = await prepareDevAgentTurn('ghs_minted', 'chat_2', null, {
+    const turn = await prepareDevAgentTurn('ghs_minted', 'Zabaca/cedarpad', 'chat_2', null, {
       manager: fakeManager,
       adopt: async (_dir, sessionId) => {
         adopted.push(sessionId);
@@ -312,12 +325,15 @@ describe('/api/chat/:id/send: 409 turn_in_flight while the chat’s turn runs', 
 // design — the Inbox attaches mid-stream later), single-flighted with JOIN semantics.
 describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
   let restore: () => void = () => {};
-  let dispatched: Array<{ chatId: string; message: string; sessionId: string | null; model?: string; devAgentGitToken?: string }> = [];
+  let dispatched: Array<{ chatId: string; message: string; sessionId: string | null; model?: string; devAgentGitToken?: string; devAgentRepo?: string }> = [];
   const kicked: string[] = [];
 
   const kick = async (token = 'ghs_run') => {
     const res = await handleRequest(
-      new Request('http://localhost/api/dev-agent/run', { method: 'POST', headers: { 'x-dev-agent-git-token': token } }),
+      new Request('http://localhost/api/dev-agent/run', {
+        method: 'POST',
+        headers: { 'x-dev-agent-git-token': token, 'x-dev-agent-repo': 'Zabaca/cedarpad' },
+      }),
     );
     const body = (await res.json()) as { chatId: string; joined: boolean };
     kicked.push(body.chatId);
@@ -328,8 +344,8 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     dispatched = [];
     // NO chatClients subscriber — the kick is headless by design.
     for (const c of [...chatClients]) chatClients.delete(c);
-    restore = setChatTurnDispatcher((chatId, message, sessionId, _images, model, _fork, _effort, _canvasId, devAgentGitToken) => {
-      dispatched.push({ chatId, message, sessionId, model, devAgentGitToken });
+    restore = setChatTurnDispatcher((chatId, message, sessionId, _images, model, _fork, _effort, _canvasId, devAgentGitToken, _mcpTokens, devAgentRepo) => {
+      dispatched.push({ chatId, message, sessionId, model, devAgentGitToken, devAgentRepo });
     });
   });
 
@@ -354,6 +370,8 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     expect(dispatched[0]!.message).toContain('docs/adr/declined/');
     expect(dispatched[0]!.message).toContain('end_turn');
     expect(dispatched[0]!.devAgentGitToken).toBe('ghs_run');
+    // The edge-stamped repo header binds the run to its target (ADR-0015: one run = one repo).
+    expect(dispatched[0]!.devAgentRepo).toBe('Zabaca/cedarpad');
   });
 
   // Issue #184: the run turn judges (triage + implementation), so it's pinned to Opus;
@@ -378,8 +396,10 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     expect(p).toContain('docs/adr/declined/');
     // Decision record in the closing end_turn.
     expect(p).toContain('decision record');
-    // Exploration fans out to the repo-defined Sonnet subagent.
+    // Exploration fans out to the repo-defined Sonnet subagent — gracefully degrading on
+    // repos that define none (ADR-0015: arbitrary connected repos must not break the run).
     expect(p).toContain('explorer');
+    expect(p).toContain('If it defines none, do the reading yourself without fan-out');
   });
 
   test('join semantics: a kick during a running run returns THAT run, dispatching nothing new', async () => {

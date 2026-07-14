@@ -6,7 +6,7 @@ import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
-import { handleGithubApi, handleGithubSetup } from './github-connection.ts';
+import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo } from './github-connection.ts';
 import { handleMembersApi } from './members.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
@@ -97,13 +97,29 @@ export interface Env {
 // Built once per isolate (route setup is pure); the db is per-request.
 const notebookApi = buildApp();
 
+// The kick's repo resolution (ADR-0015): runs target the default workspace's container, so
+// its repository connection (row, else the transitional env fallback) names the repo set.
+// Best-effort like the mint itself: a DB failure kicks token-less rather than failing the run.
+const defaultWorkspaceRepo = async (env: Env, requested?: string) => {
+  try {
+    return await resolveDevAgentRepo(env, createDbForWorker(env as unknown as Bindings), DEFAULT_WORKSPACE_ID, requested);
+  } catch (e: unknown) {
+    console.error(`[dev-agent] repo resolution failed — kicking token-less: ${String(e)}`);
+    return null;
+  }
+};
+
 export default {
   // Cron trigger (ADR-0007 PRD #51, re-shaped by ADR-0011). A scheduled dev-agent run is a
   // chat turn kicked headlessly on the warm default container's bridge: mint the per-turn
   // git token, proxy POST /api/dev-agent/run. `waitUntil` keeps the isolate alive for the
   // kick (which may pay a cold boot) past the handler return.
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(dispatchDevAgentRun(event, env, (e) => kickDevAgentRun(e, { mint: mintDevAgentGitToken, serve: serveWorkspace })));
+    ctx.waitUntil(
+      dispatchDevAgentRun(event, env, (e) =>
+        kickDevAgentRun(e, { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo }),
+      ),
+    );
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -300,7 +316,15 @@ export default {
     // bridge single-flights runs with JOIN semantics; repeated clicks answer with the same run.
     if (url.pathname === '/api/jobs/dev-agent/run') {
       if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
-      return kickDevAgentRun(env, { mint: mintDevAgentGitToken, serve: serveWorkspace });
+      // Optional body { repo }: the Jobs picker's explicit target (ADR-0015 — a platform
+      // job picks a repo at trigger; repo-defined jobs carry their own). Must be within
+      // the workspace's selected set (kickDevAgentRun 400s otherwise).
+      const body = (await request.json().catch(() => null)) as { repo?: string } | null;
+      return kickDevAgentRun(
+        env,
+        { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo },
+        typeof body?.repo === 'string' ? body.repo : undefined,
+      );
     }
 
     // Edge chat proxy (ADR-0009, PRD #119 slice #122): a Shell-mounted <ChatView> targets

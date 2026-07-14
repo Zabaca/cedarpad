@@ -30,6 +30,9 @@ export interface TurnInput {
   canvasId?: string;
   /** Edge-minted, per dev-agent send: arms open_pr + the worktree cwd for THIS turn only. */
   devAgentGitToken?: string;
+  /** The repo this dev-agent turn operates on (ADR-0015: one run = one repo), from the
+   * edge's x-dev-agent-repo header. Without it a token cannot arm open_pr (no target). */
+  devAgentRepo?: string;
   /** ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, decoded from the
    * proxied `x-mcp-tokens` header. Dropped below unless `flavor.kind === 'chat'` — dev-agent
    * turns get no external MCP servers no matter what rode the request. */
@@ -52,6 +55,7 @@ export interface TurnDeps {
   /** Prepare the dev-agent worktree + open_pr for this turn (undefined for a product turn). */
   prepareDevAgent: (
     token: string | undefined,
+    repo: string | undefined,
     chatId: string,
     sessionId: string | null,
   ) => Promise<{ openPr: OpenPr; cwd: string } | undefined>;
@@ -67,7 +71,7 @@ export interface TurnDeps {
    *  returned promise is AWAITED before the settle upsert, so the create-at-init and the
    *  settle-time find-or-create can never race into two rows for one chat (ownerRef has no
    *  unique index). Best-effort — never throws into the turn. */
-  indexSession: (chatId: string, sessionId: string, message: string, workspaceId: string, canvasId?: string, kind?: 'chat' | 'dev-agent') => Promise<void>;
+  indexSession: (chatId: string, sessionId: string, message: string, workspaceId: string, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string) => Promise<void>;
   /** Persist the (possibly new/forked) resume pointer for this chat (ADR 0004). */
   stampSession: (chatId: string, sessionId: string) => void;
   /** ADR 0003 turn-completion persistence batch. */
@@ -81,6 +85,7 @@ export interface TurnDeps {
     workspaceId: string;
     canvasId?: string;
     kind?: 'chat' | 'dev-agent';
+    repo?: string;
   }) => Promise<void>;
   /** Mirror this session's transcript to R2 (resume-restore substrate). Best-effort. */
   backupTranscript: (sessionId: string) => Promise<unknown>;
@@ -93,7 +98,7 @@ export interface TurnDeps {
  * first await) so a concurrent /send sees the in-flight turn.
  */
 export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<void> {
-  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken, mcpTokens } = input;
+  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken, devAgentRepo, mcpTokens } = input;
   const ac = new AbortController();
   deps.aborters.set(chatId, ac);
   const flavor = deps.flavor(devAgentGitToken);
@@ -109,7 +114,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
     // A dev-agent send runs in its prepared worktree with open_pr armed; a prepare failure
     // (clone/auth) surfaces through the catch below as the turn's error — better a visible
     // failure than an agent silently editing the live app tree.
-    const devAgent = await deps.prepareDevAgent(devAgentGitToken, chatId, sessionId);
+    const devAgent = await deps.prepareDevAgent(devAgentGitToken, devAgentRepo, chatId, sessionId);
     for await (const ev of deps.runChat(
       session.store,
       message,
@@ -138,7 +143,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       if (ev.kind === 'init') {
         finalSessionId = ev.sessionId;
         // The EXPLICIT canvas (never the routing default) is the chat→canvas edge claim.
-        indexed = deps.indexSession(chatId, ev.sessionId, message, flavor.workspaceId, canvasId, flavor.kind);
+        indexed = deps.indexSession(chatId, ev.sessionId, message, flavor.workspaceId, canvasId, flavor.kind, devAgentRepo);
       }
       deps.broadcast(chatId, ev satisfies ChatEvent);
     }
@@ -154,7 +159,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // The race fix: let the row-at-start create settle before the settle-time upsert reads
       // it, so find-or-create-by-chat finds the one row instead of inserting a second.
       await indexed.catch(() => {});
-      await deps.settleConversation({ chatId, sessionId: finalSessionId, message, workspaceId: flavor.workspaceId, canvasId, kind: flavor.kind });
+      await deps.settleConversation({ chatId, sessionId: finalSessionId, message, workspaceId: flavor.workspaceId, canvasId, kind: flavor.kind, repo: devAgentRepo });
       await deps.backupTranscript(finalSessionId);
     }
   }
