@@ -28,11 +28,12 @@ export const DEV_AGENT_GITHUB_TOKEN_ENV = 'DEV_AGENT_GITHUB_TOKEN';
 // org-scoped, so GitHub wants the bare name, not `owner/repo`).
 const DEV_AGENT_REPO_NAME = 'cedarpad';
 
-// Minimum permissions for clone + push + open-PR. `metadata:read` is implicit. `workflows`
-// is included because a pushed branch that touches `.github/workflows/*` is rejected without
-// it, and the dev-agent may edit CI. `issues` closes the explore loop: a run files its
-// findings as ready-for-agent issues itself (requires Issues R/W granted on the App).
-const DEV_AGENT_PERMISSIONS = { contents: 'write', pull_requests: 'write', workflows: 'write', issues: 'write' } as const;
+// Minimum permissions for clone + push + open-PR. `metadata:read` is implicit. No `workflows`
+// scope: a pushed branch that touches `.github/workflows/*` is rejected by GitHub without it,
+// which enforces the dev-agent's "no CI changes" triage law rather than just stating it as a
+// prompt rule. `issues` closes the explore loop: a run files its findings as ready-for-agent
+// issues itself (requires Issues R/W granted on the App).
+const DEV_AGENT_PERMISSIONS = { contents: 'write', pull_requests: 'write', issues: 'write' } as const;
 
 export interface GithubAppConfig {
   appId: string;
