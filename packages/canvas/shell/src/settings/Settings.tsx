@@ -193,6 +193,14 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
               {github.source === 'env' && (
                 <div className="settings-row-sub">
                   Connected via the deployment's environment (transitional) — connect through GitHub to manage the selection here.
+                  {github.canConnect && (
+                    <>
+                      {' '}
+                      <a className="settings-connect" href={`${base}/github/connect`}>
+                        Connect GitHub…
+                      </a>
+                    </>
+                  )}
                 </div>
               )}
               <ul className="settings-list">
