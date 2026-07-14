@@ -731,3 +731,121 @@ body,
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* Settings stage (#192): workspace administration — members now, repos next (#193). */
+.stage-settings {
+  display: flex;
+  color: var(--text);
+  font-size: 14px;
+  overflow-y: auto;
+}
+.settings-body {
+  width: 560px;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 28px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.settings-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.settings-section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}
+.settings-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.settings-section-head h3 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.settings-subhead {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #9aa);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.settings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 2px;
+  border-top: 1px solid var(--line);
+}
+.settings-row:first-child {
+  border-top: none;
+}
+.settings-row-name {
+  font-weight: 500;
+}
+.settings-row-sub {
+  color: var(--muted, #9aa);
+  font-size: 12.5px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-role {
+  flex: none;
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted, #9aa);
+}
+.settings-role-owner {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.settings-invite {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.settings-invite:hover {
+  background: var(--accent-hi);
+}
+.settings-remove,
+.settings-revoke {
+  flex: none;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted, #9aa);
+  padding: 4px 10px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.settings-remove:hover,
+.settings-revoke:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

@@ -6,6 +6,7 @@ import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
+import { handleMembersApi } from './members.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
@@ -226,6 +227,19 @@ export default {
         user,
         invitationsMatch[1],
         invitationsMatch[2],
+      );
+    }
+
+    // Workspace roster (#192, Settings stage): list owner+members (workspace-visible),
+    // owner-only removal. Edge-served like invitations — no container woken.
+    const membersMatch = /^\/api\/workspaces\/([^/]+)\/members(?:\/([^/]+))?$/.exec(url.pathname);
+    if (membersMatch) {
+      return handleMembersApi(
+        request,
+        createDbForWorker(env as unknown as Bindings),
+        user,
+        membersMatch[1],
+        membersMatch[2],
       );
     }
 
