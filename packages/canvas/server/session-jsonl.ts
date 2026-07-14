@@ -10,9 +10,11 @@
 import { join } from 'node:path';
 
 /** The SDK's on-disk project-dir name for a cwd. Claude Code encodes the absolute cwd into a
- * single dir segment by replacing every `/` and `.` with `-` (e.g. `/workspace/app` →
- * `-workspace-app`). */
-export const projectDirForCwd = (cwd: string): string => cwd.replace(/[/.]/g, '-');
+ * single dir segment by replacing every NON-ALPHANUMERIC character with `-` (verified against
+ * the CLI: `.../under_score_test` → `...-under-score-test`). A narrower `[/.]` rule shipped a
+ * live resume failure once the per-repo worktree root (`Zabaca__cedarpad`, ADR-0015) introduced
+ * underscores: adopt landed the JSONL in a dir the SDK never reads. */
+export const projectDirForCwd = (cwd: string): string => cwd.replace(/[^a-zA-Z0-9]/g, '-');
 
 /** The exact on-disk path `query({ resume, cwd })` reads for a session:
  * `<projectsDir>/<projectDirForCwd(cwd)>/<sessionId>.jsonl`. Restore + adopt must land the
