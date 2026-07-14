@@ -140,3 +140,51 @@ describe('discoverJobs — the default branch IS the registry (ADR-0015)', () =>
     expect(await discoverJobs(APP_ENV, database, 'ws_nogit', { nowSec: 1, fetchImpl })).toEqual([]);
   });
 });
+
+// ---- The cron evaluator (#196): tick → discover → due-check → kick → stamp ----
+
+import { evaluateScheduledJobs } from './repo-jobs.ts';
+
+describe('evaluateScheduledJobs — the tick is an evaluator, not a registry', () => {
+  const DAY = 24 * 3600_000;
+  const jobs = (over: Partial<{ schedule: 'daily' | 'manual' }> = {}) => [
+    { repo: 'Zabaca/cedarpad', name: 'deps-audit', description: '', schedule: 'daily' as const, prompt: 'Audit.', ...over },
+  ];
+
+  const kickRecorder = (joined = false) => {
+    const kicks: Array<{ repo: string; job: string }> = [];
+    const kick = async (repo: string, job: { name: string; prompt: string }) => {
+      kicks.push({ repo, job: job.name });
+      return Response.json({ chatId: 'run-x', joined }, { status: 202 });
+    };
+    return { kicks, kick };
+  };
+
+  test('a never-run daily job is due: kicked once, stamped, and NOT re-kicked the same day', async () => {
+    const { kicks, kick } = kickRecorder();
+    const r1 = await evaluateScheduledJobs(database, 'ws_jobs', { nowMs: DAY * 100, discover: async () => jobs(), kick });
+    expect(r1.kicked).toEqual(['Zabaca/cedarpad#deps-audit']);
+    // same tick retried an hour later — debounced by the stamp
+    const r2 = await evaluateScheduledJobs(database, 'ws_jobs', { nowMs: DAY * 100 + 3600_000, discover: async () => jobs(), kick });
+    expect(r2.kicked).toEqual([]);
+    // the next day it is due again
+    const r3 = await evaluateScheduledJobs(database, 'ws_jobs', { nowMs: DAY * 101, discover: async () => jobs(), kick });
+    expect(r3.kicked).toEqual(['Zabaca/cedarpad#deps-audit']);
+    expect(kicks.length).toBe(2);
+  });
+
+  test('manual jobs are never auto-kicked', async () => {
+    const { kicks, kick } = kickRecorder();
+    await evaluateScheduledJobs(database, 'ws_jobs', { nowMs: DAY * 200, discover: async () => jobs({ schedule: 'manual' }), kick });
+    expect(kicks).toEqual([]);
+  });
+
+  test('a JOINED kick (another run in flight) does NOT stamp — the job retries next tick', async () => {
+    const { kick } = kickRecorder(true);
+    const r1 = await evaluateScheduledJobs(database, 'ws_stamp2', { nowMs: DAY * 300, discover: async () => jobs(), kick });
+    expect(r1.kicked).toEqual([]); // joined ⇒ not counted as this job's run
+    const fresh = kickRecorder(false);
+    const r2 = await evaluateScheduledJobs(database, 'ws_stamp2', { nowMs: DAY * 300 + 3600_000, discover: async () => jobs(), kick: fresh.kick });
+    expect(r2.kicked).toEqual(['Zabaca/cedarpad#deps-audit']); // still due — never stamped
+  });
+});

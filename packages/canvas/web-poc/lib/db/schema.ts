@@ -758,6 +758,27 @@ export const workspaceMcpTokens = sqliteTable(
 export type WorkspaceMcpTokenRow = typeof workspaceMcpTokens.$inferSelect;
 export type NewWorkspaceMcpTokenRow = typeof workspaceMcpTokens.$inferInsert;
 
+/* ------------------------------------------------------------------ *
+ * Job run stamps (#196, ADR-0015) — the cron evaluator's debounce.
+ *
+ * One row per (workspace, repo, job): when its scheduled run last fired.
+ * Pure bookkeeping, never content — the job list itself is discovered off
+ * the repo's default branch every tick (reconcile, don't register). Losing
+ * a row costs one extra run, nothing else.
+ * ------------------------------------------------------------------ */
+export const jobRunStamps = sqliteTable(
+  "job_run_stamps",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    repo: text("repo").notNull(),
+    job: text("job").notNull(),
+    lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.workspaceId, t.repo, t.job] })],
+);
+
+export type JobRunStampRow = typeof jobRunStamps.$inferSelect;
+
 export type Workspace = typeof workspace.$inferSelect;
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;

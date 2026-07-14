@@ -8,7 +8,7 @@ import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
 import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo } from './github-connection.ts';
 import { handleMembersApi } from './members.ts';
-import { discoverJobs } from './repo-jobs.ts';
+import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
@@ -121,6 +121,20 @@ export default {
         kickDevAgentRun(e, { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo }),
       ),
     );
+    // Repo-defined scheduled jobs (#196, ADR-0015): the same tick evaluates the selected
+    // repos' `daily` jobs against their lastRunAt stamps. Same master breaker as the
+    // built-in run; best-effort — an evaluator failure never breaks the tick.
+    if (env.DEV_AGENT_ENABLED === 'true') {
+      const database = createDbForWorker(env as unknown as Bindings);
+      ctx.waitUntil(
+        evaluateScheduledJobs(database, DEFAULT_WORKSPACE_ID, {
+          nowMs: Date.now(),
+          discover: () => discoverJobs(env, database, DEFAULT_WORKSPACE_ID, { nowSec: Math.floor(Date.now() / 1000) }),
+          kick: (repo, job) =>
+            kickDevAgentRun(env, { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo }, repo, job),
+        }).catch((e: unknown) => console.error(`[jobs] scheduled evaluation failed: ${String(e)}`)),
+      );
+    }
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
