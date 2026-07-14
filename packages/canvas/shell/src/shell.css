@@ -819,7 +819,8 @@ body,
   border-color: var(--accent);
   color: var(--accent);
 }
-.settings-invite {
+.settings-invite,
+.settings-create-user {
   background: var(--accent);
   color: #fff;
   border: none;
@@ -829,7 +830,8 @@ body,
   font-weight: 600;
   cursor: pointer;
 }
-.settings-invite:hover {
+.settings-invite:hover,
+.settings-create-user:hover {
   background: var(--accent-hi);
 }
 .settings-remove,

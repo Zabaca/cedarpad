@@ -36,6 +36,15 @@ export const user = sqliteTable("user", {
    * to a non-empty array, the user may access only those workspaces.
    */
   allowedWorkspaces: text("allowed_workspaces", { mode: "json" }).$type<string[]>(),
+  /**
+   * Better Auth admin plugin fields (ADR-0014: admin lives inside the app, gated
+   * on an admin role). `role` is the gate ("admin" unlocks /admin + create-user);
+   * the ban fields ship with the plugin's schema and stay unused until needed.
+   */
+  role: text("role"),
+  banned: integer("banned", { mode: "boolean" }),
+  banReason: text("ban_reason"),
+  banExpires: integer("ban_expires", { mode: "timestamp_ms" }),
   ...timestamps,
 });
 
@@ -55,6 +64,8 @@ export const session = sqliteTable("session", {
    * workspace everywhere in our own code.
    */
   activeOrganizationId: text("active_organization_id"),
+  /** Better Auth admin plugin: set while an admin impersonates this session. */
+  impersonatedBy: text("impersonated_by"),
   ...timestamps,
 });
 
