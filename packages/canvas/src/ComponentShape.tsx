@@ -8,6 +8,7 @@ import { type Editor, T, type TLBaseShape } from 'tldraw';
 
 import { type AgentComponent, LOAD_ATTEMPTS, loadComponent } from './component-loader';
 import { activeCanvasId } from './active-canvas';
+import { setDisplayName, useCurrentUser } from './identity';
 import { type EventGuards, InteractiveBoxShapeUtil } from './InteractiveBoxShapeUtil';
 import { isInteractiveControl } from './predicates';
 // ComponentStatus is the read bridge's concern too, so it lives in the model
@@ -158,6 +159,7 @@ export function ComponentHost({
 }) {
   const [Comp, setComp] = React.useState<AgentComponent | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const currentUser = useCurrentUser();
   // Attempts at loading THIS module@rev. Reset to the first attempt on every fresh
   // load below; retries (a later slice) bump it so a `loading` status carries which try.
   const attemptRef = React.useRef(0);
@@ -220,7 +222,9 @@ export function ComponentHost({
       onRenderError={(message, where) => writeStatus({ phase: 'render_error', message, where })}
     >
       <div style={{ width: '100%', height: '100%', overflow: 'auto' }}>
-        <Comp {...data} setData={setData} />
+        {/* #211: identity rides alongside data/setData. `currentUser` is null until
+            resolved; `setDisplayName` is the ask-once guest naming (no-op for users). */}
+        <Comp {...data} setData={setData} currentUser={currentUser ?? undefined} setDisplayName={setDisplayName} />
       </div>
     </ComponentErrorBoundary>
   );

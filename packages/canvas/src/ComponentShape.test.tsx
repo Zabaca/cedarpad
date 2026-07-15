@@ -200,3 +200,48 @@ describe('sameStatus: the idempotency guard', () => {
     expect(sameStatus({ phase: 'loading', attempt: 1 }, { phase: 'ready' })).toBe(false);
   });
 });
+
+// #211: identity rides alongside data/setData into every rendered instance.
+describe('ComponentHost injects currentUser + setDisplayName', () => {
+  test('the rendered component receives the identity props (guest in this env)', async () => {
+    const ed = makeEditor({
+      id: 'shape:idn',
+      type: 'component',
+      props: { w: 360, h: 260, module: 'Probe', data: { x: 1 }, rev: 0 },
+      meta: {},
+    });
+    let seen: Record<string, unknown> | null = null;
+    const Probe: AgentComponent = (props) => {
+      seen = props;
+      return React.createElement('div', null, 'probe');
+    };
+    const host = render(
+      React.createElement(ComponentHost, {
+        shapeId: 'shape:idn',
+        editor: ed.editor,
+        module: 'Probe',
+        data: { x: 1 },
+        rev: 0,
+        load: async () => Probe,
+      }),
+    );
+    await host.mount();
+    // The identity singleton resolves async (fetch fails here → guest); poll briefly.
+    for (let i = 0; i < 20 && !(seen as Record<string, unknown> | null)?.currentUser; i++) {
+      await act(async () => void (await new Promise((r) => setTimeout(r, 10))));
+    }
+    const props = seen as unknown as {
+      x: number;
+      setData: unknown;
+      setDisplayName: unknown;
+      currentUser?: { id: string; kind: string; color: string };
+    };
+    expect(props.x).toBe(1); // data still spreads through
+    expect(typeof props.setData).toBe('function');
+    expect(typeof props.setDisplayName).toBe('function');
+    expect(props.currentUser?.kind).toBe('guest');
+    expect(props.currentUser?.id).toMatch(/^guest_/);
+    expect(props.currentUser?.color).toMatch(/^hsl\(/);
+    await host.unmount();
+  });
+});
