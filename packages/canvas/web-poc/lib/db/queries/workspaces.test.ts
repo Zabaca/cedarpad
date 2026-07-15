@@ -4,7 +4,16 @@ import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { beforeAll, describe, expect, it } from "vitest";
 import * as schema from "../schema.js";
-import { addWorkspaceMember, createWorkspace, getWorkspace, listWorkspaces, r2Prefix, sandboxId } from "./workspaces.js";
+import {
+  addWorkspaceMember,
+  createWorkspace,
+  getWorkspace,
+  listWorkspaceMembers,
+  listWorkspaces,
+  r2Prefix,
+  sandboxId,
+  transferWorkspaceOwnership,
+} from "./workspaces.js";
 
 /** In-memory DB built from the real migrations (mirrors the other query tests). */
 const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url));
@@ -115,5 +124,31 @@ describe("workspace membership (#179) — access is owner-OR-member", () => {
 
     const ids = (await listWorkspaces(db, "member_1")).map((w) => w.id).filter((id) => id === ws.id);
     expect(ids).toHaveLength(1);
+  });
+});
+
+describe("transferWorkspaceOwnership — role change IS ownership transfer (single owner model)", () => {
+  it("swaps owner_user_id and roster roles when the target is a member", async () => {
+    const ws = await createWorkspace(db, { name: "transfer-1", ownerUserId: "owner_1" });
+    await addWorkspaceMember(db, { workspaceId: ws.id, userId: "member_1" });
+
+    const ok = await transferWorkspaceOwnership(db, { workspaceId: ws.id, toUserId: "member_1" });
+    expect(ok).toBe(true);
+
+    const fetched = await getWorkspace(db, ws.id, "member_1");
+    expect(fetched?.ownerUserId).toBe("member_1");
+
+    const roster = await listWorkspaceMembers(db, ws.id);
+    expect(roster).toEqual([
+      { userId: "member_1", name: "member_1", email: "member_1@example.com", role: "owner" },
+      { userId: "owner_1", name: "owner_1", email: "owner_1@example.com", role: "member" },
+    ]);
+  });
+
+  it("returns false when the target isn't a member", async () => {
+    const ws = await createWorkspace(db, { name: "transfer-2", ownerUserId: "owner_1" });
+    const ok = await transferWorkspaceOwnership(db, { workspaceId: ws.id, toUserId: "stranger_1" });
+    expect(ok).toBe(false);
+    expect((await getWorkspace(db, ws.id, "owner_1"))?.ownerUserId).toBe("owner_1");
   });
 });

@@ -171,3 +171,41 @@ export async function addWorkspaceMember(
     })
     .onConflictDoNothing();
 }
+
+/** Transfer ownership: there is a single owner (`workspaces.owner_user_id`), so
+ *  "changing someone's role" IS a transfer, not an enum edit. The target must
+ *  already be a member; on success it becomes owner and the OLD owner becomes a
+ *  member. Returns false (no-op) if the target isn't currently a member. */
+export async function transferWorkspaceOwnership(
+  db: Database,
+  input: { workspaceId: string; toUserId: string },
+): Promise<boolean> {
+  // Member check first, then the writes — sequential (not db.transaction: the libsql
+  // driver opens transactions on a separate connection, which the in-memory test
+  // client can't share across, and this handful of single-row writes needs no
+  // cross-statement isolation beyond "member first").
+  const [existing] = await db
+    .select({ id: workspaceMembers.id })
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.toUserId)))
+    .limit(1);
+  if (!existing) return false;
+
+  const [ws] = await db
+    .select({ ownerUserId: workspaces.ownerUserId })
+    .from(workspaces)
+    .where(eq(workspaces.id, input.workspaceId))
+    .limit(1);
+  if (!ws) return false;
+  const oldOwnerUserId = ws.ownerUserId;
+
+  await db.update(workspaces).set({ ownerUserId: input.toUserId }).where(eq(workspaces.id, input.workspaceId));
+  await db
+    .delete(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.toUserId)));
+  await db
+    .insert(workspaceMembers)
+    .values({ id: `wm_${crypto.randomUUID()}`, workspaceId: input.workspaceId, userId: oldOwnerUserId, role: "member" })
+    .onConflictDoNothing();
+  return true;
+}

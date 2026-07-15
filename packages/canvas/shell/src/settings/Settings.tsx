@@ -72,6 +72,21 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
     void reload();
   };
 
+  const makeOwner = async (m: MemberView) => {
+    if (!window.confirm(`Transfer ownership of this workspace to ${m.name}? You will become a member.`)) return;
+    const r = await fetch(`${base}/members/${encodeURIComponent(m.userId)}`, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ role: 'owner' }),
+    }).catch(() => null);
+    if (!r?.ok) {
+      window.alert('Could not transfer ownership.');
+      return;
+    }
+    setMembers(((await r.json()) as { members: MemberView[] }).members);
+  };
+
   const toggleRepo = async (fullName: string) => {
     if (!github) return;
     const selected = github.selectedRepos.includes(fullName)
@@ -152,14 +167,24 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
                 <span className="settings-row-sub">{m.email}</span>
                 <span className={`settings-role settings-role-${m.role}`}>{m.role}</span>
                 {isOwnerView && m.role !== 'owner' && (
-                  <button
-                    type="button"
-                    className="settings-remove"
-                    title="Remove from workspace"
-                    onClick={() => void removeMember(m)}
-                  >
-                    Remove
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="settings-make-owner"
+                      title="Transfer ownership to this member"
+                      onClick={() => void makeOwner(m)}
+                    >
+                      Make owner
+                    </button>
+                    <button
+                      type="button"
+                      className="settings-remove"
+                      title="Remove from workspace"
+                      onClick={() => void removeMember(m)}
+                    >
+                      Remove
+                    </button>
+                  </>
                 )}
               </li>
             ))}

@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import * as schema from '../web-poc/lib/db/schema.ts';
-import { addWorkspaceMember, createWorkspace, getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
+import { addWorkspaceMember, createWorkspace, getWorkspace, getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import { handleMembersApi } from './members.ts';
 
 // In-memory DB built from the real migrations (mirrors invitations.test.ts).
@@ -41,6 +41,12 @@ beforeAll(async () => {
 });
 
 const req = (method: string) => new Request('https://x/api/workspaces/whatever/members', { method });
+const reqPatch = (body: unknown) =>
+  new Request('https://x/api/workspaces/whatever/members', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
 
 describe('handleMembersApi — the member list is workspace-visible, removal is owner-only (#192)', () => {
   test('owner and member both read the roster: owner first with role owner, then members', async () => {
@@ -83,5 +89,50 @@ describe('handleMembersApi — the member list is workspace-visible, removal is 
     expect((await handleMembersApi(req('DELETE'), database, OWNER, ws.id, OWNER.id)).status).toBe(400);
     // removing a non-member is a 404
     expect((await handleMembersApi(req('DELETE'), database, OWNER, ws.id, STRANGER.id)).status).toBe(404);
+  });
+});
+
+describe('handleMembersApi — role change IS ownership transfer (single owner model)', () => {
+  test('the owner transfers ownership to a member: roles swap, roster reflects it', async () => {
+    const ws = await createWorkspace(database, { name: 'mem-ws-5', ownerUserId: OWNER.id });
+    await addWorkspaceMember(database, { workspaceId: ws.id, userId: MEMBER.id });
+
+    const res = await handleMembersApi(reqPatch({ role: 'owner' }), database, OWNER, ws.id, MEMBER.id);
+    expect(res.status).toBe(200);
+    const { members } = await readJson(res);
+    expect(members).toEqual([
+      { userId: MEMBER.id, name: `name of ${MEMBER.id}`, email: MEMBER.email, role: 'owner' },
+      { userId: OWNER.id, name: `name of ${OWNER.id}`, email: OWNER.email, role: 'member' },
+    ]);
+    const record = await getWorkspaceRecord(database, ws.id);
+    expect(record?.ownerUserId).toBe(MEMBER.id);
+  });
+
+  test('a member calling PATCH is 403', async () => {
+    const ws = await createWorkspace(database, { name: 'mem-ws-6', ownerUserId: OWNER.id });
+    await addWorkspaceMember(database, { workspaceId: ws.id, userId: MEMBER.id });
+
+    const res = await handleMembersApi(reqPatch({ role: 'owner' }), database, MEMBER, ws.id, OWNER.id);
+    expect(res.status).toBe(403);
+  });
+
+  test('transferring to a non-member is 404', async () => {
+    const ws = await createWorkspace(database, { name: 'mem-ws-7', ownerUserId: OWNER.id });
+    const res = await handleMembersApi(reqPatch({ role: 'owner' }), database, OWNER, ws.id, STRANGER.id);
+    expect(res.status).toBe(404);
+  });
+
+  test('transferring to self is 400', async () => {
+    const ws = await createWorkspace(database, { name: 'mem-ws-8', ownerUserId: OWNER.id });
+    const res = await handleMembersApi(reqPatch({ role: 'owner' }), database, OWNER, ws.id, OWNER.id);
+    expect(res.status).toBe(400);
+  });
+
+  test('a bad body (e.g. role: member) is 400', async () => {
+    const ws = await createWorkspace(database, { name: 'mem-ws-9', ownerUserId: OWNER.id });
+    await addWorkspaceMember(database, { workspaceId: ws.id, userId: MEMBER.id });
+
+    const res = await handleMembersApi(reqPatch({ role: 'member' }), database, OWNER, ws.id, MEMBER.id);
+    expect(res.status).toBe(400);
   });
 });
