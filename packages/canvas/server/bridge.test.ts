@@ -764,6 +764,36 @@ describe('GET/PUT /api/components — the component library over the wire', () =
   });
 });
 
+describe('PUT /api/components/data/:name — data files over the wire (write_data parity)', () => {
+  const DF = `zz_test_data_${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}.json`;
+  const componentsRoot = new URL('../src/canvas-components/', import.meta.url).pathname;
+  afterAll(() => {
+    rmSync(`${componentsRoot}${DF}`, { force: true });
+  });
+
+  const putData = (name: string, body: unknown) =>
+    handleRequest(
+      new Request(`http://localhost/api/components/data/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  test('PUT writes the data file next to the components', async () => {
+    const res = await putData(DF, { source: '{"rows": [1]}' });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+    expect(readFileSync(`${componentsRoot}${DF}`, 'utf8')).toBe('{"rows": [1]}');
+  });
+
+  test('an executable extension, bad JSON, and a missing source are refused', async () => {
+    expect((await putData('evil.tsx', { source: 'x' })).status).toBe(400);
+    expect((await putData(DF, { source: '{nope' })).status).toBe(400);
+    expect((await putData(DF, {})).status).toBe(400);
+  });
+});
+
 // MCP full access: direct canvas mutation over the wire — the same ops the in-canvas
 // agent uses (create merges defaults, update merges patches, place stamps the component
 // rev), minus the chat-card linking (an external client has no chat card). Isolated on

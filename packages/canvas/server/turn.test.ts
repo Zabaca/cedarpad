@@ -273,6 +273,24 @@ describe('mcpTokens: dropped for a dev-agent turn regardless of what rode the re
     expect(seen).toBeUndefined();
   });
 
+  test('the flavor kind reaches runChat (chat drops Write/Edit there; dev-agent keeps them)', async () => {
+    const seen: unknown[] = [];
+    const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
+      seen.push(args[17]);
+      yield { kind: 'init', sessionId: 'sess_1' } satisfies ChatEvent;
+      yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
+    }) as unknown as TurnDeps['runChat'];
+    const chat = recordingDeps({ flavor: () => ({ workspaceId: 'default', kind: 'chat' as const }), runChat });
+    await runTurnAsync(input(), chat.deps);
+    const dev = recordingDeps({
+      flavor: () => ({ workspaceId: 'default', kind: 'dev-agent' as const, skills: ['impeccable'] }),
+      runChat,
+    });
+    await runTurnAsync(input({ devAgentGitToken: 'ghs_x' }), dev.deps);
+
+    expect(seen).toEqual(['chat', 'dev-agent']);
+  });
+
   test('no mcpTokens on the request ⇒ undefined reaches runChat for a chat turn too', async () => {
     let seen: Record<string, string> | undefined = { should: 'not-see-this' };
     const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {

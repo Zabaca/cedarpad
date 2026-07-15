@@ -136,6 +136,9 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // (the edge-minted git token decides that), so it never sees mcpTokens even if a stray
       // header somehow rode the request.
       flavor.kind === 'chat' ? mcpTokens : undefined,
+      // Chat turns drop the generic Write/Edit tools (component/data authoring goes through
+      // the registered canvas tools); dev-agent turns keep the full preset for worktree edits.
+      flavor.kind,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
       // Row-at-start: index the session the moment its id lands (the init event). Tracked (not
