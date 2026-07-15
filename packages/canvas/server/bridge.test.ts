@@ -764,6 +764,55 @@ describe('GET/PUT /api/components — the component library over the wire', () =
   });
 });
 
+// MCP full access: direct canvas mutation over the wire — the same ops the in-canvas
+// agent uses (create merges defaults, update merges patches, place stamps the component
+// rev), minus the chat-card linking (an external client has no chat card). Isolated on
+// a throwaway canvas via ?canvas= so no other test's store is touched.
+describe('POST /api/canvas/shapes/{create,update} + /api/components/place — direct mutation', () => {
+  const CANVAS = `cv_mcp_ops_${crypto.randomUUID().slice(0, 8)}`;
+  const post = (path: string, body: unknown) =>
+    handleRequest(
+      new Request(`http://localhost${path}?canvas=${CANVAS}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+  const readShapes = async (): Promise<Array<Record<string, unknown>>> => {
+    const res = await handleRequest(new Request(`http://localhost/api/canvas?canvas=${CANVAS}`));
+    return ((await res.json()) as { shapes: Array<Record<string, unknown>> }).shapes;
+  };
+
+  test('create → update round-trip: defaults filled on create, update merges the patch', async () => {
+    const created = await post('/api/canvas/shapes/create', {
+      shapes: [{ type: 'rectangle', x: 10, y: 20, text: 'box' }],
+    });
+    expect(created.status).toBe(200);
+    const shape = (await readShapes()).find((s) => s.text === 'box')!;
+    expect(shape.type).toBe('rectangle');
+
+    const updated = await post('/api/canvas/shapes/update', { shapes: [{ id: shape.id, text: 'renamed' }] });
+    expect(updated.status).toBe(200);
+    const after = (await readShapes()).find((s) => s.id === shape.id)!;
+    expect(after.text).toBe('renamed');
+    expect(after.x).toBe(10); // untouched fields survive the patch
+  });
+
+  test('place_component: a component instance lands with module, box, data, and a rev', async () => {
+    const placed = await post('/api/components/place', { module: 'ZzTestMod', x: 5, y: 6, data: { n: 1 } });
+    expect(placed.status).toBe(200);
+    const comp = (await readShapes()).find((s) => s.type === 'component' && s.module === 'ZzTestMod')!;
+    expect(comp.data).toEqual({ n: 1 });
+    expect(typeof comp.rev).toBe('number');
+  });
+
+  test('bad inputs are 400s: empty batch, unknown update id, missing module', async () => {
+    expect((await post('/api/canvas/shapes/create', { shapes: [] })).status).toBe(400);
+    expect((await post('/api/canvas/shapes/update', { shapes: [{ id: 'zz_ghost', text: 'x' }] })).status).toBe(400);
+    expect((await post('/api/components/place', { x: 1, y: 2 })).status).toBe(400);
+  });
+});
+
 // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
 // proxies here. Content only (ADR-0013): plain files under .claude/skills/<name>/,
 // path rules enforced server-side, persisted by the skills sink at flush.

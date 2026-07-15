@@ -14,7 +14,8 @@ import { conversations, makeDb } from '../web-poc/lib/db/index.ts';
 
 import type { CanvasState } from '../src/shapes.ts';
 import { normalizeIncomingShape } from '../src/normalize.ts';
-import { bumpAllComponents, bumpSharedModule, nextComponentRev } from '../src/canvas-ops.ts';
+import { bumpAllComponents, bumpSharedModule, createShapesOp, nextComponentRev, placeComponentOp, updateShapesOp } from '../src/canvas-ops.ts';
+import type { OpResult } from '../src/canvas-ops.ts';
 import { BlobStore, selectBackend } from './blob-store.ts';
 import { type CanvasSession, createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
 import { ChatMetaStore } from './chat-meta.ts';
@@ -719,6 +720,45 @@ export async function handleRequest(req: Request): Promise<Response> {
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
+    }
+
+    // Direct canvas mutation over the wire (MCP full access): the same ops the in-canvas
+    // agent's tools call (create fills defaults, update merges the patch, place stamps the
+    // component rev), minus the chat-card linking — an external client has no chat card.
+    // normalizeShape (inside the ops) stays the single shape validator.
+    const opJson = (r: OpResult) => (r.isError ? json({ error: r.text }, 400) : json({ text: r.text }));
+    if (path === '/api/canvas/shapes/create' && req.method === 'POST') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const body = await readBody(req);
+      const shapes = Array.isArray(body.shapes) ? (body.shapes as Array<Record<string, unknown>>) : [];
+      if (shapes.length === 0) return json({ error: 'shapes: non-empty array required' }, 400);
+      return opJson(createShapesOp(session.store, shapes));
+    }
+    if (path === '/api/canvas/shapes/update' && req.method === 'POST') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const body = await readBody(req);
+      const shapes = Array.isArray(body.shapes) ? (body.shapes as Array<Record<string, unknown>>) : [];
+      if (shapes.length === 0) return json({ error: 'shapes: non-empty array required' }, 400);
+      return opJson(updateShapesOp(session.store, shapes));
+    }
+    if (path === '/api/components/place' && req.method === 'POST') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const body = await readBody(req);
+      if (typeof body.module !== 'string' || typeof body.x !== 'number' || typeof body.y !== 'number') {
+        return json({ error: 'module (string), x and y (numbers) are required' }, 400);
+      }
+      return opJson(
+        placeComponentOp(session.store, {
+          id: typeof body.id === 'string' ? body.id : undefined,
+          module: body.module,
+          x: body.x,
+          y: body.y,
+          w: typeof body.w === 'number' ? body.w : undefined,
+          h: typeof body.h === 'number' ? body.h : undefined,
+          data: body.data && typeof body.data === 'object' ? (body.data as Record<string, unknown>) : undefined,
+          rev: nextComponentRev(session.store),
+        }),
+      );
     }
 
     // The component library over the wire (MCP full access): the edge MCP tools proxy

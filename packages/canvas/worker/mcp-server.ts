@@ -8,14 +8,18 @@ import { edgeAuth } from './auth-gate.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
 import { withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import {
+  CreateShapesInput,
+  DeleteShapesInput,
   ListCanvasesInput,
   ListComponentsInput,
   ListInboxInput,
+  PlaceComponentInput,
   ReadCanvasInput,
   ReadComponentInput,
   ReadConversationInput,
   ReadTranscriptInput,
   SendMessageInput,
+  UpdateShapesInput,
   UploadSkillInput,
   WriteComponentInput,
   buildMcpTools,
@@ -169,10 +173,43 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'write_component',
       {
         description:
-          'Create or overwrite a reusable React component module in a workspace canvas library. Rules: `export default` a React component; it receives the placement `data` as props; imports of react, other components, and "mermaid" are allowed; inline styles + SVG. Placed instances hot-reload. To render a NEW instance on the canvas, ask the agent via send_message to place_component it.',
+          'Create or overwrite a reusable React component module in a workspace canvas library. Rules: `export default` a React component; it receives the placement `data` as props; imports of react, other components, and "mermaid" are allowed; inline styles + SVG. Placed instances hot-reload; use place_component to render a new instance on a canvas.',
         inputSchema: WriteComponentInput.shape,
       },
       async (input) => text(await tools.writeComponent(input)),
+    );
+
+    server.registerTool(
+      'create_shapes',
+      {
+        description:
+          'Create primitive shapes on a canvas (types: rectangle, ellipse, text, note, arrow; page coordinates, visible area roughly x 0..1000 y 0..700). Fields per shape: type (required), x, y, w, h, text, color; arrows take x1/y1/x2/y2 or startShapeId/endShapeId to bind to shapes. Call read_canvas first to see what exists and where the free space is.',
+        inputSchema: CreateShapesInput.shape,
+      },
+      async (input) => text(await tools.createShapes(input)),
+    );
+    server.registerTool(
+      'update_shapes',
+      {
+        description:
+          'Update existing shapes by id (move, resize, recolor, relabel). Only the fields you pass change; everything else is preserved.',
+        inputSchema: UpdateShapesInput.shape,
+      },
+      async (input) => text(await tools.updateShapes(input)),
+    );
+    server.registerTool(
+      'delete_shapes',
+      { description: 'Delete shapes from a canvas by id.', inputSchema: DeleteShapesInput.shape },
+      async (input) => text(await tools.deleteShapes(input)),
+    );
+    server.registerTool(
+      'place_component',
+      {
+        description:
+          'Render an instance of a component module on a canvas at (x, y), sized w×h (default 360×260), with `data` passed to it as props. Pass an existing component shape id to move/retarget/re-data that instance instead.',
+        inputSchema: PlaceComponentInput.shape,
+      },
+      async (input) => text(await tools.placeComponent(input)),
     );
 
     server.registerTool(

@@ -248,6 +248,38 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     await expect(tools.listComponents({ workspace_id: OTHER_WS })).rejects.toThrow(/not found/);
   });
 
+  test('create/update/delete shapes and place_component proxy the mutation routes, canvas-scoped and access-checked', async () => {
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'Mutable' });
+    bridgeResponses = {
+      '/api/canvas/shapes/create': { text: 'Created 1 shape(s)' },
+      '/api/canvas/shapes/update': { text: 'Updated 1 shape(s).' },
+      '/api/canvas/delete': { version: 9 },
+      '/api/components/place': { text: 'Placed <KpiCard> as cmp_1, 360×260.' },
+    };
+    bridgeCalls = [];
+
+    await tools.createShapes({ workspace_id: WS, canvas_id: board.id, shapes: [{ type: 'rectangle', x: 1, y: 2 }] });
+    await tools.updateShapes({ workspace_id: WS, canvas_id: board.id, shapes: [{ id: 's1', text: 'renamed' }] });
+    await tools.deleteShapes({ workspace_id: WS, canvas_id: board.id, ids: ['s1'] });
+    await tools.placeComponent({ workspace_id: WS, canvas_id: board.id, module: 'KpiCard', x: 10, y: 20, data: { n: 1 } });
+
+    expect(bridgeCalls.map((c) => [c.path, c.method])).toEqual([
+      ['/api/canvas/shapes/create', 'POST'],
+      ['/api/canvas/shapes/update', 'POST'],
+      ['/api/canvas/delete', 'POST'],
+      ['/api/components/place', 'POST'],
+    ]);
+    expect(bridgeCalls.every((c) => c.headers['x-canvas-id'] === board.id)).toBe(true);
+    expect(bridgeCalls[0]?.body).toEqual({ shapes: [{ type: 'rectangle', x: 1, y: 2 }] });
+    expect(bridgeCalls[2]?.body).toEqual({ ids: ['s1'] });
+    expect(bridgeCalls[3]?.body).toEqual({ module: 'KpiCard', x: 10, y: 20, data: { n: 1 } });
+
+    bridgeCalls = [];
+    await expect(tools.createShapes({ workspace_id: OTHER_WS, shapes: [{ type: 'text' }] })).rejects.toThrow(/not found/);
+    await expect(tools.placeComponent({ workspace_id: WS, canvas_id: 'cv_ghost', module: 'X', x: 0, y: 0 })).rejects.toThrow(/canvas/);
+    expect(bridgeCalls).toEqual([]);
+  });
+
   test('list_inbox lists the workspace’s conversations for the user', async () => {
     const res = await tools.listInbox({ workspace_id: WS });
     expect(res.items.map((i) => i.chat_id)).toContain('mcp_test_read');

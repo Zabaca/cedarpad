@@ -41,6 +41,24 @@ export const ListComponentsInput = ReadCanvasInput;
 const ComponentModule = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/, 'component name: letters/digits/_/-, no extension');
 export const ReadComponentInput = ReadCanvasInput.extend({ module: ComponentModule });
 export const WriteComponentInput = ReadComponentInput.extend({ source: z.string().min(1) });
+// Direct canvas mutation. Shapes ride as loose records on purpose: the bridge's
+// normalizeShape is the single validator (same permissive-schema-strict-normalize split
+// the in-canvas agent tools use), and its errors come back agent-legible.
+const ShapeRecord = z.record(z.unknown());
+export const CreateShapesInput = ReadCanvasInput.extend({ shapes: z.array(ShapeRecord).min(1) });
+export const UpdateShapesInput = ReadCanvasInput.extend({
+  shapes: z.array(ShapeRecord.and(z.object({ id: z.string().min(1) }))).min(1),
+});
+export const DeleteShapesInput = ReadCanvasInput.extend({ ids: z.array(z.string().min(1)).min(1) });
+export const PlaceComponentInput = ReadCanvasInput.extend({
+  id: z.string().min(1).optional(),
+  module: ComponentModule,
+  x: z.number(),
+  y: z.number(),
+  w: z.number().optional(),
+  h: z.number().optional(),
+  data: z.record(z.unknown()).optional(),
+});
 
 export interface McpToolDeps {
   db: Database;
@@ -213,6 +231,33 @@ export function buildMcpTools(deps: McpToolDeps) {
         headers,
         body: { source: input.source },
       });
+    },
+
+    // Direct canvas mutation: the same ops the in-canvas agent's tools call, proxied to
+    // the bridge (no chat-card linking — an external client has no chat card).
+    async createShapes(input: z.infer<typeof CreateShapesInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      return bridgeJson(ws.id, '/api/canvas/shapes/create', { method: 'POST', headers, body: { shapes: input.shapes } });
+    },
+
+    async updateShapes(input: z.infer<typeof UpdateShapesInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      return bridgeJson(ws.id, '/api/canvas/shapes/update', { method: 'POST', headers, body: { shapes: input.shapes } });
+    },
+
+    async deleteShapes(input: z.infer<typeof DeleteShapesInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      return bridgeJson(ws.id, '/api/canvas/delete', { method: 'POST', headers, body: { ids: input.ids } });
+    },
+
+    async placeComponent(input: z.infer<typeof PlaceComponentInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      const { workspace_id: _ws, canvas_id: _cv, ...placement } = input;
+      return bridgeJson(ws.id, '/api/components/place', { method: 'POST', headers, body: placement });
     },
 
     /** Skills are workspace CONTENT (ADR-0013): any member may add one — the same actor
