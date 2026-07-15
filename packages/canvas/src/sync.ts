@@ -23,6 +23,7 @@ import { fromTldrawShape } from './tldraw-bridge';
 import { canon } from './tldraw-conventions';
 import { planReconcile, type ArrowBindingPair, type EditorSnapshot, type ReconcileOp } from './sync-plan';
 import { registerStream } from './idle';
+import { onPresenceFrame } from './presence';
 import { withCanvasHeader, withCanvasParam } from './active-canvas';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -201,6 +202,9 @@ export function wireSync(editor: Editor): () => void {
       }
     };
     es.addEventListener('screenshot', (e) => void onScreenshot(e as MessageEvent));
+    // Presence (#212): remote cursors/cameras ride the same stream as ephemeral
+    // `instance_presence` records — invisible to the shape push/reconcile above.
+    es.addEventListener('presence', (e) => onPresenceFrame(editor, (e as MessageEvent).data as string));
   };
   const closeCanvasStream = (): void => {
     es?.close();

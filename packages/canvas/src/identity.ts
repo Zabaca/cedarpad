@@ -94,6 +94,13 @@ export function setDisplayName(name: string): void {
   notify();
 }
 
+/** Kick off identity resolution (idempotent) and read the current snapshot without
+ * React — the presence heartbeat (#212) polls this on its own timer. */
+export function currentUserSnapshot(): CurrentUser | null {
+  start();
+  return snapshot;
+}
+
 /** The current identity, resolving on first use; `null` until resolved. */
 export function useCurrentUser(): CurrentUser | null {
   React.useEffect(start, []);

@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { DefaultContextMenu, DefaultContextMenuContent, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
+import { DefaultContextMenu, DefaultContextMenuContent, DefaultPeopleMenu, DefaultSharePanel, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 import { activeCanvasId } from './active-canvas';
@@ -10,6 +10,7 @@ import { DOCK_CHAT_DELETED, postDockMessage } from '../shared/dock-messages';
 import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
 import { wireSync } from './sync';
+import { startPresenceHeartbeat } from './presence';
 
 // Registered once, at editor construction: our two custom shapes. `component`
 // renders agent-authored React files; `chat` is a chat session living on the canvas.
@@ -54,7 +55,16 @@ function CanvasContextMenu(props: TLUiContextMenuProps) {
   );
 }
 
-const tldrawComponents: TLComponents = { PageMenu: null, ContextMenu: CanvasContextMenu };
+// SharePanel/PeopleMenu (#212): tldraw's built-in collaborator UI — face pile, labeled
+// cursors, click-to-follow (auto-unfollow on local pan/zoom) — rendered straight from
+// the instance_presence records our presence stream writes. Off by default in tldraw;
+// enabling the components is all it takes.
+const tldrawComponents: TLComponents = {
+  PageMenu: null,
+  ContextMenu: CanvasContextMenu,
+  SharePanel: DefaultSharePanel,
+  PeopleMenu: DefaultPeopleMenu,
+};
 
 // Persist the camera (pan + zoom) PER CANVAS across reloads, so a canvas returns to
 // where you left it rather than the default center. Canvas shapes live in the
@@ -216,6 +226,9 @@ export default function App() {
       editorRef.current = editor;
       setReady(true);
       const unsync = wireSync(editor);
+      // Presence (#212): beat this browser's cursor + camera to the bridge; remote
+      // participants arrive over the sync stream as instance_presence records.
+      const unbeat = startPresenceHeartbeat(editor);
       setForkHandler((pid) => forkChat(pid as TLShapeId)); // chat cards' fork button routes here
 
       // Per-canvas camera: restore the one we land on, then save (debounced) on move.
@@ -283,6 +296,7 @@ export default function App() {
         setForkHandler(null);
         uncam();
         unlisten();
+        unbeat();
         unsync();
       };
     },
