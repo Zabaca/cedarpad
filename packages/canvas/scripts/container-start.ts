@@ -8,7 +8,7 @@ export {};
 import { fileURLToPath } from 'node:url';
 
 import { BlobStore, selectBackend } from '../server/blob-store.ts';
-import { extractOverlay } from '../server/overlay.ts';
+import { extractCanvasDirs, extractOverlay } from '../server/overlay.ts';
 
 // Cold-boot phase timing — read via the Worker's /__bootlog (CF doesn't stream
 // container stdout to Workers Observability yet). t0 ≈ container-process start.
@@ -51,6 +51,30 @@ if (components) {
   console.log(`[boot] ${ms()} component library restored from R2`);
 } else {
   console.log(`[boot] ${ms()} no saved components; using image seed library`);
+}
+
+// ADR-0014: the two live component trees. The legacy components.tar restore above keeps
+// the default workspace's historical library visible (it lands in the read-only platform
+// dir position and is never flushed again); these two are where writes go now.
+const SHARED_COMPONENTS = `${ROOT}shared/components`;
+await Bun.spawn(['mkdir', '-p', SHARED_COMPONENTS]).exited;
+const sharedComponents = await store.loadSharedComponents(WORKSPACE).catch((err) => {
+  console.error('[boot] shared components load failed; starting with none:', err);
+  return null;
+});
+if (sharedComponents) {
+  await extractOverlay(sharedComponents, SHARED_COMPONENTS);
+  console.log(`[boot] ${ms()} shared component library restored from R2`);
+}
+
+const SRC_ROOT = `${ROOT}src`;
+const canvasDirs = await store.loadCanvasDirs(WORKSPACE).catch((err) => {
+  console.error('[boot] per-canvas component dirs load failed; starting with none:', err);
+  return null;
+});
+if (canvasDirs) {
+  await extractCanvasDirs(canvasDirs, SRC_ROOT);
+  console.log(`[boot] ${ms()} per-canvas component dirs restored from R2`);
 }
 
 // Same for the custom-handler library (the agent's backend extension).

@@ -17,13 +17,17 @@ import { fileURLToPath } from 'node:url';
 const DEFAULT_CANVAS_ID = 'default';
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 const SHARED_DIR = fileURLToPath(new URL('../shared/components/', import.meta.url));
+// The PLATFORM tier (ADR-0014): the image-baked seed library. Read-only at runtime —
+// no tool ever writes here; editing a base module shadows it into the canvas own dir.
+const BASE_DIR = `${SRC}canvas-components/`;
 const NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
 const CANVAS_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
-/** The own component dir for a canvas: the default keeps today's flat path (byte-for-byte). */
+/** The own component dir for a canvas — uniform for every canvas, default included
+ * (ADR-0014: `src/canvas-components/` is the read-only platform tier, not default's own dir). */
 function ownDir(canvasId: string = DEFAULT_CANVAS_ID): string {
-  if (canvasId !== DEFAULT_CANVAS_ID && !CANVAS_ID.test(canvasId)) throw new Error(`invalid canvas id "${canvasId}"`);
-  return canvasId === DEFAULT_CANVAS_ID ? `${SRC}canvas-components/` : `${SRC}canvas-${canvasId}/components/`;
+  if (!CANVAS_ID.test(canvasId)) throw new Error(`invalid canvas id "${canvasId}"`);
+  return `${SRC}canvas-${canvasId}/components/`;
 }
 
 function fileIn(dir: string, module: string): string {
@@ -38,9 +42,9 @@ function namesIn(dir: string): string[] {
     .map((f) => f.replace(/\.tsx$/, ''));
 }
 
-/** Names (no extension) of every module a canvas can see: its own dir ∪ the shared lib. */
+/** Names (no extension) of every module a canvas can see: own dir ∪ shared lib ∪ platform base. */
 export function listComponents(canvasId: string = DEFAULT_CANVAS_ID): string[] {
-  return [...new Set([...namesIn(ownDir(canvasId)), ...namesIn(SHARED_DIR)])].sort();
+  return [...new Set([...namesIn(ownDir(canvasId)), ...namesIn(SHARED_DIR), ...namesIn(BASE_DIR)])].sort();
 }
 
 /** True when the module lives in the shared library (and so is the workspace source). */
@@ -48,12 +52,14 @@ export function isShared(module: string): boolean {
   return existsSync(fileIn(SHARED_DIR, module));
 }
 
-/** Resolve the on-disk path of an existing module: own dir first, then shared. */
+/** Resolve the on-disk path of an existing module: own dir first, then shared, then platform. */
 function resolveExisting(module: string, canvasId: string): string {
   const own = fileIn(ownDir(canvasId), module);
   if (existsSync(own)) return own;
   const shared = fileIn(SHARED_DIR, module);
   if (existsSync(shared)) return shared;
+  const base = fileIn(BASE_DIR, module);
+  if (existsSync(base)) return base;
   throw new Error(`component "${module}" does not exist (list_components to see what does)`);
 }
 

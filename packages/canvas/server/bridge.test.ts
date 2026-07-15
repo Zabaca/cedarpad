@@ -724,7 +724,7 @@ describe('POST /api/inbox/:id/attach-canvas', () => {
 // below. GET list / GET source / PUT write, canvas-scoped via x-canvas-id (default here).
 describe('GET/PUT /api/components — the component library over the wire', () => {
   const MOD = `ZzTestComp${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
-  const componentsRoot = new URL('../src/canvas-components/', import.meta.url).pathname;
+  const componentsRoot = new URL('../src/canvas-default/components/', import.meta.url).pathname; // ADR-0014: default canvas own dir
   afterAll(() => {
     rmSync(`${componentsRoot}${MOD}.tsx`, { force: true });
   });
@@ -766,7 +766,7 @@ describe('GET/PUT /api/components — the component library over the wire', () =
 
 describe('PUT /api/components/data/:name — data files over the wire (write_data parity)', () => {
   const DF = `zz_test_data_${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}.json`;
-  const componentsRoot = new URL('../src/canvas-components/', import.meta.url).pathname;
+  const componentsRoot = new URL('../src/canvas-default/components/', import.meta.url).pathname; // ADR-0014: default canvas own dir
   afterAll(() => {
     rmSync(`${componentsRoot}${DF}`, { force: true });
   });

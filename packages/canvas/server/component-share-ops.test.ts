@@ -7,7 +7,7 @@ import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 
 // A unique module name so the round-trip never collides with the seed library.
 const SH = 'Tmp_ShareOps';
-const ownPath = fileURLToPath(new URL(`../src/canvas-components/${SH}.tsx`, import.meta.url));
+const ownPath = fileURLToPath(new URL(`../src/canvas-default/components/${SH}.tsx`, import.meta.url));
 const sharedPath = fileURLToPath(new URL(`../shared/components/${SH}.tsx`, import.meta.url));
 const cleanup = () => {
   if (existsSync(ownPath)) rmSync(ownPath);

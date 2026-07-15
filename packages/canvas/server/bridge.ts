@@ -20,7 +20,7 @@ import { BlobStore, selectBackend } from './blob-store.ts';
 import { type CanvasSession, createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
 import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
-import { maxMtimeMs, tarSubtree } from './overlay.ts';
+import { maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
 import { type Notify, attachConversationToCanvas, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
@@ -176,6 +176,11 @@ try {
 // its own onChange trigger + health below. R2 in the container only — locally these files
 // already live on disk and the session JSONL is read in place.
 const COMPONENTS_DIR = `${PKG_ROOT}src/canvas-components`;
+// ADR-0014: component writes land in per-canvas own dirs (src/canvas-<id>/components/)
+// or the shared library (shared/components/) — the platform base (COMPONENTS_DIR) is
+// read-only at runtime, so its legacy tar is restored at boot but never flushed again.
+const SRC_ROOT = `${PKG_ROOT}src`;
+const SHARED_COMPONENTS_DIR = `${PKG_ROOT}shared/components`;
 const CUSTOM_DIR = `${PKG_ROOT}server/custom`;
 const SESSIONS_DIR = `${process.env.HOME ?? '/root'}/.claude/projects`;
 // Workspace skills (ADR-0013): user-/agent-authored skill dirs, discovered by the SDK's
@@ -184,17 +189,30 @@ const SESSIONS_DIR = `${process.env.HOME ?? '/root'}/.claude/projects`;
 const SKILLS_DIR = `${PKG_ROOT}.claude/skills`;
 const sink = new PersistSink();
 sink.register({ name: 'sessions', serialize: () => tarSubtree(SESSIONS_DIR), save: (b) => blobStore.saveSessions(WORKSPACE, b as Uint8Array) });
-sink.register({ name: 'components', serialize: () => tarSubtree(COMPONENTS_DIR), save: (b) => blobStore.saveComponents(WORKSPACE, b as Uint8Array) });
+sink.register({ name: 'shared-components', serialize: () => tarSubtree(SHARED_COMPONENTS_DIR), save: (b) => blobStore.saveSharedComponents(WORKSPACE, b as Uint8Array) });
+sink.register({ name: 'canvas-dirs', serialize: () => tarCanvasDirs(SRC_ROOT), save: (b) => blobStore.saveCanvasDirs(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'custom', serialize: () => tarSubtree(CUSTOM_DIR), save: (b) => blobStore.saveCustom(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'skills', serialize: () => tarSubtree(SKILLS_DIR), save: (b) => blobStore.saveSkills(WORKSPACE, b as Uint8Array) });
 sink.register(chatMeta.persistable());
 
-const savedMtime: Record<'components' | 'custom' | 'skills', number> = { components: 0, custom: 0, skills: 0 };
-async function flushIfDirty(name: 'components' | 'custom' | 'skills', dir: string): Promise<void> {
-  const m = await maxMtimeMs(dir);
+const savedMtime: Record<'shared-components' | 'canvas-dirs' | 'custom' | 'skills', number> = {
+  'shared-components': 0,
+  'canvas-dirs': 0,
+  custom: 0,
+  skills: 0,
+};
+async function flushIfDirty(name: keyof typeof savedMtime, dir: string): Promise<void> {
+  const m = await (name === 'canvas-dirs' ? maxMtimeCanvasDirs(dir) : maxMtimeMs(dir));
   if (m <= savedMtime[name]) return; // a draw-only turn left the library untouched
   savedMtime[name] = m;
   await sink.flush(name);
+}
+
+/** Both component trees a write may have landed in (own dir or shared) — the mtime
+ * guard makes the untouched one a no-op. */
+async function flushComponentTrees(): Promise<void> {
+  await flushIfDirty('canvas-dirs', SRC_ROOT);
+  await flushIfDirty('shared-components', SHARED_COMPONENTS_DIR);
 }
 
 /** ADR 0003 turn-completion batch. chatMeta persists always (dev + prod, for resume +
@@ -203,7 +221,7 @@ async function onTurnComplete(): Promise<void> {
   await sink.flush('chatMeta');
   if (!process.env.R2_BUCKET) return;
   await sink.flush('sessions'); // a turn always wrote JSONL
-  await flushIfDirty('components', COMPONENTS_DIR);
+  await flushComponentTrees();
   await flushIfDirty('custom', CUSTOM_DIR);
   await flushIfDirty('skills', SKILLS_DIR);
 }
@@ -780,7 +798,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         if (!source) throw new Error('source must be non-empty');
         writeDataFile(name, source, session.canvasId);
         const reloaded = bumpAllComponents(session.store, nextComponentRev(session.store));
-        await flushIfDirty('components', COMPONENTS_DIR);
+        await flushComponentTrees();
         return json({ ok: true, name, reloaded });
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
@@ -805,7 +823,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         const reloaded = isShared(module)
           ? bumpSharedModuleAcrossCanvases(module)
           : bumpAllComponents(session.store, nextComponentRev(session.store));
-        await flushIfDirty('components', COMPONENTS_DIR);
+        await flushComponentTrees();
         return json({ ok: true, module, reloaded });
       } catch (e) {
         return json({ error: (e as Error).message }, 400);

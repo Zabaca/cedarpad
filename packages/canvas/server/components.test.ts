@@ -5,12 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { adoptSharedComponent, editComponent, isShared, listComponents, promoteComponent, readComponent, writeComponent, writeDataFile } from './components.ts';
 
 const TMP = 'Tmp_ComponentsTest';
-const tmpPath = fileURLToPath(new URL(`../src/canvas-components/${TMP}.tsx`, import.meta.url));
+// ADR-0014: the default canvas owns src/canvas-default/components/ like every other
+// canvas; src/canvas-components/ is the read-only platform base.
+const tmpPath = fileURLToPath(new URL(`../src/canvas-default/components/${TMP}.tsx`, import.meta.url));
 const cleanup = () => existsSync(tmpPath) && rmSync(tmpPath);
 
 // A unique module name so the promote round-trip never collides with the seed library.
 const SH = 'Tmp_SharedPromote';
-const ownPath = fileURLToPath(new URL(`../src/canvas-components/${SH}.tsx`, import.meta.url));
+const ownPath = fileURLToPath(new URL(`../src/canvas-default/components/${SH}.tsx`, import.meta.url));
 const sharedPath = fileURLToPath(new URL(`../shared/components/${SH}.tsx`, import.meta.url));
 const cleanupShared = () => {
   if (existsSync(ownPath)) rmSync(ownPath);
@@ -18,15 +20,32 @@ const cleanupShared = () => {
 };
 
 describe('component file CRUD', () => {
-  test('list includes the seed library', () => {
+  test('list includes the platform seed library — on EVERY canvas (ADR-0014)', () => {
     const mods = listComponents();
     expect(mods).toContain('KpiCard');
     expect(mods).toContain('Dashboard');
+    // The MarkdownCard incident: a non-default canvas must see the platform tier too.
+    expect(listComponents('cv_somewhere_else')).toContain('MarkdownCard');
   });
 
-  test('read returns source; missing throws', () => {
+  test('read returns source (platform base resolves for any canvas); missing throws', () => {
     expect(readComponent('KpiCard')).toContain('KpiCard');
+    expect(readComponent('KpiCard', 'cv_somewhere_else')).toContain('KpiCard');
     expect(() => readComponent('DefinitelyMissing')).toThrow(/does not exist/);
+  });
+
+  test('writing a platform module name shadows it into the canvas own dir — base stays untouched', () => {
+    const basePath = fileURLToPath(new URL('../src/canvas-components/KpiCard.tsx', import.meta.url));
+    const shadowPath = fileURLToPath(new URL('../src/canvas-default/components/KpiCard.tsx', import.meta.url));
+    const baseBefore = readFileSync(basePath, 'utf8');
+    try {
+      writeComponent('KpiCard', 'export default () => <div>shadowed</div>;\n');
+      expect(readFileSync(basePath, 'utf8')).toBe(baseBefore); // read-only tier
+      expect(existsSync(shadowPath)).toBe(true);
+      expect(readComponent('KpiCard')).toContain('shadowed'); // own wins resolution
+    } finally {
+      if (existsSync(shadowPath)) rmSync(shadowPath);
+    }
   });
 
   test('write then read round-trips; edit replaces a unique snippet', () => {
@@ -58,7 +77,7 @@ describe('component file CRUD', () => {
 
 describe('data files: write_data lands next to components', () => {
   const DF = 'tmp_data_test.json';
-  const dfOwn = fileURLToPath(new URL(`../src/canvas-components/${DF}`, import.meta.url));
+  const dfOwn = fileURLToPath(new URL(`../src/canvas-default/components/${DF}`, import.meta.url));
   const dfShared = fileURLToPath(new URL(`../shared/components/${DF}`, import.meta.url));
   const cleanupData = () => {
     if (existsSync(dfOwn)) rmSync(dfOwn);
