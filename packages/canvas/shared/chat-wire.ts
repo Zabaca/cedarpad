@@ -67,3 +67,9 @@ export function isChatFrame(x: unknown): x is ChatFrame {
   const o = x as Record<string, unknown>;
   return typeof o.chatId === 'string' && typeof o.kind === 'string';
 }
+
+/** The request header carrying a chat send's HUMAN INITIATOR from the edge to the bridge
+ *  (shared inbox, CONTEXT.md): stamped by the edge proxies on human-originated sends (never
+ *  on cron kicks), read by the bridge to assign the Conversation at birth / claim-if-
+ *  unassigned on a reply. Per-request custody, never persisted container-side. */
+export const INBOX_ASSIGN_HEADER = 'x-inbox-assign';

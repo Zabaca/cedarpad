@@ -29,8 +29,16 @@ export type Notify = (conversation: ConversationRow, question: string) => void |
  */
 export async function findOrCreateConversation(
   db: Database,
-  input: { sessionId: string; userId: string; workspaceId: string; kind?: 'chat' | 'dev-agent'; summary?: string | null; ownerRef?: string; canvasId?: string; repo?: string },
+  input: { sessionId: string; userId: string; workspaceId: string; kind?: 'chat' | 'dev-agent'; summary?: string | null; ownerRef?: string; canvasId?: string; repo?: string; assignTo?: string },
 ): Promise<ConversationRow> {
+  // Assignment (CONTEXT.md, shared inbox): `assignTo` is the HUMAN INITIATOR of this turn
+  // (edge-stamped x-inbox-assign; absent on unattended cron starts). Claim-if-unassigned:
+  // a birth claims the row for its initiator, a reply into an unassigned row claims it for
+  // the replier — but an already-assigned row is never silently re-targeted (advisory,
+  // explicit reassignment goes through the assign endpoint).
+  const claim = async (row: ConversationRow): Promise<void> => {
+    if (input.assignTo && !row.assignedTo) await conversations.assign(db, row.id, input.assignTo);
+  };
   // The chat→canvas edge is first-wins (attachCanvas only fills a null edge): a turn that
   // carries a canvas backfills chats born before capture, but never re-homes a linked chat.
   if (input.ownerRef) {
@@ -38,6 +46,7 @@ export async function findOrCreateConversation(
     if (byChat) {
       if (input.canvasId && !byChat.canvasId) await conversations.attachCanvas(db, byChat.id, input.canvasId);
       if (input.repo && !byChat.repo) await conversations.attachRepo(db, byChat.id, input.repo);
+      await claim(byChat);
       if (byChat.sessionId !== input.sessionId) {
         return (await conversations.rebindSession(db, byChat.id, input.sessionId)) ?? byChat;
       }
@@ -49,6 +58,7 @@ export async function findOrCreateConversation(
     if (input.ownerRef && !existing.ownerRef) await conversations.setOwnerRef(db, existing.id, input.ownerRef);
     if (input.canvasId && !existing.canvasId) await conversations.attachCanvas(db, existing.id, input.canvasId);
     if (input.repo && !existing.repo) await conversations.attachRepo(db, existing.id, input.repo);
+    await claim(existing);
     return (await conversations.touch(db, existing.id)) ?? existing;
   }
   return conversations.create(db, {
@@ -61,6 +71,7 @@ export async function findOrCreateConversation(
     repo: input.repo ?? null,
     summary: input.summary ?? null,
     lastMessagePreview: input.summary ?? null,
+    assignedTo: input.assignTo ?? null,
   });
 }
 
@@ -161,8 +172,10 @@ export async function attachConversationToCanvas(
  * activity — and hard-delete the rest. Rows with an ownerRef are already correctly keyed and
  * are never touched. Idempotent; safe to run at every boot (post-cleanup groups have size 1).
  */
-export async function dedupeLegacyConversations(db: Database, userId: string): Promise<number> {
-  const rows = await conversations.list(db, userId);
+export async function dedupeLegacyConversations(db: Database, _userId: string): Promise<number> {
+  // Post-shared-inbox: the cleanup sweeps ALL legacy rows (the list is no longer
+  // user-scoped); the userId param is kept for call-site compatibility.
+  const rows = await conversations.list(db);
   const legacy = rows.filter((r) => !r.ownerRef);
   const groups = new Map<string, ConversationRow[]>();
   for (const r of legacy) {

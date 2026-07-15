@@ -21,8 +21,12 @@ export const RunDevAgentInput = z.object({ repo: z.string().min(1).optional(), j
 export const ListInboxInput = z.object({
   workspace_id: z.string().min(1),
   view: z.enum(['open', 'all', 'closed']).optional(),
+  // Assignee filter (shared inbox): a member's user id, or 'unassigned' for the unclaimed queue.
+  assigned: z.string().min(1).optional(),
 });
 export const ReadConversationInput = z.object({ chat_id: z.string().min(1) });
+// Advisory assignment (shared inbox): a member's user id, or null to unassign.
+export const AssignConversationInput = z.object({ chat_id: z.string().min(1), user_id: z.string().min(1).nullable() });
 export const SendMessageInput = z.object({
   workspace_id: z.string().min(1),
   message: z.string().min(1),
@@ -98,6 +102,7 @@ const conversationView = (row: {
   waitingOn: string;
   kind: string;
   workspaceId: string;
+  assignedTo: string | null;
   summary: string | null;
   lastMessagePreview: string | null;
   lastActivity: Date;
@@ -108,6 +113,7 @@ const conversationView = (row: {
   waiting_on: row.waitingOn,
   kind: row.kind,
   workspace_id: row.workspaceId,
+  assigned_to: row.assignedTo,
   summary: row.summary,
   last_message_preview: row.lastMessagePreview,
   last_activity: row.lastActivity.getTime(),
@@ -175,11 +181,27 @@ export function buildMcpTools(deps: McpToolDeps) {
     async listInbox(input: z.infer<typeof ListInboxInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const view = input.view ?? 'open';
-      const rows = await conversations.list(deps.db, deps.userId, {
+      // Workspace-SHARED (CONTEXT.md): every member's sessions, never scoped to the token user.
+      const rows = await conversations.list(deps.db, {
         workspaceId: ws.id,
-        ...(view === 'open' ? { status: 'open' as const } : view === 'closed' ? { status: 'done' as const } : {}),
+        assigned: input.assigned,
+        ...(view === 'open' ? { status: 'open' as const } : view === 'closed' ? { status: 'closed' as const } : {}),
       });
       return { items: rows.map(conversationView) };
+    },
+
+    /** Advisory assignment (shared inbox): any member assigns any member, or clears with
+     * null — never a lock. The target must be a member of the conversation's workspace. */
+    async assignConversation(input: z.infer<typeof AssignConversationInput>) {
+      const row = await conversations.getByOwnerRef(deps.db, input.chat_id);
+      if (!row || !(await getWorkspace(deps.db, row.workspaceId, deps.userId))) {
+        throw new Error(`conversation not found: ${input.chat_id}`);
+      }
+      if (input.user_id !== null && !(await getWorkspace(deps.db, row.workspaceId, input.user_id))) {
+        throw new Error(`assignee is not a workspace member: ${input.user_id}`);
+      }
+      const updated = await conversations.assign(deps.db, row.id, input.user_id);
+      return conversationView(updated ?? row);
     },
 
     /** Poll handle for a send: 'starting' until row-at-start lands (the SDK init event
@@ -187,7 +209,11 @@ export function buildMcpTools(deps: McpToolDeps) {
      * `waiting_on`/`last_message_preview` flip when the agent finishes its turn. */
     async readConversation(input: z.infer<typeof ReadConversationInput>) {
       const row = await conversations.getByOwnerRef(deps.db, input.chat_id);
-      if (!row || row.userId !== deps.userId) return { chat_id: input.chat_id, status: 'starting' as const };
+      // Membership-gated (shared inbox): any member of the row's workspace reads it; an
+      // inaccessible row reports the same 'starting' as a missing one (no existence leak).
+      if (!row || !(await getWorkspace(deps.db, row.workspaceId, deps.userId))) {
+        return { chat_id: input.chat_id, status: 'starting' as const };
+      }
       return conversationView(row);
     },
 
@@ -199,8 +225,10 @@ export function buildMcpTools(deps: McpToolDeps) {
       let chatId = input.chat_id;
       let canvasId = input.canvas_id;
       if (chatId) {
+        // Membership suffices (shared inbox): requireWorkspace gated ws already; any member
+        // may reply to any chat conversation in it — never creator-gated.
         const existing = await conversations.getByOwnerRef(deps.db, chatId);
-        if (!existing || existing.userId !== deps.userId || existing.workspaceId !== ws.id || existing.kind !== 'chat') {
+        if (!existing || existing.workspaceId !== ws.id || existing.kind !== 'chat') {
           throw new Error(`no chat conversation ${chatId} in workspace ${ws.id}`);
         }
         // A canvas-paired conversation stays addressed to its canvas (the row's canvasId —
@@ -220,7 +248,10 @@ export function buildMcpTools(deps: McpToolDeps) {
      * cold boot and resolves the live chatId), then that chat's transcript. */
     async readTranscript(input: z.infer<typeof ReadTranscriptInput>) {
       const row = await conversations.getByOwnerRef(deps.db, input.chat_id);
-      if (!row || row.userId !== deps.userId) throw new Error(`conversation not found: ${input.chat_id}`);
+      // Membership-gated (shared inbox), same line as readConversation.
+      if (!row || !(await getWorkspace(deps.db, row.workspaceId, deps.userId))) {
+        throw new Error(`conversation not found: ${input.chat_id}`);
+      }
       const opened = (await bridgeJson(row.workspaceId, `/api/inbox/${encodeURIComponent(row.id)}/chat`)) as { chatId: string };
       const transcript = (await bridgeJson(row.workspaceId, `/api/chat/${encodeURIComponent(opened.chatId)}/transcript`)) as {
         events: unknown[];

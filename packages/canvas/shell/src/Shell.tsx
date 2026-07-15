@@ -153,7 +153,7 @@ export function Shell() {
           </Suspense>
         </div>
       )}
-      {stage === 'inbox' && <InboxStage />}
+      {stage === 'inbox' && <InboxStage workspaceId={registry.workspaceId} />}
       {stage === 'jobs' && <JobsStage />}
       {stage === 'settings' && <SettingsStage workspaceId={registry.workspaceId} />}
     </div>

@@ -47,6 +47,28 @@ the durable home for a chat's resume pointer and config, and the only place the
 `chatId → sessionId` link lives (the JSONL carries no chat id). Replaces the old
 per-browser `localStorage`. _Avoid_: putting any of this on the `chat` shape.
 
+**Conversation / Inbox**: a Conversation is the edge-side index row of a session (chat or
+dev-agent run); the Inbox is the **workspace-shared** list of them — every member sees the
+same index, it is not a per-user mailbox. On the row, **creator** (`user_id`, immutable
+attribution: who started it) is distinct from **assignee** (`assigned_to`, nullable =
+unassigned, mutable: who has taken ownership of it); filtering by "mine" means assignee,
+never creator. Visibility and action are membership-gated, not creator-gated: any member
+sees every conversation and may reply. Assignment is **advisory** — a coordination
+signal/filter, never a lock; any member may assign anyone (or unassign), and replying to
+an *unassigned* conversation auto-assigns the replier. At birth: a conversation started
+by a human (UI chat, MCP `send_message` — the token's user) is auto-assigned to that
+initiator; unattended starts (cron dev-agent runs, scheduled jobs) begin unassigned —
+queue work awaiting a claim. UI: the Open/All/Closed view switch is unchanged
+(`waiting_on: human` stays a pinned indicator inside Open, not a view); a new
+**"Assigned to" filter** beside it selects Everyone (default) / Unassigned / a specific
+member, composing with any view. Surface: `POST /api/inbox/:id/assign` `{ userId | null }`
+(membership-gated; target must be a member), `?assigned=` on the list, `assignedTo` on
+`InboxItem`; MCP gets full parity (`assign_conversation`, the `assigned` filter on
+`list_inbox`) — and since a token acts as its user, `send_message` into an unassigned
+conversation claims it for that user, deliberately. _Avoid_: scoping Inbox reads by
+`user_id`, repurposing `user_id` as the assignee, or making assignment exclusive
+(assignee-only reply). _(Decided 2026-07-15.)_
+
 Containment: **workspace → canvas → shapes**, with **chat** shapes living on the
 canvas like any other shape; a chat's `ChatMeta` and transcript live *beside* the canvas,
 server-owned, not inside canvas state. (The tldraw **pages** layer was removed — see
@@ -398,6 +420,12 @@ The round-trip:
   a human binds/unbinds. A bound terminal follows its target on move.
 
 ## Deliberately deferred
+
+- **Per-user Inbox read state.** `conversations.unread` stays a single row-level boolean
+  meaning "new activity nobody has seen yet" — the first member to open the conversation
+  clears it for everyone. A per-user `conversation_reads` table is the correct long-term
+  shape but is deferred until the shared-inbox ambiguity is actually felt (decided
+  2026-07-15 with the shared-inbox pivot).
 
 - **Interactive components — DONE for controls.** The content has
   `pointer-events: all`, and a capture-phase pointer guard stops propagation only

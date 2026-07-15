@@ -120,65 +120,94 @@ describe("conversation store — state transitions", () => {
 
 describe("conversation store — list filtering, sort, scoping", () => {
   it("filters by status", async () => {
-    const u = "user_status";
-    const open = await conversations.create(db, { sessionId: "s1", userId: u, workspaceId: "ws_a" });
-    const other = await conversations.create(db, { sessionId: "s2", userId: u, workspaceId: "ws_a" });
+    const ws = "ws_status";
+    const open = await conversations.create(db, { sessionId: "s1", userId: "u", workspaceId: ws });
+    const other = await conversations.create(db, { sessionId: "s2", userId: "u", workspaceId: ws });
     await conversations.close(db, other.id);
 
-    const openList = await conversations.list(db, u, { status: "open" });
+    const openList = await conversations.list(db, { workspaceId: ws, status: "open" });
     expect(openList.map((c) => c.id)).toContain(open.id);
     expect(openList.map((c) => c.id)).not.toContain(other.id);
 
-    const closedList = await conversations.list(db, u, { status: "closed" });
+    const closedList = await conversations.list(db, { workspaceId: ws, status: "closed" });
     expect(closedList.map((c) => c.id)).toEqual([other.id]);
   });
 
   it("filters by workspaceId", async () => {
-    const u = "user_ws";
-    const inA = await conversations.create(db, { sessionId: "s1", userId: u, workspaceId: "ws_x" });
-    await conversations.create(db, { sessionId: "s2", userId: u, workspaceId: "ws_y" });
+    const inA = await conversations.create(db, { sessionId: "s1", userId: "u", workspaceId: "ws_x" });
+    await conversations.create(db, { sessionId: "s2", userId: "u", workspaceId: "ws_y" });
 
-    const listX = await conversations.list(db, u, { workspaceId: "ws_x" });
+    const listX = await conversations.list(db, { workspaceId: "ws_x" });
     expect(listX.every((c) => c.workspaceId === "ws_x")).toBe(true);
     expect(listX.map((c) => c.id)).toContain(inA.id);
   });
 
-  it("filters by waiting_on: the 'needs me' view shows only promoted (waiting_on:human) rows", async () => {
-    const u = "user_waiting";
+  it("filters by waiting_on: only promoted (waiting_on:human) rows", async () => {
+    const ws = "ws_waiting";
     // A plain session (waiting_on defaults to 'none' — a session that exists, nothing pending).
-    const idle = await conversations.create(db, { sessionId: "s_idle", userId: u, workspaceId: "ws_a" });
+    const idle = await conversations.create(db, { sessionId: "s_idle", userId: "u", workspaceId: ws });
     // An ask_human promotion (waiting_on:human — needs attention).
-    const promoted = await conversations.create(db, { sessionId: "s_ask", userId: u, workspaceId: "ws_a" });
+    const promoted = await conversations.create(db, { sessionId: "s_ask", userId: "u", workspaceId: ws });
     await conversations.promote(db, promoted.id);
 
-    const needsMe = await conversations.list(db, u, { waitingOn: "human" });
-    expect(needsMe.map((c) => c.id)).toEqual([promoted.id]);
+    const needsAttention = await conversations.list(db, { workspaceId: ws, waitingOn: "human" });
+    expect(needsAttention.map((c) => c.id)).toEqual([promoted.id]);
 
     // The unified index (no waitingOn filter) shows BOTH — every session, promoted or not.
-    const all = await conversations.list(db, u);
+    const all = await conversations.list(db, { workspaceId: ws });
     expect(all.map((c) => c.id)).toEqual(expect.arrayContaining([idle.id, promoted.id]));
   });
 
   it("sorts by last_activity desc", async () => {
-    const u = "user_sort";
-    const first = await conversations.create(db, { sessionId: "s1", userId: u, workspaceId: "ws_a" });
+    const ws = "ws_sort";
+    const first = await conversations.create(db, { sessionId: "s1", userId: "u", workspaceId: ws });
     await new Promise((r) => setTimeout(r, 2));
-    const second = await conversations.create(db, { sessionId: "s2", userId: u, workspaceId: "ws_a" });
+    const second = await conversations.create(db, { sessionId: "s2", userId: "u", workspaceId: ws });
     await new Promise((r) => setTimeout(r, 2));
     // Bump `first` to the most recent activity.
     await conversations.markActivity(db, first.id);
 
-    const listed = await conversations.list(db, u);
+    const listed = await conversations.list(db, { workspaceId: ws });
     expect(listed.map((c) => c.id)).toEqual([first.id, second.id]);
   });
 
-  it("is user-scoped: list returns only the caller's conversations", async () => {
-    const mine = await conversations.create(db, { sessionId: "sm", userId: "owner_1", workspaceId: "ws_a" });
-    await conversations.create(db, { sessionId: "st", userId: "owner_2", workspaceId: "ws_a" });
+  it("is workspace-shared, NOT user-scoped: every member sees every row (creator kept as attribution)", async () => {
+    const ws = "ws_shared";
+    const mine = await conversations.create(db, { sessionId: "sm", userId: "owner_1", workspaceId: ws });
+    const theirs = await conversations.create(db, { sessionId: "st", userId: "owner_2", workspaceId: ws });
 
-    const listed = await conversations.list(db, "owner_1");
-    expect(listed.every((c) => c.userId === "owner_1")).toBe(true);
-    expect(listed.map((c) => c.id)).toContain(mine.id);
+    const listed = await conversations.list(db, { workspaceId: ws });
+    expect(listed.map((c) => c.id)).toEqual(expect.arrayContaining([mine.id, theirs.id]));
+    expect(listed.find((c) => c.id === mine.id)?.userId).toBe("owner_1");
+  });
+});
+
+describe("conversation store — assignment (advisory, workspace-shared inbox)", () => {
+  it("create defaults to unassigned; an initiator can be assigned at birth", async () => {
+    const bare = await seed();
+    expect(bare.assignedTo).toBeNull();
+    const claimed = await seed({ assignedTo: "user_a" });
+    expect(claimed.assignedTo).toBe("user_a");
+  });
+
+  it("assign sets, reassigns, and clears (null = unassigned)", async () => {
+    const c = await seed();
+    expect((await conversations.assign(db, c.id, "user_a"))?.assignedTo).toBe("user_a");
+    expect((await conversations.assign(db, c.id, "user_b"))?.assignedTo).toBe("user_b");
+    expect((await conversations.assign(db, c.id, null))?.assignedTo).toBeNull();
+    expect(await conversations.assign(db, "conv_missing", "user_a")).toBeNull();
+  });
+
+  it("list filters by assignee: a user id, or 'unassigned'", async () => {
+    const ws = "ws_assigned";
+    const mine = await conversations.create(db, { sessionId: "s1", userId: "u", workspaceId: ws, assignedTo: "user_a" });
+    const theirs = await conversations.create(db, { sessionId: "s2", userId: "u", workspaceId: ws, assignedTo: "user_b" });
+    const open = await conversations.create(db, { sessionId: "s3", userId: "u", workspaceId: ws });
+
+    expect((await conversations.list(db, { workspaceId: ws, assigned: "user_a" })).map((c) => c.id)).toEqual([mine.id]);
+    expect((await conversations.list(db, { workspaceId: ws, assigned: "unassigned" })).map((c) => c.id)).toEqual([open.id]);
+    const everyone = await conversations.list(db, { workspaceId: ws });
+    expect(everyone.map((c) => c.id)).toEqual(expect.arrayContaining([mine.id, theirs.id, open.id]));
   });
 });
 

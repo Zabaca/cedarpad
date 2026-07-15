@@ -43,12 +43,16 @@ export async function kickDevAgentRun(
   // A repo-defined job's (name, body) — discovered off the repo's DEFAULT branch by the
   // caller (#195); forwarded to the bridge, which wraps the body in the platform law.
   job?: { name: string; prompt: string },
+  // The MANUAL trigger's human initiator (shared inbox): rides as x-inbox-assign so the
+  // run's Conversation is assigned to who kicked it. Absent on cron ⇒ unassigned queue work.
+  assignUser?: string,
 ): Promise<Response> {
   const repo = await deps.resolveRepo(env, requestedRepo);
   if (requestedRepo && !repo) {
     return Response.json({ error: `repo not selected for this workspace: ${requestedRepo}` }, { status: 400 });
   }
   const headers = new Headers();
+  if (assignUser) headers.set('x-inbox-assign', assignUser);
   if (repo) {
     headers.set('x-dev-agent-repo', repo.repoFullName);
     const token = await deps.mint(env, { nowSec: Math.floor(Date.now() / 1000), ...repo });
@@ -80,6 +84,9 @@ export async function triggerDevAgentRun(
   env: Env,
   deps: DevAgentTriggerDeps,
   body: { repo?: string; job?: string } | null,
+  // Manual triggers are human acts: the caller passes the triggering user so the run's
+  // Conversation is assigned to them (Jobs route: the session user; MCP: the token's user).
+  assignUser?: string,
 ): Promise<Response> {
   let repoArg = typeof body?.repo === 'string' ? body.repo : undefined;
   let job: { name: string; prompt: string } | undefined;
@@ -90,7 +97,7 @@ export async function triggerDevAgentRun(
     repoArg = found.repo; // a repo job always runs against its home repo
     job = { name: found.name, prompt: found.prompt };
   }
-  return kickDevAgentRun(env, deps, repoArg, job);
+  return kickDevAgentRun(env, deps, repoArg, job, assignUser);
 }
 
 // The cron handler's core, extracted so it's unit-testable without a live cron or container.

@@ -446,6 +446,12 @@ describe('GET /inbox — redirect to the Shell inbox stage, no standalone page',
 // login and never reaches a bridge (never cold-boots a container). The real handler runs
 // here (spread above) with only serveWorkspace + conversations.get stubbed.
 describe('GET /inbox/:convId/bridge/* — the edge chat proxy, conv → owning bridge, gated', () => {
+  // Shared inbox: the proxy is MEMBERSHIP-gated (getWorkspace), so these tests admit u_1
+  // to the conversation's workspace via the stubbed record.
+  beforeEach(() => {
+    workspaceRecord = { id: 'ws_abc' };
+  });
+
   test('an owned product-workspace conversation proxies to its container, sub-path unrewritten', async () => {
     conv = convRow({ workspaceId: 'ws_abc', userId: 'u_1' });
 
@@ -480,7 +486,8 @@ describe('GET /inbox/:convId/bridge/* — the edge chat proxy, conv → owning b
     expect(servedReqs).toEqual([{ path: '/api/chat/conv_1/send', method: 'POST' }]);
   });
 
-  test('a conversation owned by someone else ⇒ 404, never proxied (no bridge woken)', async () => {
+  test('a conversation in a workspace the caller is NOT a member of ⇒ 404, never proxied', async () => {
+    workspaceRecord = null; // getWorkspace denies: u_1 has no access to the row's workspace
     conv = convRow({ workspaceId: 'ws_abc', userId: 'someone_else' });
 
     const res = await GET('/inbox/conv_1/bridge/api/chat/stream');

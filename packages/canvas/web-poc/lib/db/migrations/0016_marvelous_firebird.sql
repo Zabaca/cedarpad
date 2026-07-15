@@ -1,0 +1,1 @@
+ALTER TABLE `conversations` ADD `assigned_to` text;

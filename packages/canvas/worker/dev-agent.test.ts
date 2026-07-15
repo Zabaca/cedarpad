@@ -151,6 +151,19 @@ describe('triggerDevAgentRun — validate the repo/job request, then kick', () =
     expect(kicks).toEqual([{ repo: 'Zabaca/cedarpad', body: { job: { name: 'deps-audit', prompt: 'Audit the dependencies.' } } }]);
   });
 
+  test('a MANUAL trigger forwards its human initiator as x-inbox-assign; absent (cron) sends none', async () => {
+    const assigns: Array<string | null> = [];
+    const serve = async (req: Request, _env: Env, _coords: SandboxCoords) => {
+      assigns.push(req.headers.get('x-inbox-assign'));
+      return Response.json({ chatId: 'dev-agent-run-x', joined: false }, { status: 202 });
+    };
+    const deps = { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [JOB] };
+
+    await triggerDevAgentRun(env, deps, null, 'user_james');
+    await triggerDevAgentRun(env, deps, null);
+    expect(assigns).toEqual(['user_james', null]);
+  });
+
   test('an unknown job (or a repo mismatch) is a 404 — nothing kicked', async () => {
     const { kicks, serve } = record();
     const deps = { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [JOB] };
