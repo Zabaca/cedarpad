@@ -89,6 +89,15 @@ for f in cli-plugins contexts buildx; do [ -e "$HOME/.docker/$f" ] && ln -s "$HO
 echo "→ building Shell SPA + Notebook (shell/dist)"
 bun run build || { echo "❌ shell build failed"; exit 1; }
 
+# Migrate remote Turso BEFORE the rollout. server/bridge.ts deliberately skips remote
+# migrations ("remote Turso is migrated by the deploy") and edge worker routes read
+# Turso directly — shipping edge code that reads a new column before the ALTER lands
+# 500s the API (incident 2026-07-15, migration 0016). Drizzle's migrator is idempotent,
+# so a deploy with no pending migrations is a no-op here.
+echo "→ migrating remote Turso (drizzle, idempotent)"
+( cd "$CANVAS_DIR" && sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" 'bun run webpoc:db:migrate' ) \
+  || { echo "❌ remote Turso migration failed — aborting before rollout"; exit 1; }
+
 echo "→ zbc apply production canvas (build + deploy + push secrets)"
 ( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }
 
