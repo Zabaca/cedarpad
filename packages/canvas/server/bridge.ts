@@ -18,6 +18,7 @@ import { bumpAllComponents, bumpSharedModule, createShapesOp, nextComponentRev, 
 import type { OpResult } from '../src/canvas-ops.ts';
 import { BlobStore, selectBackend } from './blob-store.ts';
 import { type CanvasSession, createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
+import { parseHeartbeat } from './presence.ts';
 import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
@@ -643,6 +644,16 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (path === '/api/canvas' && req.method === 'GET') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
       return json(session.store.getState() satisfies CanvasState);
+    }
+    // Presence heartbeat (#212): merge this client's {cursor, camera} into the canvas's
+    // ephemeral room and fan the merged set out over the EXISTING SSE stream (throttled).
+    if (path === '/api/canvas/presence' && req.method === 'POST') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const beat = parseHeartbeat(await readBody(req));
+      if (!beat) return json({ error: 'userId (string) and color (string) are required' }, 400);
+      session.presence.beat(beat);
+      session.broadcastPresence();
+      return json({ ok: true });
     }
     // Public build stamp (#74): the SHA baked into this container image, and NOTHING
     // else. deploy.sh polls this at the edge WITHOUT a session to confirm a rollout is

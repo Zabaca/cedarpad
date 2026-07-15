@@ -200,7 +200,19 @@ A `CanvasShape` is one of:
   local-part — else a stable per-browser guest (`guest_<uuid>` + derived color in
   `localStorage`), degrading to guest when the endpoint is absent (local dev).
   Guest naming is ask-once: `setDisplayName` persists browser-wide and is a no-op
-  for logged-in users. Presence (#212) will reuse this identity.
+  for logged-in users. Presence (#212) reuses this identity.
+- **Live presence (#212)**: transport is ours, rendering is tldraw's. Each browser
+  heartbeats `{userId, name, color, cursor, camera}` to `POST /api/canvas/presence`
+  (change-gated ~150ms, 2s keepalive; `src/presence.ts`); the bridge keeps an
+  ephemeral per-canvas room (`server/presence.ts`, never persisted, 10s staleness IS
+  the disconnect) and broadcasts the merged set over the EXISTING canvas SSE as
+  throttled `event: presence` frames. The client maps remote entries (self excluded)
+  to `instance_presence` records — invisible to shape sync, which filters on
+  typeName — and tldraw's built-in collaborator UI does the rest: labeled cursors,
+  the people face-pile (`DefaultSharePanel`/`DefaultPeopleMenu` in `App.tsx`), and
+  click-to-follow via `startFollowingUser` (auto-unfollow on local pan/zoom). The
+  wire type `PresenceEntry` lives in `src/presence.ts`; `parseHeartbeat` is the
+  bridge-side guard of the same contract.
 
 - **Interactive box**: the shared kind behind the two shapes whose content is live,
   interactive DOM (`component`, `chat`) — a resizable rounded card that takes real

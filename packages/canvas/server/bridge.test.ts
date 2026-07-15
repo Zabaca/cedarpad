@@ -884,3 +884,47 @@ describe('PUT /api/skills/:name — workspace-skill upload (#177)', () => {
     expect((await putSkill(SKILL, { files: [] })).status).toBe(400);
   });
 });
+
+// #212: the presence heartbeat route + throttled fan-out over the existing canvas SSE.
+describe('POST /api/canvas/presence — ephemeral presence over the canvas stream', () => {
+  const CANVAS = `cv_presence_${crypto.randomUUID().slice(0, 8)}`;
+  const beat = (body: unknown) =>
+    handleRequest(
+      new Request(`http://localhost/api/canvas/presence?canvas=${CANVAS}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  test('a heartbeat lands and is broadcast as an `event: presence` frame on the stream', async () => {
+    const stream = await handleRequest(new Request(`http://localhost/api/canvas/stream?canvas=${CANVAS}`));
+    expect(stream.status).toBe(200);
+    const reader = (stream.body as ReadableStream<Uint8Array>).getReader();
+
+    const ok = await beat({ userId: 'u_1', name: 'James', color: 'hsl(210 65% 52%)', cursor: { x: 5, y: 6 }, camera: { x: 0, y: 0, z: 1 } });
+    expect(ok.status).toBe(200);
+
+    // Read frames until the (throttled ~100ms) presence event arrives.
+    const dec = new TextDecoder();
+    let buf = '';
+    const deadline = Date.now() + 2000;
+    while (!buf.includes('event: presence') && Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value);
+    }
+    await reader.cancel();
+    expect(buf).toContain('event: presence');
+    const frame = buf.split('event: presence\n')[1]?.split('\n\n')[0] ?? '';
+    const parsed = JSON.parse(frame.replace(/^data: /, '')) as { entries: unknown[] };
+    expect(parsed.entries).toEqual([
+      { userId: 'u_1', name: 'James', color: 'hsl(210 65% 52%)', cursor: { x: 5, y: 6 }, camera: { x: 0, y: 0, z: 1 } },
+    ]);
+  });
+
+  test('a malformed heartbeat is a 400 and lands nowhere', async () => {
+    expect((await beat({ color: 'red' })).status).toBe(400);
+    expect((await beat({ userId: 'u_1' })).status).toBe(400);
+  });
+});
