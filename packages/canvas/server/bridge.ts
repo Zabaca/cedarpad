@@ -28,6 +28,7 @@ import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
 import { MCP_TOKENS_HEADER, decodeMcpTokens } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
+import { isShared, listComponents, readComponent, writeComponent } from './components.ts';
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
@@ -715,6 +716,39 @@ export async function handleRequest(req: Request): Promise<Response> {
       const module = typeof body.module === 'string' ? body.module : '';
       try {
         return json({ ok: true, reloaded: adoptFromShared(session.canvasId, module, () => bumpAllComponents(session.store, nextComponentRev(session.store))) });
+      } catch (e) {
+        return json({ error: (e as Error).message }, 400);
+      }
+    }
+
+    // The component library over the wire (MCP full access): the edge MCP tools proxy
+    // here — the bridge owns the container filesystem (single writer, like /api/skills).
+    // Canvas-scoped via x-canvas-id; PUT mirrors the agent's write_component (write +
+    // hot-reload bump + persist via the components sink).
+    if (path === '/api/components' && req.method === 'GET') {
+      return json({ components: listComponents(canvasIdFrom(req, url)) });
+    }
+    const componentRoute = /^\/api\/components\/([^/]+)$/.exec(path);
+    if (componentRoute && req.method === 'GET') {
+      const module = decodeURIComponent(componentRoute[1] as string);
+      try {
+        return json({ module, source: readComponent(module, canvasIdFrom(req, url)) });
+      } catch (e) {
+        return json({ error: (e as Error).message }, 404);
+      }
+    }
+    if (componentRoute && req.method === 'PUT') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const module = decodeURIComponent(componentRoute[1] as string);
+      const body = await readBody(req);
+      const source = typeof body.source === 'string' ? body.source : '';
+      try {
+        writeComponent(module, source, session.canvasId);
+        const reloaded = isShared(module)
+          ? bumpSharedModuleAcrossCanvases(module)
+          : bumpAllComponents(session.store, nextComponentRev(session.store));
+        await flushIfDirty('components', COMPONENTS_DIR);
+        return json({ ok: true, module, reloaded });
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }

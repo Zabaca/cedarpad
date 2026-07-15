@@ -29,6 +29,9 @@ const database = db as never;
 
 let sends: Array<{ workspaceId: string; chatId: string; message: string; canvasId?: string }> = [];
 let skillUploads: Array<{ workspaceId: string; name: string; files: number }> = [];
+let bridgeCalls: Array<{ workspaceId: string; path: string; method: string; headers: Record<string, string>; body?: unknown }> = [];
+// Canned bridge responses by path — set per test; unset paths 404.
+let bridgeResponses: Record<string, unknown> = {};
 const tools = buildMcpTools({
   db: database,
   userId: 'u_1',
@@ -39,6 +42,13 @@ const tools = buildMcpTools({
   proxySkill: async (workspaceId, name, input) => {
     skillUploads.push({ workspaceId, name, files: input.files.length });
     return new Response(JSON.stringify({ ok: true, skill: name }), { status: 200 });
+  },
+  proxyBridge: async (workspaceId, path, init) => {
+    bridgeCalls.push({ workspaceId, path, method: init?.method ?? 'GET', headers: init?.headers ?? {}, body: init?.body });
+    const canned = bridgeResponses[path];
+    return canned === undefined
+      ? new Response(JSON.stringify({ error: 'not found' }), { status: 404 })
+      : new Response(JSON.stringify(canned), { status: 200 });
   },
 });
 
@@ -168,6 +178,74 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
       tools.uploadSkill({ workspace_id: OTHER_WS, name: 'x', files: [{ path: 'SKILL.md', content: 'x' }] }),
     ).rejects.toThrow(/not found/);
     expect(skillUploads).toHaveLength(1);
+  });
+
+  // MCP full access: direct reads (canvas, transcript) and the component library, all
+  // proxied to the workspace's bridge and access-checked exactly like the relay tools.
+  test('read_canvas proxies GET /api/canvas scoped to a workspace canvas; a stranger’s workspace or an unknown canvas never proxies', async () => {
+    bridgeCalls = [];
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'ReadMe' });
+    bridgeResponses = { '/api/canvas': { version: 3, shapes: [{ id: 's1' }] } };
+
+    const res = await tools.readCanvas({ workspace_id: WS, canvas_id: board.id });
+    expect(res).toEqual({ version: 3, shapes: [{ id: 's1' }] });
+    expect(bridgeCalls).toEqual([{ workspaceId: WS, path: '/api/canvas', method: 'GET', headers: { 'x-canvas-id': board.id }, body: undefined }]);
+
+    // No canvas_id → the workspace's default canvas (no header).
+    bridgeCalls = [];
+    await tools.readCanvas({ workspace_id: WS });
+    expect(bridgeCalls[0]?.headers).toEqual({});
+
+    await expect(tools.readCanvas({ workspace_id: OTHER_WS })).rejects.toThrow(/not found/);
+    await expect(tools.readCanvas({ workspace_id: WS, canvas_id: 'cv_ghost' })).rejects.toThrow(/canvas/);
+  });
+
+  test('read_transcript restores the session (inbox open) then returns the full settled events — the user’s own conversations only', async () => {
+    const chatId = 'mcp_full_transcript';
+    const conv = await conversations.create(database, {
+      sessionId: 's_full',
+      userId: 'u_1',
+      workspaceId: WS,
+      ownerRef: chatId,
+    } as never);
+    bridgeResponses = {
+      [`/api/inbox/${conv.id}/chat`]: { chatId: 'chat_resolved' },
+      '/api/chat/chat_resolved/transcript': { events: [{ kind: 'text', text: 'the whole reply' }] },
+    };
+    bridgeCalls = [];
+
+    const res = await tools.readTranscript({ chat_id: chatId });
+    expect(res.chat_id).toBe(chatId);
+    expect(res.events).toEqual([{ kind: 'text', text: 'the whole reply' }]);
+    expect(bridgeCalls.map((c) => c.path)).toEqual([`/api/inbox/${conv.id}/chat`, '/api/chat/chat_resolved/transcript']);
+
+    await expect(tools.readTranscript({ chat_id: 'mcp_theirs' })).rejects.toThrow(/not found/); // u_2's
+    await expect(tools.readTranscript({ chat_id: 'mcp_ghost' })).rejects.toThrow(/not found/);
+  });
+
+  test('list/read/write component proxy the bridge component routes, canvas-scoped and access-checked', async () => {
+    bridgeCalls = [];
+    bridgeResponses = {
+      '/api/components': { components: ['KpiCard'] },
+      '/api/components/KpiCard': { module: 'KpiCard', source: 'export default …' },
+    };
+
+    expect(await tools.listComponents({ workspace_id: WS })).toEqual({ components: ['KpiCard'] });
+    expect(await tools.readComponent({ workspace_id: WS, module: 'KpiCard' })).toEqual({ module: 'KpiCard', source: 'export default …' });
+
+    bridgeResponses['/api/components/NewCard'] = { ok: true, module: 'NewCard', reloaded: 1 };
+    const write = await tools.writeComponent({ workspace_id: WS, module: 'NewCard', source: 'export default function NewCard(){return null}' });
+    expect(write).toEqual({ ok: true, module: 'NewCard', reloaded: 1 });
+    expect(bridgeCalls.at(-1)).toMatchObject({
+      workspaceId: WS,
+      path: '/api/components/NewCard',
+      method: 'PUT',
+      body: { source: 'export default function NewCard(){return null}' },
+    });
+
+    // A bridge error surfaces as a thrown error, and access is workspace-checked.
+    await expect(tools.readComponent({ workspace_id: WS, module: 'ZzGhost' })).rejects.toThrow(/404|not found/);
+    await expect(tools.listComponents({ workspace_id: OTHER_WS })).rejects.toThrow(/not found/);
   });
 
   test('list_inbox lists the workspace’s conversations for the user', async () => {

@@ -719,6 +719,51 @@ describe('POST /api/inbox/:id/attach-canvas', () => {
   });
 });
 
+// MCP full access: the component library over the wire. The edge MCP tools proxy here —
+// the bridge owns the container filesystem (single writer), exactly like the skills route
+// below. GET list / GET source / PUT write, canvas-scoped via x-canvas-id (default here).
+describe('GET/PUT /api/components — the component library over the wire', () => {
+  const MOD = `ZzTestComp${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  const componentsRoot = new URL('../src/canvas-components/', import.meta.url).pathname;
+  afterAll(() => {
+    rmSync(`${componentsRoot}${MOD}.tsx`, { force: true });
+  });
+
+  const putComponent = (module: string, body: unknown) =>
+    handleRequest(
+      new Request(`http://localhost/api/components/${encodeURIComponent(module)}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  test('PUT writes the module file; list and read then see it', async () => {
+    const source = 'export default function T() { return null; }';
+    const res = await putComponent(MOD, { source });
+    expect(res.status).toBe(200);
+    expect(readFileSync(`${componentsRoot}${MOD}.tsx`, 'utf8')).toBe(source);
+
+    const list = await handleRequest(new Request('http://localhost/api/components'));
+    expect(((await list.json()) as { components: string[] }).components).toContain(MOD);
+
+    const read = await handleRequest(new Request(`http://localhost/api/components/${MOD}`));
+    expect(read.status).toBe(200);
+    expect(((await read.json()) as { source: string }).source).toBe(source);
+  });
+
+  test('an invalid module name and an empty source are refused — nothing written', async () => {
+    expect((await putComponent('../evil', { source: 'x' })).status).toBe(400);
+    expect((await putComponent(MOD, { source: '' })).status).toBe(400);
+    expect((await putComponent(MOD, {})).status).toBe(400);
+  });
+
+  test('reading a module that does not exist is a 404', async () => {
+    const res = await handleRequest(new Request('http://localhost/api/components/ZzNoSuchModule'));
+    expect(res.status).toBe(404);
+  });
+});
+
 // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
 // proxies here. Content only (ADR-0013): plain files under .claude/skills/<name>/,
 // path rules enforced server-side, persisted by the skills sink at flush.

@@ -31,6 +31,16 @@ export const UploadSkillInput = z.object({
   name: SkillName,
   files: UploadSkillFiles.shape.files,
 });
+// MCP full access: direct reads (canvas, transcript) + the component library.
+export const ReadTranscriptInput = z.object({ chat_id: z.string().min(1) });
+export const ReadCanvasInput = z.object({
+  workspace_id: z.string().min(1),
+  canvas_id: z.string().min(1).optional(),
+});
+export const ListComponentsInput = ReadCanvasInput;
+const ComponentModule = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/, 'component name: letters/digits/_/-, no extension');
+export const ReadComponentInput = ReadCanvasInput.extend({ module: ComponentModule });
+export const WriteComponentInput = ReadComponentInput.extend({ source: z.string().min(1) });
 
 export interface McpToolDeps {
   db: Database;
@@ -42,6 +52,13 @@ export interface McpToolDeps {
   /** Proxy a skill upload to the bridge's PUT /api/skills/:name — the bridge is the single
    * writer of the workspace skills tree (the edge never writes skills.tar itself). */
   proxySkill: (workspaceId: string, name: string, input: UploadSkillFiles) => Promise<Response>;
+  /** Generic bridge proxy (MCP full access): a request into the workspace's container
+   * (wakes it if asleep). Wired to serveWorkspace + coordsForWorkspace in mcp-server.ts. */
+  proxyBridge: (
+    workspaceId: string,
+    path: string,
+    init?: { method?: string; headers?: Record<string, string>; body?: unknown },
+  ) => Promise<Response>;
 }
 
 const conversationView = (row: {
@@ -71,6 +88,26 @@ export function buildMcpTools(deps: McpToolDeps) {
     const ws = await getWorkspace(deps.db, workspaceId, deps.userId);
     if (!ws) throw new Error(`workspace not found: ${workspaceId}`);
     return ws;
+  };
+
+  /** The x-canvas-id header for a request into a workspace: absent = the default canvas;
+   * a named canvas must be registered to THAT workspace (never a cross-workspace id). */
+  const canvasHeader = async (workspaceId: string, canvasId?: string): Promise<Record<string, string>> => {
+    if (!canvasId) return {};
+    const rows = await canvasRegistry.list(deps.db, workspaceId);
+    if (!rows.some((c) => c.id === canvasId)) throw new Error(`canvas not found in workspace: ${canvasId}`);
+    return { 'x-canvas-id': canvasId };
+  };
+
+  /** Proxy + parse: a non-2xx bridge answer becomes a thrown error the MCP layer surfaces. */
+  const bridgeJson = async (
+    workspaceId: string,
+    path: string,
+    init?: { method?: string; headers?: Record<string, string>; body?: unknown },
+  ): Promise<unknown> => {
+    const res = await deps.proxyBridge(workspaceId, path, init);
+    if (!res.ok) throw new Error(`bridge ${init?.method ?? 'GET'} ${path} failed (${res.status}): ${await res.text().catch(() => '')}`);
+    return res.json();
   };
 
   return {
@@ -132,6 +169,50 @@ export function buildMcpTools(deps: McpToolDeps) {
       const res = await deps.proxySend(ws.id, chatId, input.message, canvasId);
       if (!res.ok) throw new Error(`send failed (${res.status}): ${await res.text().catch(() => '')}`);
       return { chat_id: chatId, status: 'running' as const, poll: 'read_conversation' as const };
+    },
+
+    /** The full settled transcript of one of the user's conversations. Two bridge hops on
+     * purpose: GET /api/inbox/:id/chat first (restores the session JSONL from R2 after a
+     * cold boot and resolves the live chatId), then that chat's transcript. */
+    async readTranscript(input: z.infer<typeof ReadTranscriptInput>) {
+      const row = await conversations.getByOwnerRef(deps.db, input.chat_id);
+      if (!row || row.userId !== deps.userId) throw new Error(`conversation not found: ${input.chat_id}`);
+      const opened = (await bridgeJson(row.workspaceId, `/api/inbox/${encodeURIComponent(row.id)}/chat`)) as { chatId: string };
+      const transcript = (await bridgeJson(row.workspaceId, `/api/chat/${encodeURIComponent(opened.chatId)}/transcript`)) as {
+        events: unknown[];
+      };
+      return { chat_id: input.chat_id, workspace_id: row.workspaceId, events: transcript.events };
+    },
+
+    /** Read a canvas's full state (every shape) directly — no agent turn needed. */
+    async readCanvas(input: z.infer<typeof ReadCanvasInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      return bridgeJson(ws.id, '/api/canvas', { headers });
+    },
+
+    // The component library over the wire: the same list/read/write the in-canvas agent
+    // has, proxied to the bridge (the single writer of the container filesystem).
+    async listComponents(input: z.infer<typeof ListComponentsInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      return bridgeJson(ws.id, '/api/components', { headers });
+    },
+
+    async readComponent(input: z.infer<typeof ReadComponentInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      return bridgeJson(ws.id, `/api/components/${encodeURIComponent(input.module)}`, { headers });
+    },
+
+    async writeComponent(input: z.infer<typeof WriteComponentInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      return bridgeJson(ws.id, `/api/components/${encodeURIComponent(input.module)}`, {
+        method: 'PUT',
+        headers,
+        body: { source: input.source },
+      });
     },
 
     /** Skills are workspace CONTENT (ADR-0013): any member may add one — the same actor

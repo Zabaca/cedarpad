@@ -9,10 +9,15 @@ import { coordsForWorkspace } from './inbox-bridge.ts';
 import { withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import {
   ListCanvasesInput,
+  ListComponentsInput,
   ListInboxInput,
+  ReadCanvasInput,
+  ReadComponentInput,
   ReadConversationInput,
+  ReadTranscriptInput,
   SendMessageInput,
   UploadSkillInput,
+  WriteComponentInput,
   buildMcpTools,
 } from './mcp-tools.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
@@ -72,6 +77,19 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         });
         return serveWorkspace(target, env, coordsForWorkspace(workspaceId));
       },
+      // MCP full access: the generic bridge proxy behind read_canvas / read_transcript /
+      // the component tools. Same wake-the-container path as every other bridge call.
+      proxyBridge: (workspaceId, path, init) => {
+        const target = new Request(`${new URL(req.url).origin}${path}`, {
+          method: init?.method ?? 'GET',
+          headers: {
+            ...(init?.body !== undefined ? { 'content-type': 'application/json' } : {}),
+            ...(init?.headers ?? {}),
+          },
+          ...(init?.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+        });
+        return serveWorkspace(target, env, coordsForWorkspace(workspaceId));
+      },
     });
 
     const server = new McpServer({ name: 'cedarpad', version: '1.0.0' });
@@ -110,6 +128,51 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         inputSchema: SendMessageInput.shape,
       },
       async (input) => text(await tools.sendMessage(input)),
+    );
+
+    server.registerTool(
+      'read_transcript',
+      {
+        description:
+          "Read a conversation's FULL settled transcript (every message and tool event), not just the preview read_conversation returns. Wakes the workspace container if asleep.",
+        inputSchema: ReadTranscriptInput.shape,
+      },
+      async (input) => text(await tools.readTranscript(input)),
+    );
+    server.registerTool(
+      'read_canvas',
+      {
+        description:
+          "Read a canvas's full state directly — every shape with id, type, geometry, text, and component data. Omit canvas_id for the workspace's default canvas.",
+        inputSchema: ReadCanvasInput.shape,
+      },
+      async (input) => text(await tools.readCanvas(input)),
+    );
+    server.registerTool(
+      'list_components',
+      {
+        description:
+          "List the reusable React component modules a canvas can place (its own library plus the workspace shared library). Always call this before writing a new component — duplicating an existing one is a mistake.",
+        inputSchema: ListComponentsInput.shape,
+      },
+      async (input) => text(await tools.listComponents(input)),
+    );
+    server.registerTool(
+      'read_component',
+      {
+        description: "Read a component module's .tsx source (to learn conventions before writing, or to edit).",
+        inputSchema: ReadComponentInput.shape,
+      },
+      async (input) => text(await tools.readComponent(input)),
+    );
+    server.registerTool(
+      'write_component',
+      {
+        description:
+          'Create or overwrite a reusable React component module in a workspace canvas library. Rules: `export default` a React component; it receives the placement `data` as props; imports of react, other components, and "mermaid" are allowed; inline styles + SVG. Placed instances hot-reload. To render a NEW instance on the canvas, ask the agent via send_message to place_component it.',
+        inputSchema: WriteComponentInput.shape,
+      },
+      async (input) => text(await tools.writeComponent(input)),
     );
 
     server.registerTool(
