@@ -15,6 +15,9 @@ import { getWorkspace, listWorkspaces } from '../web-poc/lib/db/queries/workspac
 // Single contract for the tool inputs (CLAUDE.md §7); worker/mcp-server.ts registers the
 // same schemas with the SDK.
 export const ListCanvasesInput = z.object({ workspace_id: z.string().min(1) });
+// Same name constraint as the shell's create route (worker/shell.ts CreateCanvasInput).
+export const CreateCanvasInput = z.object({ workspace_id: z.string().min(1), name: z.string().trim().min(1).max(100) });
+export const RunDevAgentInput = z.object({ repo: z.string().min(1).optional(), job: z.string().min(1).optional() });
 export const ListInboxInput = z.object({
   workspace_id: z.string().min(1),
   view: z.enum(['open', 'all', 'closed']).optional(),
@@ -83,6 +86,9 @@ export interface McpToolDeps {
     path: string,
     init?: { method?: string; headers?: Record<string, string>; body?: unknown },
   ) => Promise<Response>;
+  /** Kick a dev-agent run (the same manual trigger as the Jobs "Run now" route). Wired to
+   * triggerDevAgentRun in worker/mcp-server.ts; stubbed in tests. */
+  kickDevAgent: (body: { repo?: string; job?: string }) => Promise<Response>;
 }
 
 const conversationView = (row: {
@@ -150,6 +156,20 @@ export function buildMcpTools(deps: McpToolDeps) {
       const ws = await requireWorkspace(input.workspace_id);
       const rows = await canvasRegistry.list(deps.db, ws.id);
       return { canvases: rows.map((c) => ({ id: c.id, name: c.name })) };
+    },
+
+    async createCanvas(input: z.infer<typeof CreateCanvasInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const row = await canvasRegistry.create(deps.db, { workspaceId: ws.id, name: input.name });
+      return { id: row.id, name: row.name, workspace_id: ws.id };
+    },
+
+    /** Manual dev-agent trigger — an explicit user action, same as the Jobs "Run now"
+     * button (never gated on DEV_AGENT_ENABLED; the bridge single-flights with JOIN). */
+    async runDevAgent(input: z.infer<typeof RunDevAgentInput>) {
+      const res = await deps.kickDevAgent(input);
+      if (!res.ok) throw new Error(`dev-agent kick failed (${res.status}): ${await res.text().catch(() => '')}`);
+      return res.json();
     },
 
     async listInbox(input: z.infer<typeof ListInboxInput>) {

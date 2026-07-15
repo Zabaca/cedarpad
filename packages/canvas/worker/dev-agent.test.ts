@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { LEGACY_SANDBOX_ID, resolve } from './sandbox-resolver.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 import { sandboxId as deriveSandboxId } from '../web-poc/lib/db/queries/workspaces.ts';
-import { DEV_AGENT_RUN_PATH, dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
+import { DEV_AGENT_RUN_PATH, dispatchDevAgentRun, kickDevAgentRun, triggerDevAgentRun } from './dev-agent.ts';
 import type { Env } from './index.ts';
 
 // ADR-0011: a dev-agent run is a chat turn kicked headlessly — the edge's whole job is
@@ -110,6 +110,53 @@ describe('kickDevAgentRun — mint + proxy the kick to the warm bridge', () => {
 
     expect(res.status).toBe(400);
     expect(calls).toEqual([]); // nothing proxied
+  });
+});
+
+// The one manual-trigger core behind BOTH the /api/jobs/dev-agent/run route and the MCP
+// run_dev_agent tool: validate the optional repo/job request, then kick.
+describe('triggerDevAgentRun — validate the repo/job request, then kick', () => {
+  const env = { CANVAS_USER: 'u' } as Env;
+  const CONN = { installationId: '145473731', repoFullName: 'Zabaca/cedarpad' };
+  const JOB = { name: 'deps-audit', repo: 'Zabaca/cedarpad', prompt: 'Audit the dependencies.' };
+
+  const record = () => {
+    const kicks: Array<{ repo: string | null; body: unknown }> = [];
+    const serve = async (req: Request, _env: Env, _coords: SandboxCoords) => {
+      kicks.push({ repo: req.headers.get('x-dev-agent-repo'), body: await req.json().catch(() => null) });
+      return Response.json({ chatId: 'dev-agent-run-x', joined: false }, { status: 202 });
+    };
+    return { kicks, serve };
+  };
+
+  test('a bare trigger (no body) kicks against the resolved default repo', async () => {
+    const { kicks, serve } = record();
+    const res = await triggerDevAgentRun(
+      env,
+      { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [JOB] },
+      null,
+    );
+    expect(res.status).toBe(202);
+    expect(kicks).toEqual([{ repo: 'Zabaca/cedarpad', body: null }]);
+  });
+
+  test('a named job is re-read off the selected repos (never caller-supplied prompt) and forwarded', async () => {
+    const { kicks, serve } = record();
+    const res = await triggerDevAgentRun(
+      env,
+      { mint: async () => 'ghs_run', serve, resolveRepo: async (_e, r) => (r === JOB.repo ? CONN : null), discover: async () => [JOB] },
+      { job: 'deps-audit' },
+    );
+    expect(res.status).toBe(202);
+    expect(kicks).toEqual([{ repo: 'Zabaca/cedarpad', body: { job: { name: 'deps-audit', prompt: 'Audit the dependencies.' } } }]);
+  });
+
+  test('an unknown job (or a repo mismatch) is a 404 — nothing kicked', async () => {
+    const { kicks, serve } = record();
+    const deps = { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [JOB] };
+    expect((await triggerDevAgentRun(env, deps, { job: 'nope' })).status).toBe(404);
+    expect((await triggerDevAgentRun(env, deps, { job: 'deps-audit', repo: 'Other/repo' })).status).toBe(404);
+    expect(kicks).toEqual([]);
   });
 });
 
