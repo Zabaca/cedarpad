@@ -193,6 +193,14 @@ A `CanvasShape` is one of:
   select/a/label/[role=button]) so the pointer reaches the component instead of
   dragging the shape. `Kanban.tsx` is the worked example (a ticket board: add /
   move / edit / delete cards, all persisted via `setData`).
+- **Components know who is looking (`currentUser`, #211)**: every instance also
+  receives `currentUser` (`{id, name?, email?, color, kind: 'user'|'guest'}`) and
+  `setDisplayName(name)`. One identity source (`src/identity.ts`): the Better Auth
+  session (`/api/auth/get-session`) when logged in — name falls back to the email
+  local-part — else a stable per-browser guest (`guest_<uuid>` + derived color in
+  `localStorage`), degrading to guest when the endpoint is absent (local dev).
+  Guest naming is ask-once: `setDisplayName` persists browser-wide and is a no-op
+  for logged-in users. Presence (#212) will reuse this identity.
 
 - **Interactive box**: the shared kind behind the two shapes whose content is live,
   interactive DOM (`component`, `chat`) — a resizable rounded card that takes real
