@@ -15,18 +15,21 @@ export type AgentComponent = ComponentType<Record<string, unknown>>;
 // Compiled module per (canvas, module, rev). A new rev = a new key = a fresh import.
 const cache = new Map<string, Promise<AgentComponent>>();
 
-// The default canvas keeps today's flat dir (`src/canvas-components/`), so its import
-// paths are byte-for-byte unchanged; every other canvas owns its own dir under
-// `src/canvas-<id>/components/` (ADR-0007 Option B: one vite, per-canvas dirs). #55
-// layers a `@shared` alias on top of this without changing the per-canvas paths.
+// Every canvas — default included — owns its own dir under `src/canvas-<id>/components/`
+// (ADR-0014: uniform canvas dirs; `src/canvas-components/` is the read-only PLATFORM tier
+// every canvas resolves as its last fallback). #55 layers the `@shared` alias in between.
 export const DEFAULT_CANVAS_ID = 'default';
 
 /** The vite dev-server URL that serves a component module for a given canvas. Pure so
  * the per-canvas path resolution is unit-testable in isolation. `nonce` cache-busts a
  * failed first import; `rev` re-imports an edited module. */
 export function componentUrl(module: string, rev: number, nonce: number, canvasId: string = DEFAULT_CANVAS_ID): string {
-  const dir = canvasId === DEFAULT_CANVAS_ID ? 'canvas-components' : `canvas-${canvasId}/components`;
-  return `/src/${dir}/${module}.tsx?r=${rev}&n=${nonce}`;
+  return `/src/canvas-${canvasId}/components/${module}.tsx?r=${rev}&n=${nonce}`;
+}
+
+/** The platform (image-baked) library — the final fallback for every canvas. */
+export function baseComponentUrl(module: string, rev: number, nonce: number): string {
+  return `/src/canvas-components/${module}.tsx?r=${rev}&n=${nonce}`;
 }
 
 // The workspace shared library lives at `shared/components/` (vite root-relative), the same
@@ -39,11 +42,22 @@ export function sharedComponentUrl(module: string, rev: number, nonce: number): 
 }
 
 /** The URLs to try, in order, to resolve a placed module for a canvas: its own per-canvas
- * dir first, then the shared library. A bare module name is thus own-dir-first with a
- * `@shared` fallback — the "live single source, promote = move" model (ADR-0007). Pure, so
- * the resolution order is unit-testable. */
-export function componentUrls(module: string, rev: number, ownNonce: number, sharedNonce: number, canvasId: string = DEFAULT_CANVAS_ID): string[] {
-  return [componentUrl(module, rev, ownNonce, canvasId), sharedComponentUrl(module, rev, sharedNonce)];
+ * dir first, then the shared library, then the platform base (ADR-0014). A bare module name
+ * is thus own-first with `@shared` and platform fallbacks — the "live single source,
+ * promote = move" model (ADR-0007). Pure, so the resolution order is unit-testable. */
+export function componentUrls(
+  module: string,
+  rev: number,
+  ownNonce: number,
+  sharedNonce: number,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  baseNonce: number = sharedNonce + 1,
+): string[] {
+  return [
+    componentUrl(module, rev, ownNonce, canvasId),
+    sharedComponentUrl(module, rev, sharedNonce),
+    baseComponentUrl(module, rev, baseNonce),
+  ];
 }
 
 // The browser caches dynamic-import results by full URL, so a failed first import
@@ -81,15 +95,20 @@ async function importWithRetry(module: string, rev: number, canvasId: string): P
   let lastErr: unknown;
   for (let i = 0; i < LOAD_ATTEMPTS; i++) {
     try {
-      // Resolve own-dir first, then the shared library (#55). A promoted module is gone
-      // from the own dir, so that import 404s and the shared source loads; a canvas's own
-      // module resolves on the first try and never touches shared (behavior-preserving).
-      const [own, shared] = componentUrls(module, rev, (attemptNonce += 1), (attemptNonce += 1), canvasId);
-      try {
-        return await importFrom(own as string);
-      } catch {
-        return await importFrom(shared as string);
+      // Resolve own-dir first, then shared, then the platform base (#55, ADR-0014). A
+      // promoted module is gone from the own dir, so that import 404s and the shared
+      // source loads; a platform module 404s twice and lands on base. A canvas's own
+      // module resolves on the first try and never touches the fallbacks.
+      const urls = componentUrls(module, rev, (attemptNonce += 1), (attemptNonce += 1), canvasId, (attemptNonce += 1));
+      let inner: unknown;
+      for (const url of urls) {
+        try {
+          return await importFrom(url);
+        } catch (e) {
+          inner = e;
+        }
       }
+      throw inner;
     } catch (e) {
       lastErr = e;
       if (i < RETRY_DELAYS_MS.length) await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[i]));

@@ -287,7 +287,8 @@ text streams on the chat channel.
 
 For anything the fixed primitives express poorly (charts, tables, KPI cards,
 dashboards, formatted layouts), the agent builds **real React component files**
-under `src/canvas-components/` and places *instances* of them on the canvas.
+in the canvas's own dir (`src/canvas-<id>/components/` — uniform for every canvas,
+`default` included) and places *instances* of them on the canvas (ADR-0014).
 Components are normal modules: they **compose** (import each other), take **data**
 (props), and import real npm deps (e.g. `mermaid`). This is the "B" design (the
 "A" in-memory `code`-string + sucrase + `new Function` path was removed).
@@ -296,13 +297,13 @@ The round-trip:
 
 1. The agent authors a module with `write_component(name, source)` /
    `edit_component(name, old, new)` (per-line edits), scoped by `server/components.ts`
-   to `src/canvas-components/<Name>.tsx` (validated names, no path escape).
+   to the canvas own dir / shared lib (validated names, no path escape).
 2. `place_component({ module, x, y, w?, h?, data? })` creates a `component` shape
    referencing the module + props + a `rev` token. `set_component_data(id, data)`
    updates just the props.
 3. The browser's `ComponentShapeUtil` (`src/ComponentShape.tsx`) renders the shape
    via `loadComponent(module, rev)` (`src/component-loader.ts`), which
-   **dynamic-imports** `/src/canvas-components/<module>.tsx?v=<rev>`. **vite** is
+   **dynamic-imports** the module (own dir → `@shared` → platform base). **vite** is
    the compiler — it transpiles the file on request and resolves all its imports
    (react, other components, mermaid, data files) exactly like any app module.
 4. Editing a file bumps `rev` on **every** placed component (`bumpAllComponents`,
@@ -313,14 +314,21 @@ The round-trip:
 - **Shared library (`@shared`, #55)**: besides its own dir, a canvas can `promote_component`
   a module into the workspace `shared/components/` dir (one live source; vite resolves the
   `@shared` alias to it). A placed instance references a module by its **bare name**, and
-  `component-loader` resolves **own-dir first, then `@shared`** (`componentUrls`) — so promote
+  `component-loader` resolves **own-dir first, then `@shared`, then the platform base**
+  (`componentUrls`, ADR-0014) — so promote
   is a pure file *move* (`server/components.ts` `promoteComponent`), instances stay stable,
   and another canvas placing the same bare name gets the one shared source. Editing a shared
   module fans the rev-bump out to **every canvas that placed it** (`bumpSharedModule` over the
   session registry's `built()`), not just the current store. `adopt_shared_component` copies a
   shared module back into a canvas's own dir (own-dir then shadows shared) so it can diverge.
-  Reads (`list_components`/`read_component`) span own dir + `@shared`. UI mirror: right-click a
+  Reads (`list_components`/`read_component`) span own dir + `@shared` + base. UI mirror: right-click a
   component shape → Promote / Copy to this canvas (`src/component-library.ts`, `App.tsx`).
+- **Platform tier (ADR-0014)**: `src/canvas-components/` is the image-baked seed library —
+  visible to every canvas as the last resolution fallback, read-only at runtime (no tool
+  writes there; writing a platform name shadows it into the canvas own dir). Persistence
+  follows writability: `canvas-components.tar` (all own dirs) + `shared-components.tar`
+  persist to R2; the platform dir ships with the image (the legacy `components.tar` is
+  still restored at boot for historical content but never flushed again).
 - The content renders inside an **error boundary**; a load or render failure shows
   a red card in the box and never crashes the canvas. While a module loads you see
   a "loading…" placeholder.

@@ -16,3 +16,8 @@
 # build stamp written by scripts/deploy.sh right before the image build (the git
 # SHA the bridge reports at /api/status). Regenerated per deploy, never committed.
 server/build-rev.txt
+
+# per-canvas component dirs are workspace content (persisted to R2, ADR-0014) —
+# only the platform base library is committed
+src/canvas-*/
+!src/canvas-components/

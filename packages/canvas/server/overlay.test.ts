@@ -4,7 +4,7 @@ import { utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { extractOverlay, maxMtimeMs, tarSubtree } from './overlay.ts';
+import { extractCanvasDirs, extractOverlay, listCanvasDirs, maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
 
 const mk = (suffix: string) => join(tmpdir(), `Tmp_OverlayTest_${process.pid}_${suffix}`);
 const w = async (p: string, s: string) => {
@@ -91,6 +91,65 @@ describe('maxMtimeMs (turn-completion dirty-check)', () => {
       expect(await maxMtimeMs(join(empty, 'does-not-exist'))).toBe(0);
     } finally {
       if (existsSync(empty)) rmSync(empty, { recursive: true, force: true });
+    }
+  });
+});
+
+// ADR-0014: the per-canvas component dirs travel as ONE tar (src-relative paths),
+// with the read-only platform base (src/canvas-components/) never captured or wiped.
+describe('canvas own dirs: tar + restore, platform base untouched', () => {
+  test('round-trips every canvas-<id> dir; base dir excluded from capture AND wipe', async () => {
+    const src = mk('cvsrc');
+    const dst = mk('cvdst');
+    try {
+      await w(join(src, 'canvas-default/components/Card.tsx'), 'CARD');
+      await w(join(src, 'canvas-cv_abc/components/Board.tsx'), 'BOARD');
+      await w(join(src, 'canvas-components/Seed.tsx'), 'SEED'); // platform base
+      await w(join(src, 'App.tsx'), 'APP'); // app code, not a canvas dir
+
+      expect(await listCanvasDirs(src)).toEqual(['canvas-cv_abc', 'canvas-default']);
+      const bytes = await tarCanvasDirs(src);
+
+      await w(join(dst, 'canvas-stale/components/Old.tsx'), 'STALE'); // must be wiped
+      await w(join(dst, 'canvas-components/Seed.tsx'), 'SEED-DST'); // must survive
+      await extractCanvasDirs(bytes, dst);
+
+      expect(existsSync(join(dst, 'canvas-default/components/Card.tsx'))).toBe(true);
+      expect(existsSync(join(dst, 'canvas-cv_abc/components/Board.tsx'))).toBe(true);
+      expect(existsSync(join(dst, 'canvas-stale'))).toBe(false); // deletion honored
+      expect(await Bun.file(join(dst, 'canvas-components/Seed.tsx')).text()).toBe('SEED-DST');
+    } finally {
+      for (const d of [src, dst]) if (existsSync(d)) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test('no canvas dirs → an empty (but valid) tar; extract is a no-op wipe of nothing', async () => {
+    const src = mk('cvempty');
+    const dst = mk('cvempty_dst');
+    try {
+      mkdirSync(src, { recursive: true });
+      mkdirSync(dst, { recursive: true });
+      const bytes = await tarCanvasDirs(src);
+      await extractCanvasDirs(bytes, dst); // must not throw
+      expect(await maxMtimeCanvasDirs(src)).toBe(0);
+    } finally {
+      for (const d of [src, dst]) if (existsSync(d)) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test('maxMtimeCanvasDirs tracks the newest file across canvas dirs only', async () => {
+    const src = mk('cvmtime');
+    try {
+      await w(join(src, 'canvas-default/components/A.tsx'), 'A');
+      await w(join(src, 'canvas-components/Seed.tsx'), 'SEED');
+      const t = await maxMtimeCanvasDirs(src);
+      expect(t).toBeGreaterThan(0);
+      expect(t).toBe(await maxMtimeMs(join(src, 'canvas-default')));
+      // touching the BASE dir does not move the canvas-dirs clock
+      await utimes(join(src, 'canvas-components/Seed.tsx'), new Date(), new Date(Date.now() + 60_000));
+      expect(await maxMtimeCanvasDirs(src)).toBe(t);
+    } finally {
+      if (existsSync(src)) rmSync(src, { recursive: true, force: true });
     }
   });
 });

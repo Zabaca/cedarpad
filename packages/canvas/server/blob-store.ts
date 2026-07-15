@@ -19,6 +19,16 @@ export const canvasStateKey = (ws: string, canvas: string): string =>
  * overlay.tar (incompatible tar paths) is never read. */
 export const componentsKey = (ws: string): string => `workspaces/${ws}/components.tar`;
 
+/** workspace-scoped SHARED component library tarball: shared/components/ — the promote
+ * target (ADR-0014). Without this, promote MOVES a file out of persistence and a restart
+ * deletes the component entirely. */
+export const sharedComponentsKey = (ws: string): string => `workspaces/${ws}/shared-components.tar`;
+
+/** workspace-scoped per-canvas component dirs tarball: every src/canvas-<id>/components/
+ * (default included — ADR-0014 uniform canvas dirs), tarred with their src-relative paths.
+ * The platform base (src/canvas-components/) is read-only and stays image-only. */
+export const canvasDirsKey = (ws: string): string => `workspaces/${ws}/canvas-components.tar`;
+
 /** workspace-scoped custom-handler tarball: just server/custom/ (the agent's
  * authored backend handlers). Same model as the component library — extension
  * content, persisted; the core stays image-only. */
@@ -113,6 +123,22 @@ export class BlobStore {
 
   async saveComponents(ws: string, bytes: Uint8Array): Promise<void> {
     await this.backend.put(componentsKey(ws), bytes);
+  }
+
+  loadSharedComponents(ws: string): Promise<Uint8Array | null> {
+    return this.backend.get(sharedComponentsKey(ws));
+  }
+
+  async saveSharedComponents(ws: string, bytes: Uint8Array): Promise<void> {
+    await this.backend.put(sharedComponentsKey(ws), bytes);
+  }
+
+  loadCanvasDirs(ws: string): Promise<Uint8Array | null> {
+    return this.backend.get(canvasDirsKey(ws));
+  }
+
+  async saveCanvasDirs(ws: string, bytes: Uint8Array): Promise<void> {
+    await this.backend.put(canvasDirsKey(ws), bytes);
   }
 
   loadCustom(ws: string): Promise<Uint8Array | null> {
