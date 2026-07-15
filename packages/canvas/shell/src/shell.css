@@ -835,7 +835,8 @@ body,
   background: var(--accent-hi);
 }
 .settings-remove,
-.settings-revoke {
+.settings-revoke,
+.settings-make-owner {
   flex: none;
   background: none;
   border: 1px solid var(--line);
@@ -847,7 +848,8 @@ body,
   cursor: pointer;
 }
 .settings-remove:hover,
-.settings-revoke:hover {
+.settings-revoke:hover,
+.settings-make-owner:hover {
   border-color: var(--accent);
   color: var(--accent);
 }

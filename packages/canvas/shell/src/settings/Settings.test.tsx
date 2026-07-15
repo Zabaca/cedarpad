@@ -45,6 +45,14 @@ function stubEdge() {
       return ownerView ? Response.json(INVITATIONS) : Response.json({ error: 'owner only' }, { status: 403 });
     }
     if (url.startsWith('/api/workspaces/ws_abc/members/') && method === 'DELETE') return new Response(null, { status: 204 });
+    if (url.startsWith('/api/workspaces/ws_abc/members/') && method === 'PATCH') {
+      return Response.json({
+        members: [
+          { userId: 'u_khoa', name: 'Khoa', email: 'khoa@example.com', role: 'owner' },
+          { userId: 'u_owner', name: 'James', email: 'james@zabaca.com', role: 'member' },
+        ],
+      });
+    }
     if (url.startsWith('/api/workspaces/ws_abc/invitations/') && method === 'DELETE') return new Response(null, { status: 204 });
     if (url === '/api/workspaces/ws_abc/github' && method === 'GET') return Response.json(githubStatus as never);
     if (url === '/api/admin/waitlist' && method === 'GET') {
@@ -196,5 +204,20 @@ describe('SettingsStage — members (#192)', () => {
     expect(calls).toContain('DELETE /api/workspaces/ws_abc/members/u_khoa');
     // roster re-fetched after the delete
     expect(calls.filter((c) => c === 'GET /api/workspaces/ws_abc/members').length).toBe(2);
+  });
+
+  test('making a member the owner PATCHes {role:"owner"} and applies the returned roster', async () => {
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    const confirmReal = window.confirm;
+    window.confirm = () => true;
+    await act(async () => {
+      (host.querySelector('.settings-make-owner') as HTMLButtonElement).click();
+    });
+    await flush();
+    window.confirm = confirmReal;
+    expect(calls).toContain('PATCH /api/workspaces/ws_abc/members/u_khoa');
+    expect(host.querySelectorAll('.settings-role-owner').length).toBe(1);
+    expect(host.textContent).toContain('Khoa');
   });
 });
