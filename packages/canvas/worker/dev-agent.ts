@@ -63,6 +63,36 @@ export async function kickDevAgentRun(
   return deps.serve(request, env, resolve(DEFAULT_WORKSPACE));
 }
 
+export interface DevAgentTriggerDeps extends DevAgentKickDeps {
+  /** Repo-defined jobs off the selected repos' default branches (worker/repo-jobs.ts
+   *  discoverJobs, curried with the db + workspace by the caller). */
+  discover: (env: Env) => Promise<Array<{ name: string; repo: string; prompt: string }>>;
+}
+
+/**
+ * The one manual-trigger core (shared by the /api/jobs/dev-agent/run route and the MCP
+ * run_dev_agent tool): validate the optional { repo, job } request, then kick. A named
+ * job's prompt is (re-)read off the repo's DEFAULT branch here — the merge armed it; a
+ * caller can never inject a prompt (#195). `repo` must be within the selected set
+ * (kickDevAgentRun 400s otherwise); an unknown job is a 404.
+ */
+export async function triggerDevAgentRun(
+  env: Env,
+  deps: DevAgentTriggerDeps,
+  body: { repo?: string; job?: string } | null,
+): Promise<Response> {
+  let repoArg = typeof body?.repo === 'string' ? body.repo : undefined;
+  let job: { name: string; prompt: string } | undefined;
+  if (typeof body?.job === 'string') {
+    const jobs = await deps.discover(env);
+    const found = jobs.find((j) => j.name === body.job && (!repoArg || j.repo === repoArg));
+    if (!found) return Response.json({ error: `job not found on a selected repo's default branch: ${body.job}` }, { status: 404 });
+    repoArg = found.repo; // a repo job always runs against its home repo
+    job = { name: found.name, prompt: found.prompt };
+  }
+  return kickDevAgentRun(env, deps, repoArg, job);
+}
+
 // The cron handler's core, extracted so it's unit-testable without a live cron or container.
 // Kill-switch: the cron fires daily, but stays a no-op until DEV_AGENT_ENABLED="true" — the
 // flag gates ONLY this scheduled auto-fire; a manual Jobs kick is an explicit user action and

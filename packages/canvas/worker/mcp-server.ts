@@ -7,7 +7,13 @@ import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { edgeAuth } from './auth-gate.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
 import { withMcpTokensHeader } from './mcp-tokens-proxy.ts';
+import { triggerDevAgentRun } from './dev-agent.ts';
+import { mintDevAgentGitToken } from './github-app.ts';
+import { resolveDevAgentRepo } from './github-connection.ts';
+import { discoverJobs } from './repo-jobs.ts';
+import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 import {
+  CreateCanvasInput,
   CreateShapesInput,
   DeleteShapesInput,
   ListCanvasesInput,
@@ -18,6 +24,7 @@ import {
   ReadComponentInput,
   ReadConversationInput,
   ReadTranscriptInput,
+  RunDevAgentInput,
   SendMessageInput,
   UpdateShapesInput,
   UploadSkillInput,
@@ -95,6 +102,31 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         });
         return serveWorkspace(target, env, coordsForWorkspace(workspaceId));
       },
+      // Manual dev-agent trigger (mirrors the /api/jobs/dev-agent/run wiring in
+      // worker/index.ts — not imported from there, that would be an import cycle):
+      // resolve the default workspace's repo connection, mint the per-turn git token,
+      // proxy the kick to the warm bridge. Repo resolution is best-effort like the route's.
+      kickDevAgent: (body) =>
+        triggerDevAgentRun(
+          env,
+          {
+            mint: mintDevAgentGitToken,
+            serve: serveWorkspace,
+            resolveRepo: async (e, requested) => {
+              try {
+                return await resolveDevAgentRepo(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, requested);
+              } catch (err: unknown) {
+                console.error(`[dev-agent] repo resolution failed — kicking token-less: ${String(err)}`);
+                return null;
+              }
+            },
+            discover: (e) =>
+              discoverJobs(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
+                nowSec: Math.floor(Date.now() / 1000),
+              }),
+          },
+          body,
+        ),
     });
 
     const server = new McpServer({ name: 'cedarpad', version: '1.0.0' });
@@ -107,6 +139,14 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'list_canvases',
       { description: 'List the canvases of one of your workspaces.', inputSchema: ListCanvasesInput.shape },
       async (input) => text(await tools.listCanvases(input)),
+    );
+    server.registerTool(
+      'create_canvas',
+      {
+        description: 'Create a new (empty) canvas in one of your workspaces. Returns its id for the other canvas tools.',
+        inputSchema: CreateCanvasInput.shape,
+      },
+      async (input) => text(await tools.createCanvas(input)),
     );
     server.registerTool(
       'list_inbox',
@@ -231,6 +271,16 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         inputSchema: UploadSkillInput.shape,
       },
       async (input) => text(await tools.uploadSkill(input)),
+    );
+
+    server.registerTool(
+      'run_dev_agent',
+      {
+        description:
+          'Trigger a dev-agent run now (same as the Jobs "Run now" button). Optional: repo (must be in the workspace\'s selected set) and job (a repo-defined job name — its prompt is read off the repo\'s default branch). Runs single-flight: a trigger while one is running joins it. Returns the run\'s chatId; follow it via read_conversation/read_transcript.',
+        inputSchema: RunDevAgentInput.shape,
+      },
+      async (input) => text(await tools.runDevAgent(input)),
     );
 
     const transport = new StreamableHTTPTransport();

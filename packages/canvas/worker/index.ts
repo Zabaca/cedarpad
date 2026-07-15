@@ -11,7 +11,7 @@ import { handleAdminApi } from './admin.ts';
 import { handleMembersApi } from './members.ts';
 import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
-import { dispatchDevAgentRun, kickDevAgentRun } from './dev-agent.ts';
+import { dispatchDevAgentRun, kickDevAgentRun, triggerDevAgentRun } from './dev-agent.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
@@ -345,22 +345,18 @@ export default {
       // otherwise). `job` names a repo-defined job (#195): its body is (re-)read off the
       // repo's DEFAULT branch here — the merge armed it; a caller can never inject a prompt.
       const body = (await request.json().catch(() => null)) as { repo?: string; job?: string } | null;
-      let repoArg = typeof body?.repo === 'string' ? body.repo : undefined;
-      let job: { name: string; prompt: string } | undefined;
-      if (typeof body?.job === 'string') {
-        const jobs = await discoverJobs(env, createDbForWorker(env as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
-          nowSec: Math.floor(Date.now() / 1000),
-        });
-        const found = jobs.find((j) => j.name === body.job && (!repoArg || j.repo === repoArg));
-        if (!found) return Response.json({ error: `job not found on a selected repo's default branch: ${body.job}` }, { status: 404 });
-        repoArg = found.repo; // a repo job always runs against its home repo
-        job = { name: found.name, prompt: found.prompt };
-      }
-      return kickDevAgentRun(
+      return triggerDevAgentRun(
         env,
-        { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo },
-        repoArg,
-        job,
+        {
+          mint: mintDevAgentGitToken,
+          serve: serveWorkspace,
+          resolveRepo: defaultWorkspaceRepo,
+          discover: (e) =>
+            discoverJobs(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
+              nowSec: Math.floor(Date.now() / 1000),
+            }),
+        },
+        body,
       );
     }
 

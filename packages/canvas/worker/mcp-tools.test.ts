@@ -50,6 +50,7 @@ const tools = buildMcpTools({
       ? new Response(JSON.stringify({ error: 'not found' }), { status: 404 })
       : new Response(JSON.stringify(canned), { status: 200 });
   },
+  kickDevAgent: async () => Response.json({ chatId: 'dev-agent-run-x', joined: false }, { status: 202 }),
 });
 
 let WS = '';
@@ -301,5 +302,51 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     const res = await tools.listInbox({ workspace_id: WS });
     expect(res.items.map((i) => i.chat_id)).toContain('mcp_test_read');
     expect(res.items.every((i) => i.workspace_id === WS)).toBe(true);
+  });
+});
+
+describe('create_canvas — the same registry create the shell route uses, access-checked', () => {
+  test('creates a canvas in an owned workspace; it shows up in list_canvases', async () => {
+    const res = await tools.createCanvas({ workspace_id: WS, name: 'Roadmap' });
+    expect(res.id).toMatch(/^cv_/);
+    expect(res).toEqual({ id: res.id, name: 'Roadmap', workspace_id: WS });
+    const listed = await tools.listCanvases({ workspace_id: WS });
+    expect(listed.canvases.some((c) => c.id === res.id && c.name === 'Roadmap')).toBe(true);
+  });
+
+  test('never creates in a stranger’s workspace', async () => {
+    await expect(tools.createCanvas({ workspace_id: OTHER_WS, name: 'Sneaky' })).rejects.toThrow(/workspace not found/);
+  });
+});
+
+describe('run_dev_agent — proxies the manual trigger; the bridge’s join answer comes back', () => {
+  test('kicks with the optional repo/job and returns the bridge JSON', async () => {
+    const kicks: Array<{ repo?: string; job?: string }> = [];
+    const t = buildMcpTools({
+      db: database,
+      userId: 'u_1',
+      proxySend: async () => new Response(null, { status: 202 }),
+      proxySkill: async () => new Response(null, { status: 200 }),
+      proxyBridge: async () => new Response(null, { status: 404 }),
+      kickDevAgent: async (body) => {
+        kicks.push(body);
+        return Response.json({ chatId: 'dev-agent-run-x', joined: true }, { status: 202 });
+      },
+    });
+    const res = await t.runDevAgent({ job: 'deps-audit' });
+    expect(kicks).toEqual([{ job: 'deps-audit' }]);
+    expect(res).toEqual({ chatId: 'dev-agent-run-x', joined: true });
+  });
+
+  test('a failed kick surfaces as an error (e.g. an unknown job’s 404)', async () => {
+    const t = buildMcpTools({
+      db: database,
+      userId: 'u_1',
+      proxySend: async () => new Response(null, { status: 202 }),
+      proxySkill: async () => new Response(null, { status: 200 }),
+      proxyBridge: async () => new Response(null, { status: 404 }),
+      kickDevAgent: async () => Response.json({ error: 'job not found' }, { status: 404 }),
+    });
+    await expect(t.runDevAgent({ job: 'nope' })).rejects.toThrow(/404/);
   });
 });
