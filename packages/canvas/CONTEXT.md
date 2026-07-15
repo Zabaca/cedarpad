@@ -265,11 +265,19 @@ in `src/canvas-ops.ts` (pure, unit-tested), component-file logic in
 `server/components.ts`. The canvas tools: `read_canvas`, `view_canvas` (PNG),
 `create_shapes` (batch), `update_shapes` (merge-by-id), `delete_shapes`, the
 component-library tools (`list_components`, `read_component`, `write_component`,
-`edit_component`, `place_component`, `set_component_data` — see below),
-`clear_canvas`, `align_shapes`. The agent is a **full Claude Code agent**: it
-also has all built-in tools (Bash, Read, Write, Edit, Web*, Task, ...) plus the
+`edit_component`, `write_data`, `place_component`, `set_component_data` — see
+below), `clear_canvas`, `align_shapes`. The agent is a **full Claude Code
+agent**: it also has the built-in tools (Bash, Read, Web*, Task, ...) plus the
 `impeccable` skill (`settingSources: ['user','project']` + `skills` filter),
 auto-approved (`bypassPermissions`). Unsandboxed — see the security note below.
+
+**Chat turns drop the generic `Write`/`Edit`/`NotebookEdit` tools**
+(`disallowedTools`): a plain Write drops an unregistered file — unserved, never
+hot-reloaded, invisible to `list_components` (the QABoard incident) — so
+component and data files may only be authored through the registered tools
+(`write_component`/`edit_component`/`write_data`, which bump revs and flush the
+components sink). Dev-agent turns keep the full preset (worktree edits are their
+job). Bash remains, so this steers the model rather than sandboxing it.
 
 The agent's "thinking" and replies to the human are its normal chat text — not a
 tool. The human watches shapes appear in real time via the canvas SSE while the

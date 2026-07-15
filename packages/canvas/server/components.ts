@@ -70,6 +70,31 @@ export function writeComponent(module: string, source: string, canvasId: string 
   writeFileSync(fileIn(dir, module), source);
 }
 
+// Data files live NEXT TO components so vite resolves `import data from "./sales.json"`.
+// Non-executable extensions only — code must go through writeComponent (the registered,
+// hot-reloading path); a data door that accepts .tsx would just be the bypass again.
+const DATA_NAME = /^[A-Za-z][A-Za-z0-9_-]*\.(json|csv|txt|md)$/;
+const DATA_MAX_BYTES = 1_048_576; // the components sink tars the whole dir on every flush
+
+/** Create or overwrite a data file a component can import as a sibling — shared lib if it
+ * already lives there (one shared source, like writeComponent), else the canvas own dir. */
+export function writeDataFile(name: string, source: string, canvasId: string = DEFAULT_CANVAS_ID): void {
+  if (!DATA_NAME.test(name)) {
+    throw new Error(`invalid data file name "${name}" — <letters/digits/_/->.(json|csv|txt|md); use write_component for code`);
+  }
+  if (Buffer.byteLength(source, 'utf8') > DATA_MAX_BYTES) throw new Error('data file too large (max 1MB)');
+  if (name.endsWith('.json')) {
+    try {
+      JSON.parse(source);
+    } catch {
+      throw new Error('source is not valid JSON — a broken .json import breaks every component that imports it');
+    }
+  }
+  const dir = existsSync(`${SHARED_DIR}${name}`) ? SHARED_DIR : ownDir(canvasId);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(`${dir}${name}`, source);
+}
+
 /** Per-line edit: replace a unique `oldStr` occurrence with `newStr` in a module file. */
 export function editComponent(module: string, oldStr: string, newStr: string, canvasId: string = DEFAULT_CANVAS_ID): void {
   const cur = readComponent(module, canvasId);

@@ -29,7 +29,7 @@ import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
 import { MCP_TOKENS_HEADER, decodeMcpTokens } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
-import { isShared, listComponents, readComponent, writeComponent } from './components.ts';
+import { isShared, listComponents, readComponent, writeComponent, writeDataFile } from './components.ts';
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
@@ -767,6 +767,24 @@ export async function handleRequest(req: Request): Promise<Response> {
     // hot-reload bump + persist via the components sink).
     if (path === '/api/components' && req.method === 'GET') {
       return json({ components: listComponents(canvasIdFrom(req, url)) });
+    }
+    // Data files (write_data parity): non-executable siblings a component can import.
+    // Same write + blunt-bump + sink-flush contract as the module PUT below.
+    const dataRoute = /^\/api\/components\/data\/([^/]+)$/.exec(path);
+    if (dataRoute && req.method === 'PUT') {
+      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const name = decodeURIComponent(dataRoute[1] as string);
+      const body = await readBody(req);
+      const source = typeof body.source === 'string' ? body.source : '';
+      try {
+        if (!source) throw new Error('source must be non-empty');
+        writeDataFile(name, source, session.canvasId);
+        const reloaded = bumpAllComponents(session.store, nextComponentRev(session.store));
+        await flushIfDirty('components', COMPONENTS_DIR);
+        return json({ ok: true, name, reloaded });
+      } catch (e) {
+        return json({ error: (e as Error).message }, 400);
+      }
     }
     const componentRoute = /^\/api\/components\/([^/]+)$/.exec(path);
     if (componentRoute && req.method === 'GET') {

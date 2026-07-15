@@ -41,6 +41,12 @@ export const ListComponentsInput = ReadCanvasInput;
 const ComponentModule = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/, 'component name: letters/digits/_/-, no extension');
 export const ReadComponentInput = ReadCanvasInput.extend({ module: ComponentModule });
 export const WriteComponentInput = ReadComponentInput.extend({ source: z.string().min(1) });
+export const WriteDataInput = ReadCanvasInput.extend({
+  name: z
+    .string()
+    .regex(/^[A-Za-z][A-Za-z0-9_-]*\.(json|csv|txt|md)$/, 'data file name: letters/digits/_/- with a .json/.csv/.txt/.md extension'),
+  source: z.string().min(1),
+});
 // Direct canvas mutation. Shapes ride as loose records on purpose: the bridge's
 // normalizeShape is the single validator (same permissive-schema-strict-normalize split
 // the in-canvas agent tools use), and its errors come back agent-legible.
@@ -227,6 +233,16 @@ export function buildMcpTools(deps: McpToolDeps) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
       return bridgeJson(ws.id, `/api/components/${encodeURIComponent(input.module)}`, {
+        method: 'PUT',
+        headers,
+        body: { source: input.source },
+      });
+    },
+
+    async writeData(input: z.infer<typeof WriteDataInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      return bridgeJson(ws.id, `/api/components/data/${encodeURIComponent(input.name)}`, {
         method: 'PUT',
         headers,
         body: { source: input.source },

@@ -22,6 +22,7 @@ import {
   UpdateShapesInput,
   UploadSkillInput,
   WriteComponentInput,
+  WriteDataInput,
   buildMcpTools,
 } from './mcp-tools.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
@@ -177,6 +178,16 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         inputSchema: WriteComponentInput.shape,
       },
       async (input) => text(await tools.writeComponent(input)),
+    );
+
+    server.registerTool(
+      'write_data',
+      {
+        description:
+          'Create or overwrite a data file NEXT TO the components (same dir), so a component can `import data from "./sales.json"`. Extensions: .json/.csv/.txt/.md only (max 1MB); code goes through write_component. Overwriting reloads placed instances so importers pick up the new data.',
+        inputSchema: WriteDataInput.shape,
+      },
+      async (input) => text(await tools.writeData(input)),
     );
 
     server.registerTool(

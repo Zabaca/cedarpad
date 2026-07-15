@@ -24,7 +24,7 @@ import {
   setComponentDataOp,
   updateShapesOp,
 } from '../src/canvas-ops.ts';
-import { editComponent, isShared, listComponents, readComponent, writeComponent } from './components.ts';
+import { editComponent, isShared, listComponents, readComponent, writeComponent, writeDataFile } from './components.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { type EndTurnDeps, type EndTurnInput, endTurn } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
@@ -206,7 +206,7 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         'write_component',
         [
           'Create or overwrite a reusable React component file at src/canvas-components/<module>.tsx. vite compiles it; place_component then renders it on the canvas.',
-          'Rules: `export default` a React component. It receives the placement `data` as props. You CAN import other modules: react/hooks, other components (`import KpiCard from "./KpiCard"`) for composition, "mermaid" for diagrams, and data files you write. Use inline styles + SVG. Prefer small composable components (a leaf like KpiCard, a container like Dashboard that imports it). Read an existing one first (e.g. read_component KpiCard) to match conventions.',
+          'Rules: `export default` a React component. It receives the placement `data` as props. You CAN import other modules: react/hooks, other components (`import KpiCard from "./KpiCard"`) for composition, "mermaid" for diagrams, and data files you write with write_data. Use inline styles + SVG. Prefer small composable components (a leaf like KpiCard, a container like Dashboard that imports it). Read an existing one first (e.g. read_component KpiCard) to match conventions.',
         ].join(' '),
         {
           module: z.string().describe('Component name, e.g. "KpiCard" (letters/digits/_/-, no extension).'),
@@ -235,6 +235,25 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
             editComponent(module, old_string, new_string, canvasId);
             const reloaded = reloadAfterAuthor(module);
             return result({ text: `Edited ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s)/canvas(es))` : ''}.` });
+          } catch (e) {
+            return result({ text: `Error: ${(e as Error).message}`, isError: true });
+          }
+        },
+      ),
+      tool(
+        'write_data',
+        'Create or overwrite a data file NEXT TO the components (same dir), so a component can `import data from "./sales.json"`. Extensions: .json/.csv/.txt/.md only (max 1MB); code goes through write_component. Overwriting reloads placed instances so importers pick up the new data.',
+        {
+          name: z.string().describe('File name with extension, e.g. "sales.json" (letters/digits/_/-, .json/.csv/.txt/.md).'),
+          source: z.string().describe('Full file content. For .json it must parse.'),
+        },
+        async ({ name, source }) => {
+          try {
+            writeDataFile(name, source, canvasId);
+            // Blunt bump (same as write_component): we can't cheaply know which modules
+            // import this file, so reload every placed instance on this canvas.
+            const reloaded = bumpAllComponents(store, nextComponentRev(store));
+            return result({ text: `Wrote ${name}${reloaded ? ` (reloaded ${reloaded} placed instance(s))` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
           }
@@ -351,7 +370,7 @@ export type { ChatEvent } from '../shared/chat-wire.ts';
 // SECURITY: the canvas chat is a full Claude Code agent — unsandboxed code execution
 // driven by a local web chat box with no auth. Anything that can reach the bridge can
 // run commands on this machine, so keep the bridge bound to localhost / a trusted LAN.
-const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and have canvas tools (mcp__canvas__*): read_canvas, read_connected (call with no args to get YOUR own connected subgraph — the shapes arrow-linked to your chat card, each with full state — since shapes you create are auto-linked back to you), read_image (see a screenshot/photo the human pasted onto the canvas; read_canvas/read_connected list image shapes but redact the pixels), view_canvas, create_shapes, update_shapes, delete_shapes, clear_canvas, align_shapes (primitives: rectangle, ellipse, text, note, arrow in colors ${SHAPE_COLORS.join(', ')}; page coordinates, visible area roughly x 0..1000 y 0..700). Plus a reusable COMPONENT library: list_components / read_component / write_component / edit_component author real React files under src/canvas-components/, and place_component / set_component_data render instances on the canvas with a \`data\` props object. Components compose (import each other) and take data — prefer them over hand-placed primitives for charts/tables/cards/dashboards/diagrams. Components you author also receive a \`setData(patch)\` prop that persists their own state (merges into the instance data, syncs to everyone, survives reload); use real controls (button/input/select/[role=button]) so clicks reach the component instead of dragging the shape. ALWAYS \`list_components\` FIRST before authoring anything — the library already has many components and creating a duplicate (e.g. a new "Markdown" when "MarkdownCard" exists) is a mistake. If one already fits the request, \`place_component\` it (or \`edit_component\` to extend it); \`read_component\` a close match for its conventions; only \`write_component\` a NEW module when nothing suitable exists. When unsure whether something exists, list and read before writing. Use all of this to visualize, diagram, or build whatever the human asks — e.g. read files and draw the architecture, or build a data-driven dashboard, on the canvas.
+const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and have canvas tools (mcp__canvas__*): read_canvas, read_connected (call with no args to get YOUR own connected subgraph — the shapes arrow-linked to your chat card, each with full state — since shapes you create are auto-linked back to you), read_image (see a screenshot/photo the human pasted onto the canvas; read_canvas/read_connected list image shapes but redact the pixels), view_canvas, create_shapes, update_shapes, delete_shapes, clear_canvas, align_shapes (primitives: rectangle, ellipse, text, note, arrow in colors ${SHAPE_COLORS.join(', ')}; page coordinates, visible area roughly x 0..1000 y 0..700). Plus a reusable COMPONENT library: list_components / read_component / write_component / edit_component author real React files under src/canvas-components/, write_data authors sibling data files (.json/.csv/.txt/.md) a component can import, and place_component / set_component_data render instances on the canvas with a \`data\` props object. These registered tools are the ONLY way to author component and data files — the generic Write/Edit tools are disabled in chat. Components compose (import each other) and take data — prefer them over hand-placed primitives for charts/tables/cards/dashboards/diagrams. Components you author also receive a \`setData(patch)\` prop that persists their own state (merges into the instance data, syncs to everyone, survives reload); use real controls (button/input/select/[role=button]) so clicks reach the component instead of dragging the shape. ALWAYS \`list_components\` FIRST before authoring anything — the library already has many components and creating a duplicate (e.g. a new "Markdown" when "MarkdownCard" exists) is a mistake. If one already fits the request, \`place_component\` it (or \`edit_component\` to extend it); \`read_component\` a close match for its conventions; only \`write_component\` a NEW module when nothing suitable exists. When unsure whether something exists, list and read before writing. Use all of this to visualize, diagram, or build whatever the human asks — e.g. read files and draw the architecture, or build a data-driven dashboard, on the canvas.
 
 BACKEND: when a component needs server-side work (call a third-party API with a secret, hit a database, receive a webhook), author a CUSTOM HANDLER at \`server/custom/<name>.ts\` — \`export default (req: Request) => Response\` (or any JSON-serializable value) — reached at \`/api/custom/<name>\`. It may call outbound (APIs, DBs) and the core canvas via \`\${CANVAS_BRIDGE}/api/canvas\` (CANVAS_BRIDGE is in its env); it runs in an isolated process and so CANNOT touch canvas state directly — go through that HTTP API. Read \`server/custom/hello.ts\` first for the shape. New/edited handlers hot-reload with no restart.
 
@@ -466,6 +485,12 @@ export async function* runChat(
   // server name (already decoded from the proxied `x-mcp-tokens` header). CHAT FLAVOR ONLY —
   // `server/turn.ts` never passes this for a dev-agent turn. Absent/empty ⇒ no external server.
   mcpTokens?: Record<string, string>,
+  // The turn flavor (server/turn.ts passes flavor.kind). A CHAT turn drops the generic
+  // file-mutation tools so components/data are authored ONLY through the registered canvas
+  // tools (write_component/edit_component/write_data) — a plain Write drops an unregistered,
+  // unserved, never-hot-reloaded file (the QABoard incident). Dev-agent turns keep the full
+  // preset: editing repo files in the prepared worktree is their whole job.
+  kind: 'chat' | 'dev-agent' = 'chat',
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn; end_turn reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
@@ -493,6 +518,7 @@ export async function* runChat(
   const fullOptions = {
     systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: CANVAS_APPEND },
     tools: { type: 'preset' as const, preset: 'claude_code' as const }, // all built-in tools (Bash, Read, Write, Edit, Web*, Task...)
+    ...(kind === 'chat' ? { disallowedTools: ['Write', 'Edit', 'NotebookEdit'] } : {}),
     // Load user + project .claude config (ADR-0013): 'user' discovers platform skills (baked
     // at the container's ~/.claude/skills), 'project' discovers workspace skills (the
     // package's .claude/skills, synced via skills.tar). Discovery and enable are two stages:

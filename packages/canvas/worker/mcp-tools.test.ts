@@ -248,6 +248,23 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     await expect(tools.listComponents({ workspace_id: OTHER_WS })).rejects.toThrow(/not found/);
   });
 
+  test('write_data proxies the data-file route, validates the name at the edge, access-checked', async () => {
+    bridgeCalls = [];
+    bridgeResponses = { '/api/components/data/sales.json': { ok: true, name: 'sales.json', reloaded: 1 } };
+
+    const res = await tools.writeData({ workspace_id: WS, name: 'sales.json', source: '{"rows":[1]}' });
+    expect(res).toEqual({ ok: true, name: 'sales.json', reloaded: 1 });
+    expect(bridgeCalls.at(-1)).toMatchObject({
+      workspaceId: WS,
+      path: '/api/components/data/sales.json',
+      method: 'PUT',
+      body: { source: '{"rows":[1]}' },
+    });
+
+    await expect(tools.writeData({ workspace_id: OTHER_WS, name: 'sales.json', source: '{}' })).rejects.toThrow(/not found/);
+    expect(bridgeCalls.length).toBe(1); // the access check never proxied
+  });
+
   test('create/update/delete shapes and place_component proxy the mutation routes, canvas-scoped and access-checked', async () => {
     const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'Mutable' });
     bridgeResponses = {
