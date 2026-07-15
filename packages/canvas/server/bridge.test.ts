@@ -719,6 +719,100 @@ describe('POST /api/inbox/:id/attach-canvas', () => {
   });
 });
 
+// MCP full access: the component library over the wire. The edge MCP tools proxy here —
+// the bridge owns the container filesystem (single writer), exactly like the skills route
+// below. GET list / GET source / PUT write, canvas-scoped via x-canvas-id (default here).
+describe('GET/PUT /api/components — the component library over the wire', () => {
+  const MOD = `ZzTestComp${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  const componentsRoot = new URL('../src/canvas-components/', import.meta.url).pathname;
+  afterAll(() => {
+    rmSync(`${componentsRoot}${MOD}.tsx`, { force: true });
+  });
+
+  const putComponent = (module: string, body: unknown) =>
+    handleRequest(
+      new Request(`http://localhost/api/components/${encodeURIComponent(module)}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  test('PUT writes the module file; list and read then see it', async () => {
+    const source = 'export default function T() { return null; }';
+    const res = await putComponent(MOD, { source });
+    expect(res.status).toBe(200);
+    expect(readFileSync(`${componentsRoot}${MOD}.tsx`, 'utf8')).toBe(source);
+
+    const list = await handleRequest(new Request('http://localhost/api/components'));
+    expect(((await list.json()) as { components: string[] }).components).toContain(MOD);
+
+    const read = await handleRequest(new Request(`http://localhost/api/components/${MOD}`));
+    expect(read.status).toBe(200);
+    expect(((await read.json()) as { source: string }).source).toBe(source);
+  });
+
+  test('an invalid module name and an empty source are refused — nothing written', async () => {
+    expect((await putComponent('../evil', { source: 'x' })).status).toBe(400);
+    expect((await putComponent(MOD, { source: '' })).status).toBe(400);
+    expect((await putComponent(MOD, {})).status).toBe(400);
+  });
+
+  test('reading a module that does not exist is a 404', async () => {
+    const res = await handleRequest(new Request('http://localhost/api/components/ZzNoSuchModule'));
+    expect(res.status).toBe(404);
+  });
+});
+
+// MCP full access: direct canvas mutation over the wire — the same ops the in-canvas
+// agent uses (create merges defaults, update merges patches, place stamps the component
+// rev), minus the chat-card linking (an external client has no chat card). Isolated on
+// a throwaway canvas via ?canvas= so no other test's store is touched.
+describe('POST /api/canvas/shapes/{create,update} + /api/components/place — direct mutation', () => {
+  const CANVAS = `cv_mcp_ops_${crypto.randomUUID().slice(0, 8)}`;
+  const post = (path: string, body: unknown) =>
+    handleRequest(
+      new Request(`http://localhost${path}?canvas=${CANVAS}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+  const readShapes = async (): Promise<Array<Record<string, unknown>>> => {
+    const res = await handleRequest(new Request(`http://localhost/api/canvas?canvas=${CANVAS}`));
+    return ((await res.json()) as { shapes: Array<Record<string, unknown>> }).shapes;
+  };
+
+  test('create → update round-trip: defaults filled on create, update merges the patch', async () => {
+    const created = await post('/api/canvas/shapes/create', {
+      shapes: [{ type: 'rectangle', x: 10, y: 20, text: 'box' }],
+    });
+    expect(created.status).toBe(200);
+    const shape = (await readShapes()).find((s) => s.text === 'box')!;
+    expect(shape.type).toBe('rectangle');
+
+    const updated = await post('/api/canvas/shapes/update', { shapes: [{ id: shape.id, text: 'renamed' }] });
+    expect(updated.status).toBe(200);
+    const after = (await readShapes()).find((s) => s.id === shape.id)!;
+    expect(after.text).toBe('renamed');
+    expect(after.x).toBe(10); // untouched fields survive the patch
+  });
+
+  test('place_component: a component instance lands with module, box, data, and a rev', async () => {
+    const placed = await post('/api/components/place', { module: 'ZzTestMod', x: 5, y: 6, data: { n: 1 } });
+    expect(placed.status).toBe(200);
+    const comp = (await readShapes()).find((s) => s.type === 'component' && s.module === 'ZzTestMod')!;
+    expect(comp.data).toEqual({ n: 1 });
+    expect(typeof comp.rev).toBe('number');
+  });
+
+  test('bad inputs are 400s: empty batch, unknown update id, missing module', async () => {
+    expect((await post('/api/canvas/shapes/create', { shapes: [] })).status).toBe(400);
+    expect((await post('/api/canvas/shapes/update', { shapes: [{ id: 'zz_ghost', text: 'x' }] })).status).toBe(400);
+    expect((await post('/api/components/place', { x: 1, y: 2 })).status).toBe(400);
+  });
+});
+
 // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
 // proxies here. Content only (ADR-0013): plain files under .claude/skills/<name>/,
 // path rules enforced server-side, persisted by the skills sink at flush.

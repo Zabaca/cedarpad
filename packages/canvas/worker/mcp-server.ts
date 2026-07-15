@@ -8,11 +8,20 @@ import { edgeAuth } from './auth-gate.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
 import { withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import {
+  CreateShapesInput,
+  DeleteShapesInput,
   ListCanvasesInput,
+  ListComponentsInput,
   ListInboxInput,
+  PlaceComponentInput,
+  ReadCanvasInput,
+  ReadComponentInput,
   ReadConversationInput,
+  ReadTranscriptInput,
   SendMessageInput,
+  UpdateShapesInput,
   UploadSkillInput,
+  WriteComponentInput,
   buildMcpTools,
 } from './mcp-tools.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
@@ -72,6 +81,19 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         });
         return serveWorkspace(target, env, coordsForWorkspace(workspaceId));
       },
+      // MCP full access: the generic bridge proxy behind read_canvas / read_transcript /
+      // the component tools. Same wake-the-container path as every other bridge call.
+      proxyBridge: (workspaceId, path, init) => {
+        const target = new Request(`${new URL(req.url).origin}${path}`, {
+          method: init?.method ?? 'GET',
+          headers: {
+            ...(init?.body !== undefined ? { 'content-type': 'application/json' } : {}),
+            ...(init?.headers ?? {}),
+          },
+          ...(init?.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+        });
+        return serveWorkspace(target, env, coordsForWorkspace(workspaceId));
+      },
     });
 
     const server = new McpServer({ name: 'cedarpad', version: '1.0.0' });
@@ -110,6 +132,84 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         inputSchema: SendMessageInput.shape,
       },
       async (input) => text(await tools.sendMessage(input)),
+    );
+
+    server.registerTool(
+      'read_transcript',
+      {
+        description:
+          "Read a conversation's FULL settled transcript (every message and tool event), not just the preview read_conversation returns. Wakes the workspace container if asleep.",
+        inputSchema: ReadTranscriptInput.shape,
+      },
+      async (input) => text(await tools.readTranscript(input)),
+    );
+    server.registerTool(
+      'read_canvas',
+      {
+        description:
+          "Read a canvas's full state directly — every shape with id, type, geometry, text, and component data. Omit canvas_id for the workspace's default canvas.",
+        inputSchema: ReadCanvasInput.shape,
+      },
+      async (input) => text(await tools.readCanvas(input)),
+    );
+    server.registerTool(
+      'list_components',
+      {
+        description:
+          "List the reusable React component modules a canvas can place (its own library plus the workspace shared library). Always call this before writing a new component — duplicating an existing one is a mistake.",
+        inputSchema: ListComponentsInput.shape,
+      },
+      async (input) => text(await tools.listComponents(input)),
+    );
+    server.registerTool(
+      'read_component',
+      {
+        description: "Read a component module's .tsx source (to learn conventions before writing, or to edit).",
+        inputSchema: ReadComponentInput.shape,
+      },
+      async (input) => text(await tools.readComponent(input)),
+    );
+    server.registerTool(
+      'write_component',
+      {
+        description:
+          'Create or overwrite a reusable React component module in a workspace canvas library. Rules: `export default` a React component; it receives the placement `data` as props; imports of react, other components, and "mermaid" are allowed; inline styles + SVG. Placed instances hot-reload; use place_component to render a new instance on a canvas.',
+        inputSchema: WriteComponentInput.shape,
+      },
+      async (input) => text(await tools.writeComponent(input)),
+    );
+
+    server.registerTool(
+      'create_shapes',
+      {
+        description:
+          'Create primitive shapes on a canvas (types: rectangle, ellipse, text, note, arrow; page coordinates, visible area roughly x 0..1000 y 0..700). Fields per shape: type (required), x, y, w, h, text, color; arrows take x1/y1/x2/y2 or startShapeId/endShapeId to bind to shapes. Call read_canvas first to see what exists and where the free space is.',
+        inputSchema: CreateShapesInput.shape,
+      },
+      async (input) => text(await tools.createShapes(input)),
+    );
+    server.registerTool(
+      'update_shapes',
+      {
+        description:
+          'Update existing shapes by id (move, resize, recolor, relabel). Only the fields you pass change; everything else is preserved.',
+        inputSchema: UpdateShapesInput.shape,
+      },
+      async (input) => text(await tools.updateShapes(input)),
+    );
+    server.registerTool(
+      'delete_shapes',
+      { description: 'Delete shapes from a canvas by id.', inputSchema: DeleteShapesInput.shape },
+      async (input) => text(await tools.deleteShapes(input)),
+    );
+    server.registerTool(
+      'place_component',
+      {
+        description:
+          'Render an instance of a component module on a canvas at (x, y), sized w×h (default 360×260), with `data` passed to it as props. Pass an existing component shape id to move/retarget/re-data that instance instead.',
+        inputSchema: PlaceComponentInput.shape,
+      },
+      async (input) => text(await tools.placeComponent(input)),
     );
 
     server.registerTool(
