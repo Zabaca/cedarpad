@@ -18,6 +18,8 @@ export interface InboxItem {
   workspaceId: string;
   /** The chat→canvas edge (canvas pairing): the canvas this chat's card lives on, or null. */
   canvasId: string | null;
+  /** The ASSIGNEE (advisory claim — shared inbox); null = unassigned. */
+  assignedTo: string | null;
   lastActivity: number;
 }
 
@@ -32,6 +34,7 @@ const toItem = (r: ConversationRow): InboxItem => ({
   lastMessagePreview: r.lastMessagePreview,
   workspaceId: r.workspaceId,
   canvasId: r.canvasId,
+  assignedTo: r.assignedTo,
   lastActivity: r.lastActivity instanceof Date ? r.lastActivity.getTime() : Number(r.lastActivity),
 });
 

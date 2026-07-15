@@ -20,6 +20,7 @@ import { handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
 import { handleMcpTokenApi } from './mcp-tokens-api.ts';
 import { IS_CHAT_SEND, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
+import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
   DEFAULT_CANVAS_ID,
   DEFAULT_WORKSPACE_ID,
@@ -318,7 +319,7 @@ export default {
     // Edge Inbox API (ADR-0007, PRD #50 slice #62), user-scoped. Served HERE against remote
     // Turso + R2: list/detail/close/reopen never wake a container (history reads from the R2
     // transcript while the runner sleeps); only reply forwards into the container (#61).
-    const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen))?)?$/.exec(url.pathname);
+    const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen|assign))?)?$/.exec(url.pathname);
     if (inboxApiMatch) {
       return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
     }
@@ -357,6 +358,8 @@ export default {
             }),
         },
         body,
+        // Shared inbox: the manual trigger's Conversation is assigned to who clicked.
+        user.id,
       );
     }
 
@@ -502,7 +505,14 @@ export default {
     // not inbox-adopted) gets the workspace's connected external-MCP tokens exactly like the
     // Inbox proxy does (worker/inbox-bridge.ts) — same header, same "no tokens ⇒ untouched".
     const isChatSend = request.method === 'POST' && IS_CHAT_SEND.test(url.pathname);
-    const proxied = isChatSend ? await withMcpTokensHeader(request, env, workspace.id) : request;
+    let proxied = request;
+    if (isChatSend) {
+      proxied = new Request(request);
+      // Shared-inbox assignment: a pad send is a human act — stamp its initiator so the
+      // bridge assigns the born Conversation to them (overwrites any client-sent value).
+      proxied.headers.set(INBOX_ASSIGN_HEADER, user.id);
+      proxied = await withMcpTokensHeader(proxied, env, workspace.id);
+    }
 
     return serveWorkspace(proxied, env, coords);
   },

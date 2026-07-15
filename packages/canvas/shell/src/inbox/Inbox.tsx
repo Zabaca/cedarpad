@@ -35,7 +35,10 @@ const bridgePrefix = (convId: string): string => `/inbox/${encodeURIComponent(co
 /** The list preview mirrors the old page: last message, else the summary. */
 const preview = (it: InboxItem): string => it.lastMessagePreview ?? it.summary ?? '';
 
-export function InboxStage() {
+/** One roster row (worker/members.ts GET) — the assignee filter's options + chip names. */
+type Member = { userId: string; name: string; email: string; role: 'owner' | 'member' };
+
+export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
   // Filters + selection are URL-persisted: a reload lands back on the same view/selected
   // conversation, the same spirit as stage.ts. Parsed once, lazily, on mount.
   const [initialUrlState] = useState(() => inboxStateFromUrl(window.location.search));
@@ -44,6 +47,11 @@ export function InboxStage() {
   // "Closed" = the archive. The waiting_on:human pinning (worker/inbox-view.ts `orderInbox`)
   // still surfaces attention at the top of Open.
   const [view, setView] = useState<InboxView>(initialUrlState.view);
+  // The "Assigned to" facet (shared inbox): null = Everyone (default), 'unassigned' = the
+  // unclaimed queue, else a member's userId. Composes with the view.
+  const [assigned, setAssigned] = useState<string | null>(null);
+  // The active workspace's roster: the filter's options + the name behind each row's chip.
+  const [members, setMembers] = useState<Member[]>([]);
   const [items, setItems] = useState<InboxItem[]>([]);
   const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading');
   // The opened Conversation (the whole item, so the thread keeps its summary/status even after a
@@ -65,6 +73,7 @@ export function InboxStage() {
   const loadList = useCallback(async () => {
     const qs = new URLSearchParams();
     qs.set('view', view);
+    if (assigned) qs.set('assigned', assigned);
     const r = await fetch(`/api/inbox?${qs.toString()}`, { credentials: 'same-origin' }).catch(() => null);
     if (!r?.ok) {
       setItems([]);
@@ -87,7 +96,22 @@ export function InboxStage() {
     // the warm default container, whose chat stream broadcasts every chat's frames).
     // Idempotent: the shared stream is a singleton.
     if (d.items[0]) openFrameSignal(bridgePrefix(d.items[0].id));
-  }, [view]);
+  }, [view, assigned]);
+
+  // The roster, once per active workspace: powers the filter's member options and the chips.
+  useEffect(() => {
+    if (!workspaceId) return;
+    let alive = true;
+    void fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/members`, { credentials: 'same-origin' })
+      .then((r) => (r.ok ? (r.json() as Promise<{ members: Member[] }>) : null))
+      .then((d) => {
+        if (alive && d) setMembers(d.members);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [workspaceId]);
 
   // Keep the URL in sync with the filter + selection — replace, not push, so twiddling filters
   // never bloats back-button history (Shell.tsx already owns pushState for the stage itself).
@@ -168,6 +192,19 @@ export function InboxStage() {
             <option value="all">All sessions</option>
             <option value="closed">Closed</option>
           </select>
+          <select
+            aria-label="Assignee filter"
+            value={assigned ?? ''}
+            onChange={(e) => setAssigned(e.target.value || null)}
+          >
+            <option value="">Everyone</option>
+            <option value="unassigned">Unassigned</option>
+            {members.map((m) => (
+              <option key={m.userId} value={m.userId}>
+                {m.name}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="inbox-items">
           {state === 'error' ? (
@@ -178,7 +215,13 @@ export function InboxStage() {
             <div className="inbox-empty">No conversations.</div>
           ) : (
             items.map((it) => (
-              <ItemRow key={it.id} item={it} selected={current?.id === it.id} onOpen={() => setCurrent(it)} />
+              <ItemRow
+                key={it.id}
+                item={it}
+                assigneeName={members.find((m) => m.userId === it.assignedTo)?.name}
+                selected={current?.id === it.id}
+                onOpen={() => setCurrent(it)}
+              />
             ))
           )}
         </div>
@@ -294,13 +337,25 @@ function AttachPanel({ item, onAttached }: { item: InboxItem; onAttached: () => 
   );
 }
 
-function ItemRow({ item, selected, onOpen }: { item: InboxItem; selected: boolean; onOpen: () => void }) {
+function ItemRow({
+  item,
+  assigneeName,
+  selected,
+  onOpen,
+}: {
+  item: InboxItem;
+  /** The assignee's display name from the roster (chip title); falls back to the raw id. */
+  assigneeName?: string;
+  selected: boolean;
+  onOpen: () => void;
+}) {
   const badge =
     item.waitingOn === 'human' ? (
       <span className="inbox-badge">waiting</span>
     ) : item.status === 'closed' ? (
       <span className="inbox-badge closed">closed</span>
     ) : null;
+  const assignee = item.assignedTo ? (assigneeName ?? item.assignedTo) : null;
 
   return (
     <div className={`inbox-item${selected ? ' sel' : ''}`} onClick={onOpen}>
@@ -309,6 +364,11 @@ function ItemRow({ item, selected, onOpen }: { item: InboxItem; selected: boolea
         <b>{item.summary || item.id}</b>
         {item.kind === 'dev-agent' && <span className="inbox-badge dev-agent">dev-agent</span>}
         {badge}
+        {assignee && (
+          <span className="inbox-assignee" title={assignee} aria-label={`Assigned to ${assignee}`}>
+            {assignee.slice(0, 1).toUpperCase()}
+          </span>
+        )}
       </div>
       <small>{preview(item)}</small>
     </div>

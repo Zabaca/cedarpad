@@ -37,6 +37,10 @@ export interface TurnInput {
    * proxied `x-mcp-tokens` header. Dropped below unless `flavor.kind === 'chat'` — dev-agent
    * turns get no external MCP servers no matter what rode the request. */
   mcpTokens?: Record<string, string>;
+  /** The turn's HUMAN INITIATOR (shared inbox, CONTEXT.md), from the edge-stamped
+   * x-inbox-assign header: assigns the Conversation at birth / claims-if-unassigned on a
+   * reply. Absent on unattended (cron) kicks ⇒ the row stays in the unassigned queue. */
+  assignTo?: string;
 }
 
 /** The stable collaborators a turn sequences. bridge.ts binds each to its singleton; every one
@@ -71,7 +75,7 @@ export interface TurnDeps {
    *  returned promise is AWAITED before the settle upsert, so the create-at-init and the
    *  settle-time find-or-create can never race into two rows for one chat (ownerRef has no
    *  unique index). Best-effort — never throws into the turn. */
-  indexSession: (chatId: string, sessionId: string, message: string, workspaceId: string, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string) => Promise<void>;
+  indexSession: (chatId: string, sessionId: string, message: string, workspaceId: string, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string, assignTo?: string) => Promise<void>;
   /** Persist the (possibly new/forked) resume pointer for this chat (ADR 0004). */
   stampSession: (chatId: string, sessionId: string) => void;
   /** ADR 0003 turn-completion persistence batch. */
@@ -98,7 +102,7 @@ export interface TurnDeps {
  * first await) so a concurrent /send sees the in-flight turn.
  */
 export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<void> {
-  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken, devAgentRepo, mcpTokens } = input;
+  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo } = input;
   const ac = new AbortController();
   deps.aborters.set(chatId, ac);
   const flavor = deps.flavor(devAgentGitToken);
@@ -146,7 +150,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       if (ev.kind === 'init') {
         finalSessionId = ev.sessionId;
         // The EXPLICIT canvas (never the routing default) is the chat→canvas edge claim.
-        indexed = deps.indexSession(chatId, ev.sessionId, message, flavor.workspaceId, canvasId, flavor.kind, devAgentRepo);
+        indexed = deps.indexSession(chatId, ev.sessionId, message, flavor.workspaceId, canvasId, flavor.kind, devAgentRepo, assignTo);
       }
       deps.broadcast(chatId, ev satisfies ChatEvent);
     }

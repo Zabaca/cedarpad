@@ -139,6 +139,55 @@ describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispa
   });
 });
 
+// Shared-inbox assignment (CONTEXT.md): the edge stamps the human initiator on a send as
+// x-inbox-assign; the bridge threads it into the turn so the Conversation is assigned at
+// birth / claimed-if-unassigned on a reply. No header (a cron kick) ⇒ undefined ⇒ unassigned.
+describe('/api/chat/:id/send: the x-inbox-assign header reaches the dispatched turn', () => {
+  let restore: () => void = () => {};
+  let dispatched: Array<{ chatId: string; assignTo?: string }> = [];
+
+  beforeEach(() => {
+    dispatched = [];
+    chatClients.add(fakeSubscriber());
+    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, _tok, _mcp, _repo, assignTo) => {
+      dispatched.push({ chatId, assignTo });
+    });
+  });
+
+  afterEach(() => {
+    restore();
+    for (const c of [...chatClients]) chatClients.delete(c);
+  });
+
+  test('a send WITH the header dispatches the turn carrying its initiator', async () => {
+    const req = new Request('http://localhost/api/chat/chat_as/send', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-inbox-assign': 'user_james' },
+      body: JSON.stringify({ message: 'hi' }),
+    });
+    const res = await handleRequest(req);
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'chat_as', assignTo: 'user_james' }]);
+  });
+
+  test('a send WITHOUT the header dispatches with undefined (unattended starts stay unassigned)', async () => {
+    const res = await handleRequest(sendReq('chat_noassign'));
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'chat_noassign', assignTo: undefined }]);
+  });
+
+  test('a dev-agent /run kick forwards its initiator too (manual trigger = a human act)', async () => {
+    const req = new Request('http://localhost/api/dev-agent/run', {
+      method: 'POST',
+      headers: { 'x-inbox-assign': 'user_james' },
+    });
+    const res = await handleRequest(req);
+    expect(res.status).toBe(202);
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]?.assignTo).toBe('user_james');
+  });
+});
+
 // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens ride the send as the
 // x-mcp-tokens header (server/mcp-registry.ts's shared contract); the bridge decodes it and
 // hands it to the dispatched turn. `server/turn.ts` is what drops this for a dev-agent turn

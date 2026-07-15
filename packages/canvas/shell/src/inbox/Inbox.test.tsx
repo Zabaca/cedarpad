@@ -32,6 +32,7 @@ type Item = {
   workspaceId: string;
   lastActivity: number;
   canvasId: string | null;
+  assignedTo: string | null;
 };
 
 const realFetch = globalThis.fetch;
@@ -48,6 +49,7 @@ const item = (o: Partial<Item> & { id: string }): Item => ({
   workspaceId: 'ws_1',
   lastActivity: 0,
   canvasId: null,
+  assignedTo: null,
   ...o,
 });
 
@@ -66,10 +68,21 @@ function stubInbox() {
     // viewToListOpts applies.
     if (u.pathname === '/api/inbox' && method === 'GET') {
       const view = u.searchParams.get('view') ?? 'open';
-      const items = store.filter((it) =>
-        view === 'closed' ? it.status === 'closed' : view === 'all' ? true : it.status === 'open',
-      );
+      const assigned = u.searchParams.get('assigned');
+      const items = store
+        .filter((it) => (view === 'closed' ? it.status === 'closed' : view === 'all' ? true : it.status === 'open'))
+        .filter((it) => (assigned ? (assigned === 'unassigned' ? it.assignedTo === null : it.assignedTo === assigned) : true));
       return Response.json({ items });
+    }
+
+    // The workspace roster (the "Assigned to" filter options + name lookup for chips).
+    if (/^\/api\/workspaces\/[^/]+\/members$/.test(u.pathname) && method === 'GET') {
+      return Response.json({
+        members: [
+          { userId: 'u_james', name: 'James Lee', email: 'james@example.com', role: 'owner' },
+          { userId: 'u_sam', name: 'Sam Poder', email: 'sam@example.com', role: 'member' },
+        ],
+      });
     }
 
     // Edge chat proxy: /inbox/:id/bridge/*  — the owning runner bridge.
@@ -118,7 +131,7 @@ async function mount() {
   document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => {
-    root.render(<InboxStage />);
+    root.render(<InboxStage workspaceId="ws_1" />);
   });
 }
 
@@ -217,9 +230,50 @@ describe('the inbox list', () => {
     await mount();
     await changeSelect(viewFilter(), 'all'); // filter around
 
-    // No /inbox/:id/bridge/* call (that is the only wake path); the list is Turso-only.
+    // No /inbox/:id/bridge/* call (that is the only wake path); the list is Turso-only —
+    // the workspace roster (the assignee filter's options) is an edge read too, never a wake.
     expect(calls.some((c) => c.includes('/bridge'))).toBe(false);
-    expect(calls.every((c) => c.includes('/api/inbox'))).toBe(true);
+    expect(calls.every((c) => c.includes('/api/inbox') || /\/api\/workspaces\/[^/]+\/members/.test(c))).toBe(true);
+  });
+});
+
+// The "Assigned to" filter (shared inbox): Everyone (default) / Unassigned / one entry per
+// workspace member, composing with the view. Rows show an assignee chip (initial) when claimed.
+describe('the assignee filter and chip', () => {
+  const assigneeFilter = () => container.querySelector('[aria-label="Assignee filter"]');
+
+  test('defaults to Everyone (no ?assigned= sent) and offers Unassigned + each member', async () => {
+    store = [item({ id: 'c1' })];
+    await mount();
+
+    expect(calls).toContain('GET /api/inbox?view=open');
+    const options = [...((assigneeFilter() as HTMLSelectElement)?.options ?? [])].map((o) => o.textContent);
+    expect(options).toEqual(['Everyone', 'Unassigned', 'James Lee', 'Sam Poder']);
+  });
+
+  test('picking Unassigned / a member re-queries with ?assigned=', async () => {
+    store = [item({ id: 'c1' }), item({ id: 'c2', assignedTo: 'u_james' })];
+    await mount();
+    calls = [];
+
+    await changeSelect(assigneeFilter(), 'unassigned');
+    expect(calls).toContain('GET /api/inbox?view=open&assigned=unassigned');
+    expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['c1']);
+
+    calls = [];
+    await changeSelect(assigneeFilter(), 'u_james');
+    expect(calls).toContain('GET /api/inbox?view=open&assigned=u_james');
+    expect(items().map((el) => el.querySelector('b')?.textContent)).toEqual(['c2']);
+  });
+
+  test('an assigned row renders the assignee chip (initial, full name as title); unassigned rows none', async () => {
+    store = [item({ id: 'c1', assignedTo: 'u_james' }), item({ id: 'c2' })];
+    await mount();
+
+    const chips = [...container.querySelectorAll('.inbox-assignee')];
+    expect(chips).toHaveLength(1);
+    expect(chips[0]?.textContent).toBe('J');
+    expect(chips[0]?.getAttribute('title')).toBe('James Lee');
   });
 });
 

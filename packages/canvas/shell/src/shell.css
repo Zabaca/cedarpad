@@ -428,6 +428,21 @@ body,
   background: var(--accent);
   flex: none;
 }
+.inbox-assignee {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: oklch(0.3 0.05 250);
+  color: var(--fg, #ddd);
+  border: 1px solid var(--line);
+  flex: none;
+  margin-left: auto;
+}
 .inbox-badge {
   font-size: 10px;
   text-transform: uppercase;

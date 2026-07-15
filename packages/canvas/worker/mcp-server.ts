@@ -13,6 +13,7 @@ import { resolveDevAgentRepo } from './github-connection.ts';
 import { discoverJobs } from './repo-jobs.ts';
 import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 import {
+  AssignConversationInput,
   CreateCanvasInput,
   CreateShapesInput,
   DeleteShapesInput,
@@ -73,6 +74,9 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
           headers: {
             'content-type': 'application/json',
             'x-headless-send': '1',
+            // Shared-inbox assignment: an MCP send is the token user's act — the bridge
+            // assigns the Conversation to them at birth / claims-if-unassigned on a reply.
+            'x-inbox-assign': session.userId,
             ...(canvasId ? { 'x-canvas-id': canvasId } : {}),
           },
           body: JSON.stringify({ message }),
@@ -126,6 +130,8 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
               }),
           },
           body,
+          // A run_dev_agent call is the token user's explicit act — assign the run to them.
+          session.userId,
         ),
     });
 
@@ -151,10 +157,20 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
     server.registerTool(
       'list_inbox',
       {
-        description: "List a workspace's conversations (view: open | all | closed; default open).",
+        description:
+          "List a workspace's conversations — the WHOLE workspace's shared index (view: open | all | closed; default open). Optional assigned filter: a member's user id, or 'unassigned' for the unclaimed queue.",
         inputSchema: ListInboxInput.shape,
       },
       async (input) => text(await tools.listInbox(input)),
+    );
+    server.registerTool(
+      'assign_conversation',
+      {
+        description:
+          "Assign a conversation to a workspace member (advisory — a coordination signal, not a lock), or pass user_id: null to unassign. Any member may assign anyone; replying to an unassigned conversation auto-assigns the replier.",
+        inputSchema: AssignConversationInput.shape,
+      },
+      async (input) => text(await tools.assignConversation(input)),
     );
     server.registerTool(
       'read_conversation',

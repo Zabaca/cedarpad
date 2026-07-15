@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { GateUser } from './auth-gate.ts';
@@ -15,7 +15,10 @@ import { LEGACY_SANDBOX_ID, type SandboxCoords } from './sandbox-resolver.ts';
 // fails.
 
 let conv: ConversationRow | null = null;
+// Membership seam (shared inbox): which users getWorkspace admits. u_1 is a member by default.
+let workspaceMembers: string[] = [];
 let served: SandboxCoords[] = [];
+let servedAssigns: Array<string | null> = [];
 let servedTokens: Array<string | null> = [];
 let servedCanvasIds: Array<string | null> = [];
 let servedRepos: Array<string | null> = [];
@@ -34,9 +37,25 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedCanvasIds.push(req.headers.get('x-canvas-id'));
     servedRepos.push(req.headers.get('x-dev-agent-repo'));
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
+    servedAssigns.push(req.headers.get('x-inbox-assign'));
     return new Response('proxied');
   },
 }));
+// Membership gate seam: the bridge proxy admits any workspace MEMBER (never creator-gated).
+// Delegate + RESTORE (the index.test.ts pattern): bun's mock.module rebinds the module for
+// every later test file in the process (#170's leak class), so a canned getWorkspace here
+// would break the real-DB tests that run after this file in a full-suite pass.
+const realWorkspaces = await import('../web-poc/lib/db/queries/workspaces.ts');
+const realGetWorkspace = realWorkspaces.getWorkspace;
+let getWorkspaceImpl: typeof realGetWorkspace = ((_db: unknown, workspaceId: string, userId: string) =>
+  Promise.resolve(workspaceMembers.includes(userId) ? { id: workspaceId } : null)) as never;
+mock.module('../web-poc/lib/db/queries/workspaces.ts', () => ({
+  ...realWorkspaces,
+  getWorkspace: (...args: Parameters<typeof realGetWorkspace>) => getWorkspaceImpl(...args),
+}));
+afterAll(() => {
+  getWorkspaceImpl = realGetWorkspace;
+});
 mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
   get: () => Promise.resolve(conv),
   reply: (_db: unknown, id: string) => {
@@ -99,7 +118,9 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   conv = row();
+  workspaceMembers = ['u_1'];
   served = [];
+  servedAssigns = [];
   servedTokens = [];
   servedCanvasIds = [];
   servedRepos = [];
@@ -144,14 +165,31 @@ describe('handleInboxBridge: the inbox triage flip on a proxied send', () => {
     expect(replyCalls).toEqual([]);
   });
 
-  test('a send for a Conversation the caller does not own is 404 — no flip, no wake', async () => {
-    conv = row({ userId: 'someone_else' });
+  test('MEMBERSHIP-gated, not creator-gated: a member proxies a conversation they did not create', async () => {
+    conv = row({ userId: 'someone_else' }); // creator is another member — irrelevant now
+    const res = await proxy('POST', '/api/chat/chat_home/send');
+    await settle();
+
+    expect(res.status).toBe(200);
+    expect(served).toHaveLength(1);
+    expect(replyCalls).toEqual(['conv_1']);
+  });
+
+  test('a NON-member (stranger to the workspace) is 404 — no flip, no wake', async () => {
+    workspaceMembers = []; // u_1 is not a member of the conversation's workspace
     const res = await proxy('POST', '/api/chat/chat_home/send');
     await settle();
 
     expect(res.status).toBe(404);
     expect(served).toHaveLength(0);
     expect(replyCalls).toEqual([]);
+  });
+
+  test('a proxied SEND stamps the replier as x-inbox-assign (the bridge claims-if-unassigned); reads never do', async () => {
+    await proxy('POST', '/api/chat/chat_home/send');
+    await proxy('GET', '/api/chat/chat_home/transcript');
+
+    expect(servedAssigns).toEqual(['u_1', null]);
   });
 });
 

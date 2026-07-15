@@ -24,6 +24,7 @@ import { PersistSink } from './persistable.ts';
 import { maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
 import { type Notify, attachConversationToCanvas, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
+import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
@@ -414,7 +415,7 @@ export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId:
  * chat MID-turn (opening the running Conversation attaches to this chat's live stream).
  * Idempotent (find-or-create by chat, rebinding the newest sessionId) and
  * best-effort — an index failure never fails the turn. */
-export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string): Promise<void> {
+export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string, assignTo?: string): Promise<void> {
   if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
   await findOrCreateConversation(webPocDb, {
     sessionId,
@@ -425,6 +426,7 @@ export async function indexSessionStart(chatId: string, sessionId: string, messa
     canvasId,
     repo,
     summary: message.slice(0, 200),
+    assignTo,
   }).catch((err) => console.error('[inbox] session-start row upsert failed:', err));
 }
 
@@ -537,8 +539,8 @@ export function setTurnRunChat(fn: TurnDeps['runChat']): () => void {
  * Conversation (an inbox reply must never link a chat to the Default canvas by default).
  * `devAgentGitToken` (edge-minted, per dev-agent send) arms the `open_pr` tool for THIS turn
  * only — see prepareDevAgentTurn. The lifecycle itself lives in `server/turn.ts`. */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string, mcpTokens?: Record<string, string>, devAgentRepo?: string): void {
-  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken, devAgentRepo, mcpTokens }, turnDeps);
+function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string, mcpTokens?: Record<string, string>, devAgentRepo?: string, assignTo?: string): void {
+  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo }, turnDeps);
 }
 
 // The dev-agent run's prompt — this IS the workflow now (ADR-0011: the harness dissolved
@@ -867,13 +869,16 @@ export async function handleRequest(req: Request): Promise<Response> {
       // The run's target repo (ADR-0015: one run = one repo), resolved and stamped by the
       // edge next to the token. It binds the Conversation (row repo edge) and the worktree.
       const repo = req.headers.get('x-dev-agent-repo') ?? undefined;
+      // A MANUAL trigger's human initiator (shared inbox): the edge stamps who clicked
+      // "Run now" / called run_dev_agent; a cron kick carries none ⇒ unassigned queue work.
+      const runAssignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
       // A repo-defined job (#195): the edge read its body off the repo's DEFAULT branch (the
       // merge armed it) and forwards it as the run's task — wrapped, never replacing the law.
       const kickBody = (await req.json().catch(() => null)) as { job?: { name?: string; prompt?: string } } | null;
       const jobPrompt = typeof kickBody?.job?.prompt === 'string' && kickBody.job.prompt.trim() ? kickBody.job.prompt.trim() : undefined;
       // A fresh session every run (sessionId null); the run's later grill turns resume it
       // through the normal conversation path.
-      dispatchChatTurn(chatId, composeRunPrompt(jobPrompt), null, [], DEV_AGENT_RUN_MODEL, undefined, undefined, undefined, token, undefined, repo);
+      dispatchChatTurn(chatId, composeRunPrompt(jobPrompt), null, [], DEV_AGENT_RUN_MODEL, undefined, undefined, undefined, token, undefined, repo, runAssignTo);
       return json({ chatId, joined: false }, 202);
     }
     // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
@@ -940,7 +945,10 @@ export async function handleRequest(req: Request): Promise<Response> {
       const mcpTokens = decodeMcpTokens(req.headers.get(MCP_TOKENS_HEADER));
       // The dev-agent turn's target repo, stamped by the edge proxy beside the token (ADR-0015).
       const devAgentRepo = req.headers.get('x-dev-agent-repo') ?? undefined;
-      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort, requestCanvasId, devAgentGitToken, mcpTokens, devAgentRepo);
+      // The send's HUMAN INITIATOR (shared inbox, CONTEXT.md), stamped by the edge proxies:
+      // assigns the Conversation at birth / claims-if-unassigned on a reply.
+      const assignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
+      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort, requestCanvasId, devAgentGitToken, mcpTokens, devAgentRepo, assignTo);
       return json({ ok: true }, 202);
     }
     // POST /api/chat/:id/config — update server-owned ChatMeta (model/effort/forkNext),

@@ -97,7 +97,7 @@ describe('end_turn protocol (ADR-0012)', () => {
     await conversations.reply(db, first!.id);
     await endTurn(deps, { outcome: 'needs_human', summary: 'second', question: 'q2' });
 
-    const all = await conversations.list(db, 'user_a');
+    const all = await conversations.list(db);
     const forSession = all.filter((c) => c.sessionId === sessionId);
     expect(forSession).toHaveLength(1); // no duplicate row
     expect(forSession[0]?.id).toBe(first!.id);
@@ -112,7 +112,7 @@ describe('end_turn protocol (ADR-0012)', () => {
       { outcome: 'needs_human', summary: 's', question: 'q' },
     );
     expect(text.toLowerCase()).toContain('unavailable');
-    expect(await conversations.list(db, 'user_a')).toHaveLength(0);
+    expect(await conversations.list(db)).toHaveLength(0);
   });
 });
 
@@ -126,7 +126,29 @@ describe('findOrCreateConversation: chat identity (ownerRef)', () => {
     const b = await findOrCreateConversation(db, { sessionId: 'sess-2', userId: 'u', workspaceId: 'w', ownerRef: 'chat_A', summary: 'first message' });
     expect(b.id).toBe(a.id);
     expect(b.sessionId).toBe('sess-2'); // the resume pointer follows the newest session
-    expect(await conversations.list(db, 'u')).toHaveLength(1);
+    expect(await conversations.list(db)).toHaveLength(1);
+  });
+
+  test('a human initiator (assignTo) claims the row at birth; absent ⇒ unassigned (cron)', async () => {
+    const db = await freshDb();
+    const human = await findOrCreateConversation(db, { sessionId: 's-h', userId: 'canvas-user', workspaceId: 'w', ownerRef: 'chat_H', assignTo: 'james' });
+    expect(human.assignedTo).toBe('james');
+    expect(human.userId).toBe('canvas-user'); // creator attribution untouched
+    const cron = await findOrCreateConversation(db, { sessionId: 's-c', userId: 'canvas-user', workspaceId: 'w', ownerRef: 'chat_C' });
+    expect(cron.assignedTo).toBeNull();
+  });
+
+  test('a reply into an UNASSIGNED row auto-claims it for the replier; an assigned row is never stolen', async () => {
+    const db = await freshDb();
+    const born = await findOrCreateConversation(db, { sessionId: 's-1', userId: 'canvas-user', workspaceId: 'w', ownerRef: 'chat_R' });
+    expect(born.assignedTo).toBeNull();
+    // James replies (next turn, new resume sessionId): the unassigned row becomes his.
+    const claimed = await findOrCreateConversation(db, { sessionId: 's-2', userId: 'canvas-user', workspaceId: 'w', ownerRef: 'chat_R', assignTo: 'james' });
+    expect(claimed.id).toBe(born.id);
+    expect(claimed.assignedTo).toBe('james');
+    // Sam replies later: assignment is advisory but never silently re-targeted by a reply.
+    const kept = await findOrCreateConversation(db, { sessionId: 's-3', userId: 'canvas-user', workspaceId: 'w', ownerRef: 'chat_R', assignTo: 'sam' });
+    expect(kept.assignedTo).toBe('james');
   });
 
   test('a legacy row (found by sessionId, no ownerRef) gets its ownerRef backfilled', async () => {
@@ -175,7 +197,7 @@ describe('dedupeLegacyConversations: collapse the per-turn duplicate rows', () =
 
     const removed = await dedupeLegacyConversations(db, 'u');
     expect(removed).toBe(2);
-    const left = await conversations.list(db, 'u');
+    const left = await conversations.list(db);
     expect(left.map((c) => c.id).sort()).toEqual([d2.id, other.id].sort()); // promoted row survives
     void d1;
     void d3;
@@ -186,7 +208,7 @@ describe('dedupeLegacyConversations: collapse the per-turn duplicate rows', () =
     await conversations.create(db, { sessionId: 's1', userId: 'u', workspaceId: 'w', ownerRef: 'chat_1', summary: 'same title' });
     await conversations.create(db, { sessionId: 's2', userId: 'u', workspaceId: 'w', ownerRef: 'chat_2', summary: 'same title' });
     expect(await dedupeLegacyConversations(db, 'u')).toBe(0);
-    expect(await conversations.list(db, 'u')).toHaveLength(2);
+    expect(await conversations.list(db)).toHaveLength(2);
   });
 });
 
@@ -237,8 +259,8 @@ describe('findOrCreateConversation', () => {
     // view: a session that never called ask_human stays waiting_on:none until (if) it promotes.
     const db = await freshDb();
     await findOrCreateConversation(db, { sessionId: 's-plain', userId: 'u', workspaceId: 'w', summary: 'hello' });
-    expect((await conversations.list(db, 'u', { waitingOn: 'human' })).length).toBe(0);
-    expect((await conversations.list(db, 'u')).map((c) => c.sessionId)).toContain('s-plain');
+    expect((await conversations.list(db, { waitingOn: 'human' })).length).toBe(0);
+    expect((await conversations.list(db)).map((c) => c.sessionId)).toContain('s-plain');
   });
 });
 

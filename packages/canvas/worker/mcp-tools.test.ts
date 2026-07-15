@@ -117,7 +117,7 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(found.workspace_id).toBe(WS);
   });
 
-  test("read_conversation never returns another user's conversation", async () => {
+  test("read_conversation never returns a conversation from a workspace the user can't access", async () => {
     await conversations.create(database, {
       sessionId: 's_2',
       userId: 'u_2',
@@ -125,6 +125,24 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
       ownerRef: 'mcp_theirs',
     } as never);
     expect((await tools.readConversation({ chat_id: 'mcp_theirs' })).status).toBe('starting');
+  });
+
+  test('the inbox is workspace-shared: a member reads (and replies to) a conversation another member created', async () => {
+    // u_2 creates a row in WS (u_1's workspace — imagine u_2 was invited); u_1 still sees it.
+    await conversations.create(database, {
+      sessionId: 's_shared',
+      userId: 'u_2',
+      workspaceId: WS,
+      ownerRef: 'mcp_shared',
+      summary: 'their session',
+    } as never);
+    const read = await tools.readConversation({ chat_id: 'mcp_shared' });
+    expect(read.status).toBe('open');
+
+    sends = [];
+    const res = await tools.sendMessage({ workspace_id: WS, message: 'joining in', chat_id: 'mcp_shared' });
+    expect(res.chat_id).toBe('mcp_shared');
+    expect(sends).toHaveLength(1);
   });
 
   test('send_message with an existing chat_id replies into that conversation (same workspace, chat kind only)', async () => {
@@ -298,10 +316,52 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(bridgeCalls).toEqual([]);
   });
 
-  test('list_inbox lists the workspace’s conversations for the user', async () => {
+  test('list_inbox lists the WHOLE workspace’s conversations (shared inbox), with assigned_to', async () => {
     const res = await tools.listInbox({ workspace_id: WS });
     expect(res.items.map((i) => i.chat_id)).toContain('mcp_test_read');
+    // Another member's session shows too — the index is workspace-shared, not per-user.
+    expect(res.items.map((i) => i.chat_id)).toContain('mcp_shared');
     expect(res.items.every((i) => i.workspace_id === WS)).toBe(true);
+    expect(res.items.every((i) => 'assigned_to' in i)).toBe(true);
+  });
+
+  test('list_inbox filters by assignee: a user id, or "unassigned"', async () => {
+    await conversations.create(database, {
+      sessionId: 's_claimed',
+      userId: 'u_1',
+      workspaceId: WS,
+      ownerRef: 'mcp_claimed',
+      assignedTo: 'u_2',
+    } as never);
+    const theirs = await tools.listInbox({ workspace_id: WS, assigned: 'u_2' });
+    expect(theirs.items.map((i) => i.chat_id)).toEqual(['mcp_claimed']);
+    const unclaimed = await tools.listInbox({ workspace_id: WS, assigned: 'unassigned' });
+    expect(unclaimed.items.map((i) => i.chat_id)).not.toContain('mcp_claimed');
+  });
+});
+
+describe('assign_conversation — advisory assignment over MCP (full parity)', () => {
+  test('assigns a member, clears with null, and the change is visible in reads', async () => {
+    await conversations.create(database, {
+      sessionId: 's_assign',
+      userId: 'u_1',
+      workspaceId: WS,
+      ownerRef: 'mcp_assign',
+    } as never);
+    // u_2 must be a member of WS to be assignable.
+    await addWorkspaceMember(database, { workspaceId: WS, userId: 'u_2' });
+
+    const res = await tools.assignConversation({ chat_id: 'mcp_assign', user_id: 'u_2' });
+    expect(res.assigned_to).toBe('u_2');
+    expect((await tools.readConversation({ chat_id: 'mcp_assign' })).assigned_to).toBe('u_2');
+
+    const cleared = await tools.assignConversation({ chat_id: 'mcp_assign', user_id: null });
+    expect(cleared.assigned_to).toBeNull();
+  });
+
+  test('a non-member target errors; a conversation outside the user’s workspaces errors', async () => {
+    await expect(tools.assignConversation({ chat_id: 'mcp_assign', user_id: 'u_ghost' })).rejects.toThrow(/member/);
+    await expect(tools.assignConversation({ chat_id: 'mcp_theirs', user_id: 'u_1' })).rejects.toThrow(/not found/);
   });
 });
 

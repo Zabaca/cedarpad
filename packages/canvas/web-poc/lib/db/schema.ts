@@ -726,7 +726,12 @@ export const conversations = sqliteTable(
     repo: text("repo"),
     /** Platform workspace id (registry / `cs_workspace`). Plain text, no FK. */
     workspaceId: text("workspace_id").notNull(),
+    /** The CREATOR (immutable attribution: who started the session) — never an access
+     *  filter; the Inbox is workspace-shared. Plain text, no FK, same as workspaceId. */
     userId: text("user_id").notNull(),
+    /** The ASSIGNEE (advisory claim: who has taken ownership). Null = unassigned. Mutable;
+     *  distinct from `user_id` by design (creator ≠ assignee — CONTEXT.md). */
+    assignedTo: text("assigned_to"),
     summary: text("summary"),
     /** Denormalized last-message preview so the inbox list renders without the transcript. */
     lastMessagePreview: text("last_message_preview"),

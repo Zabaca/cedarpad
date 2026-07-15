@@ -1,5 +1,7 @@
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { listTokens } from '../web-poc/lib/db/queries/mcp-tokens.ts';
+import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
+import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { MCP_TOKENS_HEADER, encodeMcpTokens } from '../server/mcp-registry.ts';
@@ -60,7 +62,11 @@ export async function handleInboxBridge(
 ): Promise<Response> {
   const database = db(env);
   const conv = await conversations.get(database, convId);
-  if (!conv || conv.userId !== user.id) return Response.json({ error: 'conversation not found' }, { status: 404 });
+  // Membership gate (shared inbox, CONTEXT.md): any member of the Conversation's workspace
+  // may read and reply — never creator-gated. A stranger gets the missing-row 404.
+  if (!conv || !(await getWorkspace(database, conv.workspaceId, user.id))) {
+    return Response.json({ error: 'conversation not found' }, { status: 404 });
+  }
 
   const isChatSend = request.method === 'POST' && IS_CHAT_SEND.test(subPath);
 
@@ -96,6 +102,11 @@ export async function handleInboxBridge(
       if (token) proxied.headers.set('x-dev-agent-git-token', token);
     }
   }
+
+  // Shared-inbox assignment (CONTEXT.md): a SEND is a human act, so it carries its initiator —
+  // the bridge assigns the Conversation at birth / claims-if-unassigned on a reply. Overwrites
+  // any client-sent value (the gated user is the truth); reads never carry it.
+  if (isChatSend) proxied.headers.set(INBOX_ASSIGN_HEADER, user.id);
 
   // Canvas pairing: the Inbox surface is not a pad, so its ChatView stamps no x-canvas-id.
   // A linked Conversation's SEND gets the stamp from its row instead, so the resumed turn

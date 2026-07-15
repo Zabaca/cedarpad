@@ -3,7 +3,7 @@ import type { Database } from "../client.js";
 import { type ConversationRow, conversations } from "../schema.js";
 
 /**
- * Conversation store (PRD #50, Inbox). The user-scoped attention inbox: each
+ * Conversation store (PRD #50, Inbox). The WORKSPACE-SHARED session index: each
  * row couples a Claude Agent SDK Session (`sessionId`) to its inbox state. This
  * module owns the STATE TRANSITIONS of the two-axis model (status × waiting_on
  * + unread), not just CRUD — the inbox coordinates sessions, it doesn't hold
@@ -26,6 +26,9 @@ export async function create(
     repo?: string | null;
     summary?: string | null;
     lastMessagePreview?: string | null;
+    /** The assignee at birth: a human initiator claims their session; unattended
+     *  (cron) starts stay unassigned. */
+    assignedTo?: string | null;
   },
 ): Promise<ConversationRow> {
   const [row] = await db
@@ -35,6 +38,7 @@ export async function create(
       sessionId: input.sessionId,
       userId: input.userId,
       workspaceId: input.workspaceId,
+      assignedTo: input.assignedTo ?? null,
       kind: input.kind ?? "chat",
       ownerRef: input.ownerRef ?? null,
       canvasId: input.canvasId ?? null,
@@ -70,25 +74,29 @@ export async function getBySessionId(db: Database, sessionId: string): Promise<C
 }
 
 /**
- * List a user's Conversations, newest activity first. The Inbox is user-scoped:
- * only the caller's rows, aggregated across their workspaces. Optionally filter
- * by `status` and/or platform `workspaceId`.
+ * List Conversations, newest activity first. The Inbox is WORKSPACE-SHARED (never
+ * user-scoped — CONTEXT.md): callers scope by `workspaceId` (access-checked upstream),
+ * and optionally filter by `status`, `waitingOn`, or `assigned` (a user id, or the
+ * literal 'unassigned' for the unclaimed queue).
  */
 export async function list(
   db: Database,
-  userId: string,
   opts: {
     status?: (typeof conversations.status.enumValues)[number];
     workspaceId?: string;
     waitingOn?: (typeof conversations.waitingOn.enumValues)[number];
+    assigned?: string | "unassigned";
   } = {},
 ): Promise<ConversationRow[]> {
-  const filters = [eq(conversations.userId, userId)];
+  const filters = [];
   if (opts.status) filters.push(eq(conversations.status, opts.status));
   if (opts.workspaceId) filters.push(eq(conversations.workspaceId, opts.workspaceId));
-  // The "needs me" view filters to waiting_on:human (the attention subset); "All" omits it so
-  // every session — canvas chats, dev-agent runs — shows in the unified index (#unified-index).
+  // waiting_on:human is the attention subset; "All" omits it so every session — canvas
+  // chats, dev-agent runs — shows in the unified index (#unified-index).
   if (opts.waitingOn) filters.push(eq(conversations.waitingOn, opts.waitingOn));
+  if (opts.assigned) {
+    filters.push(opts.assigned === "unassigned" ? isNull(conversations.assignedTo) : eq(conversations.assignedTo, opts.assigned));
+  }
   return db
     .select()
     .from(conversations)
@@ -147,6 +155,13 @@ export async function reply(db: Database, id: string): Promise<ConversationRow |
     unread: false,
     lastActivity: now(),
   });
+}
+
+/** Assign (advisory claim, never a lock): set the assignee, or clear with null.
+ *  Returns the row, or null if missing. No last_activity touch — a triage act,
+ *  not session activity. */
+export async function assign(db: Database, id: string, userId: string | null): Promise<ConversationRow | null> {
+  return patch(db, id, { assignedTo: userId });
 }
 
 /** Get the Conversation owned by a chat (`owner_ref` = the bridge chatId), or null. */
