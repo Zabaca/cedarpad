@@ -19,6 +19,7 @@ import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts'
 import { handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
 import { handleMcpTokenApi } from './mcp-tokens-api.ts';
+import { handleShareLinksApi } from './share-links-api.ts';
 import { IS_CHAT_SEND, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
@@ -314,6 +315,19 @@ export default {
     const canvasApiMatch = /^\/api\/canvases\/([^/]+)$/.exec(url.pathname);
     if (canvasApiMatch) {
       return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user, canvasApiMatch[1]);
+    }
+
+    // Canvas share links (canvas ADR-0015, PRD #220): mint/list/revoke the guest door's
+    // capability rows. Member-checked through the canvas's workspace; edge-only.
+    const shareLinksMatch = /^\/api\/canvases\/([^/]+)\/share-links(?:\/([^/]+))?$/.exec(url.pathname);
+    if (shareLinksMatch) {
+      return handleShareLinksApi(
+        request,
+        createDbForWorker(env as unknown as Bindings),
+        user,
+        shareLinksMatch[1] as string,
+        shareLinksMatch[2],
+      );
     }
 
     // Edge Inbox API (ADR-0007, PRD #50 slice #62), user-scoped. Served HERE against remote

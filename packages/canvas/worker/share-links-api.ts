@@ -1,0 +1,74 @@
+import { z } from 'zod';
+import type { Database } from '../web-poc/lib/db/client.ts';
+import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
+import {
+  createShareLink,
+  getActiveShareLink,
+  listShareLinks,
+  revokeShareLink,
+} from '../web-poc/lib/db/queries/share-links.ts';
+import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
+import type { GateUser } from './auth-gate.ts';
+import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+
+// The member-facing half of the guest door (canvas ADR-0015, PRD #220): mint, list and
+// revoke share links for a canvas. MEMBER-minted by design (not owner-only — collaborators
+// share their own work; grill decision on #220). Access is checked through the canvas's
+// workspace exactly like the pad route (`ownedCanvas` in worker/index.ts): a canvas the
+// caller can't see is a 404, never a 403 — don't confirm existence to outsiders.
+
+const MintInput = z.object({ guestChat: z.boolean().default(false) });
+
+/** The canvas's workspace if the caller is owner-or-member of it; null ⇒ 404. */
+async function accessibleCanvasWorkspace(
+  db: Database,
+  canvasId: string,
+  user: GateUser,
+): Promise<string | null> {
+  // The legacy default canvas has no registry row; it lives in the default workspace.
+  const workspaceId =
+    canvasId === DEFAULT_CANVAS_ID ? DEFAULT_WORKSPACE_ID : (await getCanvas(db, canvasId))?.workspaceId;
+  if (!workspaceId) return null;
+  const ws = await getWorkspace(db, workspaceId, user.id);
+  return ws ? workspaceId : null;
+}
+
+/**
+ * POST   /api/canvases/:canvasId/share-links {guestChat?}  → 201 link
+ * GET    /api/canvases/:canvasId/share-links               → 200 {links}
+ * DELETE /api/canvases/:canvasId/share-links/:linkId       → 204 (revoke, tombstone)
+ */
+export async function handleShareLinksApi(
+  request: Request,
+  db: Database,
+  user: GateUser,
+  canvasId: string,
+  linkId?: string,
+): Promise<Response> {
+  const workspaceId = await accessibleCanvasWorkspace(db, canvasId, user);
+  if (!workspaceId) return Response.json({ error: 'canvas not found' }, { status: 404 });
+
+  if (request.method === 'POST' && !linkId) {
+    const parsed = MintInput.safeParse((await request.json().catch(() => null)) ?? {});
+    if (!parsed.success) return Response.json({ error: 'invalid body' }, { status: 400 });
+    const link = await createShareLink(db, {
+      canvasId,
+      workspaceId,
+      createdBy: user.id,
+      guestChat: parsed.data.guestChat,
+    });
+    return Response.json(link, { status: 201 });
+  }
+  if (request.method === 'GET' && !linkId) {
+    return Response.json({ links: await listShareLinks(db, canvasId) });
+  }
+  if (request.method === 'DELETE' && linkId) {
+    // The link must belong to THIS canvas — a cross-canvas id is a 404, and an
+    // already-revoked/unknown link revokes as a no-op (idempotent delete).
+    const link = await getActiveShareLink(db, linkId);
+    if (link && link.canvasId !== canvasId) return Response.json({ error: 'link not found' }, { status: 404 });
+    await revokeShareLink(db, linkId);
+    return new Response(null, { status: 204 });
+  }
+  return new Response('method not allowed', { status: 405 });
+}

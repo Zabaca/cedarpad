@@ -66,10 +66,17 @@ mock.module('../web-poc/lib/db/queries/workspaces.ts', () => ({
 afterAll(() => {
   getWorkspaceImpl = realGetWorkspace;
 });
+// Same delegate-and-restore treatment as getWorkspace above: share-links-api.test.ts
+// runs the REAL canvases.get against its own in-memory DB later in the same process.
+const realGetCanvas = realCanvases.get;
+let getCanvasImpl: typeof realGetCanvas = () => Promise.resolve(canvasRecord as never);
 mock.module('../web-poc/lib/db/queries/canvases.ts', () => ({
   ...realCanvases,
-  get: () => Promise.resolve(canvasRecord),
+  get: (...args: Parameters<typeof realGetCanvas>) => getCanvasImpl(...args),
 }));
+afterAll(() => {
+  getCanvasImpl = realGetCanvas;
+});
 // The edge Inbox LIST/detail API is out of scope for this slice — stub it so we can assert the
 // Worker still ROUTES `/api/inbox*` to it (unchanged) without exercising Turso/R2.
 mock.module('./inbox.ts', () => ({
@@ -170,6 +177,29 @@ describe('invitations dispatch (#179)', () => {
     );
     expect(res.status).toBe(403); // routed + access-checked (owner-only), not 404/405/login
     expect(served).toEqual([]);
+  });
+});
+
+// PRD #220 slice 2: the share-links API is edge-only and behind the gate. Routing proof
+// only — the handler's member checks/mint/revoke behavior lives in share-links-api.test.ts.
+describe('share-links dispatch (#220)', () => {
+  test('/api/canvases/:id/share-links dispatches to the edge API (unknown canvas ⇒ its 404), never proxied', async () => {
+    canvasRecord = null;
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/canvases/cv_ghost/share-links', { method: 'POST' }),
+      env,
+    );
+    expect(res.status).toBe(404); // the handler's own JSON 404 — routed, not fallthrough-proxied
+    expect(((await res.json()) as { error: string }).error).toBe('canvas not found');
+    expect(served).toEqual([]);
+  });
+
+  test('UNAUTHENTICATED share-links hit gets the login page, never the handler or a container', async () => {
+    session = null;
+    const res = await GET('/api/canvases/cv_1/share-links');
+    expect(res.headers.get('content-type') ?? '').toContain('text/html');
+    expect(served).toEqual([]);
+    session = { user: { id: 'u_1' } };
   });
 });
 
