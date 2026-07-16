@@ -419,7 +419,7 @@ The round-trip:
   store listener also watches `binding` records to re-push the affected arrow when
   a human binds/unbinds. A bound terminal follows its target on move.
 
-## Guest share links (designed, not built — ADR 0015)
+## Guest share links (ADR 0015, PRD #220 — live)
 
 - **Share Link** — a member-minted, revocable capability row (`share_links`, Turso) granting
   outsiders access to exactly one canvas, with per-link permissions
@@ -432,6 +432,13 @@ The round-trip:
 - **Guest mode (Shell)** — the same Shell SPA with workspace chrome hidden, hard-locked to
   the link's canvas. Member conversations render view-only; a `guestChat` link lets guests
   start their own canvas-scoped conversation.
+- Enforcement layers: `worker/guest-gate.ts` (pure default-deny path allowlist at the edge,
+  per-request revocation recheck) + the bridge's `x-guest-canvas` confinement (SSE frame
+  filter, member-conversation view-only rule, guest turns are plain chat turns). Member
+  surface: the Share panel in the canvas picker (`SharePanel`, Shell.tsx).
+- Known v1 gaps: the bridge's chat→canvas / guest-owned-chat maps are in-memory (a recycle
+  locks guests out of their pre-recycle chats, fails closed); `guestChat` links carry no
+  turn budget (revocation is the only cost brake).
 
 ## Deliberately deferred
 
