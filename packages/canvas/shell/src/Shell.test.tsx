@@ -42,6 +42,7 @@ let calls: string[] = [];
 // #220 slice 5: what GET /api/guest-session answers — null for members (the default),
 // the guest scope for a cs_guest session.
 let guestInfo: { canvasId: string; workspaceId: string; guestChat: boolean } | null = null;
+let shareLinks: Array<{ id: string; canvasId: string; guestChat: boolean; revokedAt: string | null }> = [];
 
 /** The two edge APIs the shell talks to. Everything else 404s so a stray call is visible. */
 function stubEdge() {
@@ -49,6 +50,18 @@ function stubEdge() {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     calls.push(`${init?.method ?? 'GET'} ${url}`);
     if (url === '/api/guest-session') return Response.json(guestInfo);
+    // #220: the share-links API — one active link toggled by mint/revoke.
+    if (url === '/api/canvases/cv_1/share-links') {
+      if (init?.method === 'POST') {
+        shareLinks = [{ id: 'sl_1', canvasId: 'cv_1', guestChat: false, revokedAt: null }];
+        return Response.json(shareLinks[0], { status: 201 });
+      }
+      return Response.json({ links: shareLinks });
+    }
+    if (url === '/api/canvases/cv_1/share-links/sl_1' && init?.method === 'DELETE') {
+      shareLinks = [];
+      return new Response(null, { status: 204 });
+    }
     if (url === '/api/workspaces') return Response.json(WORKSPACES);
     if (url === '/api/canvases') return Response.json(CANVASES);
     if (url.startsWith('/api/inbox?')) return Response.json({ items: [] });
@@ -519,5 +532,25 @@ describe('guest mode (#220)', () => {
     await waitFor(() => container.querySelector('iframe') !== null);
     expect(calls.some((c) => c.includes('/api/workspaces') || c.includes('/api/canvases'))).toBe(false);
     guestInfo = null;
+  });
+});
+
+// PRD #220: the member-facing Share panel — mint a guest link for the open canvas,
+// see its URL, revoke it. Talks only to the edge share-links API.
+describe('share links UI (#220)', () => {
+  test('Share opens a panel that mints, lists, and revokes links for the open canvas', async () => {
+    shareLinks = [];
+    await click([...container.querySelectorAll('.page-row')][1] ?? null); // open Roadmap (cv_1)
+    await click(byTitle('Share this canvas'));
+    expect(calls).toContain('GET /api/canvases/cv_1/share-links');
+
+    await click(container.querySelector('.share-new'));
+    expect(calls).toContain('POST /api/canvases/cv_1/share-links');
+    await waitFor(() => container.querySelector('.share-url') !== null);
+    expect(container.querySelector('.share-url')?.textContent).toContain('/share/sl_1');
+
+    await click(container.querySelector('.share-revoke'));
+    expect(calls).toContain('DELETE /api/canvases/cv_1/share-links/sl_1');
+    await waitFor(() => container.querySelector('.share-url') === null);
   });
 });

@@ -546,15 +546,31 @@ function CanvasStage({ registry }: { registry: Registry }) {
     void load();
   };
 
+  // #220: the Share panel for the OPEN canvas. Guest links are canvas ADR-0015 capability
+  // rows; this is just their member-facing mint/copy/revoke surface.
+  const [shareOpen, setShareOpen] = useState(false);
+  useEffect(() => setShareOpen(false), [selected]);
+
   return (
     <div className="shell-stage stage-canvas">
       <aside className="canvas-picker">
         <div className="left-panel-head">
           <span className="left-panel-title">Canvases</span>
+          {selected && (
+            <button
+              type="button"
+              className="left-panel-add"
+              onClick={() => setShareOpen((o) => !o)}
+              title="Share this canvas"
+            >
+              ⇗
+            </button>
+          )}
           <button type="button" className="left-panel-add" onClick={() => void createCanvas()} title="Create a new canvas">
             +
           </button>
         </div>
+        {selected && shareOpen && <SharePanel canvasId={selected} />}
         <ul className="page-list">
           {canvasList.map((c) => (
             <li
@@ -639,6 +655,69 @@ function CanvasStage({ registry }: { registry: Registry }) {
       ) : (
         <div className="pad-empty">Pick a canvas to open it.</div>
       )}
+    </div>
+  );
+}
+
+// #220: mint/copy/revoke guest share links for one canvas. Revoked links vanish from the
+// panel (the edge keeps them tombstoned); the URL is the /share/<id> door.
+function SharePanel({ canvasId }: { canvasId: string }) {
+  type ShareLink = { id: string; guestChat: boolean; revokedAt: string | number | null };
+  const [links, setLinks] = useState<ShareLink[]>([]);
+  const [guestChat, setGuestChat] = useState(false);
+  const base = `/api/canvases/${encodeURIComponent(canvasId)}/share-links`;
+
+  const load = useCallback(async () => {
+    const r = await fetch(base, { credentials: 'same-origin' }).catch(() => null);
+    if (!r?.ok) return;
+    const { links: all } = (await r.json()) as { links: ShareLink[] };
+    setLinks(all.filter((l) => !l.revokedAt));
+  }, [base]);
+  useEffect(() => void load(), [load]);
+
+  const mint = async () => {
+    await fetch(base, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ guestChat }),
+    }).catch(() => {});
+    void load();
+  };
+  const revoke = async (id: string) => {
+    await fetch(`${base}/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
+    void load();
+  };
+  const urlFor = (id: string) => `${window.location.origin}/share/${id}`;
+
+  return (
+    <div className="share-panel">
+      {links.map((l) => (
+        <div key={l.id} className="share-row">
+          <span className="share-url" title={urlFor(l.id)}>
+            {urlFor(l.id)}
+            {l.guestChat ? ' · chat' : ''}
+          </span>
+          <button
+            type="button"
+            className="share-copy"
+            title="Copy link"
+            onClick={() => void navigator.clipboard?.writeText(urlFor(l.id)).catch(() => {})}
+          >
+            ⧉
+          </button>
+          <button type="button" className="share-revoke" title="Revoke link" onClick={() => void revoke(l.id)}>
+            ✕
+          </button>
+        </div>
+      ))}
+      <label className="share-chat-toggle">
+        <input type="checkbox" checked={guestChat} onChange={(e) => setGuestChat(e.target.checked)} />
+        guests can start a chat
+      </label>
+      <button type="button" className="share-new" onClick={() => void mint()}>
+        New share link
+      </button>
     </div>
   );
 }

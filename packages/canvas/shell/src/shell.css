@@ -937,3 +937,50 @@ body,
   font: inherit;
   font-size: 12.5px;
 }
+
+/* #220: the Share panel (guest links) under the canvas picker head */
+.share-panel {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border, #e5e5e5);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.share-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.share-url {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+.share-copy,
+.share-revoke {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.6;
+}
+.share-copy:hover,
+.share-revoke:hover {
+  opacity: 1;
+}
+.share-chat-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.8;
+}
+.share-new {
+  align-self: flex-start;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 8px;
+}
