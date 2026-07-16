@@ -775,6 +775,39 @@ export type WorkspaceMcpTokenRow = typeof workspaceMcpTokens.$inferSelect;
 export type NewWorkspaceMcpTokenRow = typeof workspaceMcpTokens.$inferInsert;
 
 /* ------------------------------------------------------------------ *
+ * Canvas share links (canvas ADR-0015, PRD #220) — the guest door's
+ * capability rows.
+ *
+ * A share link is a member-minted, revocable capability granting outsiders
+ * access to exactly ONE canvas. `/share/<id>` validates the row and mints a
+ * guest session; the edge gate confines that session to the link's canvas.
+ * Revocation is a tombstone (`revoked_at`), not a delete — the Share panel
+ * can still show history, and a revoked id can never be re-minted live.
+ * Plain-text ids, no FKs (ADR-0007 registry convention).
+ * ------------------------------------------------------------------ */
+export const shareLinks = sqliteTable(
+  "share_links",
+  {
+    id: text("id").primaryKey(),
+    canvasId: text("canvas_id").notNull(),
+    /** Platform workspace id (registry / `cs_workspace`). Plain text, no FK. */
+    workspaceId: text("workspace_id").notNull(),
+    createdBy: text("created_by").notNull(),
+    /** May guests holding this link start their OWN canvas-scoped conversation?
+     * (Member conversations are always view-only to guests regardless.) */
+    guestChat: integer("guest_chat", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    /** Null = live. Set once on revoke; never cleared. */
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [index("share_links_canvas_idx").on(t.canvasId)],
+);
+
+export type ShareLinkRow = typeof shareLinks.$inferSelect;
+
+/* ------------------------------------------------------------------ *
  * Job run stamps (#196, ADR-0015) — the cron evaluator's debounce.
  *
  * One row per (workspace, repo, job): when its scheduled run last fired.
