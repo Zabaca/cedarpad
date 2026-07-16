@@ -17,7 +17,9 @@ import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 // workspace exactly like the pad route (`ownedCanvas` in worker/index.ts): a canvas the
 // caller can't see is a 404, never a 403 — don't confirm existence to outsiders.
 
-const MintInput = z.object({ guestChat: z.boolean().default(false) });
+// `shapeId` set = component-scoped link (PRD #221): guest sees that one shape fullscreen,
+// chat fully denied. guestChat is meaningless there and forced false at mint.
+const MintInput = z.object({ guestChat: z.boolean().default(false), shapeId: z.string().min(1).optional() });
 
 /** The canvas's workspace if the caller is owner-or-member of it; null ⇒ 404. */
 async function accessibleCanvasWorkspace(
@@ -55,7 +57,8 @@ export async function handleShareLinksApi(
       canvasId,
       workspaceId,
       createdBy: user.id,
-      guestChat: parsed.data.guestChat,
+      guestChat: parsed.data.shapeId ? false : parsed.data.guestChat,
+      shapeId: parsed.data.shapeId ?? null,
     });
     return Response.json(link, { status: 201 });
   }

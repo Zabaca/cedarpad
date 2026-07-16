@@ -95,3 +95,20 @@ describe('/share/<linkId> — the guest door', () => {
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 });
+
+// PRD #221: component-scoped links ride the same cookie with an optional shapeId; cookies
+// minted before the field existed must keep verifying (optional = the back-compat idiom).
+import { GuestSessionPayload } from './guest-session.ts';
+
+describe('component-scoped payloads (#221)', () => {
+  test('shapeId round-trips through mint + read', async () => {
+    const payload = { linkId: 'sl_1', canvasId: 'cv_g', workspaceId: 'ws_g', guestChat: false, shapeId: 'shape:abc' };
+    const cookie = await mintGuestCookie('s3cret', payload);
+    expect(await readGuestSession(`cs_guest=${cookie}`, 's3cret')).toEqual(payload);
+  });
+
+  test('a pre-#221 payload (no shapeId) still parses', () => {
+    const parsed = GuestSessionPayload.safeParse({ linkId: 'sl_1', canvasId: 'cv_g', workspaceId: 'ws_g', guestChat: true });
+    expect(parsed.success).toBe(true);
+  });
+});

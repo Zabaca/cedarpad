@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { DefaultContextMenu, DefaultContextMenuContent, DefaultPeopleMenu, DefaultSharePanel, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
 import 'tldraw/tldraw.css';
 
@@ -13,7 +13,8 @@ import { setExpandHandler } from './component-expand';
 import { ComponentFullscreenOverlay } from './ComponentFullscreen';
 import { wireSync } from './sync';
 import { startPresenceHeartbeat } from './presence';
-import { useGuestScope } from '../shared/guest-scope';
+import { loadGuestScope, useGuestScope } from '../shared/guest-scope';
+import { ComponentGuestView } from './ComponentGuestView';
 
 // Registered once, at editor construction: our two custom shapes. `component`
 // renders agent-authored React files; `chat` is a chat session living on the canvas.
@@ -156,6 +157,23 @@ function freeSpot(editor: Editor, x: number, y: number): { x: number; y: number 
 }
 
 export default function App() {
+  // Component-scoped guest (PRD #221)? Resolve BEFORE mounting tldraw: that guest renders
+  // one component fullscreen and nothing else. undefined = probe in flight (render nothing
+  // for a beat); null/canvas-guest/member = the normal canvas below.
+  const [scope, setScope] = useState<{ shapeId?: string } | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    void loadGuestScope().then((s) => alive && setScope(s));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (scope === undefined) return null;
+  if (scope?.shapeId) return <ComponentGuestView shapeId={scope.shapeId} />;
+  return <CanvasApp />;
+}
+
+function CanvasApp() {
   const cleanup = useRef<(() => void) | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const [ready, setReady] = useState(false);

@@ -113,3 +113,67 @@ describe('ComponentFullscreenOverlay', () => {
     expect(el.querySelector('.component-fullscreen')).toBeNull();
   });
 });
+
+// PRD #221: the fullscreen header Share panel — members mint component-scoped links.
+import { resetGuestScopeForTests } from '../shared/guest-scope';
+
+describe('ShareControls (#221)', () => {
+  test('a member mints a link scoped to this shape and sees its URL', async () => {
+    resetGuestScopeForTests();
+    const calls: string[] = [];
+    let minted = false;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const method = init?.method ?? 'GET';
+      calls.push(`${method} ${url}`);
+      if (url.includes('/api/guest-session')) return Response.json(null); // member
+      if (url.includes('/share-links') && method === 'POST') {
+        expect(JSON.parse(String(init?.body))).toEqual({ shapeId: shape.id });
+        minted = true;
+        return Response.json({ id: 'sl_c1', shapeId: shape.id }, { status: 201 });
+      }
+      if (url.includes('/share-links')) {
+        return Response.json({ links: minted ? [{ id: 'sl_c1', shapeId: shape.id, revokedAt: null }] : [] });
+      }
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    const editor = makeEditor({ ...shape });
+    const { el } = await render(
+      <ComponentFullscreenOverlay editor={editor as unknown as OverlayEditor} shapeId={shape.id} onClose={() => {}} />,
+    );
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20)); // guest probe resolves → member
+    });
+    await act(async () => {
+      (el.querySelector('.component-share-toggle') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      (el.querySelector('.component-share-new') as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(el.querySelector('.component-share-url')?.textContent).toContain('/share/sl_c1');
+    globalThis.fetch = realFetch;
+  });
+
+  test('a guest sees no Share affordance', async () => {
+    resetGuestScopeForTests();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('/api/guest-session')) return Response.json({ canvasId: 'cv_g', workspaceId: 'ws_g', guestChat: false });
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    const editor = makeEditor({ ...shape });
+    const { el } = await render(
+      <ComponentFullscreenOverlay editor={editor as unknown as OverlayEditor} shapeId={shape.id} onClose={() => {}} />,
+    );
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(el.querySelector('.component-share-toggle')).toBeNull();
+    globalThis.fetch = realFetch;
+  });
+});

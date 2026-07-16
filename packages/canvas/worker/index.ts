@@ -253,6 +253,8 @@ export default {
                 canvasId: guest.canvasId,
                 workspaceId: guest.workspaceId,
                 guestChat: guest.guestChat,
+                // Component-scoped link (PRD #221): the Shell/pad narrow to this shape.
+                ...(guest.shapeId ? { shapeId: guest.shapeId } : {}),
               });
             }
             if (url.pathname === '/') return asset('/');

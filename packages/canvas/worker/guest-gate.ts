@@ -68,9 +68,14 @@ export function decideGuestGate(req: GuestRequest, guest: GuestSession): GuestGa
   // delivers only frames of chats bound to that canvas. Transcript reads are view-only
   // for every guest; send/interrupt exist only on links minted with guestChat, and the
   // bridge additionally rejects sends into member conversations (view-only rule).
-  if (pathname === '/api/chat/stream' && method === 'GET') return allow;
+  // Component-scoped links (PRD #221) share an artifact, not a conversation: the entire
+  // chat surface is denied. (Their canvas API + module reuse below is the accepted v1
+  // confinement gap — see the ADR-0015 amendment.)
+  const componentScoped = !!guest.shapeId;
+  if (pathname === '/api/chat/stream' && method === 'GET') return componentScoped ? deny : allow;
   const chatOp = /^\/api\/chat\/[^/]+\/(send|transcript|interrupt)$/.exec(pathname);
   if (chatOp) {
+    if (componentScoped) return deny;
     if (chatOp[1] === 'transcript' && method === 'GET') return allow;
     if (guest.guestChat && method === 'POST' && req.canvas === guest.canvasId) return allow;
     return deny;

@@ -51,3 +51,21 @@ public link breaks both properties.
   around.
 - **Container-side scope enforcement:** puts the boundary in the component with the most
   routes to miss, and breaks the container's assumption that all traffic is gated.
+
+## Amendment: component-scoped links (PRD #221, 2026-07-16)
+
+A share link may narrow to a single placed component: the same `share_links` capability row
+with a nullable `shapeId`. Same door (`/share/<linkId>`), same `cs_guest` session (payload
+gains an optional `shapeId`), same revocation model. What changes per scope:
+
+- **Guest surface**: the pad in component-guest mode — that one shape's component rendered
+  fullscreen (no tldraw, no other shapes' UI). Interactive: `setData` persists to the shape
+  and syncs to members. The shared unit is the placed instance, not the module.
+- **Chat**: fully denied — no stream, no transcripts, no sends. A component link shares an
+  artifact, not a conversation.
+- **Confinement (accepted v1 gap)**: the API grant reuses the canvas-guest allowlist
+  (canvas read + stream + shapes/update), so a component link technically grants
+  canvas-wide reads/writes even though its UI shows one component. Shape-scoped endpoints
+  (edge-stamped `x-guest-shape`, bridge-filtered) were considered and deferred: real
+  confinement at the right layer, but new bridge surface v1 didn't need. Revisit before
+  component links are pitched as safe for untrusted audiences.

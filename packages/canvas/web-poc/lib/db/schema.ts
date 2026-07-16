@@ -796,6 +796,9 @@ export const shareLinks = sqliteTable(
     /** May guests holding this link start their OWN canvas-scoped conversation?
      * (Member conversations are always view-only to guests regardless.) */
     guestChat: integer("guest_chat", { mode: "boolean" }).notNull().default(false),
+    /** Null = the whole canvas (PRD #220). Set = one placed component: the guest surface
+     * narrows to that shape rendered fullscreen, chat fully denied (PRD #221). */
+    shapeId: text("shape_id"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),

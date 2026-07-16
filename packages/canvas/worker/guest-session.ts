@@ -19,6 +19,9 @@ export const GuestSessionPayload = z.object({
   canvasId: z.string().min(1),
   workspaceId: z.string().min(1),
   guestChat: z.boolean(),
+  /** Set = component-scoped link (PRD #221): the guest surface is that one shape,
+   * fullscreen, chat fully denied. Optional so pre-#221 cookies stay valid. */
+  shapeId: z.string().min(1).optional(),
 });
 export type GuestSession = z.infer<typeof GuestSessionPayload>;
 
@@ -83,6 +86,7 @@ export async function handleShareAccept(
     canvasId: link.canvasId,
     workspaceId: link.workspaceId,
     guestChat: link.guestChat,
+    ...(link.shapeId ? { shapeId: link.shapeId } : {}),
   });
   return new Response(null, {
     status: 302,

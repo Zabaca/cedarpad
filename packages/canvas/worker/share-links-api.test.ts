@@ -103,3 +103,21 @@ describe('share-links API — mint/list/revoke, member-checked via the canvas', 
     expect(res.status).toBe(400);
   });
 });
+
+// PRD #221: minting with a shapeId narrows the link to one placed component. guestChat is
+// meaningless on a component link and is forced false regardless of what the body claims.
+describe('component-scoped mint (#221)', () => {
+  test('shapeId round-trips on the row and forces guestChat false', async () => {
+    const res = await handleShareLinksApi(req('POST', { shapeId: 'shape:abc', guestChat: true }), database, MEMBER, canvasId);
+    expect(res.status).toBe(201);
+    const link = (await res.json()) as { id: string; shapeId: string | null; guestChat: boolean };
+    expect(link.shapeId).toBe('shape:abc');
+    expect(link.guestChat).toBe(false);
+    expect((await getActiveShareLink(db, link.id))?.shapeId).toBe('shape:abc');
+  });
+
+  test('a canvas link keeps shapeId null', async () => {
+    const res = await handleShareLinksApi(req('POST', {}), database, MEMBER, canvasId);
+    expect(((await res.json()) as { shapeId: string | null }).shapeId).toBeNull();
+  });
+});

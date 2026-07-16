@@ -9,6 +9,8 @@ export interface GuestScope {
   canvasId: string;
   workspaceId: string;
   guestChat: boolean;
+  /** Set = component-scoped link (PRD #221): render ONLY this shape's component, fullscreen. */
+  shapeId?: string;
 }
 
 let cached: Promise<GuestScope | null> | null = null;

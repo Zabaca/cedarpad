@@ -432,6 +432,11 @@ The round-trip:
 - **Guest mode (Shell)** — the same Shell SPA with workspace chrome hidden, hard-locked to
   the link's canvas. Member conversations render view-only; a `guestChat` link lets guests
   start their own canvas-scoped conversation.
+- **Component share link** (PRD #221, ADR-0015 amendment) — a Share Link with `shapeId` set:
+  the guest surface narrows to that ONE placed component, rendered fullscreen by the pad in
+  component-guest mode (no tldraw, chat fully denied). Interactive: `setData` persists and
+  syncs. Accepted v1 gap: the API grant reuses the canvas allowlist (canvas-wide reads),
+  only the UI narrows. Minted from the ⛶ fullscreen header's Share panel.
 - Enforcement layers: `worker/guest-gate.ts` (pure default-deny path allowlist at the edge,
   per-request revocation recheck) + the bridge's `x-guest-canvas` confinement (SSE frame
   filter, member-conversation view-only rule, guest turns are plain chat turns). Member

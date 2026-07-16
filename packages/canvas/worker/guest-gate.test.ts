@@ -116,3 +116,27 @@ describe('decideGuestGate — chat (#220 slice 6)', () => {
     expect(allowFor(chatty, '/api/chat/c1/fork', 'POST', 'cv_g')).toBe(false);
   });
 });
+
+// PRD #221: a component-scoped link (shapeId set) shares an artifact, not a conversation.
+// The canvas API + module surface is unchanged (the accepted v1 confinement gap, ADR-0015
+// amendment); the ENTIRE chat surface is denied.
+describe('decideGuestGate — component-scoped links (#221)', () => {
+  const compGuest: GuestSession = { ...guest, guestChat: true, shapeId: 'shape:abc' };
+  const compAllow = (pathname: string, method = 'GET', canvas?: string) =>
+    decideGuestGate({ pathname, method, canvas: canvas ?? null }, compGuest).decision === 'allow';
+
+  test('keeps the canvas read/write + module surface', () => {
+    expect(compAllow('/api/canvas', 'GET', 'cv_g')).toBe(true);
+    expect(compAllow('/api/canvas/stream', 'GET', 'cv_g')).toBe(true);
+    expect(compAllow('/api/canvas/shapes/update', 'POST', 'cv_g')).toBe(true);
+    expect(compAllow('/src/App.tsx')).toBe(true);
+    expect(compAllow('/api/alive', 'POST')).toBe(true);
+  });
+
+  test('denies the whole chat surface — even with guestChat set on the row', () => {
+    expect(compAllow('/api/chat/stream', 'GET')).toBe(false);
+    expect(compAllow('/api/chat/c1/transcript', 'GET')).toBe(false);
+    expect(compAllow('/api/chat/c1/send', 'POST', 'cv_g')).toBe(false);
+    expect(compAllow('/api/chat/c1/interrupt', 'POST', 'cv_g')).toBe(false);
+  });
+});
