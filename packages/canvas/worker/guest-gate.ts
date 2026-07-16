@@ -62,6 +62,20 @@ export function decideGuestGate(req: GuestRequest, guest: GuestSession): GuestGa
     return allow;
   }
 
+  // Chat surface (#220 slice 6). The shared SSE stream carries EVERY chat and an
+  // EventSource can't stamp headers, so it's allowed path-wise here and confined
+  // bridge-side: the edge stamps x-guest-canvas on the proxied request and the bridge
+  // delivers only frames of chats bound to that canvas. Transcript reads are view-only
+  // for every guest; send/interrupt exist only on links minted with guestChat, and the
+  // bridge additionally rejects sends into member conversations (view-only rule).
+  if (pathname === '/api/chat/stream' && method === 'GET') return allow;
+  const chatOp = /^\/api\/chat\/[^/]+\/(send|transcript|interrupt)$/.exec(pathname);
+  if (chatOp) {
+    if (chatOp[1] === 'transcript' && method === 'GET') return allow;
+    if (guest.guestChat && method === 'POST' && req.canvas === guest.canvasId) return allow;
+    return deny;
+  }
+
   // Canvas-addressed bridge ops: the request must explicitly name the link's canvas.
   if (req.canvas !== guest.canvasId) return deny;
   if (CANVAS_API.has(`${method} ${pathname}`)) return allow;

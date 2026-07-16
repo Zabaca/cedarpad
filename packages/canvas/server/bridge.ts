@@ -282,6 +282,21 @@ function canvasStream(session: CanvasSession): Response {
 // every POST (send/shapes) into "pending". One shared stream keeps it flat at 2.
 export const chatClients = new Set<ReadableStreamDefaultController>();
 
+// --- guest chat confinement (#220 slice 6, canvas ADR-0015) ---
+// The edge stamps `x-guest-canvas` on every proxied guest request. Bridge-side that means:
+// member conversations are VIEW-ONLY (a guest send into an established non-guest chat is
+// 403), a guest may start/continue their OWN chats addressed to exactly that canvas, and
+// the shared chat SSE delivers a guest only frames of chats KNOWN to live on that canvas.
+//
+// `chatCanvas` is the chat→canvas binding the filter consults, fed by the same places that
+// learn it anyway (send dispatch, session index). In-memory only — after a recycle a guest
+// can't continue their pre-recycle chat and can't stream frames of chats whose binding is
+// gone (fails CLOSED, never open). Known v1 gap, recorded on #220.
+const chatCanvas = new Map<string, string>();
+const guestChats = new Set<string>();
+/** Guest stream controllers → the one canvas whose chats they may see. */
+const guestStreamCanvas = new WeakMap<ReadableStreamDefaultController, string>();
+
 // --- idle liveness: why the CF container can sleep ---
 // A browser holds SSE streams open; the sandbox's per-forward inflight hold keeps the
 // container awake for as long as each forward is open. The CF preview-proxy never
@@ -339,6 +354,10 @@ function broadcastChat(chatId: string, ev: ChatEvent): void {
   // in only one place fails the build here until the frame shape accounts for it.
   const frame = sse({ chatId, ...ev } satisfies ChatFrame);
   for (const c of chatClients) {
+    // #220: a guest stream sees only chats bound to ITS canvas; an unknown binding is
+    // filtered too (fail closed — never leak a frame we can't place).
+    const guestCanvas = guestStreamCanvas.get(c);
+    if (guestCanvas !== undefined && chatCanvas.get(chatId) !== guestCanvas) continue;
     try {
       c.enqueue(frame);
     } catch {
@@ -347,14 +366,19 @@ function broadcastChat(chatId: string, ev: ChatEvent): void {
   }
 }
 
-/** Subscribe to ALL chats' events (SSE), one stream per client. Subscribe BEFORE sending. */
-function chatStream(): Response {
+/** Test seam (#220): drive the shared chat broadcast directly to pin the guest filter. */
+export const broadcastChatEvent = broadcastChat;
+
+/** Subscribe to ALL chats' events (SSE), one stream per client. Subscribe BEFORE sending.
+ * A guest subscription (#220) registers with its canvas so broadcastChat filters frames. */
+function chatStream(guestCanvas?: string): Response {
   let self: ReadableStreamDefaultController;
   let ping: ReturnType<typeof setInterval>;
   const stream = new ReadableStream({
     start(controller) {
       self = controller;
       chatClients.add(controller);
+      if (guestCanvas) guestStreamCanvas.set(controller, guestCanvas);
       markAlive();
       ensureReaper();
       controller.enqueue(enc.encode(': subscribed\n\n')); // comment frame: opens + flushes the stream
@@ -417,6 +441,7 @@ export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId:
  * best-effort — an index failure never fails the turn. */
 export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string, assignTo?: string): Promise<void> {
   if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
+  if (canvasId) chatCanvas.set(chatId, canvasId); // #220: the guest stream filter's binding
   await findOrCreateConversation(webPocDb, {
     sessionId,
     userId: INBOX_USER,
@@ -847,7 +872,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     // GET  /api/chat/stream    — subscribe to ALL chats' events (one SSE per client)
     // POST /api/chat/:id/send  — run a turn in a chat; events broadcast (tagged) to subscribers
     if (path === '/api/chat/stream' && req.method === 'GET') {
-      return chatStream();
+      return chatStream(req.headers.get('x-guest-canvas') ?? undefined);
     }
     // POST /api/dev-agent/run — kick one dev-agent run as a HEADLESS chat turn (ADR-0011).
     // The edge Jobs/cron handler proxies here with the freshly-minted token header; the token
@@ -939,6 +964,18 @@ export async function handleRequest(req: Request): Promise<Response> {
       // EXPLICIT canvas only (no default): the pad stamps x-canvas-id; an unaddressed send
       // (inbox thread) routes to the default store without claiming a canvas edge.
       const requestCanvasId = req.headers.get('x-canvas-id') ?? url.searchParams.get('canvas') ?? undefined;
+      // #220 slice 6: a GUEST send (edge-stamped x-guest-canvas). Member conversations are
+      // view-only — a guest may address only the link's canvas, and only chats they started
+      // themselves (an established chat that isn't guest-owned is somebody else's thread).
+      const guestCanvas = req.headers.get('x-guest-canvas') ?? undefined;
+      if (guestCanvas) {
+        if (requestCanvasId !== guestCanvas) return json({ error: 'guest_canvas_mismatch', chatId }, 403);
+        if (chatMeta.get(chatId).sessionId && !guestChats.has(chatId)) {
+          return json({ error: 'member_conversation_view_only', chatId }, 403);
+        }
+        guestChats.add(chatId);
+      }
+      if (requestCanvasId) chatCanvas.set(chatId, requestCanvasId);
       // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, set by the edge
       // proxy (worker/inbox-bridge.ts, worker/index.ts) on this send only. `server/turn.ts` drops
       // this for a dev-agent turn regardless — chat flavor only.
@@ -948,7 +985,22 @@ export async function handleRequest(req: Request): Promise<Response> {
       // The send's HUMAN INITIATOR (shared inbox, CONTEXT.md), stamped by the edge proxies:
       // assigns the Conversation at birth / claims-if-unassigned on a reply.
       const assignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
-      dispatchChatTurn(chatId, message, meta.sessionId, images, meta.model, forkSession, effort, requestCanvasId, devAgentGitToken, mcpTokens, devAgentRepo, assignTo);
+      // Belt on top of the edge gate: a guest turn is a PLAIN chat turn on the link's canvas —
+      // never a dev-agent turn, never armed with the workspace's external-MCP tokens.
+      dispatchChatTurn(
+        chatId,
+        message,
+        meta.sessionId,
+        images,
+        meta.model,
+        forkSession,
+        effort,
+        requestCanvasId,
+        guestCanvas ? undefined : devAgentGitToken,
+        guestCanvas ? undefined : mcpTokens,
+        guestCanvas ? undefined : devAgentRepo,
+        assignTo,
+      );
       return json({ ok: true }, 202);
     }
     // POST /api/chat/:id/config — update server-owned ChatMeta (model/effort/forkNext),
@@ -984,6 +1036,10 @@ export async function handleRequest(req: Request): Promise<Response> {
     const transcriptRoute = /^\/api\/chat\/([^/]+)\/transcript$/.exec(path);
     if (transcriptRoute && req.method === 'GET') {
       const chatId = decodeURIComponent(transcriptRoute[1] as string);
+      // #220: a guest may read only transcripts of chats bound to the link's canvas.
+      // Unknown binding fails CLOSED (404 — don't confirm the chat exists).
+      const guestCanvas = req.headers.get('x-guest-canvas');
+      if (guestCanvas && chatCanvas.get(chatId) !== guestCanvas) return json({ error: 'not found' }, 404);
       const meta = chatMeta.get(chatId);
       const events = meta.sessionId ? await loadSessionTranscript(SESSIONS_DIR, meta.sessionId) : [];
       // `busy`: is a turn in flight for this chat RIGHT NOW (ADR-0011)? A mid-run opener
@@ -994,6 +1050,8 @@ export async function handleRequest(req: Request): Promise<Response> {
     const interruptRoute = /^\/api\/chat\/([^/]+)\/interrupt$/.exec(path);
     if (interruptRoute && req.method === 'POST') {
       const chatId = decodeURIComponent(interruptRoute[1] as string);
+      // #220: a guest may stop only turns of chats THEY started — never a member's.
+      if (req.headers.get('x-guest-canvas') && !guestChats.has(chatId)) return json({ error: 'not found' }, 404);
       aborters.get(chatId)?.abort();
       return json({ ok: true });
     }

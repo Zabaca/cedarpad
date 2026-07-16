@@ -259,9 +259,14 @@ export default {
             if (url.pathname.startsWith('/assets/')) return asset(url.pathname);
             // Everything else allowed by the guest gate proxies to the LINK's workspace
             // container — never the cs_workspace cookie's (a guest can't pick a container).
+            // x-guest-canvas is the bridge's confinement signal (#220 slice 6: chat stream
+            // filtering, view-only member conversations) — stamped HERE, overwriting
+            // anything the client sent, so it can never be spoofed upward.
+            const guestProxied = new Request(request);
+            guestProxied.headers.set('x-guest-canvas', guest.canvasId);
             const guestWorkspace =
               guest.workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: guest.workspaceId };
-            return serveWorkspace(request, env, resolve(guestWorkspace));
+            return serveWorkspace(guestProxied, env, resolve(guestWorkspace));
           }
         }
       }

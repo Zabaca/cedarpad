@@ -22,6 +22,7 @@ let canvasRecord: { workspaceId: string } | null = null;
 let served: SandboxCoords[] = [];
 let servedReqs: Array<{ path: string; method: string }> = [];
 let servedMcpTokenHeaders: Array<string | null> = [];
+let servedGuestCanvasHeaders: Array<string | null> = [];
 let assets: string[] = [];
 let inboxCalls: Array<{ id?: string; action?: string }> = [];
 let conv: ConversationRow | null = null;
@@ -34,6 +35,7 @@ mock.module('./sandbox-runtime.ts', () => ({
     const u = new URL(req.url);
     servedReqs.push({ path: u.pathname + u.search, method: req.method });
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
+    servedGuestCanvasHeaders.push(req.headers.get('x-guest-canvas'));
     return new Response('pad-html');
   },
   sandboxFor: () => ({}),
@@ -253,12 +255,15 @@ describe('guest session gate (#220)', () => {
       env,
     );
 
-  test("a live guest cookie reaches the link's own pad — proxied to the LINK's workspace container", async () => {
+  test("a live guest cookie reaches the link's own pad — proxied to the LINK's workspace container, stamped x-guest-canvas", async () => {
     session = null;
     shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
-    const res = await guestFetch('/w/ws_g/canvas/cv_g/pad');
+    servedGuestCanvasHeaders = [];
+    const res = await guestFetch('/w/ws_g/canvas/cv_g/pad', { headers: { 'x-guest-canvas': 'cv_spoofed' } });
     expect(await res.text()).toBe('pad-html');
     expect(served).toEqual([resolve({ id: 'ws_g' })]);
+    // The edge OVERWRITES the confinement header — a client-sent value never survives.
+    expect(servedGuestCanvasHeaders).toEqual(['cv_g']);
   });
 
   test('the Shell SPA serves in guest mode; canvas API proxies only when addressed to the guest canvas', async () => {

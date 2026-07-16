@@ -80,11 +80,33 @@ describe('decideGuestGate — everything else is denied by default', () => {
       '/__bootlog',
       '/notebook',
       '/v1/observations',
-      '/api/chat/c1/send', // chat is slice 6, per-link gated — nothing yet
-      '/api/chat/stream',
     ]) {
       expect(allow(p, 'GET', 'cv_g')).toBe(false);
       expect(allow(p, 'POST', 'cv_g')).toBe(false);
     }
+  });
+});
+
+describe('decideGuestGate — chat (#220 slice 6)', () => {
+  const chatty: GuestSession = { ...guest, guestChat: true };
+  const allowFor = (g: GuestSession, pathname: string, method: string, canvas?: string) =>
+    decideGuestGate({ pathname, method, canvas: canvas ?? null }, g).decision === 'allow';
+
+  test('every guest may WATCH: the shared stream and per-chat transcripts (bridge filters by canvas)', () => {
+    expect(allow('/api/chat/stream')).toBe(true); // EventSource can't stamp headers — bridge-side confinement
+    expect(allow('/api/chat/c1/transcript', 'GET')).toBe(true);
+  });
+
+  test('send/interrupt exist only on guestChat links, addressed to the link canvas', () => {
+    expect(allow('/api/chat/c1/send', 'POST', 'cv_g')).toBe(false); // this link has guestChat: false
+    expect(allowFor(chatty, '/api/chat/c1/send', 'POST', 'cv_g')).toBe(true);
+    expect(allowFor(chatty, '/api/chat/c1/interrupt', 'POST', 'cv_g')).toBe(true);
+    expect(allowFor(chatty, '/api/chat/c1/send', 'POST', 'cv_other')).toBe(false);
+    expect(allowFor(chatty, '/api/chat/c1/send', 'POST')).toBe(false);
+  });
+
+  test('config/fork stay denied even on a guestChat link (server-owned ChatMeta is not guest surface)', () => {
+    expect(allowFor(chatty, '/api/chat/c1/config', 'POST', 'cv_g')).toBe(false);
+    expect(allowFor(chatty, '/api/chat/c1/fork', 'POST', 'cv_g')).toBe(false);
   });
 });
