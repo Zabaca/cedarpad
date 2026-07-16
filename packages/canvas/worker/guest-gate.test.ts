@@ -24,7 +24,9 @@ describe('decideGuestGate — Shell + pad surface', () => {
   });
 
   test('vite dev-server module paths are allowed GET-only (the pad cannot boot without them)', () => {
-    for (const p of ['/src/App.tsx', '/@vite/client', '/@fs/x', '/@id/y', '/node_modules/react/index.js', '/@react-refresh']) {
+    // /shared/* is a real import prefix of the pad app (chat-store.ts, dock-messages.ts) —
+    // its 401 broke the whole module graph for guests in prod (2026-07-16).
+    for (const p of ['/src/App.tsx', '/shared/chat-store.ts', '/@vite/client', '/@fs/x', '/@id/y', '/node_modules/react/index.js', '/@react-refresh']) {
       expect(allow(p)).toBe(true);
       expect(allow(p, 'POST')).toBe(false);
     }
@@ -45,6 +47,10 @@ describe('decideGuestGate — canvas API, scoped by the x-canvas-id the client s
     expect(allow('/api/components/MyCard', 'PUT', 'cv_g')).toBe(true);
     expect(allow('/api/components/data/MyCard', 'PUT', 'cv_g')).toBe(true);
     expect(allow('/api/components/place', 'POST', 'cv_g')).toBe(true);
+  });
+
+  test('the liveness ping is allowed WITHOUT a canvas address (the client sends none — prod 401, 2026-07-16)', () => {
+    expect(allow('/api/alive', 'POST')).toBe(true);
     expect(allow('/api/alive', 'POST', 'cv_g')).toBe(true);
   });
 

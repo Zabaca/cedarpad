@@ -21,8 +21,9 @@ export interface GuestRequest {
   canvas: string | null;
 }
 
-/** GET-only vite dev-server surface — the pad's own modules. */
-const VITE_PREFIXES = ['/src/', '/@vite/', '/@fs/', '/@id/', '/node_modules/'];
+/** GET-only vite dev-server surface — the pad's own modules. /shared/ is the pad app's
+ * second import root (shared/chat-store.ts etc.) — omitting it 401'd the module graph. */
+const VITE_PREFIXES = ['/src/', '/shared/', '/@vite/', '/@fs/', '/@id/', '/node_modules/'];
 
 /** Bridge API ops a guest may use, ALWAYS scoped to the link's canvas via the request's
  * canvas selection. No default-canvas fallback for guests: an unaddressed request is
@@ -38,7 +39,6 @@ const CANVAS_API = new Set([
   'POST /api/canvas/delete',
   'GET /api/components',
   'POST /api/components/place',
-  'POST /api/alive',
 ]);
 
 /** Per-module component ops (own-dir read/write + data write for THAT canvas). Promote/
@@ -75,6 +75,10 @@ export function decideGuestGate(req: GuestRequest, guest: GuestSession): GuestGa
     if (guest.guestChat && method === 'POST' && req.canvas === guest.canvasId) return allow;
     return deny;
   }
+
+  // The liveness ping is canvas-AGNOSTIC (the client sends no canvas address) and holds
+  // no data — requiring the address here 401'd every guest keepalive.
+  if (pathname === '/api/alive' && method === 'POST') return allow;
 
   // Canvas-addressed bridge ops: the request must explicitly name the link's canvas.
   if (req.canvas !== guest.canvasId) return deny;
