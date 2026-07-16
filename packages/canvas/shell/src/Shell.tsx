@@ -543,34 +543,25 @@ function CanvasStage({ registry }: { registry: Registry }) {
   const deleteCanvas = async (id: string) => {
     await fetch(`/api/canvases/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
     if (selected === id) setSelected(null);
+    if (shareCanvasId === id) setShareCanvasId(null);
     void load();
   };
 
-  // #220: the Share panel for the OPEN canvas. Guest links are canvas ADR-0015 capability
-  // rows; this is just their member-facing mint/copy/revoke surface.
-  const [shareOpen, setShareOpen] = useState(false);
-  useEffect(() => setShareOpen(false), [selected]);
+  // #220: which canvas's Share panel is open (per-row share button; toggles closed on a
+  // second click). Guest links are canvas ADR-0015 capability rows; this is just their
+  // member-facing mint/copy/revoke surface.
+  const [shareCanvasId, setShareCanvasId] = useState<string | null>(null);
 
   return (
     <div className="shell-stage stage-canvas">
       <aside className="canvas-picker">
         <div className="left-panel-head">
           <span className="left-panel-title">Canvases</span>
-          {selected && (
-            <button
-              type="button"
-              className="left-panel-add"
-              onClick={() => setShareOpen((o) => !o)}
-              title="Share this canvas"
-            >
-              ⇗
-            </button>
-          )}
           <button type="button" className="left-panel-add" onClick={() => void createCanvas()} title="Create a new canvas">
             +
           </button>
         </div>
-        {selected && shareOpen && <SharePanel canvasId={selected} />}
+        {shareCanvasId && <SharePanel canvasId={shareCanvasId} />}
         <ul className="page-list">
           {canvasList.map((c) => (
             <li
@@ -605,6 +596,17 @@ function CanvasStage({ registry }: { registry: Registry }) {
                   {c.name}
                 </span>
               )}
+              <button
+                type="button"
+                className="page-share"
+                title="Share this canvas"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShareCanvasId((open) => (open === c.id ? null : c.id));
+                }}
+              >
+                <ShareIcon />
+              </button>
               {c.id !== DEFAULT_CANVAS_ID && c.id !== selected && (
                 <button
                   type="button"
@@ -656,6 +658,20 @@ function CanvasStage({ registry }: { registry: Registry }) {
         <div className="pad-empty">Pick a canvas to open it.</div>
       )}
     </div>
+  );
+}
+
+// #220: the conventional "share nodes" glyph (three connected dots), inline so it themes
+// with the row via currentColor — no icon library.
+function ShareIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.7" y1="10.6" x2="15.3" y2="6.4" />
+      <line x1="8.7" y1="13.4" x2="15.3" y2="17.6" />
+    </svg>
   );
 }
 

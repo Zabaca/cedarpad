@@ -538,10 +538,10 @@ describe('guest mode (#220)', () => {
 // PRD #220: the member-facing Share panel — mint a guest link for the open canvas,
 // see its URL, revoke it. Talks only to the edge share-links API.
 describe('share links UI (#220)', () => {
-  test('Share opens a panel that mints, lists, and revokes links for the open canvas', async () => {
+  test("a row's hover share button opens a panel that mints, lists, and revokes that canvas's links", async () => {
     shareLinks = [];
-    await click([...container.querySelectorAll('.page-row')][1] ?? null); // open Roadmap (cv_1)
-    await click(byTitle('Share this canvas'));
+    const roadmapRow = [...container.querySelectorAll('.page-row')][1] ?? null; // Roadmap (cv_1)
+    await click(roadmapRow?.querySelector('.page-share') ?? null);
     expect(calls).toContain('GET /api/canvases/cv_1/share-links');
 
     await click(container.querySelector('.share-new'));

@@ -345,6 +345,28 @@ body,
   background: var(--overlay);
   color: var(--text);
 }
+/* #220: the per-row share button — same hover-reveal as .page-del */
+.page-share {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  line-height: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+.page-row:hover .page-share,
+.page-row.active .page-share {
+  opacity: 1;
+}
+.page-share:hover {
+  background: var(--overlay);
+  color: var(--text);
+}
 
 /* ---- Inbox stage (#108) ------------------------------------------------- */
 /* Two panes under the rail's one chrome — a Conversation list and the open thread. Ported
