@@ -22,5 +22,12 @@ export default function MermaidDiagram({ chart = 'graph LR; A-->B' }: { chart?: 
       alive = false;
     };
   }, [chart]);
-  return <div ref={ref} style={{ padding: 16 }} />;
+  // mermaid's default line/text colors assume a light background; render on our own white
+  // card so the diagram stays legible regardless of the canvas shape's fill (e.g. dark themes).
+  return (
+    <div
+      ref={ref}
+      style={{ padding: 16, background: '#fff', borderRadius: 8, boxSizing: 'border-box' }}
+    />
+  );
 }
