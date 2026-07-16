@@ -32,6 +32,9 @@ const WebPocApp = lazy(() => import('../../web-poc/src/embed').then((m) => ({ de
 /** The legacy prod canvas — no registry row, but always openable. Mirrors worker DEFAULT_CANVAS_ID. */
 const DEFAULT_CANVAS_ID = 'default';
 
+// Sticky collapse state for the two stage nav panels (full-width content on demand).
+const PICKER_COLLAPSED_KEY = 'shell:canvasPickerCollapsed';
+
 type CanvasEntry = { id: string; name: string };
 type WorkspaceEntry = { id: string; name: string };
 
@@ -552,13 +555,33 @@ function CanvasStage({ registry }: { registry: Registry }) {
   // member-facing mint/copy/revoke surface.
   const [shareCanvasId, setShareCanvasId] = useState<string | null>(null);
 
+  // Collapse the canvas picker to a slim strip (full-width canvas). Sticky per browser.
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(PICKER_COLLAPSED_KEY) === '1');
+  useEffect(() => {
+    try {
+      localStorage.setItem(PICKER_COLLAPSED_KEY, collapsed ? '1' : '0');
+    } catch {
+      /* storage unavailable: skip */
+    }
+  }, [collapsed]);
+
   return (
     <div className="shell-stage stage-canvas">
+      {collapsed ? (
+        <aside className="canvas-picker collapsed">
+          <button type="button" className="panel-collapse" title="Show canvases" onClick={() => setCollapsed(false)}>
+            »
+          </button>
+        </aside>
+      ) : (
       <aside className="canvas-picker">
         <div className="left-panel-head">
           <span className="left-panel-title">Canvases</span>
           <button type="button" className="left-panel-add" onClick={() => void createCanvas()} title="Create a new canvas">
             +
+          </button>
+          <button type="button" className="panel-collapse" title="Hide canvases (full canvas)" onClick={() => setCollapsed(true)}>
+            «
           </button>
         </div>
         {shareCanvasId && <SharePanel canvasId={shareCanvasId} />}
@@ -624,6 +647,7 @@ function CanvasStage({ registry }: { registry: Registry }) {
           ))}
         </ul>
       </aside>
+      )}
 
       {/* The docked chat panel: the same shared <ChatView> the card renders, mounted at the
           Shell level beside the pad. A mirror — the card stays on the canvas; both are live

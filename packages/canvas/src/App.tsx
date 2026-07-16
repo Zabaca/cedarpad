@@ -9,6 +9,8 @@ import { closeSession, forkSession } from '../shared/chat-store';
 import { DOCK_CHAT_DELETED, postDockMessage } from '../shared/dock-messages';
 import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
+import { setExpandHandler } from './component-expand';
+import { ComponentFullscreenOverlay } from './ComponentFullscreen';
 import { wireSync } from './sync';
 import { startPresenceHeartbeat } from './presence';
 import { useGuestScope } from '../shared/guest-scope';
@@ -157,6 +159,8 @@ export default function App() {
   const cleanup = useRef<(() => void) | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const [ready, setReady] = useState(false);
+  // Which component shape (if any) is expanded fullscreen over the canvas (⛶ button).
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const guest = useGuestScope();
 
   // Drop a fresh chat card. If a shape is selected (or a chat is focused), the new
@@ -232,6 +236,7 @@ export default function App() {
       // participants arrive over the sync stream as instance_presence records.
       const unbeat = startPresenceHeartbeat(editor);
       setForkHandler((pid) => forkChat(pid as TLShapeId)); // chat cards' fork button routes here
+      setExpandHandler((id) => setExpandedId(id)); // component cards' ⛶ button routes here
 
       // Per-canvas camera: restore the one we land on, then save (debounced) on move.
       const camKey = activeCanvasId();
@@ -296,6 +301,7 @@ export default function App() {
         clearTimeout(t);
         if (camTimer) clearTimeout(camTimer);
         setForkHandler(null);
+        setExpandHandler(null);
         uncam();
         unlisten();
         unbeat();
@@ -310,6 +316,9 @@ export default function App() {
       <div className="tl-stage">
         <Tldraw shapeUtils={customShapeUtils} components={tldrawComponents} onMount={onMount} />
       </div>
+      {expandedId && editorRef.current && (
+        <ComponentFullscreenOverlay editor={editorRef.current} shapeId={expandedId} onClose={() => setExpandedId(null)} />
+      )}
       {/* #220: a guest may create a chat only when the share link grants guestChat. */}
       {!(guest && !guest.guestChat) && (
         <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">

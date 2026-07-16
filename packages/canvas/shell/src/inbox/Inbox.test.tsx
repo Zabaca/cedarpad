@@ -453,3 +453,22 @@ describe('the canvas pane', () => {
     expect(container.querySelector('.inbox-canvas')).not.toBeNull();
   });
 });
+
+// The conversation list folds to a slim strip (full-width thread); sticky per device.
+describe('the list collapses', () => {
+  test('« hides the list, the state survives a remount, » brings it back', async () => {
+    store = [item({ id: 'c1', summary: 'Ship it' })];
+    await mount();
+    await click(container.querySelector('[title="Hide conversations (full thread)"]'));
+    expect(container.querySelector('.inbox-items')).toBeNull();
+    expect(container.querySelector('.inbox-list.collapsed')).not.toBeNull();
+
+    await act(async () => root.unmount());
+    container.remove();
+    await mount();
+    expect(container.querySelector('.inbox-list.collapsed')).not.toBeNull();
+
+    await click(container.querySelector('[title="Show conversations"]'));
+    expect(container.querySelector('.inbox-items')).not.toBeNull();
+  });
+});

@@ -8,6 +8,7 @@ import { type Editor, T, type TLBaseShape } from 'tldraw';
 
 import { type AgentComponent, LOAD_ATTEMPTS, loadComponent } from './component-loader';
 import { activeCanvasId } from './active-canvas';
+import { requestExpand } from './component-expand';
 import { setDisplayName, useCurrentUser } from './identity';
 import { type EventGuards, InteractiveBoxShapeUtil } from './InteractiveBoxShapeUtil';
 import { isInteractiveControl } from './predicates';
@@ -251,6 +252,15 @@ export class ComponentShapeUtil extends InteractiveBoxShapeUtil<
   override containerStyle = { background: 'var(--surface)', boxShadow: 'var(--shadow-float), 0 0 0 1px var(--line)' };
 
   protected override renderContent(shape: ComponentShapeTl) {
-    return <ComponentHost shapeId={shape.id} editor={this.editor} module={shape.props.module} data={shape.props.data} rev={shape.props.rev} />;
+    return (
+      <>
+        <ComponentHost shapeId={shape.id} editor={this.editor} module={shape.props.module} data={shape.props.data} rev={shape.props.rev} />
+        {/* Hover-revealed expand: App owns the fullscreen overlay (it has the editor);
+            the button only signals over the agent-link-style singleton bus. */}
+        <button type="button" className="component-expand" title="Expand to fullscreen" onClick={() => requestExpand(shape.id)}>
+          ⛶
+        </button>
+      </>
+    );
   }
 }

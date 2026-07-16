@@ -554,3 +554,27 @@ describe('share links UI (#220)', () => {
     await waitFor(() => container.querySelector('.share-url') === null);
   });
 });
+
+// The canvas picker folds to a slim strip so the pad gets the full width; the choice is
+// sticky per device (localStorage) so a reload comes back the way you left it.
+describe('the canvas picker collapses', () => {
+  afterEach(() => {
+    localStorage.removeItem('shell:canvasPickerCollapsed');
+  });
+
+  test('« hides the list, » brings it back, and the state survives a remount', async () => {
+    await click(byTitle('Hide canvases (full canvas)'));
+    expect(container.querySelector('.page-list')).toBeNull();
+    expect(container.querySelector('.canvas-picker.collapsed')).not.toBeNull();
+
+    // Sticky: a fresh Shell (reload) restores the collapsed strip.
+    await act(async () => root.unmount());
+    container.remove();
+    await mountShell();
+    expect(container.querySelector('.canvas-picker.collapsed')).not.toBeNull();
+
+    await click(byTitle('Show canvases'));
+    expect(container.querySelector('.page-list')).not.toBeNull();
+    expect(container.querySelector('.canvas-picker.collapsed')).toBeNull();
+  });
+});

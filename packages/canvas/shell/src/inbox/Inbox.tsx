@@ -29,6 +29,9 @@ import { inboxStateFromUrl, urlWithInboxState } from './inbox-url';
 // The pane widths + the canvas-pane visibility are per-device UI prefs, persisted to
 // localStorage (`inbox-panes.ts` owns the pure clamp/serialize logic).
 
+/** Sticky collapse state for the conversation-list pane. */
+const LIST_COLLAPSED_KEY = 'inbox.list.collapsed';
+
 /** The edge chat proxy prefix a Conversation's <ChatView> addresses its owning bridge through. */
 const bridgePrefix = (convId: string): string => `/inbox/${encodeURIComponent(convId)}/bridge`;
 
@@ -66,6 +69,15 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
   // localStorage on mount.
   const [paneWidths, setPaneWidths] = useState<PaneWidths>(() => parsePaneWidths(localStorage.getItem(PANE_WIDTHS_KEY)));
   const [canvasHidden, setCanvasHidden] = useState(() => parseCanvasHidden(localStorage.getItem(CANVAS_HIDDEN_KEY)));
+  // Collapse the conversation list to a slim strip (full-width thread/canvas). Sticky per device.
+  const [listCollapsed, setListCollapsed] = useState(() => localStorage.getItem(LIST_COLLAPSED_KEY) === '1');
+  useEffect(() => {
+    try {
+      localStorage.setItem(LIST_COLLAPSED_KEY, listCollapsed ? '1' : '0');
+    } catch {
+      /* storage unavailable: skip */
+    }
+  }, [listCollapsed]);
 
   // The list is a pure function of the view filter, so re-query whenever it changes — this is
   // what makes a view change re-fetch `/api/inbox?view=…`. No `workspace` param: the list is
@@ -185,8 +197,18 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
 
   return (
     <div className="shell-stage stage-inbox">
+      {listCollapsed ? (
+        <div className="inbox-list collapsed">
+          <button type="button" className="panel-collapse" title="Show conversations" onClick={() => setListCollapsed(false)}>
+            »
+          </button>
+        </div>
+      ) : (
       <div className="inbox-list" style={{ width: paneWidths.list, flex: 'none' }}>
         <div className="inbox-filters">
+          <button type="button" className="panel-collapse" title="Hide conversations (full thread)" onClick={() => setListCollapsed(true)}>
+            «
+          </button>
           <select aria-label="View filter" value={view} onChange={(e) => setView(e.target.value as InboxView)}>
             <option value="open">Open</option>
             <option value="all">All sessions</option>
@@ -226,7 +248,8 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
           )}
         </div>
       </div>
-      <div className="inbox-divider" onPointerDown={startResize('list')} />
+      )}
+      {!listCollapsed && <div className="inbox-divider" onPointerDown={startResize('list')} />}
       <div className="inbox-thread" style={showCanvas ? { flex: `0 0 ${paneWidths.thread}px` } : undefined}>
         {current ? (
           <Thread
