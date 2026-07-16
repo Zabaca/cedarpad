@@ -1,0 +1,72 @@
+import type { GuestSession } from './guest-session.ts';
+
+// The guest confinement boundary (canvas ADR-0015, PRD #220 slice 4). PURE — unit-tested
+// off a DB, like decideGate. DEFAULT-DENY: a guest session reaches ONLY what this module
+// explicitly allows, scoped to the link's canvas. Every new edge or bridge route is
+// guest-denied until deliberately listed here; guest-gate.test.ts is the spec.
+//
+// Accepted consequence (ADR-0015): allowing the vite module paths exposes the app's
+// source to a guest — the pad IS served by the vite dev server, so it cannot boot
+// without them. That is a scoped relaxation of PRD #42's pre-auth-disclosure goal:
+// post-capability (a member minted the link), never anonymous.
+
+export type GuestGate = { decision: 'allow' } | { decision: 'deny' };
+
+/** What the gate needs to know about the request: path, method, and which canvas the
+ * client addressed (`x-canvas-id` header, else `?canvas=` — the bridge's own selection
+ * contract). Null when the request names no canvas. */
+export interface GuestRequest {
+  pathname: string;
+  method: string;
+  canvas: string | null;
+}
+
+/** GET-only vite dev-server surface — the pad's own modules. */
+const VITE_PREFIXES = ['/src/', '/@vite/', '/@fs/', '/@id/', '/node_modules/'];
+
+/** Bridge API ops a guest may use, ALWAYS scoped to the link's canvas via the request's
+ * canvas selection. No default-canvas fallback for guests: an unaddressed request is
+ * denied outright (the write_component canvas_id lesson — a wrong-canvas write is
+ * invisible until something 404s; force the address, surface the mistake). */
+const CANVAS_API = new Set([
+  'GET /api/canvas',
+  'GET /api/canvas/stream',
+  'POST /api/canvas/presence',
+  'POST /api/canvas/shapes',
+  'POST /api/canvas/shapes/create',
+  'POST /api/canvas/shapes/update',
+  'POST /api/canvas/delete',
+  'GET /api/components',
+  'POST /api/components/place',
+  'POST /api/alive',
+]);
+
+/** Per-module component ops (own-dir read/write + data write for THAT canvas). Promote/
+ * adopt are deliberately absent — they mutate the workspace-shared tier. */
+const COMPONENT_MODULE = /^\/api\/components\/(?:data\/)?([^/]+)$/;
+const COMPONENT_DENY = new Set(['promote', 'adopt', 'place']); // place is in CANVAS_API; promote/adopt denied
+
+export function decideGuestGate(req: GuestRequest, guest: GuestSession): GuestGate {
+  const { pathname, method } = req;
+  const allow: GuestGate = { decision: 'allow' };
+  const deny: GuestGate = { decision: 'deny' };
+
+  // The Shell SPA (guest mode renders from the same bundle) and its static assets.
+  if (pathname === '/' || pathname.startsWith('/assets/')) return method === 'GET' ? allow : deny;
+
+  // The guest's own pad — exact canvas + workspace, nothing else.
+  if (pathname === `/w/${guest.workspaceId}/canvas/${guest.canvasId}/pad`) return allow;
+
+  // Vite module surface, GET-only.
+  if (method === 'GET' && (VITE_PREFIXES.some((p) => pathname.startsWith(p)) || pathname === '/@react-refresh')) {
+    return allow;
+  }
+
+  // Canvas-addressed bridge ops: the request must explicitly name the link's canvas.
+  if (req.canvas !== guest.canvasId) return deny;
+  if (CANVAS_API.has(`${method} ${pathname}`)) return allow;
+  const mod = COMPONENT_MODULE.exec(pathname);
+  if (mod && !COMPONENT_DENY.has(mod[1] as string) && (method === 'GET' || method === 'PUT')) return allow;
+
+  return deny;
+}

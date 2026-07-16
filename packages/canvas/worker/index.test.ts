@@ -1,8 +1,10 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import * as realAuthGate from './auth-gate.ts';
 import * as realCanvases from '../web-poc/lib/db/queries/canvases.ts';
 import * as realWorkspaces from '../web-poc/lib/db/queries/workspaces.ts';
+import * as realShareLinks from '../web-poc/lib/db/queries/share-links.ts';
+import { mintGuestCookie } from './guest-session.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
@@ -77,6 +79,19 @@ mock.module('../web-poc/lib/db/queries/canvases.ts', () => ({
 afterAll(() => {
   getCanvasImpl = realGetCanvas;
 });
+// #220 slice 4: the guest branch's per-request revocation recheck reads the share-links
+// query — swappable + restored like the two above (guest-session.test.ts and
+// share-links-api.test.ts run the REAL one against their own in-memory DBs).
+const realGetActiveShareLink = realShareLinks.getActiveShareLink;
+let shareLinkRow: { id: string; canvasId: string } | null = null;
+let getActiveShareLinkImpl: typeof realGetActiveShareLink = () => Promise.resolve(shareLinkRow as never);
+mock.module('../web-poc/lib/db/queries/share-links.ts', () => ({
+  ...realShareLinks,
+  getActiveShareLink: (...args: Parameters<typeof realGetActiveShareLink>) => getActiveShareLinkImpl(...args),
+}));
+afterAll(() => {
+  getActiveShareLinkImpl = realGetActiveShareLink;
+});
 // The edge Inbox LIST/detail API is out of scope for this slice — stub it so we can assert the
 // Worker still ROUTES `/api/inbox*` to it (unchanged) without exercising Turso/R2.
 mock.module('./inbox.ts', () => ({
@@ -113,6 +128,9 @@ const { resolve, DEFAULT_WORKSPACE } = await import('./sandbox-resolver.ts');
 // (an authenticated `/` asking ASSETS for `/index.html` got that 307 back and returned it
 // verbatim, so the browser followed it to `/`, which asked for `/index.html` again, forever).
 const env = {
+  BETTER_AUTH_SECRET: 'test-secret-at-least-32-characters-long!!',
+  BETTER_AUTH_URL: 'https://poc.cedarpad.com',
+  WEB_ORIGIN: 'https://poc.cedarpad.com',
   ASSETS: {
     fetch: (req: Request) => {
       const path = new URL(req.url).pathname;
@@ -211,6 +229,80 @@ describe('share door dispatch (#220)', () => {
     const res = await GET('/share/sl_unknown');
     expect(res.status).toBe(404); // the door's "link not found" — NOT the login page
     expect(await res.text()).toBe('link not found');
+    expect(served).toEqual([]);
+    session = { user: { id: 'u_1' } };
+  });
+});
+
+// PRD #220 slice 4: a guest session (signed cs_guest cookie) passes the gate ONLY inside
+// decideGuestGate's per-canvas allowlist, with the link row re-checked every request.
+// The pure allow/deny table lives in guest-gate.test.ts; these prove the WIRING — what
+// actually reaches serveWorkspace/ASSETS vs. the login page.
+describe('guest session gate (#220)', () => {
+  const GUEST = { linkId: 'sl_live', canvasId: 'cv_g', workspaceId: 'ws_g', guestChat: false };
+  let cookie = '';
+  beforeAll(async () => {
+    cookie = `cs_guest=${await mintGuestCookie('test-secret-at-least-32-characters-long!!', GUEST)}`;
+  });
+  const guestFetch = (path: string, init?: RequestInit) =>
+    worker.fetch(
+      new Request(`https://poc.cedarpad.com${path}`, {
+        ...init,
+        headers: { ...(init?.headers as Record<string, string>), cookie },
+      }),
+      env,
+    );
+
+  test("a live guest cookie reaches the link's own pad — proxied to the LINK's workspace container", async () => {
+    session = null;
+    shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
+    const res = await guestFetch('/w/ws_g/canvas/cv_g/pad');
+    expect(await res.text()).toBe('pad-html');
+    expect(served).toEqual([resolve({ id: 'ws_g' })]);
+  });
+
+  test('the Shell SPA serves in guest mode; canvas API proxies only when addressed to the guest canvas', async () => {
+    session = null;
+    shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
+    const spa = await guestFetch('/');
+    expect(await spa.text()).toBe('asset');
+    const api = await guestFetch('/api/canvas', { headers: { 'x-canvas-id': 'cv_g' } });
+    expect(await api.text()).toBe('pad-html');
+    const wrong = await guestFetch('/api/canvas', { headers: { 'x-canvas-id': 'cv_other' } });
+    expect(wrong.headers.get('content-type') ?? '').toContain('text/html'); // login page
+  });
+
+  test('denied surfaces (another pad, canvas list, inbox) get the login page, never a container', async () => {
+    session = null;
+    shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
+    served = [];
+    for (const p of ['/w/ws_g/canvas/cv_other/pad', '/api/canvases', '/api/inbox']) {
+      const res = await guestFetch(p);
+      expect(res.headers.get('content-type') ?? '').toContain('text/html');
+    }
+    expect(served).toEqual([]);
+  });
+
+  test('a REVOKED link kills the session mid-flight: the same cookie now gets the login page', async () => {
+    session = null;
+    shareLinkRow = null; // revoked/deleted — getActiveShareLink resolves null
+    served = [];
+    const res = await guestFetch('/w/ws_g/canvas/cv_g/pad');
+    expect(res.headers.get('content-type') ?? '').toContain('text/html');
+    expect(served).toEqual([]);
+  });
+
+  test('a tampered cookie is no session at all — login page', async () => {
+    session = null;
+    shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
+    served = [];
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/w/ws_g/canvas/cv_g/pad', {
+        headers: { cookie: `${cookie}x` },
+      }),
+      env,
+    );
+    expect(res.headers.get('content-type') ?? '').toContain('text/html');
     expect(served).toEqual([]);
     session = { user: { id: 'u_1' } };
   });

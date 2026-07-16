@@ -20,7 +20,9 @@ import { handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
 import { handleMcpTokenApi } from './mcp-tokens-api.ts';
 import { handleShareLinksApi } from './share-links-api.ts';
-import { handleShareAccept } from './guest-session.ts';
+import { handleShareAccept, readGuestSession } from './guest-session.ts';
+import { decideGuestGate } from './guest-gate.ts';
+import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { IS_CHAT_SEND, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
@@ -220,21 +222,45 @@ export default {
       );
     }
 
-    const gate = decideGate(url.pathname, session);
-    if (gate.decision === 'deny' || !gate.user) {
-      // Sole-gate deny: serve the edge Better Auth login (#47 cutover) so an
-      // unauthenticated user can sign in — never the deleted cs_gate `?key=` page,
-      // and never the container.
-      return renderLogin();
-    }
-    const user = gate.user;
-
     /** Serve `path` out of the static-assets build (shell/dist), preserving method/headers. */
     const asset = (path: string) => {
       const assetUrl = new URL(request.url);
       assetUrl.pathname = path;
       return env.ASSETS.fetch(new Request(assetUrl, request));
     };
+
+    const gate = decideGate(url.pathname, session);
+    if (gate.decision === 'deny' || !gate.user) {
+      // #220 slice 4: no member session — maybe a GUEST session (the signed cs_guest
+      // cookie minted by /share/<linkId>). Confinement is decideGuestGate's default-deny
+      // allowlist scoped to the link's canvas; on top of it, the link row is re-checked
+      // EVERY request so revoking a link kills its sessions at the next hit. Anything
+      // that fails any of these falls through to the login page, exactly like today.
+      const guest = env.BETTER_AUTH_SECRET
+        ? await readGuestSession(request.headers.get('cookie'), env.BETTER_AUTH_SECRET)
+        : null;
+      if (guest) {
+        const canvas = request.headers.get('x-canvas-id') ?? url.searchParams.get('canvas');
+        const guestGate = decideGuestGate({ pathname: url.pathname, method: request.method, canvas }, guest);
+        if (guestGate.decision === 'allow') {
+          const live = await getActiveShareLink(createDbForWorker(env as unknown as Bindings), guest.linkId);
+          if (live && live.canvasId === guest.canvasId) {
+            if (url.pathname === '/') return asset('/');
+            if (url.pathname.startsWith('/assets/')) return asset(url.pathname);
+            // Everything else allowed by the guest gate proxies to the LINK's workspace
+            // container — never the cs_workspace cookie's (a guest can't pick a container).
+            const guestWorkspace =
+              guest.workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: guest.workspaceId };
+            return serveWorkspace(request, env, resolve(guestWorkspace));
+          }
+        }
+      }
+      // Sole-gate deny: serve the edge Better Auth login (#47 cutover) so an
+      // unauthenticated user can sign in — never the deleted cs_gate `?key=` page,
+      // and never the container.
+      return renderLogin();
+    }
+    const user = gate.user;
 
     // The Shell SPA (ADR-0007, PRD #103) — the ONE chrome, served HERE from the static-assets
     // build behind the gate above. THE INVARIANT: `/` must reach env.ASSETS without ever
