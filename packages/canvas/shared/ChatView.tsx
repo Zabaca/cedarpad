@@ -8,6 +8,7 @@ import * as React from 'react';
 
 import { requestFork, setActiveChat } from '../src/agent-link';
 import { EFFORTS, ensureSession, getSnapshot, interrupt, MODELS, openStream, type PendingImage, send, setEffort, setModel, subscribe } from './chat-store';
+import { useGuestScope } from './guest-scope';
 import { MarkdownMessage } from './MarkdownMessage';
 
 // `onDock` (optional) renders the dock affordance — only the embedded pad passes it
@@ -20,6 +21,10 @@ export function ChatView({ chatId, title, onDock }: { chatId: string; title: str
   );
   const [input, setInput] = React.useState('');
   const [pending, setPending] = React.useState<PendingImage[]>([]);
+  // #220: a guest without the link's guestChat grant sees every conversation VIEW-ONLY —
+  // the composer is hidden entirely (the gate 401s sends anyway; don't offer them).
+  const guest = useGuestScope();
+  const readOnly = !!guest && !guest.guestChat;
   const scroller = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   // Always-current ref so the window listener closure never goes stale.
@@ -249,6 +254,7 @@ export function ChatView({ chatId, title, onDock }: { chatId: string; title: str
             ))}
           </div>
         )}
+        {readOnly ? null : (
         <form className="chat-input" onSubmit={submit}>
           <textarea
             ref={textareaRef}
@@ -270,6 +276,7 @@ export function ChatView({ chatId, title, onDock }: { chatId: string; title: str
             Send
           </button>
         </form>
+        )}
       </div>
     </div>
   );

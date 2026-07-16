@@ -11,6 +11,7 @@ import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
 import { wireSync } from './sync';
 import { startPresenceHeartbeat } from './presence';
+import { useGuestScope } from '../shared/guest-scope';
 
 // Registered once, at editor construction: our two custom shapes. `component`
 // renders agent-authored React files; `chat` is a chat session living on the canvas.
@@ -156,6 +157,7 @@ export default function App() {
   const cleanup = useRef<(() => void) | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const [ready, setReady] = useState(false);
+  const guest = useGuestScope();
 
   // Drop a fresh chat card. If a shape is selected (or a chat is focused), the new
   // card lands just to the right of it and is joined by a bound arrow — so chats
@@ -308,9 +310,12 @@ export default function App() {
       <div className="tl-stage">
         <Tldraw shapeUtils={customShapeUtils} components={tldrawComponents} onMount={onMount} />
       </div>
-      <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">
-        ＋ New chat
-      </button>
+      {/* #220: a guest may create a chat only when the share link grants guestChat. */}
+      {!(guest && !guest.guestChat) && (
+        <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">
+          ＋ New chat
+        </button>
+      )}
     </div>
   );
 }

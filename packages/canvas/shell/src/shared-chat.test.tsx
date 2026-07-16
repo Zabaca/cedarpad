@@ -32,3 +32,55 @@ describe('shared chat module is importable from the Shell', () => {
     }
   });
 });
+
+// #220: a guest without the link's guestChat grant sees chats VIEW-ONLY — the composer
+// (form + Send) is not rendered at all. Members (guest probe answers null) keep it.
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { resetGuestScopeForTests } from '../../shared/guest-scope';
+
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// happy-dom provides no EventSource; ChatView's stream effect needs one to exist.
+class FakeEventSource {
+  onmessage: unknown;
+  onerror: unknown;
+  addEventListener() {}
+  close() {}
+}
+(globalThis as unknown as { EventSource: unknown }).EventSource ??= FakeEventSource;
+
+async function renderChatWithGuestProbe(answer: unknown): Promise<HTMLDivElement> {
+  resetGuestScopeForTests();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('/api/guest-session')) return Response.json(answer);
+    return new Response('{}', { headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  const el = document.createElement('div');
+  document.body.appendChild(el);
+  const root = createRoot(el);
+  await act(async () => {
+    root.render(<ChatView chatId={`c_${Math.random()}`} title="t" />);
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 20)); // let the probe resolve
+  });
+  globalThis.fetch = realFetch;
+  return el;
+}
+
+describe('guest view-only chat (#220)', () => {
+  test('a guest WITHOUT guestChat gets no composer', async () => {
+    const el = await renderChatWithGuestProbe({ canvasId: 'cv_g', workspaceId: 'ws_g', guestChat: false });
+    expect(el.querySelector('.chat-input')).toBeNull();
+  });
+
+  test('a guest WITH guestChat — and a member (null) — keep the composer', async () => {
+    const chatty = await renderChatWithGuestProbe({ canvasId: 'cv_g', workspaceId: 'ws_g', guestChat: true });
+    expect(chatty.querySelector('.chat-input')).not.toBeNull();
+    const member = await renderChatWithGuestProbe(null);
+    expect(member.querySelector('.chat-input')).not.toBeNull();
+  });
+});
