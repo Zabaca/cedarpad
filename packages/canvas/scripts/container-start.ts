@@ -17,12 +17,6 @@ const ms = () => `+${Date.now() - t0}ms`;
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
-// The agent's durable output is JUST its component library (a flat dir of .tsx).
-// Persisting only this — not the whole app subtree — keeps OUR app code image-only
-// (deploys can't be shadowed). Saved back at turn-completion by the bridge (ADR 0003).
-// Our seed components ship in the image; the saved tar (once any exist) is the full
-// library and replaces them.
-const COMPONENTS = `${ROOT}src/canvas-components`;
 // The agent's backend extension: custom handlers (a flat dir of .ts), run by the
 // isolated extension server. Same persistence model as components — extension
 // content, image-only core (ADR 0002).
@@ -39,23 +33,8 @@ console.log(
   `[boot] env present: R2_BUCKET=${!!process.env.R2_BUCKET} R2_ACCESS_KEY_ID=${!!process.env.R2_ACCESS_KEY_ID} CLAUDE_CODE_OAUTH_TOKEN=${!!process.env.CLAUDE_CODE_OAUTH_TOKEN}`,
 );
 
-// Boot restore: replace the component library with the saved one (if any). Honors
-// deletions (the tar IS the full library). The image's seed components are the
-// baseline when nothing's saved yet.
-const components = await store.loadComponents(WORKSPACE).catch((err) => {
-  console.error('[boot] component library load failed; using image seed:', err);
-  return null;
-});
-if (components) {
-  await extractOverlay(components, COMPONENTS);
-  console.log(`[boot] ${ms()} component library restored from R2`);
-} else {
-  console.log(`[boot] ${ms()} no saved components; using image seed library`);
-}
-
-// ADR-0014: the two live component trees. The legacy components.tar restore above keeps
-// the default workspace's historical library visible (it lands in the read-only platform
-// dir position and is never flushed again); these two are where writes go now.
+// ADR-0014: the two live component trees (platform base `src/canvas-components/` is
+// image-only and never restored from R2).
 const SHARED_COMPONENTS = `${ROOT}shared/components`;
 await Bun.spawn(['mkdir', '-p', SHARED_COMPONENTS]).exited;
 const sharedComponents = await store.loadSharedComponents(WORKSPACE).catch((err) => {

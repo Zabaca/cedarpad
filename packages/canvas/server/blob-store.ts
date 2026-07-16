@@ -13,12 +13,6 @@ import type { ChatMeta } from './chat-meta.ts';
 export const canvasStateKey = (ws: string, canvas: string): string =>
   `workspaces/${ws}/canvases/${canvas}/canvas-state.json`;
 
-/** workspace-scoped component library tarball: just src/canvas-components/ (the
- * agent's authored .tsx files), NOT the whole app subtree. Our own app code stays
- * image-only so deploys can't be shadowed. New key so the old whole-subtree
- * overlay.tar (incompatible tar paths) is never read. */
-export const componentsKey = (ws: string): string => `workspaces/${ws}/components.tar`;
-
 /** workspace-scoped SHARED component library tarball: shared/components/ — the promote
  * target (ADR-0014). Without this, promote MOVES a file out of persistence and a restart
  * deletes the component entirely. */
@@ -115,14 +109,6 @@ export class BlobStore {
 
   async saveCanvasState(ws: string, canvas: string, state: CanvasState): Promise<void> {
     await this.backend.put(canvasStateKey(ws, canvas), enc.encode(JSON.stringify(state)));
-  }
-
-  loadComponents(ws: string): Promise<Uint8Array | null> {
-    return this.backend.get(componentsKey(ws));
-  }
-
-  async saveComponents(ws: string, bytes: Uint8Array): Promise<void> {
-    await this.backend.put(componentsKey(ws), bytes);
   }
 
   loadSharedComponents(ws: string): Promise<Uint8Array | null> {

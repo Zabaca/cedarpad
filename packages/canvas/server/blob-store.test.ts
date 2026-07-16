@@ -9,7 +9,6 @@ import {
   BlobStore,
   canvasStateKey,
   fsBackend,
-  componentsKey,
   memBackend,
   sessionsKey,
   skillsKey,
@@ -20,10 +19,6 @@ const sampleState = (): CanvasState => ({ version: 3, shapes: [] });
 describe('blob keys', () => {
   test('B1 canvasStateKey', () => {
     expect(canvasStateKey('ws1', 'c1')).toEqual('workspaces/ws1/canvases/c1/canvas-state.json');
-  });
-
-  test('B2 componentsKey', () => {
-    expect(componentsKey('ws1')).toEqual('workspaces/ws1/components.tar');
   });
 
   test('B2b sessionsKey', () => {
@@ -58,13 +53,6 @@ describe('BlobStore', () => {
     };
     const store = new BlobStore(broken);
     expect(store.loadCanvasState('ws1', 'c1')).rejects.toThrow(/backend down/);
-  });
-
-  test('B6 component-library bytes round-trip', async () => {
-    const store = new BlobStore(memBackend());
-    const bytes = new Uint8Array([1, 2, 3, 255]);
-    await store.saveComponents('ws1', bytes);
-    expect(await store.loadComponents('ws1')).toEqual(bytes);
   });
 
   test('B6b session bytes round-trip', async () => {
