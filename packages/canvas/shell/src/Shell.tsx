@@ -109,7 +109,51 @@ function useDismiss(open: boolean, ref: React.RefObject<HTMLElement | null>, onC
   }, [open, ref, onClose]);
 }
 
+// #220 slice 5: what the edge answers on GET /api/guest-session — null for members,
+// the link's scope for a cs_guest session (worker/guest-session.ts is the contract's owner).
+interface GuestScope {
+  canvasId: string;
+  workspaceId: string;
+  guestChat: boolean;
+}
+
 export function Shell() {
+  // Guest probe BEFORE any workspace chrome mounts: a guest session must render only the
+  // locked pad and never call the registries (the gate would deny them anyway — don't ask).
+  const [guest, setGuest] = useState<GuestScope | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/guest-session')
+      .then((r) => (r.ok ? (r.json() as Promise<GuestScope | null>) : null))
+      .then((g) => alive && setGuest(g))
+      .catch(() => alive && setGuest(null));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (guest === undefined) return null;
+  if (guest) return <GuestShell guest={guest} />;
+  return <MemberShell />;
+}
+
+// Guest mode: the same bundle, none of the chrome — a fullscreen pad hard-locked to the
+// link's canvas. The pad app inside the iframe falls back to the per-browser guest
+// identity (#211) for attribution, so no session plumbing is needed here.
+function GuestShell({ guest }: { guest: GuestScope }) {
+  return (
+    <div className="shell shell-guest">
+      <div className="shell-stage stage-canvas">
+        <iframe
+          className="pad-frame"
+          title="Render Pad"
+          src={`/w/${encodeURIComponent(guest.workspaceId)}/canvas/${encodeURIComponent(guest.canvasId)}/pad`}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MemberShell() {
   const [stage, setStage] = useState<Stage>(() => stageFromUrl(window.location.search));
   // Per-tab memory of each stage's last URL (canvas's `?canvas=<id>`, inbox's filters — see
   // stage-memory.ts), so the rail restores them instead of always landing on the bare default.

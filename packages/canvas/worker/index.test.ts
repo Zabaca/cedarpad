@@ -283,6 +283,18 @@ describe('guest session gate (#220)', () => {
     expect(served).toEqual([]);
   });
 
+  test('GET /api/guest-session answers the guest scope for guests and null for members — never proxied', async () => {
+    session = null;
+    shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
+    served = [];
+    const guestRes = await guestFetch('/api/guest-session');
+    expect(await guestRes.json()).toEqual({ canvasId: 'cv_g', workspaceId: 'ws_g', guestChat: false });
+    session = { user: { id: 'u_1' } };
+    const memberRes = await GET('/api/guest-session');
+    expect(await memberRes.json()).toBeNull();
+    expect(served).toEqual([]);
+  });
+
   test('a REVOKED link kills the session mid-flight: the same cookie now gets the login page', async () => {
     session = null;
     shareLinkRow = null; // revoked/deleted — getActiveShareLink resolves null

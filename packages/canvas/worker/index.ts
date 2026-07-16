@@ -241,10 +241,20 @@ export default {
         : null;
       if (guest) {
         const canvas = request.headers.get('x-canvas-id') ?? url.searchParams.get('canvas');
+        // The one guest-only edge endpoint sits OUTSIDE decideGuestGate's proxy allowlist:
+        // it's answered here, never proxied. The Shell probes it on boot to pick guest mode.
+        const isGuestProbe = url.pathname === '/api/guest-session' && request.method === 'GET';
         const guestGate = decideGuestGate({ pathname: url.pathname, method: request.method, canvas }, guest);
-        if (guestGate.decision === 'allow') {
+        if (isGuestProbe || guestGate.decision === 'allow') {
           const live = await getActiveShareLink(createDbForWorker(env as unknown as Bindings), guest.linkId);
           if (live && live.canvasId === guest.canvasId) {
+            if (isGuestProbe) {
+              return Response.json({
+                canvasId: guest.canvasId,
+                workspaceId: guest.workspaceId,
+                guestChat: guest.guestChat,
+              });
+            }
             if (url.pathname === '/') return asset('/');
             if (url.pathname.startsWith('/assets/')) return asset(url.pathname);
             // Everything else allowed by the guest gate proxies to the LINK's workspace
@@ -295,6 +305,10 @@ export default {
     // Edge Shell (ADR-0007, #46). The launcher + its registry API are served HERE — no
     // container is proxied to for either — so listing/creating a workspace never wakes
     // one. Only opening a workspace (/w/:id) routes to a container.
+
+    // #220 slice 5: a MEMBER session is never a guest — the Shell's boot probe answers
+    // null here so the full chrome renders. (The guest branch above answers the scope.)
+    if (url.pathname === '/api/guest-session') return Response.json(null);
 
     // Registry API the launcher calls (owner-OR-member list, owner create).
     if (url.pathname === '/api/workspaces') return handleWorkspacesApi(request, env, user);

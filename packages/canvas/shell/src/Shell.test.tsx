@@ -39,12 +39,16 @@ const CANVASES = { workspaceId: 'ws_abc', canvases: [{ id: 'cv_1', name: 'Roadma
 
 const realFetch = globalThis.fetch;
 let calls: string[] = [];
+// #220 slice 5: what GET /api/guest-session answers — null for members (the default),
+// the guest scope for a cs_guest session.
+let guestInfo: { canvasId: string; workspaceId: string; guestChat: boolean } | null = null;
 
 /** The two edge APIs the shell talks to. Everything else 404s so a stray call is visible. */
 function stubEdge() {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     calls.push(`${init?.method ?? 'GET'} ${url}`);
+    if (url === '/api/guest-session') return Response.json(guestInfo);
     if (url === '/api/workspaces') return Response.json(WORKSPACES);
     if (url === '/api/canvases') return Response.json(CANVASES);
     if (url.startsWith('/api/inbox?')) return Response.json({ items: [] });
@@ -488,5 +492,32 @@ describe('the docked chat panel on the canvas stage', () => {
     window.history.replaceState(null, '', '/?canvas=cv_1');
     await mountShell();
     expect(container.querySelector('.canvas-dock-head')?.textContent).toContain('Fix login');
+  });
+});
+
+// PRD #220 slice 5: a guest session (the edge answers /api/guest-session with the link's
+// scope) renders ONLY the locked pad — no rail, no canvas list, no stages. Members
+// (guest-session answers null) keep the full shell, covered by every test above.
+describe('guest mode (#220)', () => {
+  test('a guest renders the locked pad fullscreen with no workspace chrome', async () => {
+    guestInfo = { canvasId: 'cv_g', workspaceId: 'ws_g', guestChat: false };
+    await act(async () => root.unmount());
+    container.remove();
+    await mountShell();
+    await waitFor(() => container.querySelector('iframe') !== null);
+    expect(container.querySelector('iframe')?.getAttribute('src')).toBe('/w/ws_g/canvas/cv_g/pad');
+    expect(container.querySelector('.lp-rail')).toBeNull();
+    guestInfo = null;
+  });
+
+  test('a guest shell never calls the workspace/canvas registries', async () => {
+    guestInfo = { canvasId: 'cv_g', workspaceId: 'ws_g', guestChat: false };
+    await act(async () => root.unmount());
+    container.remove();
+    calls = [];
+    await mountShell();
+    await waitFor(() => container.querySelector('iframe') !== null);
+    expect(calls.some((c) => c.includes('/api/workspaces') || c.includes('/api/canvases'))).toBe(false);
+    guestInfo = null;
   });
 });
