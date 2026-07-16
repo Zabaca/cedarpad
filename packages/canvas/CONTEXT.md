@@ -419,6 +419,20 @@ The round-trip:
   store listener also watches `binding` records to re-push the affected arrow when
   a human binds/unbinds. A bound terminal follows its target on move.
 
+## Guest share links (designed, not built — ADR 0015)
+
+- **Share Link** — a member-minted, revocable capability row (`share_links`, Turso) granting
+  outsiders access to exactly one canvas, with per-link permissions
+  `{collaboration, guestChat}`. No default expiry; lives until revoked.
+- **Guest Session** — a real session minted at `/share/<linkId>`, carrying
+  `{linkId, canvasId, permissions}`. Flows through the same sole edge gate as members; the
+  gate confines it to an explicit per-canvas path allowlist. Distinct from the per-browser
+  **guest identity** (#211), which is only the attribution/display-name layer a guest session
+  reuses.
+- **Guest mode (Shell)** — the same Shell SPA with workspace chrome hidden, hard-locked to
+  the link's canvas. Member conversations render view-only; a `guestChat` link lets guests
+  start their own canvas-scoped conversation.
+
 ## Deliberately deferred
 
 - **Per-user Inbox read state.** `conversations.unread` stays a single row-level boolean
