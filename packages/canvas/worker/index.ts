@@ -20,6 +20,7 @@ import { handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
 import { handleMcpTokenApi } from './mcp-tokens-api.ts';
 import { handleShareLinksApi } from './share-links-api.ts';
+import { handleShareAccept } from './guest-session.ts';
 import { IS_CHAT_SEND, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
@@ -203,6 +204,19 @@ export default {
         session?.user ?? null,
         inviteMatch[1],
         { signUp: inviteSignUp(env) },
+      );
+    }
+
+    // #220: the guest share door — reachable WITHOUT a session, like /invite (the link id
+    // is the credential). A live link mints the signed cs_guest cookie (worker/guest-session.ts)
+    // and 302s into the app; the gate below learns to accept that cookie (slice 4).
+    const shareMatch = /^\/share\/([^/]+)$/.exec(url.pathname);
+    if (shareMatch) {
+      return handleShareAccept(
+        request,
+        createDbForWorker(env as unknown as Bindings),
+        env.BETTER_AUTH_SECRET ?? '',
+        shareMatch[1] as string,
       );
     }
 

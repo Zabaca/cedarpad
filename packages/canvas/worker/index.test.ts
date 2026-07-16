@@ -203,6 +203,19 @@ describe('share-links dispatch (#220)', () => {
   });
 });
 
+// PRD #220 slice 3: the guest door is pre-gate like /invite — the link id is the credential.
+// Full mint behavior lives in guest-session.test.ts; this is the routing proof.
+describe('share door dispatch (#220)', () => {
+  test('UNAUTHENTICATED /share/<linkId> reaches the door (unknown link ⇒ its own 404), never login, never a container', async () => {
+    session = null;
+    const res = await GET('/share/sl_unknown');
+    expect(res.status).toBe(404); // the door's "link not found" — NOT the login page
+    expect(await res.text()).toBe('link not found');
+    expect(served).toEqual([]);
+    session = { user: { id: 'u_1' } };
+  });
+});
+
 describe('POST /api/jobs/dev-agent/run — manual Jobs trigger (ADR-0011: a proxied kick)', () => {
   test('proxies the kick to the warm default container’s bridge and returns its answer through', async () => {
     const res = await worker.fetch(
