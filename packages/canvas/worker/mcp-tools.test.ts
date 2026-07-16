@@ -7,7 +7,7 @@ import * as schema from '../web-poc/lib/db/schema.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { addWorkspaceMember, createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
-import { buildMcpTools } from './mcp-tools.ts';
+import { buildMcpTools, WriteComponentInput } from './mcp-tools.ts';
 
 // In-memory DB built from the real migrations (mirrors shell.test.ts).
 const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
@@ -244,6 +244,7 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
 
   test('list/read/write component proxy the bridge component routes, canvas-scoped and access-checked', async () => {
     bridgeCalls = [];
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'ComponentBoard' });
     bridgeResponses = {
       '/api/components': { components: ['KpiCard'] },
       '/api/components/KpiCard': { module: 'KpiCard', source: 'export default …' },
@@ -253,18 +254,36 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(await tools.readComponent({ workspace_id: WS, module: 'KpiCard' })).toEqual({ module: 'KpiCard', source: 'export default …' });
 
     bridgeResponses['/api/components/NewCard'] = { ok: true, module: 'NewCard', reloaded: 1 };
-    const write = await tools.writeComponent({ workspace_id: WS, module: 'NewCard', source: 'export default function NewCard(){return null}' });
+    const write = await tools.writeComponent({
+      workspace_id: WS,
+      canvas_id: board.id,
+      module: 'NewCard',
+      source: 'export default function NewCard(){return null}',
+    });
     expect(write).toEqual({ ok: true, module: 'NewCard', reloaded: 1 });
     expect(bridgeCalls.at(-1)).toMatchObject({
       workspaceId: WS,
       path: '/api/components/NewCard',
       method: 'PUT',
+      headers: { 'x-canvas-id': board.id },
       body: { source: 'export default function NewCard(){return null}' },
     });
 
     // A bridge error surfaces as a thrown error, and access is workspace-checked.
     await expect(tools.readComponent({ workspace_id: WS, module: 'ZzGhost' })).rejects.toThrow(/404|not found/);
     await expect(tools.listComponents({ workspace_id: OTHER_WS })).rejects.toThrow(/not found/);
+  });
+
+  test('write_component requires canvas_id — an omitted or unregistered one is rejected before it can land in the wrong canvas', async () => {
+    // Schema level: the MCP protocol boundary rejects a missing canvas_id outright (unlike
+    // read_component/list_components, which default to the workspace's default canvas).
+    expect(WriteComponentInput.safeParse({ workspace_id: WS, module: 'NewCard', source: 'x' }).success).toBe(false);
+
+    // Tool level: a canvas_id that isn't registered to this workspace is rejected too (same
+    // guard read_canvas already has for an unknown canvas).
+    await expect(
+      tools.writeComponent({ workspace_id: WS, canvas_id: 'cv_ghost', module: 'NewCard', source: 'x' }),
+    ).rejects.toThrow(/canvas/);
   });
 
   test('write_data proxies the data-file route, validates the name at the edge, access-checked', async () => {

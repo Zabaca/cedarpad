@@ -47,7 +47,12 @@ export const ReadCanvasInput = z.object({
 export const ListComponentsInput = ReadCanvasInput;
 const ComponentModule = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/, 'component name: letters/digits/_/-, no extension');
 export const ReadComponentInput = ReadCanvasInput.extend({ module: ComponentModule });
-export const WriteComponentInput = ReadComponentInput.extend({ source: z.string().min(1) });
+// canvas_id is REQUIRED here (unlike the read paths' default-canvas fallback): a write
+// silently landing in the default canvas's own dir when the caller meant a specific one
+// is invisible until something tries to place/resolve the module there — an omitted
+// canvas_id here, followed by place_component on a different canvas, 404s with no hint
+// why. Forcing the caller to say which canvas surfaces the mistake immediately.
+export const WriteComponentInput = ReadComponentInput.extend({ canvas_id: z.string().min(1), source: z.string().min(1) });
 export const WriteDataInput = ReadCanvasInput.extend({
   name: z
     .string()
