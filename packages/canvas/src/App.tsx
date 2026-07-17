@@ -11,6 +11,7 @@ import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
 import { setExpandHandler } from './component-expand';
 import { ComponentFullscreenOverlay } from './ComponentFullscreen';
+import { ComponentPalette } from './ComponentPalette';
 import { wireSync } from './sync';
 import { startPresenceHeartbeat } from './presence';
 import { loadGuestScope, useGuestScope } from '../shared/guest-scope';
@@ -179,6 +180,8 @@ function CanvasApp() {
   const [ready, setReady] = useState(false);
   // Which component shape (if any) is expanded fullscreen over the canvas (⛶ button).
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // The built-in component palette panel (browse the library, one-click place).
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const guest = useGuestScope();
 
   // Drop a fresh chat card. If a shape is selected (or a chat is focused), the new
@@ -336,6 +339,21 @@ function CanvasApp() {
       </div>
       {expandedId && editorRef.current && (
         <ComponentFullscreenOverlay editor={editorRef.current} shapeId={expandedId} onClose={() => setExpandedId(null)} />
+      )}
+      {/* Built-in component palette (members only — placement is a write). */}
+      {!guest && paletteOpen && (
+        <ComponentPalette
+          viewportCenter={() => {
+            const b = editorRef.current?.getViewportPageBounds();
+            return b ? { x: b.midX, y: b.midY } : { x: 500, y: 350 };
+          }}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
+      {!guest && (
+        <button type="button" className="palette-fab" onClick={() => setPaletteOpen((o) => !o)} disabled={!ready} title="Browse and place components">
+          ❖ Components
+        </button>
       )}
       {/* #220: a guest may create a chat only when the share link grants guestChat. */}
       {!(guest && !guest.guestChat) && (
