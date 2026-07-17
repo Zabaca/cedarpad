@@ -119,6 +119,21 @@ const defaultWorkspaceRepo = async (env: Env, requested?: string) => {
   }
 };
 
+/** Domain cutover: a request on a non-canonical host (poc.cedarpad.com) 301s to the same
+ * path+query on the canonical origin (WEB_ORIGIN). Same-host / unset / unparseable origin
+ * ⇒ null (dev + preview + tests serve wherever they are). Exported for tests. */
+export function canonicalRedirect(url: URL, webOrigin: string | undefined): Response | null {
+  if (!webOrigin) return null;
+  let canonicalHost: string;
+  try {
+    canonicalHost = new URL(webOrigin).host;
+  } catch {
+    return null;
+  }
+  if (url.host === canonicalHost || url.host.endsWith('.workers.dev') || url.hostname === 'localhost') return null;
+  return Response.redirect(`${webOrigin}${url.pathname}${url.search}`, 301);
+}
+
 export default {
   // Cron trigger (ADR-0007 PRD #51, re-shaped by ADR-0011). A scheduled dev-agent run is a
   // chat turn kicked headlessly on the warm default container's bridge: mint the per-turn
@@ -149,6 +164,12 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
+
+    // Domain cutover (2026-07-17): app.cedarpad.com is canonical; the legacy
+    // poc.cedarpad.com host 301s to the same path+query so old share links and
+    // bookmarks keep working. WEB_ORIGIN holds the canonical origin.
+    const canonical = canonicalRedirect(url, env.WEB_ORIGIN);
+    if (canonical) return canonical;
 
     // Public build stamp (#74). deploy.sh polls this post-deploy to confirm the SERVED
     // container image's SHA, and it carries no Better Auth session — so it's routed HERE,

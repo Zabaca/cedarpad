@@ -28,7 +28,7 @@ set -uo pipefail
 SCRIPT_DIR=$(cd "$(dirname "$0")/.." && pwd)          # packages/canvas (absolute)
 REPO_ROOT=$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)
 SHA=$(cd "$REPO_ROOT" && git rev-parse --short HEAD)
-URL=${CANVAS_URL:-https://poc.cedarpad.com}
+URL=${CANVAS_URL:-https://app.cedarpad.com}
 TRIES=${POLL_TRIES:-60}
 CANVAS_REL=$(cd "$SCRIPT_DIR" && git rev-parse --show-prefix | sed 's:/*$::')  # e.g. packages/canvas
 

@@ -4,10 +4,15 @@
   "main": "worker/index.ts",
   "compatibility_date": "2025-11-01",
   "compatibility_flags": ["nodejs_compat"],
-  // Custom domain: wrangler provisions the proxied DNS record + TLS cert and binds
-  // poc.cedarpad.com to this worker (the cedarpad.com zone must be in this account).
-  // The exact-match record takes precedence over the zone's *.cedarpad.com wildcard.
-  "routes": [{ "pattern": "poc.cedarpad.com", "custom_domain": true }],
+  // Custom domains: wrangler provisions the proxied DNS records + TLS certs and binds
+  // both hosts to this worker (the cedarpad.com zone must be in this account). The
+  // exact-match records take precedence over the zone's *.cedarpad.com wildcard.
+  // app.cedarpad.com is CANONICAL; the worker 301s poc.cedarpad.com → app (cutover
+  // 2026-07-17 — old share links and bookmarks keep working via the redirect).
+  "routes": [
+    { "pattern": "app.cedarpad.com", "custom_domain": true },
+    { "pattern": "poc.cedarpad.com", "custom_domain": true }
+  ],
   // Workers Logs: stream the Worker's console + request logs via `wrangler tail`
   // or the dashboard (replaces the ad-hoc /__diag route). Container stdout is
   // separate (sandbox getProcessLogs / CF container logs).
@@ -21,8 +26,8 @@
   // prod). Secrets (TURSO_*, VOYAGE_API_KEY, BETTER_AUTH_SECRET) are pushed via
   // workerSecrets, not here.
   "vars": {
-    "BETTER_AUTH_URL": "https://poc.cedarpad.com",
-    "WEB_ORIGIN": "https://poc.cedarpad.com",
+    "BETTER_AUTH_URL": "https://app.cedarpad.com",
+    "WEB_ORIGIN": "https://app.cedarpad.com",
     // Prod is James-only: Better Auth signup is disabled at the edge (dev leaves it
     // open — the var is unset in .dev.vars). See web-poc/worker/auth.ts. (PRD #49 #15)
     "AUTH_DISABLE_SIGNUP": "true",

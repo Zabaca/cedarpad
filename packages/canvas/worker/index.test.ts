@@ -715,3 +715,25 @@ describe('the same-origin chat send attaches the workspace’s connected MCP tok
     expect(servedMcpTokenHeaders).toEqual([null]);
   });
 });
+
+// Domain cutover: poc.cedarpad.com 301s to the canonical origin (WEB_ORIGIN), path+query
+// intact. Dynamic import — a static one would hoist above the mock.module calls and load
+// the real @cloudflare/sandbox.
+const { canonicalRedirect } = await import('./index.ts');
+
+describe('canonicalRedirect', () => {
+  const CANON = 'https://app.cedarpad.com';
+
+  test('legacy host redirects to the same path+query on the canonical origin', () => {
+    const r = canonicalRedirect(new URL('https://poc.cedarpad.com/share/sl_1?x=1'), CANON);
+    expect(r?.status).toBe(301);
+    expect(r?.headers.get('location')).toBe('https://app.cedarpad.com/share/sl_1?x=1');
+  });
+
+  test('canonical host, workers.dev (preview), localhost, and unset origin pass through', () => {
+    expect(canonicalRedirect(new URL('https://app.cedarpad.com/x'), CANON)).toBeNull();
+    expect(canonicalRedirect(new URL('https://agent-canvas-preview.james-99a.workers.dev/x'), CANON)).toBeNull();
+    expect(canonicalRedirect(new URL('http://localhost:8787/x'), CANON)).toBeNull();
+    expect(canonicalRedirect(new URL('https://poc.cedarpad.com/x'), undefined)).toBeNull();
+  });
+});
