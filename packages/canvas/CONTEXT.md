@@ -325,6 +325,15 @@ The agent's "thinking" and replies to the human are its normal chat text — not
 tool. The human watches shapes appear in real time via the canvas SSE while the
 text streams on the chat channel.
 
+**`send_message` (cross-chat)** — a chat turn may post a message into ANOTHER
+chat card's thread on its canvas and kick that card's turn (parity with the edge
+MCP's `send_message`). Bridge-bound seam (ChatMeta + the turn dispatcher),
+fire-and-forget: the reply streams into the target card, the sender polls
+`read_canvas`/`read_connected`. Guard rails: no self-send, the target must be a
+chat card on the sender's canvas, an in-flight target refuses (one turn per
+chat), and the delivered message is prefixed `[from <chatId>]` so the receiving
+thread knows who is speaking. Chat flavor only — dev-agent turns never see it.
+
 ## Custom components — a real, file-based component library
 
 For anything the fixed primitives express poorly (charts, tables, KPI cards,
@@ -389,6 +398,10 @@ The round-trip:
   props), `Dashboard` (composes `KpiCard`), `MermaidDiagram` (real `mermaid` import,
   render-and-inject). Agent-authored files are excluded from `tsc` (vite/esbuild
   compiles them with no type gate, matching runtime).
+- **Component palette** (`src/ComponentPalette.tsx`) — pad-chrome panel (❖
+  Components fab, members only) over `GET /api/components` + `POST
+  /api/components/place`: browse/filter the library, one-click place at the
+  viewport center. The human's no-agent placement path.
 
 > **Dependency on the dev server / security.** Because vite is the compiler, this
 > path is **dev-server-only** (a static `vite build` has no compiler for files
