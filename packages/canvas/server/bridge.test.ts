@@ -977,3 +977,36 @@ describe('POST /api/canvas/presence — ephemeral presence over the canvas strea
     expect((await beat({ userId: 'u_1' })).status).toBe(400);
   });
 });
+
+// Cross-chat messaging: the bridge-bound seam behind the agent's send_message tool.
+import { sendToChat } from './bridge.ts';
+
+describe('sendToChat (agent cross-chat messaging)', () => {
+  test('dispatches a turn for the target chat on the sender canvas', () => {
+    const dispatched: Array<{ chatId: string; message: string; canvasId?: string }> = [];
+    const restore = setChatTurnDispatcher((chatId, message, _sid, _img, _model, _fork, _effort, canvasId) => {
+      dispatched.push({ chatId, message, canvasId });
+    });
+    try {
+      const res = sendToChat('shape:other', '[from shape:me] hello', 'cv_route');
+      expect(res).toEqual({ ok: true });
+      expect(dispatched).toEqual([{ chatId: 'shape:other', message: '[from shape:me] hello', canvasId: 'cv_route' }]);
+    } finally {
+      restore();
+    }
+  });
+
+  test('refuses while the target has a turn in flight (one turn per chat)', () => {
+    const restore = setChatTurnDispatcher(() => {
+      throw new Error('must not dispatch');
+    });
+    aborters.set('shape:busy', new AbortController());
+    try {
+      const res = sendToChat('shape:busy', 'hi');
+      expect(res.ok).toBe(false);
+    } finally {
+      aborters.delete('shape:busy');
+      restore();
+    }
+  });
+});

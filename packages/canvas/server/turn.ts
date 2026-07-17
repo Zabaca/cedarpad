@@ -11,7 +11,7 @@
 // never the "what" (each collaborator). All imports are type-only — a turn is pure orchestration
 // parameterized by injected functions.
 
-import type { CanvasImage, ChatEvent, OpenPr, runChat } from './agent.ts';
+import type { CanvasImage, ChatEvent, OpenPr, SendToChat, runChat } from './agent.ts';
 import type { CanvasSession } from './canvas-sessions.ts';
 import type { EndTurnDeps } from './inbox.ts';
 
@@ -93,6 +93,10 @@ export interface TurnDeps {
   }) => Promise<void>;
   /** Mirror this session's transcript to R2 (resume-restore substrate). Best-effort. */
   backupTranscript: (sessionId: string) => Promise<unknown>;
+  /** Cross-chat messaging seam (the bridge holds ChatMeta + the dispatcher): the agent's
+   *  `send_message` tool posts into another chat card and kicks its turn. Optional — absent
+   *  in contexts without a dispatcher (tests) ⇒ the tool is omitted. */
+  sendToChat?: SendToChat;
 }
 
 /**
@@ -143,6 +147,9 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // Chat turns drop the generic Write/Edit tools (component/data authoring goes through
       // the registered canvas tools); dev-agent turns keep the full preset for worktree edits.
       flavor.kind,
+      // Cross-chat messaging is a CANVAS capability — chat turns only (a dev-agent turn has no
+      // chat cards to address).
+      flavor.kind === 'chat' ? deps.sendToChat : undefined,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
       // Row-at-start: index the session the moment its id lands (the init event). Tracked (not

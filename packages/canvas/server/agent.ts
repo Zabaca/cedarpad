@@ -94,7 +94,41 @@ export type EndTurn = (input: EndTurnInput) => Promise<string>;
  * chat, tests) ⇒ the tool is omitted, unchanged. ADR-0009 Tier 2 / #126. */
 export type OpenPr = (input: { title: string; body: string; commitMessage: string }) => Promise<string>;
 
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr) {
+/** The `send_message` tool body (bridge binds it — it holds ChatMeta + the turn dispatcher).
+ * Posts a message into ANOTHER chat card's thread and kicks its turn, fire-and-forget (the
+ * reply streams into that card; the sender polls read_canvas/read_connected). Present ⇒ the
+ * agent gets a `send_message` tool; absent (tests, non-bridge contexts) ⇒ omitted. */
+export type SendToChat = (targetChatId: string, message: string, canvasId?: string) => { ok: true } | { ok: false; error: string };
+
+/** The `send_message` tool body, extracted so the guard rails unit-test without the SDK:
+ * self-sends and unknown targets are refused; a delivered message is attributed to the
+ * origin chat card and routed on the SENDER's canvas. */
+export function sendMessageOp(
+  store: CanvasStore,
+  sendToChat: SendToChat,
+  input: { chat_id: string; message: string },
+  originChatId?: string,
+  canvasId?: string,
+): string {
+  const { chat_id, message } = input;
+  if (chat_id === originChatId) return 'That is YOUR OWN chat — send_message targets a different chat card.';
+  const target = store.getState().shapes.find((s) => s.type === 'chat' && s.id === chat_id);
+  if (!target) return `No chat card with id "${chat_id}" on this canvas. Use read_canvas to list chat shapes.`;
+  const sent = sendToChat(chat_id, originChatId ? `[from ${originChatId}] ${message}` : message, canvasId);
+  if (!sent.ok) return `Not delivered: ${sent.error}`;
+  return `Delivered to ${chat_id}; its turn is running. The reply appears in that chat card — poll read_canvas/read_connected if you need it.`;
+}
+
+/** The Inbox-list line for an end_turn call: the given summary, else derived from the
+ *  question (the Stop-gate-nudged path routinely supplies question-only calls — a required
+ *  summary made those fail schema validation and retry, doubling end_turn in the transcript). */
+export function endTurnSummaryLine(summary: string | undefined, question: string | undefined): string {
+  if (summary) return summary;
+  if (question) return question.length > 140 ? `${question.slice(0, 140)}…` : question;
+  return 'Turn complete.';
+}
+
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat) {
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -316,6 +350,23 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         { ids: z.array(z.string()).min(2), edge: z.enum(['left', 'right', 'top', 'bottom', 'center-x', 'center-y']) },
         async ({ ids, edge }) => result(alignOp(store, ids, edge)),
       ),
+      // Cross-chat messaging: present only when the bridge injected the seam (it holds ChatMeta
+      // + the turn dispatcher). Mirrors the edge MCP's send_message, scoped to chat cards on
+      // THIS canvas. Fire-and-forget; the origin chat is stamped into the delivered message so
+      // the receiving thread knows who is speaking.
+      ...(sendToChat
+        ? [
+            tool(
+              'send_message',
+              "Send a message into ANOTHER chat card's thread on this canvas and trigger it to take a turn. Fire-and-forget: the reply streams into that card, not back to you — poll read_canvas/read_connected to see it. The message is attributed to your chat card in that thread. Do not use this to reply to a message that itself arrived via send_message unless the human asked for an ongoing exchange (avoid agent-to-agent loops).",
+              {
+                chat_id: z.string().describe("The target chat card's shape id (see read_canvas / read_connected)."),
+                message: z.string().min(1).describe('The message to post into that chat.'),
+              },
+              async ({ chat_id, message }) => result({ text: sendMessageOp(store, sendToChat, { chat_id, message }, originChatId, canvasId) }),
+            ),
+          ]
+        : []),
       // The turn's mandatory terminal (ADR-0012): present only when the bridge injected the inbox
       // seam. Declares the ending — needs_human promotes to the Inbox + notifies; done records
       // completion. Either way the agent then STOPS — this tool NEVER blocks for a reply.
@@ -326,14 +377,18 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
               'ALWAYS call this exactly once as the LAST tool call of your turn, to declare how the turn ends. outcome "needs_human": you are blocked on the human — a decision, approval, or information only they have; supply `question` (it is posted to their Inbox and they are notified; the tool does NOT wait — after calling it, stop; their reply resumes this session). outcome "done": the work for this turn is complete and nothing is pending on the human; the summary is shown in their Inbox list. Never end a turn with an unanswered question in prose — route it through outcome "needs_human". Say everything important in your message first: `summary` is for the Inbox list, not a substitute for your reply.',
               {
                 outcome: z.enum(['needs_human', 'done']).describe('needs_human = blocked on the human (requires `question`); done = work complete, nothing pending.'),
-                summary: z.string().describe('One-line summary of where the turn ended (shown in the inbox list).'),
+                // Optional with a derived fallback: a REQUIRED summary made the schema reject a
+                // question-only needs_human call, forcing a visible retry (a doubled end_turn in
+                // the transcript). Missing ⇒ derived from the question / a plain "Turn complete."
+                summary: z.string().optional().describe('One-line summary of where the turn ended (shown in the inbox list).'),
                 question: z.string().optional().describe('needs_human only: the full question / context for the human.'),
               },
               async ({ outcome, summary, question }) => {
                 if (outcome === 'needs_human' && !question) {
                   return result({ text: 'outcome "needs_human" requires a `question` — call end_turn again with the question for the human.' });
                 }
-                const input: EndTurnInput = outcome === 'done' ? { outcome, summary } : { outcome, summary, question: question! };
+                const line = endTurnSummaryLine(summary, question);
+                const input: EndTurnInput = outcome === 'done' ? { outcome, summary: line } : { outcome, summary: line, question: question! };
                 return result({ text: await endTurn(input) });
               },
             ),
@@ -375,6 +430,8 @@ const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and hav
 BACKEND: when a component needs server-side work (call a third-party API with a secret, hit a database, receive a webhook), author a CUSTOM HANDLER at \`server/custom/<name>.ts\` — \`export default (req: Request) => Response\` (or any JSON-serializable value) — reached at \`/api/custom/<name>\`. It may call outbound (APIs, DBs) and the core canvas via \`\${CANVAS_BRIDGE}/api/canvas\` (CANVAS_BRIDGE is in its env); it runs in an isolated process and so CANNOT touch canvas state directly — go through that HTTP API. Read \`server/custom/hello.ts\` first for the shape. New/edited handlers hot-reload with no restart.
 
 BOUNDARY (important): you may author ONLY through the component/data tools (which write per-canvas \`src/canvas-<id>/components/\` dirs and the workspace \`shared/components/\` library — both persist across restarts and hot-reload) and \`server/custom/\` (backend handlers). Do NOT modify the CORE: the app shell, \`src/canvas-components/\` (the read-only platform library), anything else in \`src/\`, or anything in \`server/\` outside \`custom/\` (especially \`bridge.ts\`). The core is image-only — edits there will NOT persist and can break the live canvas for everyone.
+
+CROSS-CHAT: if you have a send_message tool, you can post a message into another chat card on this canvas and trigger its agent to take a turn (fire-and-forget — poll read_canvas/read_connected for its reply). Messages you send are attributed to your chat card. Use it when the human asks chats to coordinate; never build unattended agent-to-agent reply loops.
 
 ENDING A TURN: if you have an end_turn tool, ALWAYS finish your turn by calling it exactly once — outcome "needs_human" when you are blocked on the human (include your question; never leave a question only in prose), outcome "done" when the work is complete. Say everything important in your message first; the summary is for the human's Inbox list.`;
 
@@ -491,6 +548,9 @@ export async function* runChat(
   // unserved, never-hot-reloaded file (the QABoard incident). Dev-agent turns keep the full
   // preset: editing repo files in the prepared worktree is their whole job.
   kind: 'chat' | 'dev-agent' = 'chat',
+  // Cross-chat messaging seam (bridge-bound: ChatMeta + the turn dispatcher). Present ⇒ the
+  // agent gets a `send_message` tool targeting other chat cards on this canvas.
+  sendToChat?: SendToChat,
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn; end_turn reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
@@ -505,7 +565,7 @@ export async function* runChat(
         return text;
       }
     : undefined;
-  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr);
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr, sendToChat);
   const stopGate = endTurnSeam
     ? makeStopGate(
         () => turnEnded,

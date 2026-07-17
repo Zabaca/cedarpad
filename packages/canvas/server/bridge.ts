@@ -542,7 +542,23 @@ const turnDeps: TurnDeps = {
     backupTranscript(blobBackend, SESSIONS_DIR, sessionId).catch((err) =>
       console.error('[inbox] transcript backup failed:', err),
     ),
+  sendToChat: (targetChatId, message, canvasId) => sendToChat(targetChatId, message, canvasId),
 };
+
+/** Cross-chat messaging (the agent's send_message tool): post into another chat card's
+ * thread and kick its turn — the same dispatch the human's /send uses, minus the wire
+ * concerns (subscriber gate, guest gates: an agent-initiated send is member-context by
+ * construction). One turn per chat still holds: an in-flight target refuses delivery.
+ * Exported for tests (paired with setChatTurnDispatcher). */
+export function sendToChat(targetChatId: string, message: string, canvasId?: string): { ok: true } | { ok: false; error: string } {
+  if (aborters.has(targetChatId)) return { ok: false, error: 'that chat has a turn in flight — try again after it settles' };
+  const meta = chatMeta.get(targetChatId);
+  const effort = meta.effort && meta.effort !== 'default' ? meta.effort : undefined;
+  // The SENDER's canvas routes the turn (the target card was validated against that store);
+  // the recycled-away chatCanvas binding is the fallback, not the source of truth.
+  dispatchChatTurn(targetChatId, message, meta.sessionId, [], meta.model, false, effort, canvasId ?? chatCanvas.get(targetChatId));
+  return { ok: true };
+}
 
 // Test seam: swap the turn's agent (`turnDeps.runChat`) on the live deps object. The
 // canvas-routing test needs the REAL runChatTurn (session resolution is what it tests)
