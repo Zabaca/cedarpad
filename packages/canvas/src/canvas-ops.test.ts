@@ -270,6 +270,27 @@ describe('canvas ops (the agent tool logic)', () => {
     });
   });
 
+  describe('placeComponentOp keeps frame membership on re-place', () => {
+    test('re-placing an existing framed instance preserves its parentId', () => {
+      const s = createStore();
+      s.upsert([
+        normalizeShape({ id: 'shape:frame1', type: 'frame', color: 'black', x: 0, y: 0, w: 800, h: 600, name: 'F' }),
+        normalizeShape({ id: 'shape:comp1', type: 'component', parentId: 'shape:frame1', color: 'black', x: 20, y: 30, w: 360, h: 260, module: 'KpiCard', data: {}, rev: 1 }),
+      ]);
+      const r = placeComponentOp(s, { id: 'shape:comp1', module: 'KpiCard', x: 50, y: 60, w: 360, h: 260, rev: 2 });
+      expect(r.isError).toBeUndefined();
+      const comp = s.getState().shapes.find((sh) => sh.id === 'shape:comp1')!;
+      expect(comp.parentId).toBe('shape:frame1');
+      expect(comp.type === 'component' && comp.x).toBe(50);
+    });
+
+    test('a new placement has no parentId (page-level, as before)', () => {
+      const s = createStore();
+      placeComponentOp(s, { module: 'KpiCard', x: 10, y: 10, w: 360, h: 260, rev: 1 });
+      expect(s.getState().shapes[0]!.parentId).toBeUndefined();
+    });
+  });
+
   describe('placeComponentOp routes attach through the seam (no inline duplication)', () => {
     test('a missing origin chat is the seam no-op: shape upserted unchanged, no link', () => {
       const s = createStore(); // the chat id below was never added to the canvas

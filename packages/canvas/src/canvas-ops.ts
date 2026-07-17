@@ -297,7 +297,12 @@ export interface PlaceComponentInput {
 /** Place an instance of a component module on the canvas (or move/retarget by id). */
 export function placeComponentOp(store: CanvasStore, input: PlaceComponentInput, originChatId?: string): OpResult {
   try {
+    // Re-placing an existing instance must not unframe it: the agent's input never carries
+    // parentId, so rebuilding from input alone silently dropped frame membership (and the
+    // frame-relative coords then rendered as page coords — the post-deploy scatter bug).
+    const existing = input.id ? store.getState().shapes.find((s) => s.id === input.id) : undefined;
     const shape = normalizeShape({
+      ...(existing?.parentId ? { parentId: existing.parentId } : {}),
       type: 'component',
       id: input.id,
       x: input.x,

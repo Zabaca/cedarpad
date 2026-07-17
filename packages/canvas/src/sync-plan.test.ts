@@ -27,8 +27,10 @@ const tlasset = (assetId: string, src: string, w = 100, h = 100): TLAsset =>
     props: { w, h, name: 'image', isAnimated: false, mimeType: 'image/png', src },
   }) as unknown as TLAsset;
 
-// A present shape's value is never read (only its key), so a bare marker suffices.
-const present = (): TLShape => ({}) as unknown as TLShape;
+// A present shape's value carries only what the planner reads back off the live store
+// today: presence + `parentId` (the reparent-convergence check). A bare marker is fine
+// for shapes whose parent doesn't matter to the test.
+const present = (parentId?: string): TLShape => (parentId ? { parentId } : {}) as unknown as TLShape;
 
 const rect = (id: string, x: number, over: Partial<CanvasShape> = {}): CanvasShape =>
   ({ id, type: 'rectangle', x, y: 0, w: 100, h: 100, color: 'black', text: '', ...over }) as CanvasShape;
@@ -189,13 +191,45 @@ test('6. update without reparent: an existing frame child updates with no parent
     input({
       remote: { version: 2, shapes: [rect('shape:u', 50, { parentId: 'shape:f' })] },
       snapshot: snap({
-        shapes: new Map([['shape:u', present()]]),
+        shapes: new Map([['shape:u', present('shape:f')], ['shape:f', present()]]),
         canonical: new Map([['shape:u', canon(cur)]]),
       }),
     }),
   );
   const update = opOf(plan.ops, 'shapeUpdate');
   expect(update?.partials).toHaveLength(1);
+  expect('parentId' in (update!.partials[0] as object)).toBe(false);
+});
+
+test('6b. reparent convergence: a page-parented local shape whose remote frame exists updates WITH parentId', () => {
+  // The hydrate race: the child was created before its frame and tldraw page-parented it.
+  // Once the frame exists locally, the update carries the model parentId to converge.
+  const cur = rect('shape:u', 0); // local decodes with NO parentId
+  const plan = planReconcile(
+    input({
+      remote: { version: 2, shapes: [rect('shape:u', 0, { parentId: 'shape:f' })] },
+      snapshot: snap({
+        shapes: new Map([['shape:u', present()], ['shape:f', present()]]),
+        canonical: new Map([['shape:u', canon(cur)]]),
+      }),
+    }),
+  );
+  const update = opOf(plan.ops, 'shapeUpdate');
+  expect((update!.partials[0] as { parentId?: string }).parentId).toBe('shape:f');
+});
+
+test('6c. no dangling reparent: the remote frame is absent locally, parentId stays stripped', () => {
+  const cur = rect('shape:u', 0);
+  const plan = planReconcile(
+    input({
+      remote: { version: 2, shapes: [rect('shape:u', 0, { parentId: 'shape:missing' })] },
+      snapshot: snap({
+        shapes: new Map([['shape:u', present()]]),
+        canonical: new Map([['shape:u', canon(cur)]]),
+      }),
+    }),
+  );
+  const update = opOf(plan.ops, 'shapeUpdate');
   expect('parentId' in (update!.partials[0] as object)).toBe(false);
 });
 

@@ -208,9 +208,17 @@ export function planReconcile(input: ReconcileInput): ReconcilePlan {
     } else {
       const curCanon = snapshot.canonical.get(id);
       if (curCanon === undefined || curCanon !== canon(rs)) {
-        // Don't reparent an existing shape on update (tldraw fights it and it would
-        // churn); only position/props/bindings update in place.
-        delete (partial as { parentId?: string }).parentId;
+        // Don't reparent an existing shape on update when the parent already matches
+        // (tldraw fights it and it would churn); only position/props/bindings update in
+        // place. EXCEPTION — the remote model parents this shape to a frame the local
+        // shape is NOT under, and that frame exists here: converge. This heals the
+        // hydrate race where a child was created before its frame arrived and tldraw
+        // silently page-parented it (the shape's next self-echo then stripped the
+        // frame membership server-side — the post-deploy scatter bug).
+        const wantParent = (partial as { parentId?: string }).parentId;
+        const localParent = (snapshot.shapes.get(id) as { parentId?: string } | undefined)?.parentId;
+        const reparent = !!wantParent && wantParent !== localParent && snapshot.shapes.has(wantParent);
+        if (!reparent) delete (partial as { parentId?: string }).parentId;
         toUpdate.push(partial);
       }
     }
