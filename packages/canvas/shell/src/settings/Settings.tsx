@@ -129,6 +129,19 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
       window.alert('Could not create the user.');
       return;
     }
+    // Auto-add the fresh account to THIS workspace: without membership the user can sign
+    // in but sees nothing (and never shows in the roster) — the trap the invite-link flow
+    // fell into. Owner-only endpoint, idempotent.
+    const created = (await r.json().catch(() => null)) as { user?: { id?: string } } | null;
+    if (created?.user?.id) {
+      const added = await fetch(`${base}/members`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ userId: created.user.id }),
+      }).catch(() => null);
+      if (!added?.ok) window.alert('User created, but adding them to the workspace failed — add them manually.');
+    }
     window.prompt('User created. Temporary password (send it over your own channel):', password);
     void reload();
   };

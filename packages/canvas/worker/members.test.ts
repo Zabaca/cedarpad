@@ -92,6 +92,32 @@ describe('handleMembersApi — the member list is workspace-visible, removal is 
   });
 });
 
+describe('handleMembersApi — owner adds an existing user as a member (ADR-0014 manual invite)', () => {
+  const reqPost = (body: unknown) =>
+    new Request('https://x/api/workspaces/whatever/members', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  test('the owner adds a user; the roster shows them; re-adding is a no-op', async () => {
+    const ws = await createWorkspace(database, { name: 'mem-ws-add', ownerUserId: OWNER.id });
+    for (let i = 0; i < 2; i++) {
+      const res = await handleMembersApi(reqPost({ userId: STRANGER.id }), database, OWNER, ws.id);
+      expect(res.status).toBe(200);
+      const { members } = await readJson(res);
+      expect(members.map((m: { userId: string }) => m.userId)).toEqual([OWNER.id, STRANGER.id]);
+    }
+  });
+
+  test('a member cannot add (403); a bad body is 400', async () => {
+    const ws = await createWorkspace(database, { name: 'mem-ws-add-2', ownerUserId: OWNER.id });
+    await addWorkspaceMember(database, { workspaceId: ws.id, userId: MEMBER.id });
+    expect((await handleMembersApi(reqPost({ userId: STRANGER.id }), database, MEMBER, ws.id)).status).toBe(403);
+    expect((await handleMembersApi(reqPost({}), database, OWNER, ws.id)).status).toBe(400);
+  });
+});
+
 describe('handleMembersApi — role change IS ownership transfer (single owner model)', () => {
   test('the owner transfers ownership to a member: roles swap, roster reflects it', async () => {
     const ws = await createWorkspace(database, { name: 'mem-ws-5', ownerUserId: OWNER.id });
