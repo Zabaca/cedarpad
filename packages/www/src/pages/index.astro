@@ -1,4 +1,9 @@
 ---
+// Server-rendered (not prerendered) so middleware.ts actually runs per request —
+// Astro middleware never fires for prerendered pages, and the www→apex 301 lives
+// there. The page is static-shaped; the render is trivial.
+export const prerender = false
+
 import InboxMock from '../components/InboxMock.astro'
 import Logo from '../components/Logo.astro'
 import PadMock from '../components/PadMock.astro'
