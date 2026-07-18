@@ -1079,3 +1079,20 @@ body,
 .left-panel-head .panel-collapse {
   margin-left: 4px;
 }
+
+/* Inbox nav badge: unseen count pushed over /api/inbox/events (shared read mark). */
+.lp-rail-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}

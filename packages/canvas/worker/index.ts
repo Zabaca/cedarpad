@@ -416,7 +416,7 @@ export default {
     // Edge Inbox API (ADR-0007, PRD #50 slice #62), user-scoped. Served HERE against remote
     // Turso + R2: list/detail/close/reopen never wake a container (history reads from the R2
     // transcript while the runner sleeps); only reply forwards into the container (#61).
-    const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen|assign))?)?$/.exec(url.pathname);
+    const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen|assign|visibility))?)?$/.exec(url.pathname);
     if (inboxApiMatch) {
       return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
     }

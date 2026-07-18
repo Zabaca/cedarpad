@@ -537,6 +537,10 @@ export const workspaces = sqliteTable(
     ownerUserId: text("owner_user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // Shared inbox read mark (single-inbox semantics): set to now when ANY member
+    // opens the Inbox — one mark for the whole workspace, read-for-all. The nav
+    // badge counts items whose last_activity is newer than this. Null = never read.
+    inboxReadAt: integer("inbox_read_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),

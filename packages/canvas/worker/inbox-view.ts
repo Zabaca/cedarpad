@@ -48,6 +48,12 @@ const toItem = (r: ConversationRow): InboxItem => ({
   lastActivity: r.lastActivity instanceof Date ? r.lastActivity.getTime() : Number(r.lastActivity),
 });
 
+/** Pure: the nav-badge count — open items with activity newer than the workspace's
+ *  SHARED read mark (read-for-all; 0 mark = never read, everything open counts). */
+export function unseenCount(items: InboxItem[], readAt: number): number {
+  return items.filter((i) => i.status === 'open' && i.lastActivity > readAt).length;
+}
+
 /**
  * Pure inbox ordering: `waiting_on:human` items pinned to the top (they need attention),
  * everything else after, each group newest-activity first. Independent of the input order

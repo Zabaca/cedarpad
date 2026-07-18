@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
-import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
+import { getWorkspace, setInboxReadAt } from '../web-poc/lib/db/queries/workspaces.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
-import { orderInbox, viewToListOpts } from './inbox-view.ts';
+import { orderInbox, unseenCount, viewToListOpts, type InboxItem } from './inbox-view.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import { activeWorkspaceId } from './shell.ts';
 import { conversationHiddenFrom } from './visibility.ts';
@@ -29,10 +29,39 @@ const AssignInput = z.object({ userId: z.string().min(1).nullable() });
 /** POST /api/inbox/:id/visibility body (ADR-0016): the chat's own flag, creator-only. */
 const VisibilityInput = z.object({ visibility: z.enum(['shared', 'private']) });
 
+/** How often /api/inbox/events re-reads Turso per connected client. */
+export const INBOX_EVENTS_INTERVAL_MS = 10_000;
+
+/** The caller's view of the inbox: rows scoped to the workspace, ADR-0016 visibility
+ *  applied (a private chat that isn't theirs, or any chat on someone else's private
+ *  canvas — canvas dominates; derived via one registry read, never copied), ordered. */
+async function visibleInbox(
+  database: ReturnType<typeof db>,
+  workspaceId: string,
+  userId: string,
+  listOpts: ReturnType<typeof viewToListOpts>,
+  assigned?: string,
+): Promise<InboxItem[]> {
+  const rows = await conversations.list(database, { ...listOpts, workspaceId, assigned });
+  const canvasById = new Map((await canvasRegistry.list(database, workspaceId)).map((c) => [c.id, c]));
+  const visible = rows.filter(
+    (r) => !conversationHiddenFrom(r, (r.canvasId && canvasById.get(r.canvasId)) || null, userId),
+  );
+  return orderInbox(visible);
+}
+
+/** The workspace's shared read mark as epoch ms (0 = never read). */
+async function inboxReadAt(database: ReturnType<typeof db>, workspaceId: string, userId: string): Promise<number> {
+  const ws = await getWorkspace(database, workspaceId, userId);
+  return ws?.inboxReadAt ? ws.inboxReadAt.getTime() : 0;
+}
+
 /**
  * The edge Inbox API — WORKSPACE-SHARED (CONTEXT.md): visibility and action are
  * membership-gated, never creator-gated.
- *   GET  /api/inbox                 → { items: InboxItem[] }  (filters: ?view=, ?assigned=<userId|unassigned>; scoped to the active workspace)
+ *   GET  /api/inbox                 → { items: InboxItem[], me, readAt }  (filters: ?view=, ?assigned=<userId|unassigned>; scoped to the active workspace)
+ *   GET  /api/inbox/events          → SSE { count, readAt } (the nav badge, pushed live)
+ *   POST /api/inbox/read            → stamp the SHARED read mark (read-for-all)
  *   GET  /api/inbox/:id             → { conversation }  (Turso metadata only — never wakes a runner)
  *   POST /api/inbox/:id/reply       → forwarded to the container bridge (wakes it, #61)
  *   POST /api/inbox/:id/close       → store close
@@ -61,15 +90,70 @@ export async function handleInboxApi(
     // with any view (absent = Everyone / a member's id / 'unassigned' = the unclaimed queue).
     const listOpts = viewToListOpts(url.searchParams.get('view'));
     const assigned = url.searchParams.get('assigned') ?? undefined;
-    const rows = await conversations.list(database, { ...listOpts, workspaceId, assigned });
-    // ADR-0016: drop rows hidden from THIS member — a private chat that isn't theirs, or
-    // any chat on a private canvas that isn't theirs (canvas dominates). The canvas
-    // contribution is derived here via one registry read, never copied onto rows.
-    const canvasById = new Map((await canvasRegistry.list(database, workspaceId)).map((c) => [c.id, c]));
-    const visible = rows.filter(
-      (r) => !conversationHiddenFrom(r, (r.canvasId && canvasById.get(r.canvasId)) || null, user.id),
-    );
-    return Response.json({ items: orderInbox(visible), me: user.id });
+    const items = await visibleInbox(database, workspaceId, user.id, listOpts, assigned);
+    // The SHARED read mark (read-for-all): the client badges items newer than this.
+    const readAt = await inboxReadAt(database, workspaceId, user.id);
+    return Response.json({ items, me: user.id, readAt });
+  }
+
+  // GET /api/inbox/events — SSE: pushes the caller's nav-badge count ({count, readAt})
+  // whenever it changes, so every open Shell updates live (no client polling). The edge
+  // watches Turso (writes come from both the edge and container bridges — no pub/sub bus
+  // yet), so latency is one INBOX_EVENTS_INTERVAL_MS tick. Per-user: visibility-filtered.
+  if (id === 'events' && !action) {
+    if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
+    const workspaceId = await activeWorkspaceId(request, database, user);
+    if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
+    const enc = new TextEncoder();
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        let last = -1;
+        const tick = async () => {
+          try {
+            const items = await visibleInbox(database, workspaceId, user.id, viewToListOpts(null));
+            const readAt = await inboxReadAt(database, workspaceId, user.id);
+            const count = unseenCount(items, readAt);
+            if (count !== last) {
+              last = count;
+              controller.enqueue(enc.encode(`data: ${JSON.stringify({ count, readAt })}\n\n`));
+            } else {
+              controller.enqueue(enc.encode(': keep-alive\n\n')); // detects a gone client
+            }
+          } catch {
+            // Client disconnected (enqueue threw) or a read failed: stop the loop.
+            if (timer) clearInterval(timer);
+            timer = null;
+            try {
+              controller.close();
+            } catch {
+              /* already closed */
+            }
+          }
+        };
+        void tick();
+        timer = setInterval(() => void tick(), INBOX_EVENTS_INTERVAL_MS);
+      },
+      cancel: () => {
+        if (timer) clearInterval(timer);
+        timer = null;
+      },
+    });
+    return new Response(stream, {
+      headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
+    });
+  }
+
+  // POST /api/inbox/read — stamp the shared read mark for the active workspace (any
+  // member; single-inbox semantics: one mark, everyone's badge clears). `read` sits in
+  // the :id path slot but can never collide with a conversation id (`chat_<uuid>`).
+  if (id === 'read' && !action) {
+    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+    const workspaceId = await activeWorkspaceId(request, database, user);
+    if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
+    const at = new Date();
+    await setInboxReadAt(database, workspaceId, at);
+    return Response.json({ readAt: at.getTime() });
   }
 
   const conv = await conversations.get(database, id);

@@ -91,6 +91,12 @@ export async function getWorkspaceRecord(db: Database, workspaceId: string): Pro
   return row ? toRecord(row) : null;
 }
 
+/** Stamp the shared inbox read mark (read-for-all): any member opening the Inbox
+ *  clears the whole workspace's badge. Caller must have verified membership. */
+export async function setInboxReadAt(db: Database, workspaceId: string, at: Date): Promise<void> {
+  await db.update(workspaces).set({ inboxReadAt: at }).where(eq(workspaces.id, workspaceId));
+}
+
 /** Persist the workspace's GitHub App installation (repository connection, ADR-0015).
  *  Connecting resets the repo selection — the new grant defines what's selectable. */
 export async function setWorkspaceGithubInstallation(

@@ -1,0 +1,1 @@
+ALTER TABLE `workspaces` ADD `inbox_read_at` integer;

@@ -197,9 +197,30 @@ function MemberShell() {
   // rail's workspace popover needs to mark the current row.
   const registry = useCanvasRegistry();
 
+  // Inbox nav badge, pushed over SSE (/api/inbox/events → {count}). The read mark is
+  // WORKSPACE-SHARED (read-for-all): opening the Inbox stamps it server-side, so every
+  // member's badge clears — and the same stream delivers that clear to other open Shells.
+  const [inboxUnseen, setInboxUnseen] = useState(0);
+  useEffect(() => {
+    const es = new EventSource('/api/inbox/events');
+    es.onmessage = (e) => {
+      try {
+        setInboxUnseen((JSON.parse(e.data) as { count: number }).count);
+      } catch {
+        /* malformed frame: keep the current badge */
+      }
+    };
+    return () => es.close();
+  }, []);
+  useEffect(() => {
+    if (stage !== 'inbox') return;
+    setInboxUnseen(0); // clear locally now; the POST clears it for everyone
+    void fetch('/api/inbox/read', { method: 'POST' }).catch(() => {});
+  }, [stage, inboxUnseen]); // re-stamp while sitting in the Inbox as new items stream in
+
   return (
     <div className="shell">
-      <Rail stage={stage} onSelectStage={selectStage} activeWorkspace={registry.workspaceId} />
+      <Rail stage={stage} onSelectStage={selectStage} activeWorkspace={registry.workspaceId} inboxUnseen={inboxUnseen} />
       {stage === 'canvas' && <CanvasStage registry={registry} />}
       {stage === 'notebook' && (
         <div className="shell-stage stage-notebook">
@@ -224,10 +245,12 @@ function Rail({
   stage,
   onSelectStage,
   activeWorkspace,
+  inboxUnseen,
 }: {
   stage: Stage;
   onSelectStage: (s: Stage) => void;
   activeWorkspace: string;
+  inboxUnseen: number;
 }) {
   const [wsOpen, setWsOpen] = useState(false);
   const [meOpen, setMeOpen] = useState(false);
@@ -257,7 +280,7 @@ function Rail({
     window.location.href = '/';
   };
 
-  const railBtn = (s: Stage, title: string, icon: React.ReactNode) => (
+  const railBtn = (s: Stage, title: string, icon: React.ReactNode, badge?: number) => (
     <button
       type="button"
       className={`lp-rail-btn${stage === s ? ' active' : ''}`}
@@ -266,6 +289,11 @@ function Rail({
       onClick={() => onSelectStage(s)}
     >
       {icon}
+      {badge != null && badge > 0 && (
+        <span className="lp-rail-badge" aria-label={`${badge} unread`}>
+          {badge > 9 ? '9+' : badge}
+        </span>
+      )}
     </button>
   );
 
@@ -284,7 +312,7 @@ function Rail({
       >
         Z
       </button>
-      {railBtn('inbox', 'Inbox', <IconInbox />)}
+      {railBtn('inbox', 'Inbox', <IconInbox />, stage === 'inbox' ? 0 : inboxUnseen)}
       {railBtn('canvas', 'Canvases', <IconCanvases />)}
       {railBtn('notebook', 'Notebook', <IconNotebook />)}
       {railBtn('jobs', 'Jobs', <IconJobs />)}

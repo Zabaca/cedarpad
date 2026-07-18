@@ -11,7 +11,7 @@ export type { InboxItem, InboxView };
 /** `GET /api/inbox?view=&workspace=` → the ordered list (waiting_on:human pinned),
  *  ADR-0016-filtered server-side; `me` = the caller's user id (drives the Private
  *  toggle's creator check client-side). */
-export type InboxListResponse = { items: InboxItem[]; me?: string };
+export type InboxListResponse = { items: InboxItem[]; me?: string; readAt?: number };
 
 /** The thread head reads only these fields off the detail's Conversation row. */
 export type InboxConversation = {

@@ -8,7 +8,7 @@ import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
-import { orderInbox, transcriptObjectUrl, viewToListOpts } from './inbox-view.ts';
+import { orderInbox, transcriptObjectUrl, unseenCount, viewToListOpts } from './inbox-view.ts';
 
 // Pure decisions the edge Inbox makes: list ordering (waiting_on:human pinned) and the R2
 // object-URL derivation. Both are runtime-free so they test without the edge or a container.
@@ -327,5 +327,48 @@ describe('handleInboxApi — visibility (ADR-0016)', () => {
     const ok = await flip(USER, 'private');
     expect(ok.status).toBe(200);
     expect(((await readJson(ok)) as { conversation: { visibility: string } }).conversation.visibility).toBe('private');
+  });
+});
+
+describe('handleInboxApi — shared read mark + badge stream (read-for-all)', () => {
+  test('unseenCount: open items newer than the mark; closed and already-seen excluded', () => {
+    const items = orderInbox([
+      row({ id: 'new-open', lastActivity: new Date(500) }),
+      row({ id: 'old-open', lastActivity: new Date(100) }),
+      row({ id: 'new-closed', status: 'closed', lastActivity: new Date(600) }),
+    ]);
+    expect(unseenCount(items, 200)).toBe(1);
+    expect(unseenCount(items, 0)).toBe(2); // never read: everything open counts
+  });
+
+  test('POST /api/inbox/read stamps the workspace mark; the list echoes it for every member', async () => {
+    const ws = await createWorkspace(database, { name: 'Badge', ownerUserId: USER.id });
+    await db.insert(schema.workspaceMembers).values({ id: 'wm_badge', workspaceId: ws.id, userId: MEMBER.id });
+    const cookie = `cs_workspace=${ws.id}`;
+    const before = await readJson(await handleInboxApi(new Request('https://x/api/inbox', { headers: { cookie } }), {} as never, USER));
+    expect(before.readAt).toBe(0);
+
+    const stamped = await readJson(
+      await handleInboxApi(new Request('https://x/api/inbox/read', { method: 'POST', headers: { cookie } }), {} as never, USER, 'read'),
+    );
+    expect(stamped.readAt).toBeGreaterThan(0);
+
+    // Read-for-all: the OTHER member's list carries the same mark.
+    const after = await readJson(await handleInboxApi(new Request('https://x/api/inbox', { headers: { cookie } }), {} as never, MEMBER));
+    expect(after.readAt).toBe(stamped.readAt);
+  });
+
+  test('GET /api/inbox/events streams the badge count as an SSE frame', async () => {
+    const ws = await createWorkspace(database, { name: 'Stream', ownerUserId: USER.id });
+    await conversations.create(database, { sessionId: 's_stream', userId: USER.id, workspaceId: ws.id });
+    const cookie = `cs_workspace=${ws.id}`;
+    const res = await handleInboxApi(new Request('https://x/api/inbox/events', { headers: { cookie } }), {} as never, USER, 'events');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/event-stream');
+    const reader = res.body!.getReader();
+    const { value } = await reader.read();
+    const frame = new TextDecoder().decode(value);
+    expect(frame).toContain('"count":1'); // one open conversation, never read
+    await reader.cancel();
   });
 });
