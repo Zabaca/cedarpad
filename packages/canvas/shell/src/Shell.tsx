@@ -201,11 +201,20 @@ function MemberShell() {
   // WORKSPACE-SHARED (read-for-all): opening the Inbox stamps it server-side, so every
   // member's badge clears — and the same stream delivers that clear to other open Shells.
   const [inboxUnseen, setInboxUnseen] = useState(0);
+  // The previous pushed count: null until the first frame lands, so a page load with
+  // existing unread never dings — only a count RISING while the tab is open does.
+  const unseenPrev = useRef<number | null>(null);
+  const stageRef = useRef(stage);
+  stageRef.current = stage;
   useEffect(() => {
     const es = new EventSource('/api/inbox/events');
     es.onmessage = (e) => {
       try {
-        setInboxUnseen((JSON.parse(e.data) as { count: number }).count);
+        const { count } = JSON.parse(e.data) as { count: number };
+        const prev = unseenPrev.current;
+        unseenPrev.current = count;
+        setInboxUnseen(count);
+        if (prev !== null && count > prev && stageRef.current !== 'inbox') chime();
       } catch {
         /* malformed frame: keep the current badge */
       }
@@ -236,6 +245,34 @@ function MemberShell() {
       {stage === 'settings' && <SettingsStage workspaceId={registry.workspaceId} />}
     </div>
   );
+}
+
+// A soft two-note chime for a new Inbox item — synthesized (no asset), and inaudible
+// until the user has interacted with the page (browsers gate AudioContext on a gesture;
+// we just let those early plays fail silently).
+function chime(): void {
+  try {
+    const Ctx = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const note = (freq: number, at: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime + at);
+      gain.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.35);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + at);
+      osc.stop(ctx.currentTime + at + 0.4);
+    };
+    note(740, 0); // F#5
+    note(988, 0.12); // B5
+    setTimeout(() => void ctx.close(), 800);
+  } catch {
+    /* no audio available */
+  }
 }
 
 // ---- Rail -----------------------------------------------------------------
