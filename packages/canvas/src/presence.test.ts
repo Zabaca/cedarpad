@@ -63,6 +63,30 @@ describe('applyPresence', () => {
     applyPresence(editor, [entry('me'), entry('u2')], 'me', 2); // u3 left
     expect([...records.keys()]).toEqual(['instance_presence:u2']);
   });
+
+  test('an unchanged entry writes nothing (no put, no merge) until the re-stamp window lapses', () => {
+    const { editor, records } = makeEditor();
+    let puts = 0;
+    const realPut = editor.store.put.bind(editor.store);
+    editor.store.put = ((rs: never[]) => {
+      puts += 1;
+      realPut(rs);
+    }) as typeof editor.store.put;
+
+    applyPresence(editor, [entry('u2')], 'me', 1_000);
+    expect(puts).toBe(1);
+    // Identical frames inside the window: skipped entirely.
+    applyPresence(editor, [entry('u2')], 'me', 1_100);
+    applyPresence(editor, [entry('u2')], 'me', 2_000);
+    expect(puts).toBe(1);
+    // A moved cursor writes immediately…
+    applyPresence(editor, [entry('u2', { cursor: { x: 9, y: 9 } })], 'me', 2_100);
+    expect(puts).toBe(2);
+    // …and a parked one re-stamps once its liveness window lapses.
+    applyPresence(editor, [entry('u2', { cursor: { x: 9, y: 9 } })], 'me', 6_000);
+    expect(puts).toBe(3);
+    expect(records.size).toBe(1);
+  });
 });
 
 describe('startPresenceHeartbeat', () => {

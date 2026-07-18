@@ -36,16 +36,54 @@ export function entryToPresence(e: PresenceEntry, pageId: string, now: number): 
   });
 }
 
+// Per-editor memory of the presence records WE own: record id → what we last wrote
+// (content key + when we last stamped liveness). Lets a frame apply without scanning
+// `store.allRecords()` (O(all shapes), and frames arrive ~10×/s while anyone moves —
+// the main-thread cost behind multi-user jitter) and lets an unchanged entry skip its
+// `store.put` entirely.
+type PresenceMemory = Map<string, { key: string; stampedAt: number }>;
+const presenceMemory = new WeakMap<Editor, PresenceMemory>();
+
+// How stale a parked collaborator's lastActivityTimestamp may get before we re-stamp
+// it anyway (keeps tldraw's liveness/fade machinery honest without per-frame writes).
+const RESTAMP_MS = 3_000;
+
 /** Reconcile the store's presence records against a broadcast: everyone else upserted,
- * SELF excluded (you are not your own collaborator), departed users removed. */
+ * SELF excluded (you are not your own collaborator), departed users removed. Writes only
+ * what actually changed: an entry identical to what the store already holds is skipped
+ * (re-stamped at most every RESTAMP_MS), and departures are diffed against our own
+ * memory of written ids — never a full-store scan. */
 export function applyPresence(editor: Editor, entries: PresenceEntry[], selfId: string | undefined, now: number = Date.now()): void {
   const pageId = editor.getCurrentPageId() as string;
-  const records = entries.filter((e) => e.userId !== selfId).map((e) => entryToPresence(e, pageId, now));
-  const keep = new Set(records.map((r) => r.id));
-  const gone = editor.store
-    .allRecords()
-    .filter((r) => r.typeName === 'instance_presence' && !keep.has(r.id as TLInstancePresence['id']))
-    .map((r) => r.id);
+  let memory = presenceMemory.get(editor);
+  if (!memory) {
+    memory = new Map();
+    presenceMemory.set(editor, memory);
+  }
+  const mem = memory;
+
+  const records: TLInstancePresence[] = [];
+  const keep = new Set<string>();
+  for (const e of entries) {
+    if (e.userId === selfId) continue;
+    const rec = entryToPresence(e, pageId, now);
+    const id = rec.id as string;
+    keep.add(id);
+    // Content key: everything but the liveness stamp — a parked cursor writes nothing.
+    const key = JSON.stringify([e.name, e.color, e.cursor, e.camera, pageId]);
+    const known = mem.get(id);
+    if (known && known.key === key && now - known.stampedAt < RESTAMP_MS) continue;
+    mem.set(id, { key, stampedAt: now });
+    records.push(rec);
+  }
+  const gone: string[] = [];
+  for (const id of mem.keys()) {
+    if (!keep.has(id)) {
+      gone.push(id);
+      mem.delete(id);
+    }
+  }
+  if (!gone.length && !records.length) return; // nothing changed: no store write, no re-render
   editor.store.mergeRemoteChanges(() => {
     if (gone.length) editor.store.remove(gone as never[]);
     if (records.length) editor.store.put(records);

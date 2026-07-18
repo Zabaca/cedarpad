@@ -36,7 +36,13 @@ import { withCanvasHeader, withCanvasParam } from './active-canvas';
 // A plain, Editor-free snapshot of everything the planner reads off the editor,
 // built in one pass over the store. The planner never touches an `Editor`; this is
 // the only place those reads happen.
-function snapshotEditor(editor: Editor): EditorSnapshot {
+// Canonical-string memo: tldraw records are immutable, so a shape whose record
+// REFERENCE is unchanged since the last frame has the same canonical form — skip the
+// decode + JSON re-serialization (the per-frame O(all shapes) cost that made remote
+// activity jitter big canvases). `canon: null` remembers "doesn't decode".
+type CanonCache = Map<string, { rec: TLShape; canon: string | null }>;
+
+function snapshotEditor(editor: Editor, canonCache?: CanonCache): EditorSnapshot {
   const shapes = new Map<string, TLShape>();
   const assets = new Map<string, TLAsset>();
   for (const r of editor.store.allRecords()) {
@@ -57,15 +63,30 @@ function snapshotEditor(editor: Editor): EditorSnapshot {
   // `undefined` and treats it as changed (matching the old `!cur` branch).
   const canonical = new Map<string, string>();
   for (const shape of shapes.values()) {
+    const id = shape.id as string;
     if (shape.type === 'arrow') {
       const b = getArrowBindings(editor, shape as TLArrowShape);
-      arrowBindings.set(shape.id as string, {
+      arrowBindings.set(id, {
         start: b.start ? { id: b.start.id as string, toId: b.start.toId as string } : undefined,
         end: b.end ? { id: b.end.id as string, toId: b.end.toId as string } : undefined,
       });
     }
+    // Arrows are never cached: their canonical form includes binding targets, which
+    // can change without touching the arrow record itself (record identity wouldn't
+    // catch it). They're few; the decode is cheap at their count.
+    const hit = shape.type === 'arrow' ? undefined : canonCache?.get(id);
+    if (hit && hit.rec === shape) {
+      if (hit.canon !== null) canonical.set(id, hit.canon);
+      continue;
+    }
     const cur = fromTldrawShape(editor, shape);
-    if (cur) canonical.set(shape.id as string, canon(cur));
+    const c = cur ? canon(cur) : null;
+    canonCache?.set(id, { rec: shape, canon: c });
+    if (c !== null) canonical.set(id, c);
+  }
+  // Drop cache entries for deleted shapes so it never outgrows the canvas.
+  if (canonCache) {
+    for (const id of canonCache.keys()) if (!shapes.has(id)) canonCache.delete(id);
   }
 
   return {
@@ -135,8 +156,14 @@ export function wireSync(editor: Editor): () => void {
   const mirroredShapes = new Set<string>();
 
   // --- remote -> editor ---
+  const canonCache: CanonCache = new Map();
   function reconcile(state: CanvasState) {
-    const snapshot = snapshotEditor(editor);
+    // Fast path for the common case (our own echo, or an out-of-order frame): the
+    // planner would gate on the version watermark anyway — skip the O(all shapes)
+    // editor snapshot it no longer needs. Same semantics: nothing applied, nothing
+    // mirrored, watermark untouched.
+    if (state.version <= lastVersion) return;
+    const snapshot = snapshotEditor(editor, canonCache);
     const { ops, nextVersion } = planReconcile({
       remote: state,
       lastVersion,
