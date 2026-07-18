@@ -217,7 +217,8 @@ function CanvasApp() {
   const togglePanel = useCallback((open: boolean) => {
     setPanelOpen(open);
     savePanelOpen(open);
-    if (!open) setSlots({ menu: null, style: null, toolbar: null, nav: null });
+    // The menu slot lives on the stage, not in the panel — it survives a collapse.
+    if (!open) setSlots((prev) => ({ menu: prev.menu, style: null, toolbar: null, nav: null }));
   }, []);
   // Guests keep tldraw's default floating chrome; members' chrome portals into the panel.
   const components = useMemo<TLComponents>(() => (guest ? tldrawComponents : panelComponents(slots)), [guest, slots]);
@@ -374,10 +375,10 @@ function CanvasApp() {
     <div className="app">
       <div className="tl-stage">
         <Tldraw shapeUtils={customShapeUtils} components={components} onMount={onMount} />
-        {/* The menu/actions slot floats over the canvas's top-right corner, INSIDE the
-            stage: tldraw's dropdowns portal into its own overflow-clipped container, so
-            a trigger outside it (the panel) opens an invisible, clipped menu. */}
-        {!guest && panelOpen && <div className="side-panel-slot stage-menu" ref={menuSlotRef} />}
+        {/* The menu/actions strip lives on the canvas itself (top-left, independent of
+            the panel): tldraw's dropdowns portal into its own overflow-clipped container,
+            so a trigger outside it (the panel) opens an invisible, clipped menu. */}
+        {!guest && <div className="side-panel-slot stage-menu" ref={menuSlotRef} />}
       </div>
       {/* The docked side panel (members only — placement is a write): all canvas
           controls, the component palette, and the placed-instance list. */}
