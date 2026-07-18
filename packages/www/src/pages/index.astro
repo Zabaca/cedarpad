@@ -27,12 +27,12 @@ import Layout from '../layouts/Layout.astro'
       <main id="main">
         <div class="hero">
           <div>
-            <p class="label">Invitation only</p>
-            <h1>The pad you, your team, and AI all draw on.</h1>
+            <p class="label wound">AI made building easy. Aligning your team is still hard.</p>
+            <h1>The pad where teams get aligned.</h1>
             <p class="sub">
-              A shared infinite canvas where AI does real work — chat on the board and get back
-              live components, diagrams, and pull requests. Not screenshots of ideas. The real
-              thing.
+              A shared canvas for you, your team, and AI. Talk through the problem on the board and
+              the AI renders what you mean — live charts, working interface variants, real diagrams
+              — so you converge on the real thing, not a description of it.
             </p>
             <WaitlistForm id="hero" />
           </div>
@@ -167,6 +167,15 @@ import Layout from '../layouts/Layout.astro'
   }
   .navlinks a:hover {
     color: var(--text);
+  }
+  /* The hero eyebrow is the wound, not a category label: sentence case, accent. */
+  .label.wound {
+    text-transform: none;
+    letter-spacing: 0.01em;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    color: var(--accent);
+    font-family: inherit;
   }
   .hero {
     display: grid;

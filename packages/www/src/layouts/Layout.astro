@@ -7,8 +7,8 @@ interface Props {
 }
 
 const {
-  title = 'cedarpad — the pad you, your team, and AI all draw on',
-  description = 'A shared infinite canvas where AI does real work: chat on the board and get back live components, diagrams, and pull requests. Not screenshots of ideas.',
+  title = 'cedarpad — the pad where teams get aligned',
+  description = 'AI made building easy; aligning your team is still hard. Cedarpad is a shared canvas where AI renders what your team means — live charts, working variants, real diagrams — so you converge on the real thing.',
   noindex = false,
 } = Astro.props
 
@@ -26,10 +26,10 @@ const ogImage = new URL('/og.png', Astro.site)
     {noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={Astro.site} />}
     <meta property="og:type" content="website" />
     <meta property="og:url" content={Astro.site} />
-    <meta property="og:title" content="cedarpad — the pad you, your team, and AI all draw on" />
+    <meta property="og:title" content="cedarpad — the pad where teams get aligned" />
     <meta
       property="og:description"
-      content="A shared infinite canvas where AI does real work: chat on the board and get back live components, diagrams, and pull requests. Invite-only."
+      content="A shared canvas where teams and AI get aligned on live, working artifacts. Invite-only."
     />
     <meta property="og:image" content={ogImage} />
     <meta name="twitter:card" content="summary_large_image" />
