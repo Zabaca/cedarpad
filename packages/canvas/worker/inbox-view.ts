@@ -20,6 +20,9 @@ export interface InboxItem {
   canvasId: string | null;
   /** The ASSIGNEE (advisory claim — shared inbox); null = unassigned. */
   assignedTo: string | null;
+  /** The owning bridge chatId (the row's identity key) — how the Shell matches a
+   *  just-started draft chat back to the row its first send created. */
+  ownerRef: string | null;
   lastActivity: number;
 }
 
@@ -35,6 +38,7 @@ const toItem = (r: ConversationRow): InboxItem => ({
   workspaceId: r.workspaceId,
   canvasId: r.canvasId,
   assignedTo: r.assignedTo,
+  ownerRef: r.ownerRef,
   lastActivity: r.lastActivity instanceof Date ? r.lastActivity.getTime() : Number(r.lastActivity),
 });
 

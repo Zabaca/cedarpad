@@ -60,10 +60,18 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
   // The opened Conversation (the whole item, so the thread keeps its summary/status even after a
   // close drops it from the filtered list). null = nothing open.
   const [current, setCurrent] = useState<InboxItem | null>(null);
+  // A DRAFT chat started from the Inbox (no Conversation row yet): a fresh client-minted
+  // chatId whose <ChatView> talks same-origin (the edge fall-through proxies /api/chat/* to
+  // the active workspace's bridge). The first send's row-at-start creates the Conversation
+  // (ownerRef = this chatId); the next list load matches it back and promotes draft → current.
+  const [draft, setDraft] = useState<string | null>(null);
   // A `conv` named in the URL on mount is selected once the (async) list loads and contains it —
   // it may live in a different view than the one showing; cleared after the first load attempt
   // whether or not it matched, since after that the selection is user-driven.
   const pendingConvId = useRef(initialUrlState.conv);
+  // Mirror of `draft` for loadList (which is memoized on the filters only).
+  const draftRef = useRef<string | null>(null);
+  draftRef.current = draft;
 
   // Column management (drag-to-resize + canvas-pane toggle): per-device UI prefs, restored from
   // localStorage on mount.
@@ -103,6 +111,15 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
       const match = d.items.find((it) => it.id === pendingConvId.current);
       if (match) setCurrent(match);
       pendingConvId.current = null;
+    }
+    // Draft promotion: the first send created the row (ownerRef = the draft chatId) — select
+    // it so the thread becomes a normal Conversation (URL-persisted, closable, attachable).
+    if (draftRef.current) {
+      const born = d.items.find((it) => it.ownerRef === draftRef.current);
+      if (born) {
+        setCurrent(born);
+        setDraft(null);
+      }
     }
     // Open the doorbell stream through any conversation's bridge proxy (they all resolve to
     // the warm default container, whose chat stream broadcasts every chat's frames).
@@ -214,6 +231,17 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
             <option value="all">All sessions</option>
             <option value="closed">Closed</option>
           </select>
+          <button
+            type="button"
+            className="inbox-new-chat"
+            title="Start a new chat"
+            onClick={() => {
+              setCurrent(null);
+              setDraft(`chat_${crypto.randomUUID()}`);
+            }}
+          >
+            + New
+          </button>
           <select
             aria-label="Assignee filter"
             value={assigned ?? ''}
@@ -242,7 +270,10 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
                 item={it}
                 assigneeName={members.find((m) => m.userId === it.assignedTo)?.name}
                 selected={current?.id === it.id}
-                onOpen={() => setCurrent(it)}
+                onOpen={() => {
+                  setDraft(null);
+                  setCurrent(it);
+                }}
               />
             ))
           )}
@@ -259,6 +290,18 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
             canvasHidden={canvasHidden}
             onToggleCanvas={toggleCanvas}
           />
+        ) : draft ? (
+          // The draft thread: a live same-origin <ChatView> on a chat that has no
+          // Conversation row yet. The first send births the row on the active workspace's
+          // bridge; loadList promotes it to `current` (see draft promotion above).
+          <>
+            <div className="inbox-threadhead">
+              <b>New chat</b>
+            </div>
+            <div className="inbox-chatview">
+              <ChatView key={draft} chatId={draft} title="New chat" />
+            </div>
+          </>
         ) : (
           <div className="inbox-empty">Select a conversation.</div>
         )}

@@ -36,7 +36,7 @@ const row = (o: Partial<ConversationRow>): ConversationRow =>
     waitingOn: o.waitingOn ?? 'none',
     unread: o.unread ?? false,
     lastActivity: o.lastActivity ?? new Date(0),
-    ownerRef: null,
+    ownerRef: o.ownerRef ?? null,
     workspaceId: o.workspaceId ?? 'default',
     userId: o.userId ?? 'u',
     summary: o.summary ?? null,
@@ -69,6 +69,11 @@ describe('orderInbox', () => {
       row({ id: 'x', waitingOn: 'human', unread: true, summary: 'S', lastMessagePreview: 'P', lastActivity: new Date(1234) }),
     ]);
     expect(item).toMatchObject({ id: 'x', waitingOn: 'human', unread: true, summary: 'S', lastMessagePreview: 'P', lastActivity: 1234 });
+  });
+
+  test('projects ownerRef (the draft-chat match key for the Shell)', () => {
+    const [item] = orderInbox([row({ id: 'x', ownerRef: 'chat_abc' })]);
+    expect(item?.ownerRef).toBe('chat_abc');
   });
 });
 

@@ -405,6 +405,21 @@ body,
   font: inherit;
   font-size: 13px;
 }
+.inbox-new-chat {
+  flex: none;
+  background: var(--void);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.inbox-new-chat:hover {
+  border-color: var(--accent, #7aa2f7);
+}
 .inbox-items {
   overflow-y: auto;
   flex: 1;
