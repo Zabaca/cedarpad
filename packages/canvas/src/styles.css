@@ -1148,3 +1148,16 @@ body,
 .side-panel-add:hover {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
+.side-panel-actions {
+  display: flex;
+  gap: 6px;
+  margin: 4px 10px 8px;
+}
+.side-panel-actions .side-panel-add {
+  margin: 0;
+  flex: 1;
+}
+.side-panel-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

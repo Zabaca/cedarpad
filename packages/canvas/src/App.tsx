@@ -390,6 +390,7 @@ function CanvasApp() {
           onSlots={onSlots}
           onClose={() => togglePanel(false)}
           onAddComponent={() => setGalleryOpen(true)}
+          onNewChat={ready ? newChat : undefined}
         />
       )}
       {/* The component gallery modal (+ Component). */}
@@ -410,8 +411,9 @@ function CanvasApp() {
       {expandedId && editorRef.current && (
         <ComponentFullscreenOverlay editor={editorRef.current} shapeId={expandedId} onClose={() => setExpandedId(null)} />
       )}
-      {/* #220: a guest may create a chat only when the share link grants guestChat. */}
-      {!(guest && !guest.guestChat) && (
+      {/* Members create chats from the side panel; the FAB remains for guests whose
+          share link grants guestChat (#220) and for members with the panel collapsed. */}
+      {(guest ? guest.guestChat : !panelOpen) && (
         <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">
           ＋ New chat
         </button>
