@@ -1,32 +1,68 @@
 ---
-// The hero visual: a static mock of the pad — a chat card mid-turn (tool chips,
-// one live), the human's stroke, and the component the agent placed. Pure
-// CSS/inline-SVG so there is nothing to load and nothing to shift.
+// The hero visual: a living mock of the pad — the human's actual stroke (drawn SVG),
+// a chat card mid-turn whose tool chips arrive one by one, the component the agent
+// placed with bars that grow in, an arrow tying stroke → work, and a teammate's
+// cursor drifting across the board. Pure CSS/inline-SVG: nothing to load, nothing to
+// shift, and every animation sits behind prefers-reduced-motion.
 ---
 
 <div
   class="pad"
   role="img"
-  aria-label="A canvas with a chat card streaming tool calls and a live component the agent built"
+  aria-label="A canvas where a hand-drawn sketch, a chat card streaming tool calls, a teammate's cursor, and a live component the agent built all share one board"
 >
+  <!-- The human's sketch: a loose box + stroke, hand-drawn weight. -->
+  <svg class="sketch" viewBox="0 0 150 110" fill="none" aria-hidden="true">
+    <path
+      class="draw d1"
+      d="M12 18 C 40 12, 96 14, 128 20 C 132 44, 130 68, 126 88 C 92 94, 44 92, 16 86 C 12 64, 10 40, 12 18 Z"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+    ></path>
+    <path
+      class="draw d2"
+      d="M30 62 L 52 44 L 72 56 L 96 34 L 118 42"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    ></path>
+  </svg>
+  <div class="hand">your sketch</div>
+
   <div class="card">
     <div class="card-h"><span class="dot"></span> agent · working</div>
     <div class="card-b">
       Read the board. Building the usage panel you sketched.
       <div class="chips">
-        <span class="chip">READ_CANVAS <span class="t">0.2s</span></span>
-        <span class="chip">CREATE_SHAPES <span class="t">0.4s</span></span>
-        <span class="chip live">WRITE_COMPONENT</span>
+        <span class="chip c1">READ_CANVAS <span class="t">0.2s</span></span>
+        <span class="chip c2">CREATE_SHAPES <span class="t">0.4s</span></span>
+        <span class="chip live c3">WRITE_COMPONENT</span>
       </div>
     </div>
   </div>
-  <div class="hand">↳ your stroke</div>
+
+  <!-- The edge the agent drew: sketch → the component it built from it. -->
+  <svg class="edge" viewBox="0 0 190 120" fill="none" aria-hidden="true">
+    <path class="draw d3" d="M8 14 C 70 40, 110 78, 170 100" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 6" stroke-linecap="round"></path>
+    <path class="tip" d="M170 100 l -10 -7 m 10 7 l -12 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
+  </svg>
+
   <div class="comp">
     <div class="t">UsagePanel.tsx · live</div>
     <div class="bars">
       <i style="height: 40%"></i><i style="height: 72%"></i><i style="height: 52%"></i><i
         style="height: 90%"></i><i style="height: 61%"></i><i style="height: 34%"></i>
     </div>
+  </div>
+
+  <!-- A teammate is here too: named cursor, product-style. -->
+  <div class="peer" aria-hidden="true">
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+      <path d="M1 1 L 12 6 L 7 7.5 L 5 12.5 Z" fill="currentColor"></path>
+    </svg>
+    <span>khoa</span>
   </div>
 </div>
 
@@ -38,17 +74,20 @@
     border: 1px solid var(--line);
     box-shadow: var(--shadow-lift);
     padding: 16px;
-    min-height: 380px;
+    min-height: 400px;
     background-image: radial-gradient(var(--line) 1px, transparent 1px);
     background-size: 22px 22px;
+    overflow: hidden;
   }
   .card {
+    position: relative;
     background: var(--raised);
     border-radius: 14px;
     box-shadow: var(--shadow-float);
     width: 232px;
     max-width: 100%;
     overflow: hidden;
+    margin-left: auto;
   }
   .card-h {
     display: flex;
@@ -64,20 +103,6 @@
     height: 6px;
     border-radius: 999px;
     background: var(--accent);
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .dot {
-      animation: pulse 1.6s ease-in-out infinite;
-    }
-  }
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.35;
-    }
   }
   .card-b {
     padding: 10px;
@@ -105,6 +130,33 @@
   }
   .chip .t {
     color: var(--faint);
+  }
+
+  /* The human's sketch, top-left of the board. */
+  .sketch {
+    position: absolute;
+    left: 22px;
+    top: 26px;
+    width: 150px;
+    height: 110px;
+    color: var(--line-strong);
+  }
+  .hand {
+    position: absolute;
+    left: 26px;
+    top: 142px;
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    color: var(--faint);
+  }
+  /* The dashed edge from the sketch down to the component. */
+  .edge {
+    position: absolute;
+    left: 96px;
+    top: 148px;
+    width: 190px;
+    height: 120px;
+    color: var(--line-strong);
   }
   .comp {
     position: absolute;
@@ -141,14 +193,126 @@
   .bars i:nth-child(4) {
     background: oklch(0.66 0.13 150);
   }
-  .hand {
+
+  /* A teammate's cursor: same shape the product renders, one cool hue. */
+  .peer {
     position: absolute;
-    left: 26px;
-    bottom: 40px;
-    font-family: var(--mono);
-    font-size: 0.6875rem;
-    color: var(--faint);
+    left: 46%;
+    top: 58%;
+    display: flex;
+    align-items: flex-start;
+    gap: 3px;
+    color: oklch(0.62 0.13 220);
   }
+  .peer span {
+    font-size: 0.6875rem;
+    font-family: var(--mono);
+    background: oklch(0.62 0.13 220);
+    color: oklch(0.16 0.01 60);
+    border-radius: 5px;
+    padding: 1px 5px;
+    margin-top: 8px;
+  }
+
+  /* Motion: the sketch draws itself, the chips land in order, the bars grow, the
+     teammate drifts. All gated; the resting frame reads complete without any of it. */
+  @media (prefers-reduced-motion: no-preference) {
+    .dot {
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    .draw {
+      stroke-dasharray: 420;
+      stroke-dashoffset: 420;
+      animation: draw 1.1s ease-out forwards;
+    }
+    .d2 {
+      animation-delay: 0.7s;
+    }
+    .d3 {
+      /* the dashed edge keeps its dash pattern; reveal it with opacity instead */
+      stroke-dasharray: 5 6;
+      stroke-dashoffset: 0;
+      opacity: 0;
+      animation: appear 0.6s ease-out 2.6s forwards;
+    }
+    .tip {
+      opacity: 0;
+      animation: appear 0.4s ease-out 3s forwards;
+    }
+    .chip {
+      opacity: 0;
+      transform: translateY(4px);
+      animation: land 0.35s ease-out forwards;
+    }
+    .c1 {
+      animation-delay: 1.5s;
+    }
+    .c2 {
+      animation-delay: 2s;
+    }
+    .c3 {
+      animation-delay: 2.5s;
+    }
+    .bars i {
+      transform-origin: bottom;
+      transform: scaleY(0);
+      animation: grow 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+    }
+    .bars i:nth-child(1) { animation-delay: 3s; }
+    .bars i:nth-child(2) { animation-delay: 3.08s; }
+    .bars i:nth-child(3) { animation-delay: 3.16s; }
+    .bars i:nth-child(4) { animation-delay: 3.24s; }
+    .bars i:nth-child(5) { animation-delay: 3.32s; }
+    .bars i:nth-child(6) { animation-delay: 3.4s; }
+    .peer {
+      animation: drift 9s ease-in-out infinite alternate;
+    }
+  }
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+  @keyframes draw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  @keyframes appear {
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes land {
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes grow {
+    to {
+      transform: scaleY(1);
+    }
+  }
+  @keyframes drift {
+    0% {
+      transform: translate(0, 0);
+    }
+    35% {
+      transform: translate(34px, -22px);
+    }
+    70% {
+      transform: translate(-16px, 12px);
+    }
+    100% {
+      transform: translate(22px, -6px);
+    }
+  }
+
   @media (max-width: 460px) {
     .comp {
       position: static;
@@ -158,8 +322,14 @@
     .pad {
       min-height: 0;
     }
-    .hand {
+    .hand,
+    .sketch,
+    .edge,
+    .peer {
       display: none;
+    }
+    .card {
+      margin-left: 0;
     }
   }
 </style>

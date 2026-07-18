@@ -1,4 +1,5 @@
 ---
+import InboxMock from '../components/InboxMock.astro'
 import Logo from '../components/Logo.astro'
 import PadMock from '../components/PadMock.astro'
 import WaitlistForm from '../components/WaitlistForm.astro'
@@ -12,6 +13,7 @@ import Layout from '../layouts/Layout.astro'
         <Logo />
         <div class="navlinks">
           <a href="#surface">Canvas</a>
+          <a href="#team">Team</a>
           <a href="#repo">Repos</a>
           <a href="#access">Access</a>
         </div>
@@ -57,6 +59,29 @@ import Layout from '../layouts/Layout.astro'
           <h3>Builds</h3>
           <p>Authors React components against a real library, places live instances, hot-reloads on edit.</p>
         </div>
+        <div class="col">
+          <h3>Asks</h3>
+          <p>Ends its turn to a human when it needs one — the question lands in the team's shared inbox.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="team">
+      <p class="label">The team</p>
+      <h2>Agents ask. Humans answer. Nothing gets lost.</h2>
+      <div class="split">
+        <div>
+          <p class="lede">
+            Every conversation in the workspace lands in one shared inbox. When an agent needs a
+            decision, it stops and hands the question to the humans — the rail badges, a chime
+            rings, and whoever answers first answers for everyone.
+          </p>
+          <p class="lede">
+            The board is shared the same way: live cursors, follow mode, one state everyone writes
+            to. Keep a canvas private while you think; publish it to the workspace when it's ready.
+          </p>
+        </div>
+        <InboxMock />
       </div>
     </section>
 
@@ -91,7 +116,7 @@ import Layout from '../layouts/Layout.astro'
     </section>
 
     <footer>
-      <div>cedarpad — a spatial workspace where you and an agent share the same pad.</div>
+      <div>cedarpad — the pad you, your team, and AI all draw on.</div>
       <div>© 2026 Zabaca</div>
     </footer>
   </div>
@@ -176,9 +201,19 @@ import Layout from '../layouts/Layout.astro'
   }
   .cols {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 28px;
     margin-top: 40px;
+  }
+  .split {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 48px;
+    align-items: center;
+    margin-top: 8px;
+  }
+  .split .lede + .lede {
+    margin-top: 16px;
   }
   .col {
     border-top: 1px solid var(--line);
@@ -225,6 +260,11 @@ import Layout from '../layouts/Layout.astro'
     flex-wrap: wrap;
     gap: 14px;
   }
+  @media (max-width: 1020px) {
+    .cols {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
   @media (max-width: 860px) {
     .hero {
       grid-template-columns: 1fr;
@@ -234,6 +274,10 @@ import Layout from '../layouts/Layout.astro'
     .cols {
       grid-template-columns: 1fr;
       gap: 22px;
+    }
+    .split {
+      grid-template-columns: 1fr;
+      gap: 32px;
     }
     .navlinks {
       display: none;

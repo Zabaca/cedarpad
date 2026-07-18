@@ -1,0 +1,129 @@
+---
+// The team-section visual: the shared inbox. One workspace queue — a question an
+// agent just handed to the humans (pinned, badged), a run still going, a finished
+// thread. Static except the working dot; the badge is the story.
+---
+
+<div class="inbox" role="img" aria-label="A shared inbox: an agent's question waiting on a human, a run in progress, and a finished thread">
+  <div class="head">
+    <span>Inbox · workspace</span>
+    <span class="badge">2</span>
+  </div>
+  <div class="row needs">
+    <span class="pin">needs you</span>
+    <div class="body">
+      <b>Ship the pricing page?</b>
+      <p>Copy and components are on the board — want a look before I open the PR?</p>
+    </div>
+  </div>
+  <div class="row">
+    <span class="dot"></span>
+    <div class="body">
+      <b>Refactor the auth gate</b>
+      <p>agent · working — branch chat/8a2e</p>
+    </div>
+  </div>
+  <div class="row done">
+    <span class="tick">✓</span>
+    <div class="body">
+      <b>Usage dashboard</b>
+      <p>closed · PR #212 merged</p>
+    </div>
+  </div>
+</div>
+
+<style>
+  .inbox {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-lift);
+    overflow: hidden;
+    max-width: 420px;
+  }
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .badge {
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    border-radius: 999px;
+    min-width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    padding: 0 5px;
+  }
+  .row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .row:last-child {
+    border-bottom: none;
+  }
+  .row.needs {
+    background: var(--raised);
+  }
+  .pin {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: var(--accent);
+    color: var(--on-accent);
+    border-radius: 5px;
+    padding: 2px 6px;
+    margin-top: 2px;
+  }
+  .dot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: var(--accent);
+    margin-top: 6px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .dot {
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+  }
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+  .tick {
+    flex: none;
+    color: var(--success, oklch(0.65 0.12 150));
+    font-size: 0.8rem;
+    margin-top: 1px;
+  }
+  .body b {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .body p {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+</style>
