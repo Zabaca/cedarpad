@@ -47,6 +47,40 @@ export function listComponents(canvasId: string = DEFAULT_CANVAS_ID): string[] {
   return [...new Set([...namesIn(ownDir(canvasId)), ...namesIn(SHARED_DIR), ...namesIn(BASE_DIR)])].sort();
 }
 
+// Pure: the leading line-comment (or block-comment) of a module's source, as one
+// line — agents open components with a describing comment, which the gallery shows
+// as the card description. Empty string when there is none.
+export function leadingComment(source: string): string {
+  const lines = source.split('\n');
+  const out: string[] = [];
+  for (const raw of lines) {
+    const l = raw.trim();
+    if (out.length === 0 && l === '') continue;
+    if (l.startsWith('//')) out.push(l.replace(/^\/\/\s?/, ''));
+    else if (out.length === 0 && l.startsWith('/*')) out.push(l.replace(/^\/\*+\s?/, '').replace(/\*+\/\s*$/, ''));
+    else if (out.length > 0 && (l.startsWith('*') || l.endsWith('*/'))) out.push(l.replace(/^\*+\s?/, '').replace(/\*+\/\s*$/, ''));
+    else break;
+  }
+  return out.join(' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
+export type ComponentInfo = { name: string; description: string; tier: 'own' | 'shared' | 'base' };
+
+/** listComponents enriched with each module's first-comment description + tier. */
+export function listComponentDetails(canvasId: string = DEFAULT_CANVAS_ID): ComponentInfo[] {
+  const own = ownDir(canvasId);
+  return listComponents(canvasId).map((name) => {
+    const dir = existsSync(fileIn(own, name)) ? own : existsSync(fileIn(SHARED_DIR, name)) ? SHARED_DIR : BASE_DIR;
+    let description = '';
+    try {
+      description = leadingComment(readFileSync(fileIn(dir, name), 'utf8'));
+    } catch {
+      /* unreadable: name-only card */
+    }
+    return { name, description, tier: dir === own ? 'own' : dir === SHARED_DIR ? 'shared' : 'base' };
+  });
+}
+
 /** True when the module lives in the shared library (and so is the workspace source). */
 export function isShared(module: string): boolean {
   return existsSync(fileIn(SHARED_DIR, module));

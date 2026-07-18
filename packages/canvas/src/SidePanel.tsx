@@ -7,7 +7,6 @@
 import * as React from 'react';
 import { useValue, type Editor, type TLShapeId } from 'tldraw';
 
-import { ComponentPalette } from './ComponentPalette';
 
 const OPEN_KEY = 'agent-canvas:side-panel';
 
@@ -77,12 +76,12 @@ export function SidePanel({
   editor,
   onSlots,
   onClose,
-  viewportCenter,
+  onAddComponent,
 }: {
   editor: Editor | null;
   onSlots: (slots: Partial<PanelSlots>) => void;
   onClose: () => void;
-  viewportCenter: () => { x: number; y: number };
+  onAddComponent: () => void;
 }) {
   // Stable ref callbacks (memoized per panel mount): a new function identity each
   // render makes React detach (null) + reattach every render, which loops setState.
@@ -102,11 +101,10 @@ export function SidePanel({
         <div className="side-panel-slot side-panel-style" ref={slot('style')} />
       </details>
       <details className="side-panel-section" open>
-        <summary>Components</summary>
-        <ComponentPalette viewportCenter={viewportCenter} onClose={onClose} />
-      </details>
-      <details className="side-panel-section" open>
         <summary>On this board</summary>
+        <button type="button" className="side-panel-add" onClick={onAddComponent}>
+          ＋ Component
+        </button>
         {editor && <InstanceList editor={editor} />}
       </details>
       <div className="side-panel-slot side-panel-nav" ref={slot('nav')} />

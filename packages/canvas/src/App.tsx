@@ -12,6 +12,7 @@ import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
 import { setExpandHandler } from './component-expand';
 import { ComponentFullscreenOverlay } from './ComponentFullscreen';
+import { ComponentGallery } from './ComponentGallery';
 import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './SidePanel';
 import { wireSync } from './sync';
 import { startPresenceHeartbeat } from './presence';
@@ -200,6 +201,7 @@ function CanvasApp() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   // The docked side panel (canvas controls + component palette + placed instances).
   const [panelOpen, setPanelOpen] = useState(loadPanelOpen);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const [slots, setSlots] = useState<PanelSlots>({ menu: null, style: null, toolbar: null, nav: null });
   const onSlots = useCallback(
     (s: Partial<PanelSlots>) =>
@@ -387,10 +389,17 @@ function CanvasApp() {
           editor={ready ? editorRef.current : null}
           onSlots={onSlots}
           onClose={() => togglePanel(false)}
+          onAddComponent={() => setGalleryOpen(true)}
+        />
+      )}
+      {/* The component gallery modal (+ Component). */}
+      {!guest && galleryOpen && (
+        <ComponentGallery
           viewportCenter={() => {
             const b = editorRef.current?.getViewportPageBounds();
             return b ? { x: b.midX, y: b.midY } : { x: 500, y: 350 };
           }}
+          onClose={() => setGalleryOpen(false)}
         />
       )}
       {!guest && !panelOpen && (

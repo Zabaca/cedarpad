@@ -31,7 +31,7 @@ import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
 import { MCP_TOKENS_HEADER, decodeMcpTokens } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
-import { isShared, listComponents, readComponent, writeComponent, writeDataFile } from './components.ts';
+import { isShared, listComponentDetails, listComponents, readComponent, writeComponent, writeDataFile } from './components.ts';
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
@@ -838,7 +838,10 @@ export async function handleRequest(req: Request): Promise<Response> {
     // Canvas-scoped via x-canvas-id; PUT mirrors the agent's write_component (write +
     // hot-reload bump + persist via the components sink).
     if (path === '/api/components' && req.method === 'GET') {
-      return json({ components: listComponents(canvasIdFrom(req, url)) });
+      const cid = canvasIdFrom(req, url);
+      // `details` (name/description/tier) feeds the gallery; `components` stays for
+      // existing consumers of the bare name list.
+      return json({ components: listComponents(cid), details: listComponentDetails(cid) });
     }
     // Data files (write_data parity): non-executable siblings a component can import.
     // Same write + blunt-bump + sink-flush contract as the module PUT below.
