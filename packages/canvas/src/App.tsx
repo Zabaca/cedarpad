@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { DefaultContextMenu, DefaultContextMenuContent, DefaultMenuPanel, DefaultNavigationPanel, DefaultPeopleMenu, DefaultSharePanel, DefaultStylePanel, DefaultToolbar, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
+import { DefaultContextMenu, DefaultContextMenuContent, DefaultMenuPanel, DefaultNavigationPanel, DefaultPeopleMenu, DefaultSharePanel, DefaultStylePanel, DefaultToolbar, NoteShapeUtil, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 import { activeCanvasId } from './active-canvas';
@@ -21,7 +21,12 @@ import { ComponentGuestView } from './ComponentGuestView';
 
 // Registered once, at editor construction: our two custom shapes. `component`
 // renders agent-authored React files; `chat` is a chat session living on the canvas.
-const customShapeUtils: TLAnyShapeUtilConstructor[] = [ComponentShapeUtil, ChatShapeUtil];
+const customShapeUtils: TLAnyShapeUtilConstructor[] = [
+  ComponentShapeUtil,
+  ChatShapeUtil,
+  // Sticky notes are fixed-size by default; let users resize them (scales text with the note).
+  NoteShapeUtil.configure({ resizeMode: 'scale' }),
+];
 
 // This is the Render Pad (ADR-0007, PRD #103): the container serves ONLY the tldraw canvas
 // + chat now. The rail, canvas selector, and Notebook stage moved to the edge Shell SPA
