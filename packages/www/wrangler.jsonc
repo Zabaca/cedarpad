@@ -11,14 +11,22 @@
   // and binds cedarpad.com to this worker (the zone lives in this account — same
   // pattern as canvas's poc.cedarpad.com). An existing apex DNS record conflicts;
   // remove it before the first deploy.
-  "routes": [{ "pattern": "cedarpad.com", "custom_domain": true }],
+  // www is also bound so it resolves (it 522'd otherwise); middleware.ts 301s it to
+  // the canonical apex, mirroring poc→app on the app side.
+  "routes": [
+    { "pattern": "cedarpad.com", "custom_domain": true },
+    { "pattern": "www.cedarpad.com", "custom_domain": true }
+  ],
   "observability": { "enabled": true },
   // Static assets live in dist/client (astro build's layout). The derived deploy
   // config rewrites this itself; it's declared here so `wrangler types` sees the
   // ASSETS binding.
   "assets": {
     "binding": "ASSETS",
-    "directory": "./dist/client"
+    "directory": "./dist/client",
+    // Without this, prerendered pages are answered by the asset layer BEFORE the
+    // worker runs, so the middleware's www→apex 301 never fires (www served 200).
+    "run_worker_first": true
   },
   // The waitlist DB (ADR-0014): one table, email UNIQUE. The same database is later
   // bound to the app worker so /admin can read the list.
