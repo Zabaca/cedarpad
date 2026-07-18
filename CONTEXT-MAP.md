@@ -1,5 +1,9 @@
 # Context Map
 
+> **Product thesis:** [docs/POSITIONING.md](./docs/POSITIONING.md) — why cedarpad
+> exists (the alignment medium; live components as the vocabulary). Marketing and
+> roadmap decisions start there.
+
 > **Workspace platform frame (target model, being designed):** [CONTEXT.md](./CONTEXT.md)
 > — the Workspace runtime, edge Shell, and App layer (Canvas / Notebook / Inbox) that
 > sit *above* the per-package contexts below.
