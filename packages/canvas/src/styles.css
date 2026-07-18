@@ -904,12 +904,20 @@ body,
   border-top: 1px solid var(--line);
   margin-top: auto;
 }
+/* Containment: tldraw ships absolute/fixed positioning on its chrome; a portaled
+   panel that keeps it escapes the 300px aside and invisibly covers the canvas,
+   swallowing every click (the "canvas won't select/draw" bug). !important because
+   tldraw's stylesheet loads after ours; relative slots catch anything absolute. */
+.side-panel-slot {
+  position: relative;
+}
 .side-panel-slot .tlui-toolbar,
 .side-panel-slot .tlui-style-panel,
 .side-panel-slot .tlui-navigation-panel,
 .side-panel-slot .tlui-menu-zone {
-  position: static;
-  width: 100%;
+  position: static !important;
+  inset: auto !important;
+  width: 100% !important;
   max-width: none;
   box-shadow: none;
   border: none;
