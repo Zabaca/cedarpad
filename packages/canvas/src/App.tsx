@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { DefaultContextMenu, DefaultContextMenuContent, DefaultPeopleMenu, DefaultSharePanel, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { DefaultContextMenu, DefaultContextMenuContent, DefaultMenuPanel, DefaultNavigationPanel, DefaultPeopleMenu, DefaultSharePanel, DefaultStylePanel, DefaultToolbar, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 import { activeCanvasId } from './active-canvas';
@@ -11,7 +12,7 @@ import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
 import { setExpandHandler } from './component-expand';
 import { ComponentFullscreenOverlay } from './ComponentFullscreen';
-import { ComponentPalette } from './ComponentPalette';
+import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './SidePanel';
 import { wireSync } from './sync';
 import { startPresenceHeartbeat } from './presence';
 import { loadGuestScope, useGuestScope } from '../shared/guest-scope';
@@ -70,6 +71,23 @@ const tldrawComponents: TLComponents = {
   SharePanel: DefaultSharePanel,
   PeopleMenu: DefaultPeopleMenu,
 };
+
+// Members get the docked side panel: tldraw's chrome (menu, toolbar, style panel,
+// zoom nav) is nulled in place and PORTALED into the panel's slot divs. Portals keep
+// the components inside the Tldraw React tree, so every tldraw hook still works —
+// only the DOM moves. When the panel is collapsed (slots null) the chrome unmounts:
+// collapse doubles as a focus mode (keyboard + context menu keep working).
+function panelComponents(slots: PanelSlots): TLComponents {
+  // The fragment wrapper bridges the bundled-React-19 vs project-React-18 ReactPortal types.
+  const into = (el: HTMLElement | null, node: ReactNode) => (el ? <>{createPortal(node, el)}</> : null);
+  return {
+    ...tldrawComponents,
+    MenuPanel: () => into(slots.menu, <DefaultMenuPanel />),
+    Toolbar: () => into(slots.toolbar, <DefaultToolbar />),
+    StylePanel: () => into(slots.style, <DefaultStylePanel />),
+    NavigationPanel: () => into(slots.nav, <DefaultNavigationPanel />),
+  };
+}
 
 // Persist the camera (pan + zoom) PER CANVAS across reloads, so a canvas returns to
 // where you left it rather than the default center. Canvas shapes live in the
@@ -180,9 +198,18 @@ function CanvasApp() {
   const [ready, setReady] = useState(false);
   // Which component shape (if any) is expanded fullscreen over the canvas (⛶ button).
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  // The built-in component palette panel (browse the library, one-click place).
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  // The docked side panel (canvas controls + component palette + placed instances).
+  const [panelOpen, setPanelOpen] = useState(loadPanelOpen);
+  const [slots, setSlots] = useState<PanelSlots>({ menu: null, style: null, toolbar: null, nav: null });
+  const onSlots = useCallback((s: Partial<PanelSlots>) => setSlots((prev) => ({ ...prev, ...s })), []);
   const guest = useGuestScope();
+  const togglePanel = useCallback((open: boolean) => {
+    setPanelOpen(open);
+    savePanelOpen(open);
+    if (!open) setSlots({ menu: null, style: null, toolbar: null, nav: null });
+  }, []);
+  // Guests keep tldraw's default floating chrome; members' chrome portals into the panel.
+  const components = useMemo<TLComponents>(() => (guest ? tldrawComponents : panelComponents(slots)), [guest, slots]);
 
   // Drop a fresh chat card. If a shape is selected (or a chat is focused), the new
   // card lands just to the right of it and is joined by a bound arrow — so chats
@@ -335,25 +362,28 @@ function CanvasApp() {
   return (
     <div className="app">
       <div className="tl-stage">
-        <Tldraw shapeUtils={customShapeUtils} components={tldrawComponents} onMount={onMount} />
+        <Tldraw shapeUtils={customShapeUtils} components={components} onMount={onMount} />
       </div>
-      {expandedId && editorRef.current && (
-        <ComponentFullscreenOverlay editor={editorRef.current} shapeId={expandedId} onClose={() => setExpandedId(null)} />
-      )}
-      {/* Built-in component palette (members only — placement is a write). */}
-      {!guest && paletteOpen && (
-        <ComponentPalette
+      {/* The docked side panel (members only — placement is a write): all canvas
+          controls, the component palette, and the placed-instance list. */}
+      {!guest && panelOpen && (
+        <SidePanel
+          editor={ready ? editorRef.current : null}
+          onSlots={onSlots}
+          onClose={() => togglePanel(false)}
           viewportCenter={() => {
             const b = editorRef.current?.getViewportPageBounds();
             return b ? { x: b.midX, y: b.midY } : { x: 500, y: 350 };
           }}
-          onClose={() => setPaletteOpen(false)}
         />
       )}
-      {!guest && (
-        <button type="button" className="palette-fab" onClick={() => setPaletteOpen((o) => !o)} disabled={!ready} title="Browse and place components">
-          ❖ Components
+      {!guest && !panelOpen && (
+        <button type="button" className="palette-fab" onClick={() => togglePanel(true)} disabled={!ready} title="Open the canvas panel (controls, components, instances)">
+          ❖ Panel
         </button>
+      )}
+      {expandedId && editorRef.current && (
+        <ComponentFullscreenOverlay editor={editorRef.current} shapeId={expandedId} onClose={() => setExpandedId(null)} />
       )}
       {/* #220: a guest may create a chat only when the share link grants guestChat. */}
       {!(guest && !guest.guestChat) && (

@@ -42,19 +42,22 @@ body,
   height: 100%;
 }
 
-/* Full-bleed canvas; chat now lives in the canvas as `chat` shapes. */
+/* The pad is a flex row: the tldraw stage + (members) the docked side panel that owns
+   all canvas controls. Chat lives in the canvas as `chat` shapes. */
 .app {
   position: relative;
+  display: flex;
   height: 100vh;
   width: 100vw;
   background: var(--bg);
 }
 
-/* Full-bleed tldraw canvas: the container serves only the Render Pad now (the rail moved
-   to the edge Shell, which iframes this pad). */
+/* The tldraw canvas fills whatever the side panel leaves (the rail moved to the edge
+   Shell, which iframes this pad). */
 .tl-stage {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1;
+  min-width: 0;
 }
 
 /* Floating control to spawn a new chat card. Bottom-center, just above tldraw's
@@ -741,20 +744,13 @@ body,
   cursor: default;
 }
 .component-palette {
-  position: absolute;
-  top: 56px;
-  right: 16px;
-  bottom: 128px;
-  width: 280px;
-  z-index: 500;
   display: flex;
   flex-direction: column;
   background: var(--panel);
   color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 8px 28px rgb(0 0 0 / 0.25);
   overflow: hidden;
+  min-height: 0;
+  flex: 1;
 }
 .component-palette-head {
   display: flex;
@@ -841,4 +837,132 @@ body,
 .component-palette-add:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* ---- Docked side panel: all canvas controls + palette + placed instances ---- */
+.side-panel {
+  flex: none;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  border-left: 1px solid var(--line);
+  z-index: 500;
+  overflow: hidden;
+}
+.side-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.side-panel-title {
+  flex: 1;
+  font-weight: 700;
+  font-size: 14px;
+}
+.side-panel-collapse {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  width: 26px;
+  height: 24px;
+  cursor: pointer;
+}
+.side-panel-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: 1px solid var(--line);
+}
+.side-panel-section[open] {
+  flex: 1;
+}
+.side-panel-section > summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-weight: 700;
+  font-size: 13px;
+  user-select: none;
+}
+
+/* tldraw chrome, portaled into the panel: let it flow as blocks instead of the
+   absolute grid slots it ships with. */
+.side-panel-slot:empty {
+  display: none;
+}
+.side-panel-toolbar,
+.side-panel-style,
+.side-panel-nav {
+  border-bottom: 1px solid var(--line);
+}
+.side-panel-nav {
+  border-bottom: none;
+  border-top: 1px solid var(--line);
+  margin-top: auto;
+}
+.side-panel-slot .tlui-toolbar,
+.side-panel-slot .tlui-style-panel,
+.side-panel-slot .tlui-navigation-panel,
+.side-panel-slot .tlui-menu-zone {
+  position: static;
+  width: 100%;
+  max-width: none;
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+.side-panel-slot .tlui-toolbar__inner {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.side-panel-slot .tlui-style-panel {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.side-panel-menu {
+  flex: none;
+}
+
+/* The palette inside the panel: the <summary> is its title, the panel collapse is
+   its close — hide the component's own duplicates. */
+.side-panel .component-palette-close,
+.side-panel .component-palette-title {
+  display: none;
+}
+
+/* Placed component instances: click → select + zoom-to. */
+.instance-list {
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+.instance-list-empty {
+  opacity: 0.6;
+  font-size: 13px;
+  padding: 2px 4px;
+}
+.instance-list-row {
+  text-align: left;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-size: 13px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instance-list-row:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
