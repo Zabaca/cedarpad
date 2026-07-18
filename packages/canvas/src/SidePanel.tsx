@@ -91,14 +91,16 @@ export function SidePanel({
   return (
     <aside className="side-panel">
       <div className="side-panel-head">
-        <div className="side-panel-slot side-panel-menu" ref={slot('menu')} />
         <span className="side-panel-title">Canvas</span>
         <button type="button" className="side-panel-collapse" title="Collapse the panel" onClick={onClose}>
           »
         </button>
       </div>
-      <div className="side-panel-slot side-panel-toolbar" ref={slot('toolbar')} />
-      <div className="side-panel-slot side-panel-style" ref={slot('style')} />
+      <details className="side-panel-section side-panel-controls" open>
+        <summary>Controls</summary>
+        <div className="side-panel-slot side-panel-toolbar" ref={slot('toolbar')} />
+        <div className="side-panel-slot side-panel-style" ref={slot('style')} />
+      </details>
       <details className="side-panel-section" open>
         <summary>Components</summary>
         <ComponentPalette viewportCenter={viewportCenter} onClose={onClose} />

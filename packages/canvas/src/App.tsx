@@ -213,6 +213,7 @@ function CanvasApp() {
     [],
   );
   const guest = useGuestScope();
+  const menuSlotRef = useCallback((el: HTMLElement | null) => onSlots({ menu: el }), [onSlots]);
   const togglePanel = useCallback((open: boolean) => {
     setPanelOpen(open);
     savePanelOpen(open);
@@ -373,6 +374,10 @@ function CanvasApp() {
     <div className="app">
       <div className="tl-stage">
         <Tldraw shapeUtils={customShapeUtils} components={components} onMount={onMount} />
+        {/* The menu/actions slot floats over the canvas's top-right corner, INSIDE the
+            stage: tldraw's dropdowns portal into its own overflow-clipped container, so
+            a trigger outside it (the panel) opens an invisible, clipped menu. */}
+        {!guest && panelOpen && <div className="side-panel-slot stage-menu" ref={menuSlotRef} />}
       </div>
       {/* The docked side panel (members only — placement is a write): all canvas
           controls, the component palette, and the placed-instance list. */}

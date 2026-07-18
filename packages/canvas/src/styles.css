@@ -974,3 +974,48 @@ body,
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* Panel refinements (user pass 2) */
+/* 4: menu/actions dropdowns paint above the later slots (they open inside the head
+   slot; without this the style slot's opaque background covered them). */
+.side-panel-head {
+  position: relative;
+  z-index: 10;
+}
+/* The Controls section wraps the tldraw toolbar + style slots, collapsible like
+   the other sections. */
+.side-panel-controls[open] {
+  flex: none;
+}
+/* 2: colors (148px) and the text/geometry toggle rows (112px) fit side by side. */
+.side-panel-slot .tlui-style-panel {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.side-panel-slot .tlui-style-panel__section {
+  width: auto !important;
+  min-width: 0;
+}
+.side-panel-slot .tlui-slider__container {
+  max-width: 148px;
+}
+/* 3: the opacity slider's track was invisible against the panel background. */
+.side-panel-slot .tlui-slider__track {
+  background: linear-gradient(var(--line-strong) 0 0) center / calc(100% - 12px) 3px no-repeat;
+  border-radius: 3px;
+}
+/* 4 (cont.): the menu/actions strip floats INSIDE the stage (top-right over the
+   canvas) so its dropdowns open within tldraw's clipped container. */
+.stage-menu {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 400;
+}
+.stage-menu .tlui-menu-zone {
+  position: static !important;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
