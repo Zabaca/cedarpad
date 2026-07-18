@@ -48,8 +48,8 @@ import Layout from '../layouts/Layout.astro'
       <h2>Same canvas. Same state. No handoff.</h2>
       <p class="lede">
         You draw a box and a stroke. The agent reads them — the actual shapes, not a screenshot —
-        and answers on the board. Every edit streams to your screen as it happens, because there is
-        one store and both of you write to it.
+        and answers on the board. Every edit appears on everyone's screen as it happens, because
+        you're all drawing on the same living surface.
       </p>
       <div class="cols">
         <div class="col">
@@ -62,11 +62,11 @@ import Layout from '../layouts/Layout.astro'
         </div>
         <div class="col">
           <h3>Builds</h3>
-          <p>Authors React components against a real library, places live instances, hot-reloads on edit.</p>
+          <p>Writes real software onto the board — charts, dashboards, tools — running live where it stands, updating as it's edited.</p>
         </div>
         <div class="col">
           <h3>Asks</h3>
-          <p>Ends its turn to a human when it needs one — the question lands in the team's shared inbox.</p>
+          <p>Stops and asks when it needs a decision — the question lands in your team's shared inbox, waiting for a human.</p>
         </div>
       </div>
     </section>
@@ -82,8 +82,9 @@ import Layout from '../layouts/Layout.astro'
             rings, and whoever answers first answers for everyone.
           </p>
           <p class="lede">
-            The board is shared the same way: live cursors, follow mode, one state everyone writes
-            to. Keep a canvas private while you think; publish it to the workspace when it's ready.
+            The board is shared the same way: live cursors, follow a teammate's view, everyone
+            moving the same pieces. Keep a canvas private while you think; publish it to the
+            workspace when it's ready.
           </p>
         </div>
         <InboxMock />
@@ -95,9 +96,9 @@ import Layout from '../layouts/Layout.astro'
       <h2>It doesn't suggest the change. It opens the PR.</h2>
       <p class="lede">
         Attach your GitHub repos to a workspace. An agent works them the way you would: its own
-        worktree off <code>main</code>, a branch per conversation, a commit, a pull request you
-        review on GitHub like any other. Its runs land in the same inbox, stream live, and can be
-        interrupted mid-thought.
+        copy of the code, a branch per conversation, a commit, a pull request you review on GitHub
+        like any other. Its runs land in the same inbox, stream live, and can be interrupted
+        mid-thought.
       </p>
       <div class="strip">
         <span class="chip">worktree ← origin/main</span>
@@ -111,8 +112,8 @@ import Layout from '../layouts/Layout.astro'
       <p class="label">Access</p>
       <h2>Seats open in batches.</h2>
       <p class="lede">
-        A workspace is a real isolated runtime with an unsandboxed agent inside it — so we hand
-        them out deliberately, and we sit with the people we hand them to. Leave an email. We'll
+        Every workspace is its own private machine with a capable, hands-on agent inside — so we
+        open seats deliberately, and we sit with the people we hand them to. Leave an email. We'll
         tell you when a seat is yours.
       </p>
       <div class="cta-form">
