@@ -69,6 +69,25 @@ conversation claims it for that user, deliberately. _Avoid_: scoping Inbox reads
 `user_id`, repurposing `user_id` as the assignee, or making assignment exclusive
 (assignee-only reply). _(Decided 2026-07-15.)_
 
+**Visibility (canvas + chat)** _(decided 2026-07-17, design — not yet implemented)_:
+a canvas is **workspace-visible** (default; today's behavior) or **private** —
+private means only its **creator** (`created_by`, a new registry column) can see or
+open it; everyone else, list and routes alike, gets the same 404 as a nonexistent
+canvas. Standalone chats get the same opt-in flag: shared by default, the chat's
+creator may flip it. Effective rule: a conversation is hidden from user U iff
+(its canvas is private AND U ≠ the canvas creator) OR (the chat is flagged private
+AND U ≠ the chat creator) — **canvas privacy dominates**: re-privatizing a canvas
+hides ALL its attached chats, even from their own creators, until re-published.
+Flips are creator-only, both directions; the workspace owner additionally gets
+**manage-not-read**: sees that a private canvas exists (name, creator) and may
+force-publish or delete it, but cannot open it while private. Legacy canvases with
+no recorded creator — and the registry-row-less `default` canvas — are permanently
+workspace-visible. Share links still work on a private canvas (an explicit act by
+its creator); MCP enforces the same rules via the token's user. _Avoid_: an
+"admin" role (there is only owner/member), copying visibility onto conversation
+rows (derive it at read time via the canvas edge), or treating private as an ACL
+(it is a binary creator-only flag, not per-member sharing).
+
 Containment: **workspace → canvas → shapes**, with **chat** shapes living on the
 canvas like any other shape; a chat's `ChatMeta` and transcript live *beside* the canvas,
 server-owned, not inside canvas state. (The tldraw **pages** layer was removed — see
