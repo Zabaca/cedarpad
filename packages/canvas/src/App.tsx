@@ -201,7 +201,17 @@ function CanvasApp() {
   // The docked side panel (canvas controls + component palette + placed instances).
   const [panelOpen, setPanelOpen] = useState(loadPanelOpen);
   const [slots, setSlots] = useState<PanelSlots>({ menu: null, style: null, toolbar: null, nav: null });
-  const onSlots = useCallback((s: Partial<PanelSlots>) => setSlots((prev) => ({ ...prev, ...s })), []);
+  const onSlots = useCallback(
+    (s: Partial<PanelSlots>) =>
+      setSlots((prev) => {
+        // No-op guard: SidePanel's ref callbacks re-fire every render (new function
+        // identity), so an unchanged element must NOT produce a new state object —
+        // that re-rendered Tldraw's components and looped ("Maximum update depth").
+        for (const [k, v] of Object.entries(s)) if (prev[k as keyof PanelSlots] !== v) return { ...prev, ...s };
+        return prev;
+      }),
+    [],
+  );
   const guest = useGuestScope();
   const togglePanel = useCallback((open: boolean) => {
     setPanelOpen(open);

@@ -84,7 +84,10 @@ export function SidePanel({
   onClose: () => void;
   viewportCenter: () => { x: number; y: number };
 }) {
-  const slot = (name: keyof PanelSlots) => (el: HTMLElement | null) => onSlots({ [name]: el });
+  // Stable ref callbacks (memoized per panel mount): a new function identity each
+  // render makes React detach (null) + reattach every render, which loops setState.
+  const slots = React.useRef<Partial<Record<keyof PanelSlots, (el: HTMLElement | null) => void>>>({});
+  const slot = (name: keyof PanelSlots) => (slots.current[name] ??= (el) => onSlots({ [name]: el }));
   return (
     <aside className="side-panel">
       <div className="side-panel-head">
