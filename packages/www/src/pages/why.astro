@@ -1,0 +1,148 @@
+---
+// The manifesto: the long-form argument the homepage compresses. Same arc as
+// docs/POSITIONING.md — the wound, the medium, the ritual, the loop.
+import Logo from '../components/Logo.astro'
+import WaitlistForm from '../components/WaitlistForm.astro'
+import Layout from '../layouts/Layout.astro'
+---
+
+<Layout
+  title="why cedarpad exists — ideas in, decisions out"
+  description="AI made building easy and decisions scarce. Chat is the wrong shape for deciding. Why we're building a funnel for decisions: ideas in, aligned solutions out."
+>
+  <div class="wrap">
+    <nav aria-label="Main">
+      <Logo />
+      <div class="navlinks">
+        <a href="/">Home</a>
+        <a href="#waitlist">Access</a>
+      </div>
+    </nav>
+
+    <article>
+      <p class="label">Why cedarpad exists</p>
+      <h1>Ideas in. Decisions out.</h1>
+
+      <h2>The bottleneck moved</h2>
+      <p>
+        For seventy years, building software was the expensive part. Every tool we work in —
+        tickets, specs, roadmaps — exists to protect scarce builder time. Then building stopped
+        being scarce. One engineer with an AI agent ships in an afternoon what used to take a
+        sprint.
+      </p>
+      <p>
+        But watch a team of five, each vibe-coding with their own agent, and you see the new
+        problem: they ship five afternoons of work in five directions. AI didn't just make
+        building easy — it made misalignment cheap to produce at scale. The bottleneck moved
+        upstream, to the oldest problem teams have: agreeing on what to build. Builders are
+        everywhere now. Clear decisions are the scarce thing.
+      </p>
+
+      <h2>Chat is the wrong shape for deciding</h2>
+      <p>
+        The medium we got for working with AI is a chat thread: linear, single-player, gone by
+        tomorrow. But almost everything worth deciding is structural — a system, a tradeoff
+        space, three options and how they differ. Prose serializes structure; your head has to
+        rebuild it. Whiteboards fixed structure but never finished anything: every session ends
+        with someone photographing the board, and the real work restarting from zero somewhere
+        else.
+      </p>
+
+      <h2>So we're building a funnel for decisions</h2>
+      <p>
+        <strong>In.</strong> Everything your team notices, pooled: ideas, issues, notes, signals.
+        Today you capture them; soon they arrive on their own from where signal already lives —
+        your issues, your errors, your support queue, your data. The pool synthesizes into the
+        problems worth your next cycle.
+      </p>
+      <p>
+        <strong>On the board.</strong> Problems meet the team and its visual agents on one shared
+        canvas. The agent answers in working things: research docs, diagrams, charts on real
+        data, custom apps, clickable prototypes. Everyone explores in parallel with their own
+        agent; everything lands on one surface; the team converges by pointing at real things
+        instead of arguing about adjectives.
+      </p>
+      <p>
+        <strong>Out.</strong> The decision leaves as a solution PRD with working prototypes
+        attached, into GitHub issues, Linear, or Jira. Your builders — human or agent, including
+        ours — pick up a clear decision instead of a vague ticket.
+      </p>
+
+      <h2>Why this compounds</h2>
+      <p>
+        Every component your team builds becomes vocabulary — reusable words in how you and your
+        agents communicate. Every shipped decision throws off new observations. A cedarpad
+        workspace gets faster at aligning, and sharper about what's worth building, the longer it
+        lives. A fresh chat window starts from zero every time.
+      </p>
+
+      <h2 id="waitlist">Come build it with us</h2>
+      <p>
+        The board is live today; the funnel is being built around it. Cedarpad is invite-only
+        while that happens — every workspace is a private machine with a capable, hands-on agent
+        inside, and we sit with every team we let in.
+      </p>
+      <WaitlistForm id="why" />
+    </article>
+
+    <footer>
+      <div>cedarpad — the pad where teams get aligned.</div>
+      <div>© 2026 Zabaca</div>
+    </footer>
+  </div>
+</Layout>
+
+<style>
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .navlinks {
+    display: flex;
+    gap: 22px;
+    font-size: 0.8125rem;
+  }
+  .navlinks a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .navlinks a:hover {
+    color: var(--text);
+  }
+  article {
+    max-width: 640px;
+    padding: 64px 0 72px;
+  }
+  h1 {
+    font-size: clamp(1.8rem, 3.4vw, 2.6rem);
+    font-weight: 600;
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+    margin: 14px 0 8px;
+  }
+  h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 44px 0 10px;
+  }
+  p {
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1.7;
+    margin: 0 0 16px;
+  }
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 32px 0 48px;
+    color: var(--faint);
+    font-size: 0.8125rem;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+</style>
