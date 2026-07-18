@@ -100,6 +100,94 @@ describe('handleCanvasesApi — list/create scoped to the active workspace', () 
   });
 });
 
+// ADR-0016: creator-private canvases. The registry API is the flip surface and the list
+// is the filter surface; the workspace owner gets manage-not-read (locked rows, force-
+// publish, delete — never open; the pad-route gate lives in index.ts).
+describe('handleCanvasesApi — visibility (ADR-0016)', () => {
+  const MEMBER = { id: 'user_vis_member' };
+  const OWNER = { id: 'user_vis_owner' };
+  let cookie = '';
+  let canvasId = '';
+
+  beforeAll(async () => {
+    for (const u of [MEMBER, OWNER]) {
+      await db.insert(schema.user).values({ id: u.id, name: u.id, email: `${u.id}@example.com` });
+    }
+    const ws = await createWorkspace(database, { name: 'Vis', ownerUserId: OWNER.id });
+    await db.insert(schema.workspaceMembers).values({ id: 'wm_vis', workspaceId: ws.id, userId: MEMBER.id });
+    cookie = `cs_workspace=${ws.id}`;
+    const created = await readJson(
+      await handleCanvasesApi(
+        new Request('https://x/api/canvases', {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'Mine' }),
+        }),
+        database,
+        MEMBER,
+      ),
+    );
+    canvasId = created.id;
+  });
+
+  const patchVis = (user: { id: string }, visibility: string) =>
+    handleCanvasesApi(
+      new Request('https://x/api/canvases/x', {
+        method: 'PATCH',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ visibility }),
+      }),
+      database,
+      user,
+      canvasId,
+    );
+  const list = async (user: { id: string }) =>
+    (await readJson(await handleCanvasesApi(new Request('https://x/api/canvases', { headers: { cookie } }), database, user))).canvases;
+
+  test('creation stamps the creator; rows carry visibility + mine', async () => {
+    const rows = await list(MEMBER);
+    expect(rows).toEqual([{ id: canvasId, name: 'Mine', visibility: 'workspace', mine: true }]);
+    expect((await list(OWNER))[0]).toMatchObject({ mine: false });
+  });
+
+  test('the creator flips private; another member no longer lists it; the owner sees it locked', async () => {
+    expect((await patchVis(MEMBER, 'private')).status).toBe(200);
+    expect(await list(MEMBER)).toEqual([{ id: canvasId, name: 'Mine', visibility: 'private', mine: true }]);
+    const ownerRows = await list(OWNER);
+    expect(ownerRows).toEqual([
+      { id: canvasId, name: 'Mine', visibility: 'private', mine: false, locked: true, createdBy: MEMBER.id },
+    ]);
+  });
+
+  test('while private: the owner cannot rename or privately-read, but CAN force-publish', async () => {
+    const rename = await handleCanvasesApi(
+      new Request('https://x/api/canvases/x', {
+        method: 'PATCH',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Stolen' }),
+      }),
+      database,
+      OWNER,
+      canvasId,
+    );
+    expect(rename.status).toBe(403);
+    expect((await patchVis(OWNER, 'workspace')).status).toBe(200);
+    expect((await list(OWNER))[0]).toMatchObject({ visibility: 'workspace' });
+  });
+
+  test('the owner may never privatize someone else’s canvas (403); a plain member gets 404 on a hidden one', async () => {
+    expect((await patchVis(OWNER, 'private')).status).toBe(403);
+    await patchVis(MEMBER, 'private');
+    const STRANGER_MEMBER = { id: 'user_vis_third' };
+    await db.insert(schema.user).values({ id: STRANGER_MEMBER.id, name: 'third', email: 'third@example.com' });
+    await db
+      .insert(schema.workspaceMembers)
+      .values({ id: 'wm_vis3', workspaceId: cookie.slice('cs_workspace='.length), userId: STRANGER_MEMBER.id });
+    expect((await patchVis(STRANGER_MEMBER, 'workspace')).status).toBe(404);
+    expect(await list(STRANGER_MEMBER)).toEqual([]);
+  });
+});
+
 // The edge login page is what the SOLE gate (edge Better Auth, #45) serves on a deny
 // after the #47 cutover — replacing the deleted cs_gate `?key=` page. It must let an
 // unauthenticated user actually sign in, at the edge, without waking a container.

@@ -18,26 +18,40 @@ type GithubStatus = {
   canConnect?: boolean;
 };
 type WaitlistEntry = { email: string; createdAt: string };
+// ADR-0016 manage-not-read: `locked` rows (other members' private canvases) reach the
+// workspace owner as name + creator only; the owner may force-publish or delete, never open.
+type CanvasRowView = {
+  id: string;
+  name: string;
+  visibility: 'workspace' | 'private';
+  mine: boolean;
+  locked?: boolean;
+  createdBy?: string | null;
+};
 
 export function SettingsStage({ workspaceId }: { workspaceId: string }) {
   const [members, setMembers] = useState<MemberView[]>([]);
   const [invitations, setInvitations] = useState<InvitationView[] | null>(null); // null = not owner
   const [github, setGithub] = useState<GithubStatus | null>(null);
   const [waitlist, setWaitlist] = useState<WaitlistEntry[] | null>(null); // null = not admin
+  const [lockedCanvases, setLockedCanvases] = useState<CanvasRowView[]>([]);
   const base = `/api/workspaces/${encodeURIComponent(workspaceId)}`;
 
   const reload = useCallback(async () => {
-    const [m, i, g, w] = await Promise.all([
+    const [m, i, g, w, c] = await Promise.all([
       fetch(`${base}/members`, { credentials: 'same-origin' }).catch(() => null),
       fetch(`${base}/invitations`, { credentials: 'same-origin' }).catch(() => null),
       fetch(`${base}/github`, { credentials: 'same-origin' }).catch(() => null),
       // The admin probe (ADR-0014): 200 only for role=admin; anything else hides the section.
       fetch('/api/admin/waitlist', { credentials: 'same-origin' }).catch(() => null),
+      // ADR-0016: locked rows appear only in the owner's list — empty for members.
+      fetch(`/api/canvases?workspace=${encodeURIComponent(workspaceId)}`, { credentials: 'same-origin' }).catch(() => null),
     ]);
     if (m?.ok) setMembers(((await m.json()) as { members: MemberView[] }).members);
     setInvitations(i?.ok ? ((await i.json()) as { invitations: InvitationView[] }).invitations : null);
     if (g?.ok) setGithub((await g.json()) as GithubStatus);
     setWaitlist(w?.ok ? ((await w.json()) as { entries: WaitlistEntry[] }).entries : null);
+    if (c?.ok) setLockedCanvases(((await c.json()) as { canvases: CanvasRowView[] }).canvases.filter((cv) => cv.locked));
   }, [base]);
 
   useEffect(() => {
@@ -227,6 +241,61 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
             </>
           )}
         </section>
+
+        {isOwnerView && lockedCanvases.length > 0 && (
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <h3>Private canvases</h3>
+            </div>
+            <p className="settings-row-sub">
+              Other members' private canvases. You can publish or delete them, but not open them while private
+              (manage, not read).
+            </p>
+            <ul className="settings-list">
+              {lockedCanvases.map((cv) => (
+                <li key={cv.id} className="settings-row">
+                  <span className="settings-row-name">🔒 {cv.name}</span>
+                  <span className="settings-row-sub">
+                    {members.find((m) => m.userId === cv.createdBy)?.name ?? cv.createdBy ?? 'unknown'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void (async () => {
+                        if (!window.confirm(`Make "${cv.name}" visible to the whole workspace?`)) return;
+                        await fetch(`/api/canvases/${encodeURIComponent(cv.id)}`, {
+                          method: 'PATCH',
+                          credentials: 'same-origin',
+                          headers: { 'content-type': 'application/json' },
+                          body: JSON.stringify({ visibility: 'workspace' }),
+                        }).catch(() => {});
+                        void reload();
+                      })()
+                    }
+                  >
+                    Publish
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-revoke"
+                    onClick={() =>
+                      void (async () => {
+                        if (!window.confirm(`Delete "${cv.name}"? This cannot be undone.`)) return;
+                        await fetch(`/api/canvases/${encodeURIComponent(cv.id)}`, {
+                          method: 'DELETE',
+                          credentials: 'same-origin',
+                        }).catch(() => {});
+                        void reload();
+                      })()
+                    }
+                  >
+                    Delete
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         <section className="settings-section">
           <div className="settings-section-head">

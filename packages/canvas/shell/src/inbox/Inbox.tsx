@@ -55,6 +55,8 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
   const [assigned, setAssigned] = useState<string | null>(null);
   // The active workspace's roster: the filter's options + the name behind each row's chip.
   const [members, setMembers] = useState<Member[]>([]);
+  // The caller's user id (from the list response) — drives the Private toggle's creator check.
+  const [me, setMe] = useState<string | null>(null);
   const [items, setItems] = useState<InboxItem[]>([]);
   const [state, setState] = useState<'loading' | 'error' | 'ready'>('loading');
   // The opened Conversation (the whole item, so the thread keeps its summary/status even after a
@@ -102,6 +104,7 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
     }
     const d = (await r.json()) as InboxListResponse;
     setItems(d.items);
+    if (d.me) setMe(d.me);
     setState('ready');
     // Refresh the opened item from the authoritative list (it's a snapshot): an attach
     // (canvasId), a rename, or a triage flip should reach the thread + canvas pane without
@@ -286,6 +289,7 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
           <Thread
             key={current.id}
             item={current}
+            me={me}
             onListReload={loadList}
             canvasHidden={canvasHidden}
             onToggleCanvas={toggleCanvas}
@@ -428,6 +432,11 @@ function ItemRow({
       <div className="inbox-item-top">
         {item.unread && <span className="inbox-dot" aria-label="unread" />}
         <b>{item.summary || item.id}</b>
+        {item.visibility === 'private' && (
+          <span className="inbox-private" title="Private — only you see this chat" aria-label="private">
+            🔒
+          </span>
+        )}
         {item.kind === 'dev-agent' && <span className="inbox-badge dev-agent">dev-agent</span>}
         {badge}
         {assignee && (
@@ -450,11 +459,14 @@ function ItemRow({
 // edge R2 read; browsing the list never reaches here (only opening does).
 function Thread({
   item,
+  me,
   onListReload,
   canvasHidden,
   onToggleCanvas,
 }: {
   item: InboxItem;
+  /** The caller's user id — the Private toggle shows only for the chat's creator (ADR-0016). */
+  me: string | null;
   onListReload: () => Promise<void>;
   canvasHidden: boolean;
   onToggleCanvas: () => void;
@@ -504,6 +516,29 @@ function Thread({
     <>
       <div className="inbox-threadhead">
         <b>{item.summary || id}</b>
+        {me && item.createdBy === me && (
+          <button
+            type="button"
+            title={
+              item.visibility === 'private'
+                ? 'Private — only you see this chat. Click to share with the workspace.'
+                : 'Shared with the workspace. Click to make private.'
+            }
+            onClick={() =>
+              void (async () => {
+                await fetch(`/api/inbox/${encodeURIComponent(id)}/visibility`, {
+                  method: 'POST',
+                  credentials: 'same-origin',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({ visibility: item.visibility === 'private' ? 'shared' : 'private' }),
+                }).catch(() => {});
+                await onListReload();
+              })()
+            }
+          >
+            {item.visibility === 'private' ? '🔒 Private' : '🔓 Shared'}
+          </button>
+        )}
         <button
           type="button"
           className="inbox-canvas-toggle"

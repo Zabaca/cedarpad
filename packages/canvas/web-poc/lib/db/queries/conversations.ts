@@ -29,6 +29,8 @@ export async function create(
     /** The assignee at birth: a human initiator claims their session; unattended
      *  (cron) starts stay unassigned. */
     assignedTo?: string | null;
+    /** ADR-0016: the human initiator (immutable). Null = unattended start. */
+    createdBy?: string | null;
   },
 ): Promise<ConversationRow> {
   const [row] = await db
@@ -39,6 +41,7 @@ export async function create(
       userId: input.userId,
       workspaceId: input.workspaceId,
       assignedTo: input.assignedTo ?? null,
+      createdBy: input.createdBy ?? null,
       kind: input.kind ?? "chat",
       ownerRef: input.ownerRef ?? null,
       canvasId: input.canvasId ?? null,
@@ -162,6 +165,16 @@ export async function reply(db: Database, id: string): Promise<ConversationRow |
  *  not session activity. */
 export async function assign(db: Database, id: string, userId: string | null): Promise<ConversationRow | null> {
   return patch(db, id, { assignedTo: userId });
+}
+
+/** ADR-0016: flip a chat's own visibility flag (authorization is the caller's job).
+ *  No last_activity touch — a triage act, like assign. */
+export async function setVisibility(
+  db: Database,
+  id: string,
+  visibility: "shared" | "private",
+): Promise<ConversationRow | null> {
+  return patch(db, id, { visibility });
 }
 
 /** Get the Conversation owned by a chat (`owner_ref` = the bridge chatId), or null. */

@@ -5,6 +5,7 @@ import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
+import { canvasHiddenFrom } from './visibility.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
 import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo } from './github-connection.ts';
 import { handleAdminApi } from './admin.ts';
@@ -501,7 +502,10 @@ export default {
       // owner-OR-member; a missing row fails closed. No bypass.
       const wsRecord = await getWorkspace(workerDb, workspaceId, user.id);
       const cvRecord = canvasId === DEFAULT_CANVAS_ID ? null : await getCanvas(workerDb, canvasId);
-      return decideCanvasRoute(workspaceId, canvasId, wsRecord, cvRecord);
+      // ADR-0016: a private canvas is 404 to everyone but its creator — the workspace
+      // owner included (manage-not-read). Same response as a nonexistent canvas.
+      const visible = cvRecord && canvasHiddenFrom(cvRecord, user.id) ? null : cvRecord;
+      return decideCanvasRoute(workspaceId, canvasId, wsRecord, visible);
     };
 
     /** cs_workspace pins which container the absolute-path asset/API fallthrough proxies to. */

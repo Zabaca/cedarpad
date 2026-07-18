@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, mock, test } from 'bun:test';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import * as schema from '../web-poc/lib/db/schema.ts';
+import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
@@ -251,5 +252,80 @@ describe('handleInboxApi — list scoped to the active workspace', () => {
       await handleInboxApi(new Request(`https://x/api/inbox?workspace=${ws.id}`), {} as never, USER),
     );
     expect(res.items.map((i: { workspaceId: string }) => i.workspaceId)).not.toContain(ws.id);
+  });
+});
+
+// ADR-0016: the list drops rows hidden from the caller — the chat's own private flag, or
+// a private linked canvas (canvas dominates, its chats' creators included). Per-id actions
+// 404 on hidden rows; the chat's own flag flips via /visibility, creator-only.
+describe('handleInboxApi — visibility (ADR-0016)', () => {
+  let wsId = '';
+  let cookie = '';
+  const listFor = async (user: { id: string }) =>
+    readJson(await handleInboxApi(new Request('https://x/api/inbox?view=all', { headers: { cookie } }), {} as never, user));
+
+  beforeAll(async () => {
+    const ws = await createWorkspace(database, { name: 'VisWs', ownerUserId: USER.id });
+    wsId = ws.id;
+    cookie = `cs_workspace=${wsId}`;
+    await db.insert(schema.workspaceMembers).values({ id: 'wm_vis_inbox', workspaceId: wsId, userId: MEMBER.id });
+  });
+
+  test('a private chat lists for its creator only; the response carries me', async () => {
+    const conv = await conversations.create(database, {
+      sessionId: 's_vis1',
+      userId: 'system',
+      workspaceId: wsId,
+      createdBy: USER.id,
+    });
+    await conversations.setVisibility(database, conv.id, 'private');
+    const mine = await listFor(USER);
+    expect(mine.me).toBe(USER.id);
+    expect(mine.items.map((i: { id: string }) => i.id)).toContain(conv.id);
+    const theirs = await listFor(MEMBER);
+    expect(theirs.items.map((i: { id: string }) => i.id)).not.toContain(conv.id);
+    // Per-id: hidden ⇒ the same 404 as missing.
+    const detail = await handleInboxApi(new Request(`https://x/api/inbox/${conv.id}`), {} as never, MEMBER, conv.id);
+    expect(detail.status).toBe(404);
+  });
+
+  test('canvas dominates: a shared chat on a private canvas hides even from the CHAT creator', async () => {
+    const canvas = await canvasRegistry.create(database, { workspaceId: wsId, name: 'Secret', createdBy: MEMBER.id });
+    await canvasRegistry.setVisibility(database, canvas.id, 'private');
+    const conv = await conversations.create(database, {
+      sessionId: 's_vis2',
+      userId: 'system',
+      workspaceId: wsId,
+      canvasId: canvas.id,
+      createdBy: USER.id,
+    });
+    expect((await listFor(USER)).items.map((i: { id: string }) => i.id)).not.toContain(conv.id);
+    // The canvas creator still sees it.
+    expect((await listFor(MEMBER)).items.map((i: { id: string }) => i.id)).toContain(conv.id);
+  });
+
+  test('POST /visibility is creator-only', async () => {
+    const conv = await conversations.create(database, {
+      sessionId: 's_vis3',
+      userId: 'system',
+      workspaceId: wsId,
+      createdBy: USER.id,
+    });
+    const flip = (user: { id: string }, visibility: string) =>
+      handleInboxApi(
+        new Request(`https://x/api/inbox/${conv.id}/visibility`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ visibility }),
+        }),
+        {} as never,
+        user,
+        conv.id,
+        'visibility',
+      );
+    expect((await flip(MEMBER, 'private')).status).toBe(403);
+    const ok = await flip(USER, 'private');
+    expect(ok.status).toBe(200);
+    expect(((await readJson(ok)) as { conversation: { visibility: string } }).conversation.visibility).toBe('private');
   });
 });

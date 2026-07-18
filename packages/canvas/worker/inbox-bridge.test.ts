@@ -56,6 +56,19 @@ mock.module('../web-poc/lib/db/queries/workspaces.ts', () => ({
 afterAll(() => {
   getWorkspaceImpl = realGetWorkspace;
 });
+// ADR-0016 canvas edge seam: the proxy derives conversation visibility through the linked
+// canvas. Delegate + RESTORE, same leak-class reasoning as getWorkspace above.
+let linkedCanvas: { visibility: 'workspace' | 'private'; createdBy: string | null } | null = null;
+const realCanvases = await import('../web-poc/lib/db/queries/canvases.ts');
+const realGetCanvas = realCanvases.get;
+let getCanvasImpl: typeof realGetCanvas = (() => Promise.resolve(linkedCanvas as never)) as never;
+mock.module('../web-poc/lib/db/queries/canvases.ts', () => ({
+  ...realCanvases,
+  get: (...args: Parameters<typeof realGetCanvas>) => getCanvasImpl(...args),
+}));
+afterAll(() => {
+  getCanvasImpl = realGetCanvas;
+});
 mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
   get: () => Promise.resolve(conv),
   reply: (_db: unknown, id: string) => {
@@ -118,6 +131,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   conv = row();
+  linkedCanvas = null;
   workspaceMembers = ['u_1'];
   served = [];
   servedAssigns = [];
@@ -294,6 +308,31 @@ describe('handleInboxBridge: a linked Conversation’s send carries its canvas t
     conv = row({ canvasId: 'cv_home' });
     await proxy('GET', '/api/chat/chat_1/transcript');
     expect(servedCanvasIds).toEqual([null]);
+  });
+});
+
+// ADR-0016: a hidden conversation is the same 404 as a missing row on every proxied
+// sub-path — its own private flag, or a private linked canvas (canvas dominates).
+describe('handleInboxBridge: visibility gate (ADR-0016)', () => {
+  test('a private conversation proxies for its creator, 404s for another member', async () => {
+    conv = row({ visibility: 'private', createdBy: 'u_1' } as never);
+    expect((await proxy('GET', '/api/chat/chat_1/transcript')).status).toBe(200);
+    conv = row({ visibility: 'private', createdBy: 'u_2' } as never);
+    workspaceMembers = ['u_1', 'u_2'];
+    expect((await proxy('GET', '/api/chat/chat_1/transcript')).status).toBe(404);
+  });
+
+  test('canvas dominates: a shared chat on someone else’s private canvas 404s — even for the chat’s creator', async () => {
+    conv = row({ canvasId: 'cv_priv', createdBy: 'u_1' } as never);
+    linkedCanvas = { visibility: 'private', createdBy: 'u_2' };
+    expect((await proxy('POST', '/api/chat/chat_1/send')).status).toBe(404);
+    expect(served).toEqual([]); // never reached the runner
+  });
+
+  test('a workspace-visible linked canvas gates nothing', async () => {
+    conv = row({ canvasId: 'cv_open' });
+    linkedCanvas = { visibility: 'workspace', createdBy: 'u_2' };
+    expect((await proxy('POST', '/api/chat/chat_1/send')).status).toBe(200);
   });
 });
 

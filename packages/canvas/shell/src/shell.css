@@ -367,6 +367,27 @@ body,
   background: var(--overlay);
   color: var(--text);
 }
+/* ADR-0016: the creator's visibility toggle. A private canvas keeps its lock visible;
+   the unlock affordance appears on hover like the other row actions. */
+.page-visibility {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  line-height: 0;
+  cursor: pointer;
+  opacity: 0;
+}
+.page-row:hover .page-visibility,
+.page-row.active .page-visibility,
+.page-visibility.locked {
+  opacity: 1;
+}
+.inbox-private {
+  font-size: 11px;
+  line-height: 1;
+}
 
 /* ---- Inbox stage (#108) ------------------------------------------------- */
 /* Two panes under the rail's one chrome — a Conversation list and the open thread. Ported

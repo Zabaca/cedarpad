@@ -7,6 +7,7 @@ import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE_ID, readWorkspaceCookie } from './shell-routing.ts';
+import { canvasHiddenFrom, mayFlipCanvas } from './visibility.ts';
 
 // The edge Shell's DB-touching half (ADR-0007, #46): the workspace registry API the
 // launcher calls, and the static launcher HTML itself. Served entirely at the edge —
@@ -47,10 +48,23 @@ export async function handleWorkspacesApi(request: Request, env: Env, user: Gate
 }
 
 // Single contract for the canvas registry API (CLAUDE.md §7). Both the Shell's canvas
-// selector and this handler speak these shapes.
+// selector and this handler speak these shapes. ADR-0016: `visibility` + `mine` ride on
+// every row; `locked` rows (someone else's private canvas) appear ONLY to the workspace
+// owner — the manage-not-read list (name + creator, never openable). Selectors must
+// exclude locked rows.
 const CreateCanvasInput = z.object({ name: z.string().trim().min(1).max(100) });
-const RenameCanvasInput = z.object({ name: z.string().trim().min(1).max(100) });
-const CanvasView = z.object({ id: z.string(), name: z.string() });
+const PatchCanvasInput = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  visibility: z.enum(['workspace', 'private']).optional(),
+});
+const CanvasView = z.object({
+  id: z.string(),
+  name: z.string(),
+  visibility: z.enum(['workspace', 'private']),
+  mine: z.boolean(),
+  locked: z.boolean().optional(),
+  createdBy: z.string().nullable().optional(),
+});
 export type CanvasView = z.infer<typeof CanvasView>;
 
 /**
@@ -82,7 +96,23 @@ export async function handleCanvasesApi(
   user: GateUser,
   canvasId?: string,
 ): Promise<Response> {
-  const workspaceId = await activeWorkspaceId(request, database, user);
+  const selected = readWorkspaceCookie(request.headers.get('cookie')) ?? DEFAULT_WORKSPACE_ID;
+  const activeWs = await getWorkspace(database, selected, user.id);
+  const workspaceId = activeWs ? activeWs.id : null;
+  const isOwner = !!activeWs && activeWs.ownerUserId === user.id;
+
+  // ADR-0016 projection: visible rows carry visibility + mine; the workspace owner
+  // additionally sees others' private rows as `locked` (manage-not-read — never openable).
+  const view = (c: { id: string; name: string; visibility: 'workspace' | 'private'; createdBy: string | null }): CanvasView => {
+    const hidden = canvasHiddenFrom(c, user.id);
+    return {
+      id: c.id,
+      name: c.name,
+      visibility: c.visibility,
+      mine: c.createdBy === user.id,
+      ...(hidden ? { locked: true, createdBy: c.createdBy } : {}),
+    };
+  };
 
   if (!canvasId) {
     if (request.method === 'GET') {
@@ -96,31 +126,58 @@ export async function handleCanvasesApi(
           : null
         : workspaceId;
       if (!listWorkspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
+      // Owner-ness for the LIST is judged against the listed workspace (it may differ
+      // from the cookie's), so the manage-not-read rows show in the right place.
+      const listWs = await getWorkspace(database, listWorkspaceId, user.id);
+      const listOwner = !!listWs && listWs.ownerUserId === user.id;
       const rows = await canvasRegistry.list(database, listWorkspaceId);
-      const canvases: CanvasView[] = rows.map((c) => ({ id: c.id, name: c.name }));
+      const canvases: CanvasView[] = rows
+        .filter((c) => !canvasHiddenFrom(c, user.id) || listOwner)
+        .map(view);
       return Response.json({ workspaceId: listWorkspaceId, canvases });
     }
     if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
     if (request.method === 'POST') {
       const parsed = CreateCanvasInput.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return Response.json({ error: 'invalid name' }, { status: 400 });
-      const row = await canvasRegistry.create(database, { workspaceId, name: parsed.data.name });
-      return Response.json({ id: row.id, name: row.name }, { status: 201 });
+      const row = await canvasRegistry.create(database, { workspaceId, name: parsed.data.name, createdBy: user.id });
+      return Response.json(view(row), { status: 201 });
     }
     return new Response('method not allowed', { status: 405 });
   }
 
-  // Per-canvas mutations: the target must belong to the active workspace.
+  // Per-canvas mutations: the target must belong to the active workspace. A private
+  // canvas is 404 (same as missing) to everyone but its creator — except the workspace
+  // owner, who may manage it (visibility→workspace, delete) without reading it.
   const existing = await canvasRegistry.get(database, canvasId);
   if (!existing || existing.workspaceId !== workspaceId) {
     return Response.json({ error: 'canvas not found' }, { status: 404 });
   }
+  const hidden = canvasHiddenFrom(existing, user.id);
+  if (hidden && !isOwner) return Response.json({ error: 'canvas not found' }, { status: 404 });
+
   if (request.method === 'PATCH') {
-    const parsed = RenameCanvasInput.safeParse(await request.json().catch(() => null));
-    if (!parsed.success) return Response.json({ error: 'invalid name' }, { status: 400 });
-    const row = await canvasRegistry.rename(database, canvasId, parsed.data.name);
-    if (!row) return Response.json({ error: 'canvas not found' }, { status: 404 });
-    return Response.json({ id: row.id, name: row.name });
+    const parsed = PatchCanvasInput.safeParse(await request.json().catch(() => null));
+    if (!parsed.success || (!parsed.data.name && !parsed.data.visibility)) {
+      return Response.json({ error: 'invalid body' }, { status: 400 });
+    }
+    if (parsed.data.visibility && parsed.data.visibility !== existing.visibility) {
+      if (!mayFlipCanvas(existing, user.id, isOwner, parsed.data.visibility)) {
+        return Response.json({ error: 'only the creator can change visibility' }, { status: 403 });
+      }
+      const flipped = await canvasRegistry.setVisibility(database, canvasId, parsed.data.visibility);
+      if (!flipped) return Response.json({ error: 'canvas not found' }, { status: 404 });
+      existing.visibility = flipped.visibility;
+    }
+    if (parsed.data.name) {
+      // Renaming a private canvas is reading-adjacent: creator only (the owner's
+      // manage powers are force-publish + delete, not editing).
+      if (hidden) return Response.json({ error: 'only the creator can rename' }, { status: 403 });
+      const row = await canvasRegistry.rename(database, canvasId, parsed.data.name);
+      if (!row) return Response.json({ error: 'canvas not found' }, { status: 404 });
+      return Response.json(view(row));
+    }
+    return Response.json(view({ ...existing }));
   }
   if (request.method === 'DELETE') {
     await canvasRegistry.delete(database, canvasId);

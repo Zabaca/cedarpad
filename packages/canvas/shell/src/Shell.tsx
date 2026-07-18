@@ -35,7 +35,17 @@ const DEFAULT_CANVAS_ID = 'default';
 // Sticky collapse state for the two stage nav panels (full-width content on demand).
 const PICKER_COLLAPSED_KEY = 'shell:canvasPickerCollapsed';
 
-type CanvasEntry = { id: string; name: string };
+// ADR-0016: `visibility`+`mine` ride every registry row; `locked` rows (someone else's
+// private canvas) reach only the workspace owner and are for Settings' manage list —
+// the picker must never offer them.
+type CanvasEntry = {
+  id: string;
+  name: string;
+  visibility?: 'workspace' | 'private';
+  mine?: boolean;
+  locked?: boolean;
+  createdBy?: string | null;
+};
 type WorkspaceEntry = { id: string; name: string };
 
 function IconCanvases() {
@@ -503,7 +513,9 @@ function CanvasStage({ registry }: { registry: Registry }) {
   }, [selected]);
 
   // The list always offers the legacy Default canvas (no registry row) so you can return to it.
-  const canvasList: CanvasEntry[] = [{ id: DEFAULT_CANVAS_ID, name: 'Default' }, ...canvases];
+  // Locked rows (ADR-0016 — someone else's private canvas, owner-only metadata) are never
+  // pickable; they surface in Settings' manage list instead.
+  const canvasList: CanvasEntry[] = [{ id: DEFAULT_CANVAS_ID, name: 'Default' }, ...canvases.filter((c) => !c.locked)];
 
   // A URL can name a canvas that no longer exists (deleted elsewhere, stale bookmark). Only
   // clear it once the registry has actually loaded — clearing before then would drop a valid
@@ -618,6 +630,27 @@ function CanvasStage({ registry }: { registry: Registry }) {
                 >
                   {c.name}
                 </span>
+              )}
+              {c.mine && c.id !== DEFAULT_CANVAS_ID && (
+                <button
+                  type="button"
+                  className={`page-visibility${c.visibility === 'private' ? ' locked' : ''}`}
+                  title={c.visibility === 'private' ? 'Private — only you can see this. Click to make workspace-visible.' : 'Workspace-visible. Click to make private.'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void (async () => {
+                      await fetch(`/api/canvases/${encodeURIComponent(c.id)}`, {
+                        method: 'PATCH',
+                        credentials: 'same-origin',
+                        headers: { 'content-type': 'application/json' },
+                        body: JSON.stringify({ visibility: c.visibility === 'private' ? 'workspace' : 'private' }),
+                      }).catch(() => {});
+                      void load();
+                    })();
+                  }}
+                >
+                  {c.visibility === 'private' ? '🔒' : '🔓'}
+                </button>
               )}
               <button
                 type="button"

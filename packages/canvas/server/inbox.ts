@@ -72,6 +72,9 @@ export async function findOrCreateConversation(
     summary: input.summary ?? null,
     lastMessagePreview: input.summary ?? null,
     assignedTo: input.assignTo ?? null,
+    // ADR-0016: the birth initiator is also the immutable creator (createdBy). Unlike
+    // assignment there is no claim-on-reply — a later replier never becomes the creator.
+    createdBy: input.assignTo ?? null,
   });
 }
 

@@ -10,6 +10,7 @@ import {
 import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import type { GateUser } from './auth-gate.ts';
 import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { canvasHiddenFrom } from './visibility.ts';
 
 // The member-facing half of the guest door (canvas ADR-0015, PRD #220): mint, list and
 // revoke share links for a canvas. MEMBER-minted by design (not owner-only — collaborators
@@ -28,8 +29,12 @@ async function accessibleCanvasWorkspace(
   user: GateUser,
 ): Promise<string | null> {
   // The legacy default canvas has no registry row; it lives in the default workspace.
-  const workspaceId =
-    canvasId === DEFAULT_CANVAS_ID ? DEFAULT_WORKSPACE_ID : (await getCanvas(db, canvasId))?.workspaceId;
+  const row = canvasId === DEFAULT_CANVAS_ID ? null : await getCanvas(db, canvasId);
+  // ADR-0016: a private canvas's links are its creator's business only — everyone else
+  // (owner included) gets the same 404 as a missing canvas. Minting on your own private
+  // canvas is allowed: `private` governs workspace visibility, not explicit sharing.
+  if (row && canvasHiddenFrom(row, user.id)) return null;
+  const workspaceId = canvasId === DEFAULT_CANVAS_ID ? DEFAULT_WORKSPACE_ID : row?.workspaceId;
   if (!workspaceId) return null;
   const ws = await getWorkspace(db, workspaceId, user.id);
   return ws ? workspaceId : null;

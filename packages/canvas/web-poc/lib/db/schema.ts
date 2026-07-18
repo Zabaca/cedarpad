@@ -663,6 +663,9 @@ export const oauthConsent = sqliteTable("oauthConsent", {
  * lives in R2 (ADR-0001), never here. `ownerRef` is the owner edge — nullable
  * and unused this slice (#52), populated by a later slice.
  * ------------------------------------------------------------------ */
+/** Canvas visibility (ADR-0016): workspace-visible (default) or creator-private. */
+export const canvasVisibility = ["workspace", "private"] as const;
+
 export const canvases = sqliteTable(
   "canvases",
   {
@@ -670,6 +673,10 @@ export const canvases = sqliteTable(
     workspaceId: text("workspace_id").notNull(),
     name: text("name").notNull(),
     ownerRef: text("owner_ref"),
+    /** ADR-0016: `private` = only `created_by` sees/opens it (owner: manage-not-read). */
+    visibility: text("visibility", { enum: canvasVisibility }).notNull().default("workspace"),
+    /** The creating user (ADR-0016). Null (legacy / bridge-created) = permanently workspace-visible. */
+    createdBy: text("created_by"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -702,6 +709,9 @@ export const conversationWaitingOn = ["human", "agent", "none"] as const;
  * live in the workspace they run in (default) — the kind, not a fake workspace, carries
  * dev-agent-ness (token mint, run flavor, badge). */
 export const conversationKind = ["chat", "dev-agent"] as const;
+/** Standalone-chat visibility (ADR-0016): shared (default) or creator-private. The canvas
+ * contribution is DERIVED at read time via `canvas_id` — never copied here. */
+export const conversationVisibility = ["shared", "private"] as const;
 
 export const conversations = sqliteTable(
   "conversations",
@@ -732,6 +742,12 @@ export const conversations = sqliteTable(
     /** The ASSIGNEE (advisory claim: who has taken ownership). Null = unassigned. Mutable;
      *  distinct from `user_id` by design (creator ≠ assignee — CONTEXT.md). */
     assignedTo: text("assigned_to"),
+    /** ADR-0016: `private` = only `created_by` sees it in the Inbox. Own flag only; the
+     *  linked canvas's privacy is derived at read time, never copied here. */
+    visibility: text("visibility", { enum: conversationVisibility }).notNull().default("shared"),
+    /** ADR-0016: the HUMAN initiator (edge-attested — x-inbox-assign at birth). Distinct
+     *  from `user_id` (the bridge's system user) and `assigned_to` (advisory, mutable). */
+    createdBy: text("created_by"),
     summary: text("summary"),
     /** Denormalized last-message preview so the inbox list renders without the transcript. */
     lastMessagePreview: text("last_message_preview"),

@@ -13,7 +13,7 @@ const newCanvasId = () => `cv_${crypto.randomUUID()}`;
 /** Create a canvas in the given workspace. Returns the new row. */
 export async function create(
   db: Database,
-  input: { workspaceId: string; name: string },
+  input: { workspaceId: string; name: string; createdBy?: string },
 ): Promise<CanvasRow> {
   const [row] = await db
     .insert(canvases)
@@ -21,6 +21,7 @@ export async function create(
       id: newCanvasId(),
       workspaceId: input.workspaceId,
       name: input.name,
+      createdBy: input.createdBy ?? null,
     })
     .returning();
   if (!row) throw new Error("create: insert returned no row");
@@ -51,6 +52,20 @@ export async function rename(
   const [row] = await db
     .update(canvases)
     .set({ name })
+    .where(eq(canvases.id, canvasId))
+    .returning();
+  return row ?? null;
+}
+
+/** ADR-0016: flip a canvas's visibility (authorization is the caller's job). */
+export async function setVisibility(
+  db: Database,
+  canvasId: string,
+  visibility: "workspace" | "private",
+): Promise<CanvasRow | null> {
+  const [row] = await db
+    .update(canvases)
+    .set({ visibility })
     .where(eq(canvases.id, canvasId))
     .returning();
   return row ?? null;

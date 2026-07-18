@@ -69,7 +69,7 @@ conversation claims it for that user, deliberately. _Avoid_: scoping Inbox reads
 `user_id`, repurposing `user_id` as the assignee, or making assignment exclusive
 (assignee-only reply). _(Decided 2026-07-15.)_
 
-**Visibility (canvas + chat)** _(decided 2026-07-17, design — not yet implemented)_:
+**Visibility (canvas + chat)** _(ADR-0016, decided + implemented 2026-07-17)_:
 a canvas is **workspace-visible** (default; today's behavior) or **private** —
 private means only its **creator** (`created_by`, a new registry column) can see or
 open it; everyone else, list and routes alike, gets the same 404 as a nonexistent

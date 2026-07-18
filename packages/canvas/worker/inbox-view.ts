@@ -23,6 +23,10 @@ export interface InboxItem {
   /** The owning bridge chatId (the row's identity key) — how the Shell matches a
    *  just-started draft chat back to the row its first send created. */
   ownerRef: string | null;
+  /** ADR-0016: the chat's OWN flag (the canvas contribution is server-side filtering). */
+  visibility: 'shared' | 'private';
+  /** ADR-0016: the human initiator — whose Private toggle this is. Null = legacy/unattended. */
+  createdBy: string | null;
   lastActivity: number;
 }
 
@@ -39,6 +43,8 @@ const toItem = (r: ConversationRow): InboxItem => ({
   canvasId: r.canvasId,
   assignedTo: r.assignedTo,
   ownerRef: r.ownerRef,
+  visibility: r.visibility,
+  createdBy: r.createdBy,
   lastActivity: r.lastActivity instanceof Date ? r.lastActivity.getTime() : Number(r.lastActivity),
 });
 

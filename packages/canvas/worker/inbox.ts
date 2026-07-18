@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
@@ -7,6 +8,7 @@ import { coordsForWorkspace } from './inbox-bridge.ts';
 import { orderInbox, viewToListOpts } from './inbox-view.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import { activeWorkspaceId } from './shell.ts';
+import { conversationHiddenFrom } from './visibility.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
 
@@ -23,6 +25,9 @@ const db = (env: Env) => createDbForWorker(env as unknown as Bindings);
 /** POST /api/inbox/:id/assign body (CLAUDE.md §7 — parse at the boundary): a workspace
  *  member's user id, or null to unassign. */
 const AssignInput = z.object({ userId: z.string().min(1).nullable() });
+
+/** POST /api/inbox/:id/visibility body (ADR-0016): the chat's own flag, creator-only. */
+const VisibilityInput = z.object({ visibility: z.enum(['shared', 'private']) });
 
 /**
  * The edge Inbox API — WORKSPACE-SHARED (CONTEXT.md): visibility and action are
@@ -57,7 +62,14 @@ export async function handleInboxApi(
     const listOpts = viewToListOpts(url.searchParams.get('view'));
     const assigned = url.searchParams.get('assigned') ?? undefined;
     const rows = await conversations.list(database, { ...listOpts, workspaceId, assigned });
-    return Response.json({ items: orderInbox(rows) });
+    // ADR-0016: drop rows hidden from THIS member — a private chat that isn't theirs, or
+    // any chat on a private canvas that isn't theirs (canvas dominates). The canvas
+    // contribution is derived here via one registry read, never copied onto rows.
+    const canvasById = new Map((await canvasRegistry.list(database, workspaceId)).map((c) => [c.id, c]));
+    const visible = rows.filter(
+      (r) => !conversationHiddenFrom(r, (r.canvasId && canvasById.get(r.canvasId)) || null, user.id),
+    );
+    return Response.json({ items: orderInbox(visible), me: user.id });
   }
 
   const conv = await conversations.get(database, id);
@@ -65,6 +77,24 @@ export async function handleInboxApi(
   // act on it; a stranger gets the same 404 as a missing row (no existence leak).
   if (!conv || !(await getWorkspace(database, conv.workspaceId, user.id))) {
     return Response.json({ error: 'conversation not found' }, { status: 404 });
+  }
+  // ADR-0016: hidden rows 404 like missing ones on every per-id action.
+  const linkedCanvas = conv.canvasId ? await canvasRegistry.get(database, conv.canvasId) : null;
+  if (conversationHiddenFrom(conv, linkedCanvas, user.id)) {
+    return Response.json({ error: 'conversation not found' }, { status: 404 });
+  }
+
+  // ADR-0016: the chat's own privacy flag — its creator only (the edge-attested initiator;
+  // legacy rows without one have no toggle). Not an owner power (manage-not-read is canvas-level).
+  if (action === 'visibility') {
+    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+    if (!conv.createdBy || conv.createdBy !== user.id) {
+      return Response.json({ error: 'only the chat creator can change visibility' }, { status: 403 });
+    }
+    const parsed = VisibilityInput.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return Response.json({ error: 'invalid visibility body' }, { status: 400 });
+    const updated = await conversations.setVisibility(database, id, parsed.data.visibility);
+    return Response.json({ conversation: updated });
   }
 
   // Reply forwards into the container (wakes it) — the bridge restores + resumes the Session.
