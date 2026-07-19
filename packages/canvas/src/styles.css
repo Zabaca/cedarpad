@@ -1161,3 +1161,29 @@ body,
   opacity: 0.5;
   cursor: default;
 }
+
+/* Huddle (ADR-0017): the guest floating join button + the live-state tint shared
+   with the side-panel button. */
+.huddle-fab {
+  position: absolute;
+  bottom: 76px;
+  right: 24px;
+  z-index: 400;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--raised, #2c2a26);
+  color: inherit;
+  border: 1px solid var(--line, #4a4640);
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.huddle-button.huddle-live,
+.huddle-fab.huddle-live {
+  background: oklch(0.65 0.12 150);
+  color: oklch(0.16 0.01 60);
+  border-color: transparent;
+}

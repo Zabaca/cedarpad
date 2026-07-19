@@ -65,3 +65,31 @@ export async function handleGuestHuddleJoin(
   const token = await mintRoomToken(env, canvasId, `guest:${guest.linkId}`);
   return Response.json({ url: env.LIVEKIT_URL, token, room: canvasId });
 }
+
+export const HUDDLE_ENSURE_PATH = '/api/huddle/ensure';
+export const HUDDLE_AGENT_IDENTITY = 'cedar';
+
+/** Poke the canvas's bridge to ensure the agent worker (ADR-0017 explicit spawn). The
+ * agent's room token is minted HERE and rides a header — signing keys stay edge-side.
+ * Best-effort: a failed poke logs; the humans' huddle still works, just agent-less. */
+export async function ensureHuddleWorker(
+  env: LiveKitEnv,
+  canvasId: string,
+  serve: (req: Request) => Promise<Response>,
+): Promise<void> {
+  try {
+    const agentToken = await mintRoomToken(env, canvasId, HUDDLE_AGENT_IDENTITY);
+    const req = new Request(`https://bridge.internal${HUDDLE_ENSURE_PATH}`, {
+      method: 'POST',
+      headers: {
+        'x-huddle-canvas': canvasId,
+        'x-huddle-agent-token': agentToken,
+        'x-livekit-url': env.LIVEKIT_URL,
+      },
+    });
+    const res = await serve(req);
+    if (!res.ok) console.error(`[huddle] worker ensure failed: ${res.status} ${await res.text().catch(() => '')}`);
+  } catch (e) {
+    console.error(`[huddle] worker ensure errored: ${String(e)}`);
+  }
+}

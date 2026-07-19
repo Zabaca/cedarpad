@@ -8,10 +8,13 @@ type FakeChild = { kill: () => void; exited: boolean; exit: () => void };
 
 function fakeSpawner() {
   const children: FakeChild[] = [];
+  const args: unknown[] = [];
   let onExit: (() => void) | null = null;
   return {
     children,
-    spawn: () => {
+    args,
+    spawn: (_canvasId: string, arg?: unknown) => {
+      args.push(arg);
       const child: FakeChild = {
         exited: false,
         kill: () => child.exit(),
@@ -30,9 +33,10 @@ describe('huddle supervisor — single-flight worker per canvas', () => {
   test('two ensures spawn once (second join joins); after exit, ensure spawns again', () => {
     const s = fakeSpawner();
     const sup = createHuddleSupervisor({ spawn: s.spawn, maxDurationMs: 60_000 });
-    expect(sup.ensure('cv_1').joined).toBe(false); // first: spawned
-    expect(sup.ensure('cv_1').joined).toBe(true); // second: joined existing
+    expect(sup.ensure('cv_1', { token: 't1' }).joined).toBe(false); // first: spawned
+    expect(sup.ensure('cv_1', { token: 't2' }).joined).toBe(true); // second: joined existing
     expect(s.children.length).toBe(1);
+    expect(s.args).toEqual([{ token: 't1' }]); // spawn got the FIRST join's args only
     s.children[0]?.exit();
     expect(sup.ensure('cv_1').joined).toBe(false); // respawned
     expect(s.children.length).toBe(2);

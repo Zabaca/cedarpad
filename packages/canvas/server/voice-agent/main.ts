@@ -1,0 +1,139 @@
+// The huddle agent worker (ADR-0017): the agent's ears and mouth in a canvas voice room.
+// Spawned by the bridge per huddle (server/bridge.ts supervisor), joins the room directly
+// with an edge-minted token (no dispatch registration — room↔container affinity by
+// construction), and exits when the last human leaves (liveness.ts).
+//
+// Pipeline: LiveKit Inference STT/TTS (model strings — billed through LiveKit, no vendor
+// keys) around a Claude brain on the subscription OAuth token: the stock Anthropic plugin
+// with a pre-configured client (Bearer + oauth beta header; spiked 2026-07-18 — the
+// prefixed-string identity form returns 200). ANTHROPIC_API_KEY, if present, wins.
+import Anthropic from '@anthropic-ai/sdk';
+import { llm, voice } from '@livekit/agents';
+import * as anthropic from '@livekit/agents-plugin-anthropic';
+import * as silero from '@livekit/agents-plugin-silero';
+import { Room, RoomEvent } from '@livekit/rtc-node';
+import { z } from 'zod';
+import { createLiveness } from './liveness.ts';
+import { appendUtterance, transcriptPath } from './transcript.ts';
+
+const CANVAS = process.env.HUDDLE_CANVAS ?? 'default';
+const LIVEKIT_URL = process.env.LIVEKIT_URL ?? '';
+const TOKEN = process.env.LIVEKIT_AGENT_TOKEN ?? '';
+const BRIDGE = process.env.BRIDGE_ORIGIN ?? 'http://127.0.0.1:4511';
+const AGENT_IDENTITY = 'cedar';
+const CC_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+if (!LIVEKIT_URL || !TOKEN) {
+  console.error('[voice-agent] LIVEKIT_URL and LIVEKIT_AGENT_TOKEN are required');
+  process.exit(1);
+}
+
+// --- bridge tools: thin canvas-scoped wrappers over localhost bridge calls ------------
+const bridge = async (path: string, init?: RequestInit): Promise<unknown> => {
+  const res = await fetch(`${BRIDGE}${path}`, {
+    ...init,
+    headers: { 'x-canvas-id': CANVAS, 'content-type': 'application/json', ...(init?.headers ?? {}) },
+  });
+  if (!res.ok) throw new Error(`bridge ${path}: ${res.status} ${await res.text().catch(() => '')}`);
+  return res.json();
+};
+
+const tools = {
+  list_components: llm.tool({
+    description: 'List the component library available to place on the canvas.',
+    parameters: z.object({}),
+    execute: async () => bridge('/api/components'),
+  }),
+  place_component: llm.tool({
+    description: 'Place a library component on the shared canvas at (x, y).',
+    parameters: z.object({
+      module: z.string().describe('component module name from list_components'),
+      x: z.number(),
+      y: z.number(),
+      w: z.number().optional(),
+      h: z.number().optional(),
+    }),
+    execute: async (args) => bridge('/api/components/place', { method: 'POST', body: JSON.stringify(args) }),
+  }),
+  write_component: llm.tool({
+    description: 'Write (create or overwrite) a component module in the canvas library. TSX source with a default export.',
+    parameters: z.object({ module: z.string(), source: z.string() }),
+    execute: async (args) =>
+      bridge(`/api/components/${encodeURIComponent(args.module)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ source: args.source }),
+      }),
+  }),
+  read_canvas: llm.tool({
+    description: 'Read the current canvas state (shapes, notes, placed components).',
+    parameters: z.object({}),
+    execute: async () => bridge('/api/canvas'),
+  }),
+  create_shapes: llm.tool({
+    description: 'Create simple shapes/notes on the canvas. Each shape: {type: "note"|"text", x, y, text}.',
+    parameters: z.object({
+      shapes: z.array(z.object({ type: z.enum(['note', 'text']), x: z.number(), y: z.number(), text: z.string() })),
+    }),
+    execute: async (args) => bridge('/api/canvas/shapes', { method: 'POST', body: JSON.stringify(args) }),
+  }),
+};
+
+// --- brain ----------------------------------------------------------------------------
+const auth = process.env.ANTHROPIC_API_KEY
+  ? { apiKey: process.env.ANTHROPIC_API_KEY }
+  : {
+      client: new Anthropic({
+        apiKey: null,
+        authToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+        defaultHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
+      }),
+    };
+
+const instructions = `${CC_IDENTITY}
+
+You are Cedar, the workspace's voice agent, sitting in a live huddle on canvas ${CANVAS}.
+Humans are talking to EACH OTHER by default. Stay silent unless directly addressed
+("Cedar, ...") or clearly asked to do something. When silent, respond with an empty
+message — say nothing at all. When addressed: be brief and conversational (one or two
+spoken sentences), act through your canvas tools when asked to build or place things,
+and confirm what you did in a few words. Never read out code, JSON, or long lists.`;
+
+// --- session --------------------------------------------------------------------------
+const room = new Room();
+await room.connect(LIVEKIT_URL, TOKEN, { autoSubscribe: true, dynacast: false });
+console.log(`[voice-agent] joined room for canvas ${CANVAS} as ${AGENT_IDENTITY}`);
+
+const liveness = createLiveness({
+  graceMs: 60_000,
+  isAgent: (id) => id === AGENT_IDENTITY,
+  onExit: () => {
+    console.log('[voice-agent] last human left — exiting');
+    void room.disconnect().finally(() => process.exit(0));
+  },
+});
+for (const p of room.remoteParticipants.values()) liveness.join(p.identity);
+room.on(RoomEvent.ParticipantConnected, (p) => liveness.join(p.identity));
+room.on(RoomEvent.ParticipantDisconnected, (p) => liveness.leave(p.identity));
+
+const session = new voice.AgentSession({
+  vad: await silero.VAD.load(),
+  stt: 'deepgram/nova-3',
+  tts: 'inworld/inworld-tts-2',
+  llm: new anthropic.LLM({ model: 'claude-sonnet-5', ...auth }),
+});
+
+// Transcript (ADR-0017): every finalized utterance — human or agent — appends a JSONL
+// line. A byproduct of listening; audio is never recorded.
+const transcriptFile = transcriptPath(process.env.CANVAS_CWD ?? process.cwd(), CANVAS);
+session.on(voice.AgentSessionEventTypes.ConversationItemAdded, (ev) => {
+  const item = ev.item;
+  if (!('textContent' in item) || !item.textContent) return;
+  const speaker = item.role === 'assistant' ? AGENT_IDENTITY : 'human';
+  appendUtterance(transcriptFile, { speaker, ts: Date.now(), text: item.textContent });
+});
+
+await session.start({
+  agent: new voice.Agent({ instructions, tools }),
+  room,
+});
+console.log('[voice-agent] session started — listening');

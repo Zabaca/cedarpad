@@ -5,17 +5,20 @@
 // for free.
 
 export type WorkerHandle = { kill: () => void; onExit: (cb: () => void) => void };
-export type SpawnWorker = (canvasId: string) => WorkerHandle;
+export type SpawnWorker<TArg = unknown> = (canvasId: string, arg?: TArg) => WorkerHandle;
 
-export function createHuddleSupervisor(opts: { spawn: SpawnWorker; maxDurationMs: number }): {
-  ensure: (canvasId: string) => { joined: boolean };
+export function createHuddleSupervisor<TArg = unknown>(opts: {
+  spawn: SpawnWorker<TArg>;
+  maxDurationMs: number;
+}): {
+  ensure: (canvasId: string, arg?: TArg) => { joined: boolean };
 } {
   const alive = new Map<string, WorkerHandle>();
 
   return {
-    ensure(canvasId) {
+    ensure(canvasId, arg) {
       if (alive.has(canvasId)) return { joined: true };
-      const handle = opts.spawn(canvasId);
+      const handle = opts.spawn(canvasId, arg);
       alive.set(canvasId, handle);
       const maxTimer = setTimeout(() => handle.kill(), opts.maxDurationMs);
       handle.onExit(() => {

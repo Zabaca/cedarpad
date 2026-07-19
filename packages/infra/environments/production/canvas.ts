@@ -56,6 +56,11 @@ export default cloudflareModule.instance({
       'GITHUB_APP_ID',
       'GITHUB_APP_INSTALLATION_ID',
       'GITHUB_APP_PRIVATE_KEY',
+      // Huddles (ADR-0017): LiveKit Cloud signing keys, edge-only — the container gets
+      // short-lived minted room tokens, never these. Provisioned in production/secrets.yaml.
+      'LIVEKIT_URL',
+      'LIVEKIT_API_KEY',
+      'LIVEKIT_API_SECRET',
     ],
     // Single always-warm DO-bound container; the gradual default never drains it,
     // so a redeployed image would silently never take effect. Roll immediately.

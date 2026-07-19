@@ -24,6 +24,7 @@ import { handleShareLinksApi } from './share-links-api.ts';
 import { handleShareAccept, readGuestSession } from './guest-session.ts';
 import { decideGuestGate } from './guest-gate.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
+import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
 import { IS_CHAT_SEND, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
@@ -99,6 +100,11 @@ export interface Env {
   // The www worker's waitlist D1, also bound here for the admin view (ADR-0014).
   // Unset in local dev ⇒ /api/admin/waitlist answers 503.
   WAITLIST?: D1Database;
+  // Huddles (ADR-0017): LiveKit Cloud signing keys, edge-only — the container gets
+  // short-lived minted room tokens, never these. Unset ⇒ join answers 503, no UI harm.
+  LIVEKIT_URL?: string;
+  LIVEKIT_API_KEY?: string;
+  LIVEKIT_API_SECRET?: string;
 }
 
 // Notebook's Hono API (web-poc's `buildApp`), mounted AT THE EDGE (ADR-0007, #56). No
@@ -266,8 +272,12 @@ export default {
         // The one guest-only edge endpoint sits OUTSIDE decideGuestGate's proxy allowlist:
         // it's answered here, never proxied. The Shell probes it on boot to pick guest mode.
         const isGuestProbe = url.pathname === '/api/guest-session' && request.method === 'GET';
+        // Huddle join (ADR-0017): edge-answered like the probe, never proxied. The
+        // capability is re-read off the LIVE link row (not the cookie) so revoking or
+        // downgrading a link takes effect at the next join.
+        const guestHuddleMatch = /^\/api\/canvases\/([^/]+)\/huddle\/join$/.exec(url.pathname);
         const guestGate = decideGuestGate({ pathname: url.pathname, method: request.method, canvas }, guest);
-        if (isGuestProbe || guestGate.decision === 'allow') {
+        if (isGuestProbe || guestHuddleMatch || guestGate.decision === 'allow') {
           const live = await getActiveShareLink(createDbForWorker(env as unknown as Bindings), guest.linkId);
           if (live && live.canvasId === guest.canvasId) {
             if (isGuestProbe) {
@@ -275,9 +285,27 @@ export default {
                 canvasId: guest.canvasId,
                 workspaceId: guest.workspaceId,
                 guestChat: guest.guestChat,
+                guestHuddle: live.guestHuddle,
                 // Component-scoped link (PRD #221): the Shell/pad narrow to this shape.
                 ...(guest.shapeId ? { shapeId: guest.shapeId } : {}),
               });
+            }
+            if (guestHuddleMatch) {
+              if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
+                return Response.json({ error: 'huddle not configured' }, { status: 503 });
+              }
+              const lk = { LIVEKIT_URL: env.LIVEKIT_URL, LIVEKIT_API_KEY: env.LIVEKIT_API_KEY, LIVEKIT_API_SECRET: env.LIVEKIT_API_SECRET };
+              const res = await handleGuestHuddleJoin(
+                request,
+                { ...guest, guestHuddle: live.guestHuddle },
+                guestHuddleMatch[1] as string,
+                lk,
+              );
+              if (res.ok) {
+                const gw = guest.workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: guest.workspaceId };
+                await ensureHuddleWorker(lk, guest.canvasId, (req) => serveWorkspace(req, env, resolve(gw)));
+              }
+              return res;
             }
             if (url.pathname === '/') return asset('/');
             if (url.pathname.startsWith('/assets/')) return asset(url.pathname);
@@ -398,6 +426,27 @@ export default {
     const canvasApiMatch = /^\/api\/canvases\/([^/]+)$/.exec(url.pathname);
     if (canvasApiMatch) {
       return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user, canvasApiMatch[1]);
+    }
+
+    // Huddles (ADR-0017): join mints a canvas-scoped LiveKit room token at the edge
+    // (signing keys never leave here) and pokes the canvas's bridge to ensure the agent
+    // worker. Access is 404-checked inside the handler exactly like share links.
+    const huddleJoinMatch = /^\/api\/canvases\/([^/]+)\/huddle\/join$/.exec(url.pathname);
+    if (huddleJoinMatch) {
+      if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
+        return Response.json({ error: 'huddle not configured' }, { status: 503 });
+      }
+      const lk = { LIVEKIT_URL: env.LIVEKIT_URL, LIVEKIT_API_KEY: env.LIVEKIT_API_KEY, LIVEKIT_API_SECRET: env.LIVEKIT_API_SECRET };
+      const huddleCanvasId = huddleJoinMatch[1] as string;
+      const workerDb = createDbForWorker(env as unknown as Bindings);
+      const res = await handleHuddleJoin(request, workerDb, user, huddleCanvasId, lk);
+      if (res.ok) {
+        const cvRow = huddleCanvasId === DEFAULT_CANVAS_ID ? null : await getCanvas(workerDb, huddleCanvasId);
+        const wsId = huddleCanvasId === DEFAULT_CANVAS_ID ? DEFAULT_WORKSPACE_ID : cvRow?.workspaceId;
+        const workspace = wsId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: wsId as string };
+        await ensureHuddleWorker(lk, huddleCanvasId, (req) => serveWorkspace(req, env, resolve(workspace)));
+      }
+      return res;
     }
 
     // Canvas share links (canvas ADR-0015, PRD #220): mint/list/revoke the guest door's

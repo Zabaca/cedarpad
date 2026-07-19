@@ -36,6 +36,7 @@ import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
+import { createHuddleSupervisor } from './huddle-supervisor.ts';
 
 // Build stamp: scripts/deploy.sh writes the git SHA to build-rev.txt right before
 // the image build, so /api/status reports exactly which commit is serving. The
@@ -643,6 +644,34 @@ export function setChatTurnDispatcher(fn: typeof runChatTurn): () => void {
 // at the exact path SDK resume reads. Restore before a resumed turn (which the SDK cwd re-derives).
 const CANVAS_CWD = process.env.CANVAS_CWD ?? process.cwd();
 
+// Huddle agent workers (ADR-0017): one child process per live voice room, spawned on the
+// edge's ensure poke and reaped by its own liveness rule (exits when the last human
+// leaves) — the 4h max-duration kill here is the absurdity backstop.
+const huddleSupervisor = createHuddleSupervisor<{ agentToken: string; livekitUrl: string }>({
+  maxDurationMs: 4 * 60 * 60 * 1000,
+  spawn: (canvasId, arg) => {
+    const child = Bun.spawn(['bun', resolve(import.meta.dir, 'voice-agent/main.ts')], {
+      cwd: CANVAS_CWD,
+      env: {
+        ...process.env,
+        HUDDLE_CANVAS: canvasId,
+        LIVEKIT_URL: arg?.livekitUrl ?? '',
+        LIVEKIT_AGENT_TOKEN: arg?.agentToken ?? '',
+        BRIDGE_ORIGIN: `http://127.0.0.1:${PORT}`,
+      },
+      stdout: 'inherit',
+      stderr: 'inherit',
+    });
+    const exitCbs: Array<() => void> = [];
+    void child.exited.then(() => {
+      console.log(`[huddle] worker for ${canvasId} exited`);
+      for (const cb of exitCbs) cb();
+    });
+    console.log(`[huddle] spawned agent worker for ${canvasId} (pid ${child.pid})`);
+    return { kill: () => child.kill(), onExit: (cb) => exitCbs.push(cb) };
+  },
+});
+
 // The JSONL carries no chatId, so the chatId→sessionId link lives in ChatMeta (ADR 0004). Reverse
 // it to route a resumed inbox turn back to its chat card's SSE; absent (a session with no canvas
 // chat home) ⇒ fall back to the conversation id so the turn still streams under a stable channel.
@@ -670,6 +699,18 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (req.method === 'POST' && path.startsWith('/api/')) markAlive();
     if (path === '/api/alive' && req.method === 'POST') {
       return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*' } });
+    }
+
+    // Huddles (ADR-0017): the edge join flow pokes here to ensure the agent worker for a
+    // canvas's voice room. The agent's room token arrives edge-minted in a header (signing
+    // keys never enter the container); single-flight per canvas via the supervisor.
+    if (path === '/api/huddle/ensure' && req.method === 'POST') {
+      const canvasId = req.headers.get('x-huddle-canvas');
+      const agentToken = req.headers.get('x-huddle-agent-token');
+      const livekitUrl = req.headers.get('x-livekit-url');
+      if (!canvasId || !agentToken || !livekitUrl) return json({ error: 'missing huddle headers' }, 400);
+      const { joined } = huddleSupervisor.ensure(canvasId, { agentToken, livekitUrl });
+      return json({ ok: true, joined });
     }
 
     // web-poc mounted in-process: its data API (/v1/*) and Better Auth (/api/auth/*)

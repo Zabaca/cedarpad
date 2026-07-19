@@ -9,6 +9,8 @@ export interface GuestScope {
   canvasId: string;
   workspaceId: string;
   guestChat: boolean;
+  /** May this guest join the canvas's voice huddle? (ADR-0017) */
+  guestHuddle?: boolean;
   /** Set = component-scoped link (PRD #221): render ONLY this shape's component, fullscreen. */
   shapeId?: string;
 }
