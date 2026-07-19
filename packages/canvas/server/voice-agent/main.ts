@@ -27,6 +27,13 @@ const CC_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
 // initializes its logger — AgentSession construction throws without this.
 initializeLogger({ pretty: false, level: 'info' });
 
+// A transient LLM/TTS failure (a 429 burst, a network blip) surfaces as an UNCAUGHT
+// throw out of the framework's retry loop and killed the whole worker — cedar silently
+// vanished mid-huddle with nothing to respawn it until the next join. One bad turn must
+// cost one reply, not the huddle: log and keep listening.
+process.on('uncaughtException', (e) => console.error('[voice-agent] survived uncaught:', e?.message ?? e));
+process.on('unhandledRejection', (e) => console.error('[voice-agent] survived rejection:', (e as Error)?.message ?? e));
+
 if (!LIVEKIT_URL || !TOKEN) {
   console.error('[voice-agent] LIVEKIT_URL and LIVEKIT_AGENT_TOKEN are required');
   process.exit(1);
