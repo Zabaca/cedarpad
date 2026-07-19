@@ -75,9 +75,25 @@ const tools = {
       }),
   }),
   read_canvas: llm.tool({
-    description: 'Read the current canvas state (shapes, notes, placed components).',
+    description:
+      'Read a compact summary of the canvas: every shape with id, type, position, and a text preview. No raw component data.',
     parameters: z.object({}),
-    execute: async () => bridge('/api/canvas'),
+    // The raw canvas state can be hundreds of KB (component data blobs) — feeding it to
+    // a voice turn wedges the conversation. Summarize hard: geometry + text preview only.
+    execute: async () => {
+      const state = (await bridge('/api/canvas')) as { shapes?: Array<Record<string, unknown>> };
+      const shapes = (state.shapes ?? []).slice(0, 300).map((s) => ({
+        id: s.id,
+        type: s.type,
+        x: s.x,
+        y: s.y,
+        ...(s.w != null ? { w: s.w, h: s.h } : {}),
+        ...(typeof s.module === 'string' ? { module: s.module } : {}),
+        ...(typeof s.text === 'string' && s.text ? { text: s.text.slice(0, 120) } : {}),
+        ...(typeof s.title === 'string' && s.title ? { title: s.title } : {}),
+      }));
+      return { shapeCount: state.shapes?.length ?? 0, shapes };
+    },
   }),
   create_shapes: llm.tool({
     description: 'Create simple shapes/notes on the canvas. Each shape: {type: "note"|"text", x, y, text}.',
