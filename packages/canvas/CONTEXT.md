@@ -477,6 +477,26 @@ The round-trip:
   locks guests out of their pre-recycle chats, fails closed); `guestChat` links carry no
   turn budget (revocation is the only cost brake).
 
+## Huddles (ADR 0017, issue #222 — decided, not yet built)
+
+- **Huddle** — a voice room on one canvas (LiveKit room named by canvas id): participants
+  talk over the board while the workspace's agent listens and acts on the canvas. Audio
+  only; exists only while humans are in it. _Avoid_: "call", "meeting" (a huddle has no
+  schedule, agenda, or lifecycle beyond presence).
+- **Agent worker** — the agent's ears and mouth in a huddle: a Node `@livekit/agents`
+  process in the workspace container running STT → Claude → TTS. Spawned by the bridge per
+  huddle (single-flight per canvas), joins the room as the participant "cedar", exits when
+  the last human leaves. Distinct from a **chat turn** (request/response Claude Code
+  session): the worker is continuously alive while the huddle runs, and its brain is the
+  raw streaming Messages API under the subscription OAuth token, not an SDK session.
+- **Addressed** — the condition under which the agent speaks or acts: an utterance directed
+  at it ("Cedar, …"), judged by the model from full conversational context, not a wake-word
+  engine. Un-addressed speech is still heard (context) but answered with silence.
+- **Huddle transcript** — per-speaker `{speaker, ts, text}` JSONL appended live by the
+  worker; a byproduct of listening, not a recording feature. Audio is never recorded.
+- **guestHuddle** — a Share Link capability (like `guestChat`): the link's guests may join
+  that canvas's huddle through the sole guest gate, attributed under their guest identity.
+
 ## Deliberately deferred
 
 - **Per-user Inbox read state.** `conversations.unread` stays a single row-level boolean
