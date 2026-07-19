@@ -10,7 +10,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { initializeLogger, llm, voice } from '@livekit/agents';
 import * as anthropic from '@livekit/agents-plugin-anthropic';
-import * as silero from '@livekit/agents-plugin-silero';
 import { Room, RoomEvent } from '@livekit/rtc-node';
 import { z } from 'zod';
 import { createLiveness } from './liveness.ts';
@@ -156,11 +155,16 @@ for (const p of room.remoteParticipants.values()) liveness.join(p.identity);
 room.on(RoomEvent.ParticipantConnected, (p) => liveness.join(p.identity));
 room.on(RoomEvent.ParticipantDisconnected, (p) => liveness.leave(p.identity));
 
+// No local VAD: Silero runs ONNX inference on the container's CPU and falls behind the
+// live stream under load ("inference is slower than realtime" flood — diagnosed live
+// 2026-07-18: the pipeline backs up, end-of-turn never fires, cedar goes silent while
+// staying connected). Deepgram's server-side endpointing does turn detection instead —
+// zero local audio inference.
 const session = new voice.AgentSession({
-  vad: await silero.VAD.load(),
   stt: 'deepgram/nova-3',
   tts: 'inworld/inworld-tts-2',
   llm: new anthropic.LLM({ model: 'claude-sonnet-5', ...auth }),
+  turnHandling: { turnDetection: 'stt' },
 });
 
 // Transcript (ADR-0017): every finalized utterance — human or agent — appends a JSONL
