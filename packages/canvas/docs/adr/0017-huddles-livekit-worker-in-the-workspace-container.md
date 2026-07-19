@@ -50,8 +50,15 @@ runs.
 - **Addressed-only speech, full-context listening.** Every finalized utterance flows through
   Claude (so "Cedar, do what Khoa just said" works), but the system prompt makes silence the
   default; it speaks/acts only when addressed. Barge-in stays enabled.
-- **Vendors:** Deepgram STT, Cartesia TTS (latency-first), chosen with the Node plugin parity
-  check (`@livekit/agents` 1.5.3 has Anthropic/Deepgram/Cartesia/Silero/turn-detection).
+- **Vendors: LiveKit Inference for STT/TTS, ours for the LLM.** The pipeline's three stages
+  are independently pluggable (Inference model string / vendor plugin with own key / custom
+  implementation), so we mix: STT `deepgram/nova-3` and TTS `inworld/inworld-tts-2` served
+  and billed through LiveKit Inference (no Deepgram/Cartesia accounts), LLM a custom node on
+  the subscription OAuth token. Every slot stays swappable by config — a vendor key restores
+  the bring-your-own path with no redesign. (Node plugin parity checked at 1.5.3:
+  Anthropic/Deepgram/Cartesia/Silero/turn-detection all exist as fallback plugins.)
+  LiveKit's own benchmark shows end-of-turn detection dominating pipeline latency (~2.5s of
+  ~2.6s) — model choice is not the latency lever; turn-detection tuning is.
 - **Guests can huddle.** `guestHuddle` is a per-link capability like `guestChat`; the join
   endpoint flows through the sole guest gate (ADR-0015), and the guest's LiveKit token carries
   their guest identity for attribution.
@@ -72,9 +79,8 @@ runs.
   latency lever if it grates.
 - The container must be awake for a huddle; wake-on-huddle is the join flow's normal
   container wake, nothing special.
-- Four new SOPS secrets: `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (edge-only),
-  `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY` (container env for the worker). Zero new Anthropic
-  spend.
+- Two new SOPS secrets: `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (edge-only; Inference rides
+  the same credentials). One signup (LiveKit Cloud). Zero new Anthropic spend.
 - No feature flag: a huddle only exists when a human clicks join, spend stops when the room
   drains, and the join endpoint is members/permitted-guests only — the guardrails are
   structural. Kill switch is removing the button (a deploy).
