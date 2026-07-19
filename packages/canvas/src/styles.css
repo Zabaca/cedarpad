@@ -884,11 +884,11 @@ body,
 .side-panel-section {
   display: flex;
   flex-direction: column;
-  min-height: 0;
   border-bottom: 1px solid var(--line);
-}
-.side-panel-section[open] {
-  flex: 1;
+  /* Sections take their natural height and the PANEL column scrolls. The old
+     flex:1-per-open-section sizing fought the scrolling column and painted
+     sections on top of each other once the instance list got long. */
+  flex: none;
 }
 .side-panel-section > summary {
   cursor: pointer;
@@ -954,12 +954,11 @@ body,
 
 /* Placed component instances: click → select + zoom-to. */
 .instance-list {
-  overflow-y: auto;
+  /* Natural height — the panel column is the scroller now. */
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-height: 0;
 }
 .instance-list-empty {
   opacity: 0.6;
