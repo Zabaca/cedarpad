@@ -21,3 +21,4 @@ server/build-rev.txt
 # only the platform base library is committed
 src/canvas-*/
 !src/canvas-components/
+huddles/

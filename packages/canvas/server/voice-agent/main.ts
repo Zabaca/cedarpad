@@ -83,14 +83,44 @@ const tools = {
 };
 
 // --- brain ----------------------------------------------------------------------------
+// OAuth contract (isolated live, 2026-07-18): the subscription path requires the CC
+// identity as its OWN first system block — a single string with anything appended gets
+// an instant 429 ("rate_limit_error" in name only). The plugin sends instructions as a
+// string, so wrap the client to rewrite any string system into the two-block form.
+function withBlockSystem(client: Anthropic): Anthropic {
+  const raw = client.messages.create.bind(client.messages);
+  // biome-ignore lint/suspicious/noExplicitAny: thin transport shim over the SDK's own types
+  (client.messages as any).create = (body: any, opts?: any) => {
+    const sys = body?.system;
+    const blocks: Array<{ type: 'text'; text: string }> =
+      typeof sys === 'string' ? [{ type: 'text', text: sys }] : Array.isArray(sys) ? [...sys] : [];
+    if (blocks.length > 0) {
+      const first = blocks[0]?.text ?? '';
+      const rest = first.startsWith(CC_IDENTITY) ? first.slice(CC_IDENTITY.length).trimStart() : first;
+      body = {
+        ...body,
+        system: [
+          { type: 'text', text: CC_IDENTITY },
+          ...(rest ? [{ type: 'text', text: rest }] : []),
+          ...blocks.slice(1),
+        ],
+      };
+    }
+    return raw(body, opts);
+  };
+  return client;
+}
+
 const auth = process.env.ANTHROPIC_API_KEY
   ? { apiKey: process.env.ANTHROPIC_API_KEY }
   : {
-      client: new Anthropic({
-        apiKey: null,
-        authToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
-        defaultHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
-      }),
+      client: withBlockSystem(
+        new Anthropic({
+          apiKey: null,
+          authToken: process.env.CLAUDE_CODE_OAUTH_TOKEN,
+          defaultHeaders: { 'anthropic-beta': 'oauth-2025-04-20' },
+        }),
+      ),
     };
 
 const instructions = `${CC_IDENTITY}
