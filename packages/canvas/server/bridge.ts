@@ -666,8 +666,11 @@ const huddleSupervisor = createHuddleSupervisor<{
         LIVEKIT_API_SECRET: arg?.apiSecret ?? '',
         BRIDGE_ORIGIN: `http://127.0.0.1:${PORT}`,
       },
-      stdout: 'inherit',
-      stderr: 'inherit',
+      // Worker output to a per-canvas file (not 'inherit'): bridge stdout is unreadable
+      // after the fact, which made every huddle failure require a foreground re-run to
+      // diagnose. /tmp/huddle-<canvas>.log is tail-able by anyone in the container.
+      stdout: Bun.file(`/tmp/huddle-${canvasId.replace(/[^\w-]/g, '_')}.log`),
+      stderr: Bun.file(`/tmp/huddle-${canvasId.replace(/[^\w-]/g, '_')}.log`),
     });
     const exitCbs: Array<() => void> = [];
     void child.exited.then(() => {
