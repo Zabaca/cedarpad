@@ -41,7 +41,7 @@ export const DEFAULT_MODEL = 'sonnet';
 // Reasoning effort, sent alongside the model. 'default' omits the param (adaptive). Lower
 // effort = faster, less time staring at "thinking…"; higher = deeper but slower.
 export const EFFORTS = ['default', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
-export const DEFAULT_EFFORT = 'default';
+export const DEFAULT_EFFORT = 'high';
 
 const TERMINAL: ReadonlySet<TaskStatus> = new Set(['completed', 'failed', 'stopped', 'killed']);
 
