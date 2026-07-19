@@ -8,7 +8,7 @@
 // with a pre-configured client (Bearer + oauth beta header; spiked 2026-07-18 — the
 // prefixed-string identity form returns 200). ANTHROPIC_API_KEY, if present, wins.
 import Anthropic from '@anthropic-ai/sdk';
-import { llm, voice } from '@livekit/agents';
+import { initializeLogger, llm, voice } from '@livekit/agents';
 import * as anthropic from '@livekit/agents-plugin-anthropic';
 import * as silero from '@livekit/agents-plugin-silero';
 import { Room, RoomEvent } from '@livekit/rtc-node';
@@ -22,6 +22,10 @@ const TOKEN = process.env.LIVEKIT_AGENT_TOKEN ?? '';
 const BRIDGE = process.env.BRIDGE_ORIGIN ?? 'http://127.0.0.1:4511';
 const AGENT_IDENTITY = 'cedar';
 const CC_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+// Direct room join bypasses the framework's cli.runApp entry, which is what normally
+// initializes its logger — AgentSession construction throws without this.
+initializeLogger({ pretty: false, level: 'info' });
 
 if (!LIVEKIT_URL || !TOKEN) {
   console.error('[voice-agent] LIVEKIT_URL and LIVEKIT_AGENT_TOKEN are required');
