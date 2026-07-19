@@ -7,7 +7,7 @@
 import * as React from 'react';
 import { useValue, type Editor, type TLShapeId } from 'tldraw';
 import { activeCanvasId } from './active-canvas';
-import { HuddleButton } from './huddle';
+import { HuddleControl } from './huddle';
 
 
 const OPEN_KEY = 'agent-canvas:side-panel';
@@ -113,7 +113,7 @@ export function SidePanel({
           <button type="button" className="side-panel-add" disabled={!onNewChat} onClick={onNewChat}>
             ＋ New chat
           </button>
-          <HuddleButton canvasId={activeCanvasId()} className="side-panel-add" />
+          <HuddleControl canvasId={activeCanvasId()} className="side-panel-add" />
         </div>
         {editor && <InstanceList editor={editor} />}
       </details>

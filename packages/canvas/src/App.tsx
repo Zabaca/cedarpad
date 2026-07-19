@@ -17,7 +17,7 @@ import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './Side
 import { wireSync } from './sync';
 import { startPresenceHeartbeat } from './presence';
 import { loadGuestScope, useGuestScope } from '../shared/guest-scope';
-import { HuddleButton } from './huddle';
+import { HuddleControl } from './huddle';
 import { ComponentGuestView } from './ComponentGuestView';
 
 // Registered once, at editor construction: our two custom shapes. `component`
@@ -426,7 +426,7 @@ function CanvasApp() {
       )}
       {/* Huddle (ADR-0017): guests join via a floating button when their link grants it;
           members have the button in the side panel. */}
-      {guest?.guestHuddle && <HuddleButton canvasId={guest.canvasId} className="huddle-fab" />}
+      {guest?.guestHuddle && <HuddleControl canvasId={guest.canvasId} className="huddle-fab" />}
     </div>
   );
 }

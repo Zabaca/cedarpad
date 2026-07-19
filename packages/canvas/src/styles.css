@@ -1187,3 +1187,43 @@ body,
   color: oklch(0.16 0.01 60);
   border-color: transparent;
 }
+
+/* Huddle status (in-panel/floating): cedar's state, peers, live captions. */
+.huddle-status {
+  width: 100%;
+  background: var(--surface, #232120);
+  border: 1px solid var(--line, #4a4640);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.huddle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.huddle-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #777;
+}
+.huddle-dot.st-listening { background: oklch(0.65 0.12 150); }
+.huddle-dot.st-thinking { background: oklch(0.75 0.14 85); animation: huddle-pulse 1s infinite alternate; }
+.huddle-dot.st-speaking { background: oklch(0.68 0.145 45); animation: huddle-pulse 0.5s infinite alternate; }
+.huddle-dot.st-off { background: #555; }
+@keyframes huddle-pulse { from { opacity: 1; } to { opacity: 0.4; } }
+.huddle-state { color: var(--muted, #999); }
+.huddle-speaking { color: oklch(0.68 0.145 45); font-weight: 600; }
+.huddle-peers { color: var(--muted, #999); }
+.huddle-caption {
+  border-top: 1px solid var(--line, #4a4640);
+  padding-top: 5px;
+  color: var(--muted, #bbb);
+  line-height: 1.4;
+  max-height: 60px;
+  overflow: hidden;
+}
