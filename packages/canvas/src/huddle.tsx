@@ -97,68 +97,81 @@ function HuddleStatus({ room }: { room: Room }) {
 }
 
 /** The 🎧 toggle. Self-contained: owns the Room lifecycle, leaves on unmount. */
-export function HuddleButton({
-  canvasId,
-  className,
-  onRoom,
-}: {
-  canvasId: string;
-  className?: string;
-  onRoom?: (room: Room | null) => void;
-}) {
-  const [state, setState] = React.useState<'idle' | 'joining' | 'live'>('idle');
-  const roomRef = React.useRef<Room | null>(null);
+// --- connection manager (module-level, OUTSIDE React) ---------------------------------
+// The call must survive UI changes: collapsing the panel unmounts its components, and a
+// connection owned by a component dies with it. The manager owns the Room; buttons and
+// status cards are disposable views over it.
+type HuddleState = { room: Room | null; phase: 'idle' | 'joining' | 'live' };
+let hs: HuddleState = { room: null, phase: 'idle' };
+const hsListeners = new Set<() => void>();
+function setHs(next: HuddleState) {
+  hs = next;
+  for (const l of hsListeners) l();
+}
 
-  const leave = React.useCallback(async () => {
-    const room = roomRef.current;
-    roomRef.current = null;
-    onRoom?.(null);
-    if (room) await leaveHuddle(room).catch(() => {});
-    setState('idle');
-  }, [onRoom]);
+export async function huddleJoin(canvasId: string): Promise<void> {
+  if (hs.phase !== 'idle') return;
+  setHs({ room: null, phase: 'joining' });
+  try {
+    const room = await joinHuddle(canvasId);
+    room.on(RoomEvent.Disconnected, () => setHs({ room: null, phase: 'idle' }));
+    setHs({ room, phase: 'live' });
+  } catch (e) {
+    console.error('[huddle]', e);
+    setHs({ room: null, phase: 'idle' });
+  }
+}
 
-  React.useEffect(() => () => void leave(), [leave]);
+export async function huddleLeave(): Promise<void> {
+  const room = hs.room;
+  setHs({ room: null, phase: 'idle' });
+  if (room) await leaveHuddle(room).catch(() => {});
+}
 
-  const toggle = async () => {
-    if (state === 'live') return leave();
-    if (state !== 'idle') return;
-    setState('joining');
-    try {
-      const room = await joinHuddle(canvasId);
-      room.on(RoomEvent.Disconnected, () => {
-        roomRef.current = null;
-        onRoom?.(null);
-        setState('idle');
-      });
-      roomRef.current = room;
-      onRoom?.(room);
-      setState('live');
-    } catch (e) {
-      console.error('[huddle]', e);
-      setState('idle');
-    }
-  };
+export function useHuddle(): HuddleState {
+  return React.useSyncExternalStore(
+    (cb) => {
+      hsListeners.add(cb);
+      return () => hsListeners.delete(cb);
+    },
+    () => hs,
+  );
+}
 
+export function HuddleButton({ canvasId, className }: { canvasId: string; className?: string }) {
+  const { phase } = useHuddle();
   return (
     <button
       type="button"
-      className={`${className ?? ''} huddle-button${state === 'live' ? ' huddle-live' : ''}`}
-      title={state === 'live' ? 'Leave the huddle' : 'Start or join this canvas’s voice huddle'}
-      disabled={state === 'joining'}
-      onClick={() => void toggle()}
+      className={`${className ?? ''} huddle-button${phase === 'live' ? ' huddle-live' : ''}`}
+      title={phase === 'live' ? 'Leave the huddle' : 'Start or join this canvas’s voice huddle'}
+      disabled={phase === 'joining'}
+      onClick={() => void (phase === 'live' ? huddleLeave() : huddleJoin(canvasId))}
     >
-      {state === 'live' ? '🎧 Leave' : state === 'joining' ? '🎧 …' : '🎧 Huddle'}
+      {phase === 'live' ? '🎧 Leave' : phase === 'joining' ? '🎧 …' : '🎧 Huddle'}
     </button>
   );
 }
 
-/** Button + (while live) the status overlay. Drop-in replacement surface for callers. */
+/** Button + (while live) the status overlay — a pure view; safe to unmount anytime. */
 export function HuddleControl({ canvasId, className }: { canvasId: string; className?: string }) {
-  const [room, setRoom] = React.useState<Room | null>(null);
+  const { room } = useHuddle();
   return (
     <>
-      <HuddleButton canvasId={canvasId} className={className} onRoom={setRoom} />
+      <HuddleButton canvasId={canvasId} className={className} />
       {room && <HuddleStatus room={room} />}
     </>
+  );
+}
+
+/** Floating huddle card for when the side panel is hidden mid-call: renders only while
+ * live (or joining), so an idle collapsed panel adds no chrome. */
+export function HuddleFloat({ canvasId }: { canvasId: string }) {
+  const { phase } = useHuddle();
+  if (phase === 'idle') return null;
+  return (
+    <div className="huddle-float">
+      <HuddleControl canvasId={canvasId} className="side-panel-add" />
+    </div>
   );
 }

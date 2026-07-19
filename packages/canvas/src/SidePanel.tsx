@@ -105,6 +105,12 @@ export function SidePanel({
         <div className="side-panel-slot side-panel-style" ref={slot('style')} />
       </details>
       <details className="side-panel-section" open>
+        <summary>Huddle</summary>
+        <div className="side-panel-huddle">
+          <HuddleControl canvasId={activeCanvasId()} className="side-panel-add" />
+        </div>
+      </details>
+      <details className="side-panel-section" open>
         <summary>On this board</summary>
         <div className="side-panel-actions">
           <button type="button" className="side-panel-add" onClick={onAddComponent}>
@@ -115,12 +121,6 @@ export function SidePanel({
           </button>
         </div>
         {editor && <InstanceList editor={editor} />}
-      </details>
-      <details className="side-panel-section" open>
-        <summary>Huddle</summary>
-        <div className="side-panel-huddle">
-          <HuddleControl canvasId={activeCanvasId()} className="side-panel-add" />
-        </div>
       </details>
       <div className="side-panel-slot side-panel-nav" ref={slot('nav')} />
     </aside>

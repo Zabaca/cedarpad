@@ -1235,3 +1235,19 @@ body,
   max-height: 60px;
   overflow: hidden;
 }
+
+.huddle-float {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  z-index: 450;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--panel, #1d1b19);
+  border: 1px solid var(--line, #4a4640);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: var(--shadow-lift, 0 8px 24px rgba(0, 0, 0, 0.5));
+}
