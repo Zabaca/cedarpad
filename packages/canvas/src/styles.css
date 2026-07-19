@@ -849,7 +849,16 @@ body,
   color: var(--text);
   border-left: 1px solid var(--line);
   z-index: 500;
-  overflow: hidden;
+  /* The column scrolls as a whole: a long instance list was clipped dead under
+     overflow:hidden (sections grow past the viewport with no scrollbar). */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.side-panel-huddle {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .side-panel-head {
   display: flex;

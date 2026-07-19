@@ -113,9 +113,14 @@ export function SidePanel({
           <button type="button" className="side-panel-add" disabled={!onNewChat} onClick={onNewChat}>
             ＋ New chat
           </button>
-          <HuddleControl canvasId={activeCanvasId()} className="side-panel-add" />
         </div>
         {editor && <InstanceList editor={editor} />}
+      </details>
+      <details className="side-panel-section" open>
+        <summary>Huddle</summary>
+        <div className="side-panel-huddle">
+          <HuddleControl canvasId={activeCanvasId()} className="side-panel-add" />
+        </div>
       </details>
       <div className="side-panel-slot side-panel-nav" ref={slot('nav')} />
     </aside>
