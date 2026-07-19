@@ -11,7 +11,14 @@ import { type ShareLinkRow, shareLinks } from "../schema.js";
 
 export async function createShareLink(
   db: Database,
-  input: { canvasId: string; workspaceId: string; createdBy: string; guestChat: boolean; shapeId?: string | null },
+  input: {
+    canvasId: string;
+    workspaceId: string;
+    createdBy: string;
+    guestChat: boolean;
+    guestHuddle?: boolean;
+    shapeId?: string | null;
+  },
 ): Promise<ShareLinkRow> {
   const rows = await db
     .insert(shareLinks)

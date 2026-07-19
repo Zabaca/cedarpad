@@ -62,6 +62,13 @@ describe('share-links API — mint/list/revoke, member-checked via the canvas', 
     expect(await getActiveShareLink(db, link.id)).not.toBeNull();
   });
 
+  test('a member mints a guestHuddle link (ADR-0017): 201 with the capability on the row', async () => {
+    const res = await handleShareLinksApi(req('POST', { guestHuddle: true }), database, MEMBER, canvasId);
+    expect(res.status).toBe(201);
+    const link = (await res.json()) as { guestHuddle: boolean };
+    expect(link.guestHuddle).toBe(true);
+  });
+
   test('a stranger gets 404 (never 403 — existence is not confirmed) on every method', async () => {
     for (const r of [req('POST', {}), req('GET'), req('DELETE')]) {
       const res = await handleShareLinksApi(r, database, STRANGER, canvasId, 'sl_whatever');

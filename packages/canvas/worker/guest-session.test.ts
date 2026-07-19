@@ -81,6 +81,20 @@ describe('/share/<linkId> — the guest door', () => {
     });
   });
 
+  test('a guestHuddle link mints a cookie carrying the huddle capability (ADR-0017)', async () => {
+    const link = await createShareLink(db, {
+      canvasId: 'cv_share',
+      workspaceId: 'ws_share',
+      createdBy: 'u_1',
+      guestChat: false,
+      guestHuddle: true,
+    });
+    const res = await handleShareAccept(new Request(`https://edge.test/share/${link.id}`), database, SECRET, link.id);
+    const cookieValue = (res.headers.get('set-cookie') ?? '').split(';')[0]?.split('cs_guest=')[1] ?? '';
+    const session = await readGuestSession(`cs_guest=${cookieValue}`, SECRET);
+    expect(session?.guestHuddle).toBe(true);
+  });
+
   test('a revoked link mints nothing — 404, no cookie', async () => {
     const link = await mkLink();
     await revokeShareLink(db, link.id);

@@ -19,6 +19,9 @@ export const GuestSessionPayload = z.object({
   canvasId: z.string().min(1),
   workspaceId: z.string().min(1),
   guestChat: z.boolean(),
+  /** Huddle capability (ADR-0017): the link's guests may join this canvas's voice room.
+   * Optional so pre-huddle cookies stay valid. */
+  guestHuddle: z.boolean().optional(),
   /** Set = component-scoped link (PRD #221): the guest surface is that one shape,
    * fullscreen, chat fully denied. Optional so pre-#221 cookies stay valid. */
   shapeId: z.string().min(1).optional(),
@@ -86,6 +89,7 @@ export async function handleShareAccept(
     canvasId: link.canvasId,
     workspaceId: link.workspaceId,
     guestChat: link.guestChat,
+    ...(link.guestHuddle ? { guestHuddle: true } : {}),
     ...(link.shapeId ? { shapeId: link.shapeId } : {}),
   });
   return new Response(null, {

@@ -20,7 +20,12 @@ import { canvasHiddenFrom } from './visibility.ts';
 
 // `shapeId` set = component-scoped link (PRD #221): guest sees that one shape fullscreen,
 // chat fully denied. guestChat is meaningless there and forced false at mint.
-const MintInput = z.object({ guestChat: z.boolean().default(false), shapeId: z.string().min(1).optional() });
+const MintInput = z.object({
+  guestChat: z.boolean().default(false),
+  /** Huddle capability (ADR-0017). Like guestChat, meaningless on component-scoped links. */
+  guestHuddle: z.boolean().default(false),
+  shapeId: z.string().min(1).optional(),
+});
 
 /** The canvas's workspace if the caller is owner-or-member of it; null ⇒ 404. */
 async function accessibleCanvasWorkspace(
@@ -63,6 +68,7 @@ export async function handleShareLinksApi(
       workspaceId,
       createdBy: user.id,
       guestChat: parsed.data.shapeId ? false : parsed.data.guestChat,
+      guestHuddle: parsed.data.shapeId ? false : parsed.data.guestHuddle,
       shapeId: parsed.data.shapeId ?? null,
     });
     return Response.json(link, { status: 201 });
