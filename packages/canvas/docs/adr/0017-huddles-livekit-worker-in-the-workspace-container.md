@@ -34,9 +34,13 @@ runs.
   the worker exits when zero humans remain (short grace for rejoins); rooms are created with a
   small `emptyTimeout` so they evaporate after the worker leaves or crashes; the bridge
   enforces a hard max-duration kill and reaps the child on container shutdown.
-- **LiveKit signing keys are edge-only** (the ADR-0008 custody pattern). The edge mints the
+- **LiveKit signing keys are edge-held** (the ADR-0008 custody pattern). The edge mints the
   human's room token on the session-authed join endpoint and mints the agent's token into the
-  spawn poke. The container never holds signing material.
+  spawn poke. *Amendment (2026-07-18, found live):* LiveKit **Inference** mints its own
+  short-lived gateway tokens from key+secret inside the worker process — there is no
+  pre-minted-token seam — so the key+secret ride the spawn poke into the worker's process env
+  (per-huddle, never persisted container config). Accepted: the blast radius is the LiveKit
+  project (rooms/minutes), not the RCE boundary the GitHub App key rule protects.
 - **The brain is the subscription OAuth token, not an API key.** The voice loop drives the
   streaming Messages API directly with `CLAUDE_CODE_OAUTH_TOKEN` (Bearer +
   `anthropic-beta: oauth-2025-04-20` + the Claude Code identity string as the first system

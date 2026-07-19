@@ -647,7 +647,12 @@ const CANVAS_CWD = process.env.CANVAS_CWD ?? process.cwd();
 // Huddle agent workers (ADR-0017): one child process per live voice room, spawned on the
 // edge's ensure poke and reaped by its own liveness rule (exits when the last human
 // leaves) — the 4h max-duration kill here is the absurdity backstop.
-const huddleSupervisor = createHuddleSupervisor<{ agentToken: string; livekitUrl: string }>({
+const huddleSupervisor = createHuddleSupervisor<{
+  agentToken: string;
+  livekitUrl: string;
+  apiKey: string;
+  apiSecret: string;
+}>({
   maxDurationMs: 4 * 60 * 60 * 1000,
   spawn: (canvasId, arg) => {
     const child = Bun.spawn(['bun', resolve(import.meta.dir, 'voice-agent/main.ts')], {
@@ -657,6 +662,8 @@ const huddleSupervisor = createHuddleSupervisor<{ agentToken: string; livekitUrl
         HUDDLE_CANVAS: canvasId,
         LIVEKIT_URL: arg?.livekitUrl ?? '',
         LIVEKIT_AGENT_TOKEN: arg?.agentToken ?? '',
+        LIVEKIT_API_KEY: arg?.apiKey ?? '',
+        LIVEKIT_API_SECRET: arg?.apiSecret ?? '',
         BRIDGE_ORIGIN: `http://127.0.0.1:${PORT}`,
       },
       stdout: 'inherit',
@@ -709,7 +716,13 @@ export async function handleRequest(req: Request): Promise<Response> {
       const agentToken = req.headers.get('x-huddle-agent-token');
       const livekitUrl = req.headers.get('x-livekit-url');
       if (!canvasId || !agentToken || !livekitUrl) return json({ error: 'missing huddle headers' }, 400);
-      const { joined } = huddleSupervisor.ensure(canvasId, { agentToken, livekitUrl });
+      const { joined } = huddleSupervisor.ensure(canvasId, {
+        agentToken,
+        livekitUrl,
+        // Inference credentials (documented custody deviation — see worker/huddle.ts).
+        apiKey: req.headers.get('x-livekit-api-key') ?? '',
+        apiSecret: req.headers.get('x-livekit-api-secret') ?? '',
+      });
       return json({ ok: true, joined });
     }
 

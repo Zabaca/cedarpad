@@ -85,6 +85,12 @@ export async function ensureHuddleWorker(
         'x-huddle-canvas': canvasId,
         'x-huddle-agent-token': agentToken,
         'x-livekit-url': env.LIVEKIT_URL,
+        // Deliberate ADR-0017 custody deviation: LiveKit Inference (STT/TTS) mints its
+        // own short-lived gateway tokens from key+secret INSIDE the worker process — no
+        // pre-minted-token seam exists. Scope: per-spawn process env, never persisted
+        // container config; blast radius is the LiveKit project, not the RCE boundary.
+        'x-livekit-api-key': env.LIVEKIT_API_KEY,
+        'x-livekit-api-secret': env.LIVEKIT_API_SECRET,
       },
     });
     const res = await serve(req);
