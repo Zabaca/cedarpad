@@ -20,7 +20,7 @@ export function detectedShapeSpec(d: DetectedPaste): { module: string; data: Rec
   if (d.kind === 'mermaid') return { module: 'MermaidDiagram', data: { chart: d.chart }, w: 480, h: 380 };
   if (d.kind === 'markdown') {
     const lines = d.md.split('\n').length;
-    return { module: 'MarkdownCard', data: { md: d.md }, w: 460, h: Math.round(Math.min(560, Math.max(200, lines * 20 + 40))) };
+    return { module: 'MarkdownCard', data: { markdown: d.md }, w: 460, h: Math.round(Math.min(560, Math.max(200, lines * 20 + 40))) };
   }
   if (d.kind === 'code') {
     const lines = d.code.split('\n');

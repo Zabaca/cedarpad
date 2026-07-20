@@ -1,4 +1,4 @@
-// Generic markdown card — renders any `md` prop through the same parser as chat bubbles.
+// Generic markdown card — renders any `markdown` prop through the same parser as chat bubbles.
 // Pass `title` for an optional header label.
 
 import * as React from 'react';

@@ -18,6 +18,12 @@ describe('detectedShapeSpec', () => {
     expect(spec.h).toBe(520);
   });
 
+  test('markdown maps to MarkdownCard via its real prop name, `markdown`', () => {
+    const spec = detectedShapeSpec({ kind: 'markdown', md: '# Hi' });
+    expect(spec.module).toBe('MarkdownCard');
+    expect(spec.data).toEqual({ markdown: '# Hi' });
+  });
+
   test('json maps to JsonCard carrying the parsed value', () => {
     const spec = detectedShapeSpec({ kind: 'json', value: { a: 1 } });
     expect(spec.module).toBe('JsonCard');
