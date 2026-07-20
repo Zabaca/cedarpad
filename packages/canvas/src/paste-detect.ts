@@ -5,7 +5,10 @@
 
 export type DetectedPaste =
   | { kind: 'table'; columns: string[]; rows: string[][]; totalRows?: number }
-  | { kind: 'json'; value: unknown };
+  | { kind: 'json'; value: unknown }
+  | { kind: 'markdown'; md: string }
+  | { kind: 'mermaid'; chart: string }
+  | { kind: 'code'; code: string; lang?: string };
 
 /** A clipboard source item as tldraw hands them to external-content handlers. */
 export type PasteSource = { type: string; subtype?: string; data?: unknown };
@@ -112,20 +115,95 @@ function detectDelimited(text: string): DetectedPaste | null {
   return null;
 }
 
+const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+const cellText = (v: unknown): string =>
+  v == null ? '' : typeof v === 'object' ? JSON.stringify(v).slice(0, CELL_MAX) : String(v).slice(0, CELL_MAX);
+
+/** A JSON array of flat records (the classic API response) is really a table. */
+function tabularJson(value: unknown): DetectedPaste | null {
+  if (!Array.isArray(value) || value.length < 2 || !value.every(isPlainObject)) return null;
+  const columns: string[] = [];
+  for (const o of value) {
+    for (const k of Object.keys(o)) if (!columns.includes(k)) columns.push(k);
+    if (columns.length >= MAX_COLS) break;
+  }
+  if (columns.length < 2) return null;
+  const maxRows = Math.max(50, Math.floor(MAX_CELLS / columns.length));
+  const rows = value.slice(0, maxRows).map((o) => columns.slice(0, MAX_COLS).map((k) => cellText(o[k])));
+  return { kind: 'table', columns: columns.slice(0, MAX_COLS), rows, ...(value.length > rows.length ? { totalRows: value.length } : {}) };
+}
+
 /** JSON detection alone (also used by the raw-paste capture hook, where tldraw's
  * pipeline drops subtype-'json' clipboard text on the floor). Only object/array
- * roots count: a bare number or quoted string pastes better as text. */
+ * roots count: a bare number or quoted string pastes better as text. An array of
+ * flat records becomes a table — that's what the data actually is. */
 export function detectJson(text: string): DetectedPaste | null {
   const t = text.trim();
   if (!t.startsWith('{') && !t.startsWith('[')) return null;
   try {
     const value: unknown = JSON.parse(t);
-    if (typeof value === 'object' && value !== null) return { kind: 'json', value };
+    if (typeof value === 'object' && value !== null) return tabularJson(value) ?? { kind: 'json', value };
   } catch {
     /* not JSON */
   }
   return null;
 }
+
+const MERMAID_RE = /^(flowchart\s+\w+|graph\s+(TB|TD|BT|RL|LR)\b|sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|gantt|pie\b|mindmap|journey|timeline)/;
+
+/** Raw Mermaid source (first non-empty line names a diagram type). */
+export function detectMermaid(text: string): DetectedPaste | null {
+  const first = text.split('\n').find((l) => l.trim() !== '')?.trim() ?? '';
+  return MERMAID_RE.test(first) ? { kind: 'mermaid', chart: text.trim() } : null;
+}
+
+/** A paste that is exactly one fenced code block: ```mermaid → diagram, any
+ * other lang → code card. (Fences inside a longer text read as markdown.) */
+function detectFence(text: string): DetectedPaste | null {
+  const m = text.trim().match(/^```([\w-]*)[ \t]*\n([\s\S]*?)\n?```$/);
+  if (!m) return null;
+  const [, lang = '', code = ''] = m;
+  if (!code.trim()) return null;
+  if (lang === 'mermaid') return { kind: 'mermaid', chart: code };
+  return { kind: 'code', code, ...(lang ? { lang } : {}) };
+}
+
+/** Markdown wants a strong signal: a heading, three-plus list lines, a pipe
+ * table, or an embedded fence — plain prose must stay a text shape. */
+export function looksLikeMarkdown(text: string): boolean {
+  if (/^#{1,6} .+/m.test(text)) return true;
+  if (/^```/m.test(text)) return true;
+  if (/^\|.+\|\s*$/m.test(text) && /^\|[-| :]+\|\s*$/m.test(text)) return true;
+  const listLines = text.split('\n').filter((l) => /^\s*([-*+] |\d+\. )/.test(l)).length;
+  return listLines >= 3;
+}
+
+/** File-drop detection: the extension IS the signal, so no heuristics — just
+ * parse per type. Unknown extensions return null (tldraw's flow keeps them). */
+export function detectFromFile(name: string, text: string): DetectedPaste | null {
+  const ext = /\.(\w+)$/.exec(name.toLowerCase())?.[1];
+  switch (ext) {
+    case 'csv':
+    case 'tsv': {
+      const grid = parseDelimited(text.replace(/\n+$/, ''), ext === 'tsv' ? '\t' : ',');
+      return grid.length > 0 && (grid[0]?.length ?? 0) > 0 ? toTable(grid) : null;
+    }
+    case 'json':
+      return detectJson(text) ?? { kind: 'code', code: text, lang: 'json' };
+    case 'md':
+    case 'markdown':
+      return { kind: 'markdown', md: text };
+    case 'mmd':
+    case 'mermaid':
+      return { kind: 'mermaid', chart: text.trim() };
+    default:
+      return null;
+  }
+}
+
+/** Extensions the drop hook claims; anything else stays with tldraw. */
+export const STRUCTURED_FILE_RE = /\.(csv|tsv|json|md|markdown|mmd|mermaid)$/i;
 
 /** A `<table>` in pasted rich text (Sheets/Excel/Numbers all put one on the
  * clipboard). `<th>` cells mark an explicit header row; otherwise the same
@@ -164,5 +242,11 @@ export function detectPaste(input: { text: string; html?: string; sources?: Read
   const rawText = input.sources?.find((s) => s.type === 'text' && s.subtype === 'text');
   const text = (typeof rawText?.data === 'string' ? rawText.data : input.text).replace(/\n+$/, '');
   if (!text.trim()) return null;
-  return detectJson(text) ?? detectDelimited(text);
+  return (
+    detectFence(text) ??
+    detectMermaid(text) ??
+    detectJson(text) ??
+    detectDelimited(text) ??
+    (looksLikeMarkdown(text) ? { kind: 'markdown', md: text } : null)
+  );
 }

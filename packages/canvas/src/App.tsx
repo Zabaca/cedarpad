@@ -17,7 +17,7 @@ import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './Side
 import { wireSync } from './sync';
 import { startPresenceHeartbeat } from './presence';
 import { detectPaste } from './paste-detect';
-import { placeDetected, wireJsonPaste } from './paste-place';
+import { placeDetected, wirePasteCapture } from './paste-place';
 import { loadGuestScope, useGuestScope } from '../shared/guest-scope';
 import { HuddleControl, HuddleFloat } from './huddle';
 import { ComponentGuestView } from './ComponentGuestView';
@@ -317,7 +317,7 @@ function CanvasApp() {
         if (d) return placeDetected(editor, d, content.point);
         return defaultHandleExternalTextContent(editor, content);
       });
-      const unJsonPaste = wireJsonPaste(editor);
+      const unJsonPaste = wirePasteCapture(editor);
 
       // Per-canvas camera: restore the one we land on, then save (debounced) on move.
       const camKey = activeCanvasId();

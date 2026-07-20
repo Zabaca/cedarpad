@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { detectPaste } from './paste-detect';
+import { detectFromFile, detectPaste } from './paste-detect';
 
 describe('detectPaste: TSV (spreadsheet copy)', () => {
   test('a rectangular tab-separated block becomes a table', () => {
@@ -94,6 +94,11 @@ describe('detectPaste: JSON', () => {
     expect(detectPaste({ text: '{not: valid json}' })).toBeNull();
   });
 
+  test('an array of flat records is really a table', () => {
+    const d = detectPaste({ text: '[{"name":"Acme","rev":100},{"name":"Globex","rev":200}]' });
+    expect(d).toEqual({ kind: 'table', columns: ['name', 'rev'], rows: [['Acme', '100'], ['Globex', '200']] });
+  });
+
   test('a subtype-json clipboard source is detected even when text is html-stripped', () => {
     const d = detectPaste({
       text: 'a 1',
@@ -101,5 +106,48 @@ describe('detectPaste: JSON', () => {
       sources: [{ type: 'text', subtype: 'json', data: '{"a": 1}' }],
     });
     expect(d).toEqual({ kind: 'json', value: { a: 1 } });
+  });
+});
+
+describe('detectPaste: mermaid / code / markdown', () => {
+  test('raw mermaid source becomes a diagram', () => {
+    expect(detectPaste({ text: 'flowchart TD\n  A --> B' })).toEqual({ kind: 'mermaid', chart: 'flowchart TD\n  A --> B' });
+    expect(detectPaste({ text: 'sequenceDiagram\n  A->>B: hi' })?.kind).toBe('mermaid');
+  });
+
+  test('prose starting with the word graph is not mermaid', () => {
+    expect(detectPaste({ text: 'graph theory is fun\nreally fun' })).toBeNull();
+  });
+
+  test('a single fenced block becomes a code card (mermaid fence → diagram)', () => {
+    expect(detectPaste({ text: '```ts\nconst a = 1;\nconst b = 2;\n```' })).toEqual({ kind: 'code', code: 'const a = 1;\nconst b = 2;', lang: 'ts' });
+    expect(detectPaste({ text: '```mermaid\nflowchart LR\n  A --> B\n```' })).toEqual({ kind: 'mermaid', chart: 'flowchart LR\n  A --> B' });
+  });
+
+  test('markdown with a heading or enough list lines becomes a markdown card', () => {
+    expect(detectPaste({ text: '# Plan\n\nsome prose here' })).toEqual({ kind: 'markdown', md: '# Plan\n\nsome prose here' });
+    expect(detectPaste({ text: 'todo\n- one\n- two\n- three' })?.kind).toBe('markdown');
+  });
+
+  test('short bullet-less prose stays plain text', () => {
+    expect(detectPaste({ text: 'just a note\n- one item' })).toBeNull();
+  });
+});
+
+describe('detectFromFile (drops)', () => {
+  test('csv and tsv files become tables even below the paste thresholds', () => {
+    expect(detectFromFile('data.csv', 'name,rev\nAcme,100')?.kind).toBe('table');
+    expect(detectFromFile('data.tsv', 'a\tb\n1\t2')?.kind).toBe('table');
+  });
+
+  test('json files become json cards; invalid json falls back to a code card', () => {
+    expect(detectFromFile('x.json', '{"a": 1}')).toEqual({ kind: 'json', value: { a: 1 } });
+    expect(detectFromFile('x.json', '{oops')).toEqual({ kind: 'code', code: '{oops', lang: 'json' });
+  });
+
+  test('md and mmd files map by extension; unknown extensions stay with tldraw', () => {
+    expect(detectFromFile('notes.md', 'plain prose, no markers')).toEqual({ kind: 'markdown', md: 'plain prose, no markers' });
+    expect(detectFromFile('flow.mmd', 'flowchart LR\nA-->B')?.kind).toBe('mermaid');
+    expect(detectFromFile('pic.png', 'binary-ish')).toBeNull();
   });
 });
