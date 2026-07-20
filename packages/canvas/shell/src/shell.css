@@ -909,7 +909,8 @@ body,
 }
 .settings-remove,
 .settings-revoke,
-.settings-make-owner {
+.settings-make-owner,
+.settings-reset-password {
   flex: none;
   background: none;
   border: 1px solid var(--line);
@@ -922,7 +923,8 @@ body,
 }
 .settings-remove:hover,
 .settings-revoke:hover,
-.settings-make-owner:hover {
+.settings-make-owner:hover,
+.settings-reset-password:hover {
   border-color: var(--accent);
   color: var(--accent);
 }

@@ -59,6 +59,7 @@ function stubEdge() {
       return adminWaitlist ? Response.json({ entries: adminWaitlist }) : Response.json({ error: 'admin only' }, { status: 403 });
     }
     if (url === '/api/auth/admin/create-user' && method === 'POST') return Response.json({ user: { id: 'u_new' } });
+    if (url === '/api/auth/admin/set-user-password' && method === 'POST') return Response.json({ status: true });
     if (url === '/api/workspaces/ws_abc/github/repos' && method === 'PUT') {
       return Response.json({ selectedRepos: JSON.parse((init?.body as string) ?? '{}').selected });
     }
@@ -189,6 +190,31 @@ describe('SettingsStage — members (#192)', () => {
     window.prompt = promptReal;
     window.alert = alertReal;
     expect(calls).toContain('POST /api/auth/admin/create-user');
+  });
+
+  test('an admin resets a member\'s password: posts userId+newPassword to the auth admin endpoint', async () => {
+    adminWaitlist = [];
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    const confirmReal = window.confirm;
+    const promptReal = window.prompt;
+    window.confirm = () => true;
+    window.prompt = () => null;
+    await act(async () => {
+      (host.querySelector('.settings-reset-password') as HTMLButtonElement).click();
+    });
+    await flush();
+    window.confirm = confirmReal;
+    window.prompt = promptReal;
+    const call = calls.find((c) => c.startsWith('POST /api/auth/admin/set-user-password'));
+    expect(call).toBeDefined();
+  });
+
+  test('a non-admin owner does not see the reset-password action', async () => {
+    adminWaitlist = null;
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    expect(host.querySelector('.settings-reset-password')).toBeNull();
   });
 
   test('removing a member DELETEs and reloads the roster', async () => {

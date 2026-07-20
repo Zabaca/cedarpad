@@ -59,6 +59,9 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
   }, [workspaceId, reload]);
 
   const isOwnerView = invitations !== null;
+  // Global admin role (ADR-0014) — same probe as the Waitlist section, since
+  // better-auth's admin plugin is gated on user.role === "admin", not workspace ownership.
+  const isAdmin = waitlist !== null;
 
   const invite = async () => {
     const email = window.prompt('Invite to this workspace by email — the link works only for that address:');
@@ -160,6 +163,24 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
     void reload();
   };
 
+  // Admin-only (global role, not just workspace owner — same gate as "Create user"):
+  // better-auth's admin plugin already exposes this at /api/auth/admin/set-user-password.
+  const resetPassword = async (m: MemberView) => {
+    if (!window.confirm(`Reset ${m.name}'s (${m.email}) password? Their current password stops working immediately.`)) return;
+    const password = crypto.randomUUID();
+    const r = await fetch('/api/auth/admin/set-user-password', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userId: m.userId, newPassword: password }),
+    }).catch(() => null);
+    if (!r?.ok) {
+      window.alert('Could not reset the password.');
+      return;
+    }
+    window.prompt('Temporary password (send it over your own channel):', password);
+  };
+
   const revokeInvitation = async (inv: InvitationView) => {
     await fetch(`${base}/invitations/${encodeURIComponent(inv.token)}`, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
     void reload();
@@ -193,6 +214,16 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
                 <span className="settings-row-name">{m.name}</span>
                 <span className="settings-row-sub">{m.email}</span>
                 <span className={`settings-role settings-role-${m.role}`}>{m.role}</span>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="settings-reset-password"
+                    title="Reset this member's password"
+                    onClick={() => void resetPassword(m)}
+                  >
+                    Reset password…
+                  </button>
+                )}
                 {isOwnerView && m.role !== 'owner' && (
                   <>
                     <button
