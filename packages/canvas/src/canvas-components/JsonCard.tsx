@@ -8,7 +8,7 @@ const OPEN_DEPTH = 2; // depth < OPEN_DEPTH starts expanded
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
 const color = (v: unknown) =>
-  v === null ? 'var(--muted, #64748b)' : typeof v === 'string' ? '#16a34a' : typeof v === 'number' ? '#2563eb' : typeof v === 'boolean' ? '#9333ea' : 'inherit';
+  v === null ? 'var(--muted, #94a3b8)' : typeof v === 'string' ? '#4ade80' : typeof v === 'number' ? '#60a5fa' : typeof v === 'boolean' ? '#c084fc' : 'inherit';
 
 function Primitive({ v }: { v: unknown }) {
   const text = typeof v === 'string' ? JSON.stringify(v) : String(v);
@@ -19,7 +19,7 @@ function Node({ k, v, depth }: { k: string | null; v: unknown; depth: number }) 
   const [open, setOpen] = React.useState(depth < OPEN_DEPTH);
   const [limit, setLimit] = React.useState(CHUNK);
   const branch = typeof v === 'object' && v !== null;
-  const label = k !== null && <span style={{ color: 'var(--ink, #0f172a)', fontWeight: 500 }}>{k}: </span>;
+  const label = k !== null && <span style={{ color: 'var(--text, #e5e7eb)', fontWeight: 500 }}>{k}: </span>;
 
   if (!branch) {
     return (
@@ -52,7 +52,7 @@ function Node({ k, v, depth }: { k: string | null; v: unknown; depth: number }) 
             <button
               type="button"
               onClick={() => setLimit((n) => n + 500)}
-              style={{ marginLeft: (depth + 1) * 14, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'var(--accent, #2563eb)' }}
+              style={{ marginLeft: (depth + 1) * 14, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', color: 'var(--accent, #60a5fa)' }}
             >
               … {(entries.length - limit).toLocaleString()} more
             </button>
@@ -65,7 +65,7 @@ function Node({ k, v, depth }: { k: string | null; v: unknown; depth: number }) 
 
 export default function JsonCard({ title, value }: { title?: string; value?: unknown }) {
   return (
-    <div style={{ height: '100%', overflow: 'auto', padding: '8px 10px', font: `12px/1.6 ${MONO}`, color: 'var(--ink, #0f172a)' }}>
+    <div style={{ height: '100%', overflow: 'auto', padding: '8px 10px', font: `12px/1.6 ${MONO}`, color: 'var(--text, #e5e7eb)' }}>
       {title && <div style={{ fontWeight: 700, fontSize: 13, fontFamily: 'ui-sans-serif, system-ui', marginBottom: 4 }}>{title}</div>}
       <Node k={null} v={value} depth={0} />
     </div>

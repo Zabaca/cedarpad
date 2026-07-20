@@ -73,7 +73,7 @@ export default function DataTable({
   const count = totalRows && totalRows > rows.length ? `first ${rows.length.toLocaleString()} of ${totalRows.toLocaleString()}` : `${rows.length.toLocaleString()} rows`;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', font: '12px/1.4 ui-sans-serif, system-ui, sans-serif', color: 'var(--ink, #0f172a)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', font: '12px/1.4 ui-sans-serif, system-ui, sans-serif', color: 'var(--text, #e5e7eb)' }}>
       {title && <div style={{ padding: '8px 10px 4px', fontWeight: 700, fontSize: 13 }}>{title}</div>}
       <div
         ref={scroller}

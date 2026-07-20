@@ -8,7 +8,7 @@ export default function CodeCard({ title, code = '', lang }: { title?: string; c
   const all = code.split('\n');
   const lines = all.slice(0, MAX_LINES);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', font: '12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace', color: 'var(--ink, #0f172a)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', font: '12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace', color: 'var(--text, #e5e7eb)' }}>
       {(title || lang) && (
         <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--line, #e2e8f0)', fontFamily: 'ui-sans-serif, system-ui', fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
           <b>{title ?? ''}</b>
