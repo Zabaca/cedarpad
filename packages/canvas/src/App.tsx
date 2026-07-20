@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { DefaultContextMenu, DefaultContextMenuContent, DefaultMenuPanel, DefaultNavigationPanel, DefaultPeopleMenu, DefaultSharePanel, DefaultStylePanel, DefaultToolbar, NoteShapeUtil, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, useEditor } from 'tldraw';
+import { DefaultContextMenu, DefaultContextMenuContent, DefaultMenuPanel, DefaultNavigationPanel, DefaultPeopleMenu, DefaultSharePanel, DefaultStylePanel, DefaultToolbar, NoteShapeUtil, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, defaultHandleExternalTextContent, useEditor } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 import { activeCanvasId } from './active-canvas';
@@ -16,6 +16,8 @@ import { ComponentGallery } from './ComponentGallery';
 import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './SidePanel';
 import { wireSync } from './sync';
 import { startPresenceHeartbeat } from './presence';
+import { detectPaste } from './paste-detect';
+import { placeDetected, wireJsonPaste } from './paste-place';
 import { loadGuestScope, useGuestScope } from '../shared/guest-scope';
 import { HuddleControl, HuddleFloat } from './huddle';
 import { ComponentGuestView } from './ComponentGuestView';
@@ -306,6 +308,17 @@ function CanvasApp() {
       setForkHandler((pid) => forkChat(pid as TLShapeId)); // chat cards' fork button routes here
       setExpandHandler((id) => setExpandedId(id)); // component cards' ⛶ button routes here
 
+      // Smart paste: a spreadsheet/CSV table or a JSON document becomes a live
+      // DataTable/JsonCard component instead of a wall of text; anything else
+      // falls through to tldraw's stock text handling. The extra capture-phase
+      // hook rescues raw JSON, which tldraw's clipboard flow silently drops.
+      editor.registerExternalContentHandler('text', (content) => {
+        const d = detectPaste(content);
+        if (d) return placeDetected(editor, d, content.point);
+        return defaultHandleExternalTextContent(editor, content);
+      });
+      const unJsonPaste = wireJsonPaste(editor);
+
       // Per-canvas camera: restore the one we land on, then save (debounced) on move.
       const camKey = activeCanvasId();
       const cameras = loadCameras();
@@ -370,6 +383,7 @@ function CanvasApp() {
         if (camTimer) clearTimeout(camTimer);
         setForkHandler(null);
         setExpandHandler(null);
+        unJsonPaste();
         uncam();
         unlisten();
         unbeat();
