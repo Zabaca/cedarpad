@@ -69,6 +69,13 @@ describe('detectPaste: CSV', () => {
     expect(detectPaste({ text: 'First, we ship it.\nThen we see, measure, and learn.\nFinally, we iterate.' })).toBeNull();
   });
 
+  test('emails and phone numbers count as data, so contact lists keep their header', () => {
+    const d = detectPaste({ text: 'First Name,Last Name,Email,Phone\nJane,Doe,jdoe@example.com,555-0100\nJohn,Smith,jsmith@example.com,555-0199' });
+    if (d?.kind !== 'table') throw new Error('expected a table');
+    expect(d.columns).toEqual(['First Name', 'Last Name', 'Email', 'Phone']);
+    expect(d.rows.length).toBe(2);
+  });
+
   test('quoted CSV fields may contain commas', () => {
     const d = detectPaste({ text: 'company,revenue\n"Acme, Inc.",100\nGlobex,200' });
     if (d?.kind !== 'table') throw new Error('expected a table');

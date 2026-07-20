@@ -79,9 +79,14 @@ function toTable(grid: string[][], headerRow: boolean | 'auto' = 'auto'): Extrac
   const clip = (r: string[]) => r.slice(0, MAX_COLS).map((c) => (c.length > CELL_MAX ? c.slice(0, CELL_MAX) : c));
   const first = clip(grid[0] ?? []);
   const body = grid.slice(1);
+  // Header when row 0 is all labels and the body carries data-like cells —
+  // numbers, but also emails/phones/URLs/dates, so "First Name, Email, Phone"
+  // over contact rows reads as the header it is.
+  const dataLike = (c: string) =>
+    isNumeric(c) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.trim()) || /^\+?[\d][\d\s\-().]{5,}$/.test(c.trim()) || /^https?:\/\//.test(c.trim()) || /^\d{4}-\d{2}-\d{2}/.test(c.trim());
   const isHeader =
     headerRow === 'auto'
-      ? first.every((c) => c.trim() !== '' && !isNumeric(c)) && body.some((r) => r.some(isNumeric))
+      ? first.every((c) => c.trim() !== '' && !dataLike(c)) && body.some((r) => r.some(dataLike))
       : headerRow;
   const columns = isHeader ? first : first.map((_, i) => columnLetter(i));
   const all = isHeader ? body : grid;
