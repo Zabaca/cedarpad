@@ -10,11 +10,15 @@ import { useCallback, useEffect, useState } from 'react';
 type MemberView = { userId: string; name: string; email: string; role: 'owner' | 'member' };
 type InvitationView = { token: string; email: string; url: string; expiresAt: number };
 type GrantedRepo = { fullName: string; defaultBranch: string; protected: boolean };
+// ADR-0016: a PAT-backed repo row with its live badges. `unreachable` = the stored token
+// no longer opens the repo (expired/revoked) — the row needs "Update token…", not removal.
+type PatRepo = { fullName: string; defaultBranch: string | null; protected: boolean; canPush: boolean; unreachable?: boolean };
 type GithubStatus = {
   connected: boolean;
   source?: 'workspace' | 'env';
   selectedRepos: string[];
   grantedRepos?: GrantedRepo[];
+  patRepos?: PatRepo[];
   canConnect?: boolean;
 };
 type WaitlistEntry = { email: string; createdAt: string };
@@ -125,6 +129,55 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
   const disconnect = async () => {
     if (!window.confirm('Disconnect GitHub from this workspace? The dev-agent loses repo access until reconnected.')) return;
     await fetch(`${base}/github`, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
+    void reload();
+  };
+
+  // PAT repos (ADR-0016): repos outside the App installation's identity, added by token.
+  // The token is validated live and stored sealed; a read-only token is accepted with a
+  // "PRs unavailable" heads-up rather than rejected (least-privilege is a feature).
+  const patCall = async (method: 'POST' | 'PATCH', fullName: string, token: string) => {
+    const r = await fetch(`${base}/github/external`, {
+      method,
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fullName, token }),
+    }).catch(() => null);
+    if (!r?.ok) {
+      const err = r ? ((await r.json().catch(() => null)) as { error?: string } | null) : null;
+      window.alert(err?.error ?? 'Could not save the repo token.');
+      return;
+    }
+    const d = (await r.json()) as { canPush: boolean };
+    if (!d.canPush) {
+      window.alert('Saved — note the token is read-only: research and job discovery work, but PRs are unavailable until you update it with a write-capable token.');
+    }
+    void reload();
+  };
+
+  const addExternalRepo = async () => {
+    const fullName = window.prompt('Add a repo by token — owner/name:');
+    if (!fullName) return;
+    const token = window.prompt(
+      `Personal access token for ${fullName}. Use a fine-grained PAT scoped to ONLY that repo, with an expiry (read-write to allow PRs):`,
+    );
+    if (!token) return;
+    await patCall('POST', fullName.trim(), token.trim());
+  };
+
+  const updateExternalToken = async (repo: PatRepo) => {
+    const token = window.prompt(`New token for ${repo.fullName} (fine-grained, single-repo, with an expiry):`);
+    if (!token) return;
+    await patCall('PATCH', repo.fullName, token.trim());
+  };
+
+  const removeExternalRepo = async (repo: PatRepo) => {
+    if (!window.confirm(`Remove ${repo.fullName} and its stored token from this workspace?`)) return;
+    await fetch(`${base}/github/external`, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fullName: repo.fullName }),
+    }).catch(() => {});
     void reload();
   };
 
@@ -331,6 +384,11 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
         <section className="settings-section">
           <div className="settings-section-head">
             <h3>Repositories</h3>
+            {isOwnerView && (
+              <button type="button" className="settings-add-external" onClick={() => void addExternalRepo()}>
+                Add repo by token…
+              </button>
+            )}
             {github?.connected && github.source === 'workspace' && isOwnerView && (
               <button type="button" className="settings-disconnect" onClick={() => void disconnect()}>
                 Disconnect
@@ -403,6 +461,58 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
               </ul>
               <p className="settings-row-sub">
                 Selected repos are in scope for this workspace's agents: job discovery, dev-agent runs, and token minting.
+              </p>
+            </>
+          )}
+
+          {(github?.patRepos?.length ?? 0) > 0 && (
+            <>
+              <div className="settings-subhead">External repos (by token)</div>
+              <ul className="settings-list">
+                {github?.patRepos?.map((repo) => (
+                  <li key={repo.fullName} className="settings-row">
+                    <span className="settings-row-name">{repo.fullName}</span>
+                    {repo.unreachable ? (
+                      <span className="settings-unprotected" title="The stored token no longer reaches this repo — update it">
+                        token expired or revoked
+                      </span>
+                    ) : (
+                      <>
+                        {repo.defaultBranch && (
+                          <span
+                            className={repo.protected ? 'settings-protected' : 'settings-unprotected'}
+                            title={
+                              repo.protected
+                                ? `${repo.defaultBranch} requires PRs — merges are the arming step`
+                                : `${repo.defaultBranch} is NOT protected — the token could push to it directly`
+                            }
+                          >
+                            {repo.protected ? `${repo.defaultBranch} protected` : `${repo.defaultBranch} unprotected`}
+                          </span>
+                        )}
+                        {!repo.canPush && (
+                          <span className="settings-unprotected" title="Research and discovery work; PRs need a write-capable token">
+                            read-only — PRs unavailable
+                          </span>
+                        )}
+                      </>
+                    )}
+                    {isOwnerView && (
+                      <>
+                        <button type="button" className="settings-make-owner" onClick={() => void updateExternalToken(repo)}>
+                          Update token…
+                        </button>
+                        <button type="button" className="settings-remove" onClick={() => void removeExternalRepo(repo)}>
+                          Remove
+                        </button>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="settings-row-sub">
+                Repos connected with their own token (e.g. a client-issued GitHub account). Tokens are stored encrypted and
+                used only at the moment of fetch or PR.
               </p>
             </>
           )}

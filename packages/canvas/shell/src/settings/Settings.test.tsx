@@ -27,6 +27,10 @@ const GITHUB_CONNECTED = {
   ],
   canConnect: true,
 };
+const PAT_REPOS = [
+  { fullName: 'hudsonts/app', defaultBranch: 'main', protected: false, canPush: false },
+  { fullName: 'client/dead', defaultBranch: null, protected: false, canPush: false, unreachable: true },
+];
 const GITHUB_DISCONNECTED = { connected: false, selectedRepos: [], canConnect: true };
 
 const realFetch = globalThis.fetch;
@@ -62,6 +66,11 @@ function stubEdge() {
     if (url === '/api/auth/admin/set-user-password' && method === 'POST') return Response.json({ status: true });
     if (url === '/api/workspaces/ws_abc/github/repos' && method === 'PUT') {
       return Response.json({ selectedRepos: JSON.parse((init?.body as string) ?? '{}').selected });
+    }
+    if (url === '/api/workspaces/ws_abc/github/external') {
+      if (method === 'DELETE') return new Response(null, { status: 204 });
+      const b = JSON.parse((init?.body as string) ?? '{}') as { fullName?: string };
+      return Response.json({ fullName: b.fullName, defaultBranch: 'main', protected: false, canPush: true });
     }
     return new Response('not found', { status: 404 });
   }) as typeof fetch;
@@ -215,6 +224,37 @@ describe('SettingsStage — members (#192)', () => {
     await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
     await flush();
     expect(host.querySelector('.settings-reset-password')).toBeNull();
+  });
+
+  test('PAT repos render with their badges (read-only / expired) — ADR-0016', async () => {
+    githubStatus = { ...GITHUB_CONNECTED, patRepos: PAT_REPOS };
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    expect(host.textContent).toContain('External repos (by token)');
+    expect(host.textContent).toContain('hudsonts/app');
+    expect(host.textContent).toContain('read-only — PRs unavailable');
+    expect(host.textContent).toContain('token expired or revoked');
+  });
+
+  test('the owner adds a repo by token: POSTs fullName+token to the external endpoint', async () => {
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    const prompts = ['hudsonts/app', 'github_pat_x'];
+    const promptReal = window.prompt;
+    window.prompt = () => prompts.shift() ?? null;
+    await act(async () => {
+      (host.querySelector('.settings-add-external') as HTMLButtonElement).click();
+    });
+    await flush();
+    window.prompt = promptReal;
+    expect(calls).toContain('POST /api/workspaces/ws_abc/github/external');
+  });
+
+  test('a non-owner sees neither the add-by-token button nor row actions', async () => {
+    ownerView = false;
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    expect(host.querySelector('.settings-add-external')).toBeNull();
   });
 
   test('removing a member DELETEs and reloads the roster', async () => {

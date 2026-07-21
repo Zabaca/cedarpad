@@ -943,7 +943,8 @@ body,
 .settings-connect:hover {
   background: var(--accent-hi);
 }
-.settings-disconnect {
+.settings-disconnect,
+.settings-add-external {
   background: none;
   border: 1px solid var(--line);
   color: var(--muted, #9aa);
@@ -953,7 +954,8 @@ body,
   font-size: 12.5px;
   cursor: pointer;
 }
-.settings-disconnect:hover {
+.settings-disconnect:hover,
+.settings-add-external:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
