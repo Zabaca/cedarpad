@@ -6,11 +6,19 @@ import {
   getWorkspace,
   getWorkspaceRecord,
   setWorkspaceGithubInstallation,
-  setWorkspaceSelectedRepos,
 } from '../web-poc/lib/db/queries/workspaces.ts';
+import {
+  addPatRepo,
+  clearInstallationRepos,
+  listWorkspaceRepos,
+  removePatRepo,
+  replaceInstallationRepos,
+  updatePatRepoToken,
+} from '../web-poc/lib/db/queries/workspace-repos.ts';
 import type { GateUser } from './auth-gate.ts';
-import { buildAppJwt, mintInstallationToken } from './github-app.ts';
+import { type RepoAuth, buildAppJwt, mintInstallationToken } from './github-app.ts';
 import type { Env } from './index.ts';
+import { openSecret, sealSecret } from './secret-box.ts';
 
 // Repository connection (#193, ADR-0015). The GitHub App identity stays platform env;
 // the INSTALLATION and the SELECTED repos are workspace config. The owner connects via
@@ -118,37 +126,96 @@ export function workspaceGithub(
   return { connected: false };
 }
 
-/** The (installation, repo) a dev-agent run against `workspaceId` should use.
- *  `requested` (the Jobs picker / kick body) must be within the selected set; absent ⇒
- *  the first selected repo. Null ⇒ no connection or nothing selected — the run kicks
- *  token-less. Resolution is edge-internal (getWorkspaceRecord): callers key off an
- *  already-authorized artifact (the auth-gated kick route / an owned Conversation). */
+/** One repo of the workspace's set, with how it authenticates (ADR-0016). The
+ *  resolve→mint contract: callers spread this into a mint call and never branch. */
+export type WorkspaceRepoView = { repoFullName: string; auth: RepoAuth };
+
+/** The workspace's full Repo set (ADR-0016): its rows (installation-sourced ones need the
+ *  App connection to be usable; PAT rows carry their own sealed credential) plus the
+ *  transitional env fallback for the default workspace. */
+export async function workspaceRepoSet(
+  env: Env,
+  database: Database,
+  ws: { id: string; githubInstallationId: string | null; selectedRepos: string[] | null },
+): Promise<WorkspaceRepoView[]> {
+  const conn = workspaceGithub(env, ws);
+  const rows = await listWorkspaceRepos(database, ws.id);
+  const views: WorkspaceRepoView[] = [];
+  for (const r of rows) {
+    if (r.source === 'pat') {
+      if (r.encryptedToken) views.push({ repoFullName: r.fullName, auth: { kind: 'pat', encryptedToken: r.encryptedToken } });
+    } else if (conn.connected) {
+      views.push({ repoFullName: r.fullName, auth: { kind: 'installation', installationId: conn.installationId } });
+    }
+  }
+  if (conn.connected && conn.source === 'env') {
+    for (const fullName of conn.selectedRepos) {
+      if (!views.some((v) => v.repoFullName === fullName)) {
+        views.push({ repoFullName: fullName, auth: { kind: 'installation', installationId: conn.installationId } });
+      }
+    }
+  }
+  return views;
+}
+
+/** The repo a dev-agent run against `workspaceId` should use, with its auth.
+ *  `requested` (the Jobs picker / kick body) must be within the workspace's repo set;
+ *  absent ⇒ the first repo. Null ⇒ nothing usable — the run kicks token-less. Resolution
+ *  is edge-internal (getWorkspaceRecord): callers key off an already-authorized artifact
+ *  (the auth-gated kick route / an owned Conversation). */
 export async function resolveDevAgentRepo(
   env: Env,
   database: Database,
   workspaceId: string,
   requested?: string,
-): Promise<{ installationId: string; repoFullName: string } | null> {
+): Promise<WorkspaceRepoView | null> {
   const ws = await getWorkspaceRecord(database, workspaceId);
   if (!ws) return null;
-  const conn = workspaceGithub(env, ws);
-  if (!conn.connected || conn.selectedRepos.length === 0) return null;
-  if (requested && !conn.selectedRepos.includes(requested)) return null;
-  const repoFullName = requested ?? conn.selectedRepos[0];
-  if (!repoFullName) return null;
-  return { installationId: conn.installationId, repoFullName };
+  const views = await workspaceRepoSet(env, database, ws);
+  if (views.length === 0) return null;
+  const view = requested ? views.find((v) => v.repoFullName === requested) : views[0];
+  return view ?? null;
+}
+
+// ---- PAT repo probe (ADR-0016) ----------------------------------------------
+
+const REPO_NAME = /^[\w.-]+\/[\w.-]+$/;
+
+type PatRepoProbe = { defaultBranch: string; protected: boolean; canPush: boolean };
+
+/** Live-validate a PAT against its repo: proves reachability and captures the badges
+ *  (default branch, protection, push permission). Null ⇒ the token can't see the repo. */
+async function probePatRepo(
+  fullName: string,
+  token: string,
+  fetchImpl?: typeof fetch,
+): Promise<PatRepoProbe | null> {
+  const doFetch = fetchImpl ?? fetch;
+  const res = await doFetch(`https://api.github.com/repos/${fullName}`, { headers: GH_HEADERS(`token ${token}`) });
+  if (!res.ok) return null;
+  const json = (await res.json()) as { default_branch: string; permissions?: { push?: boolean } };
+  const b = await doFetch(`https://api.github.com/repos/${fullName}/branches/${json.default_branch}`, {
+    headers: GH_HEADERS(`token ${token}`),
+  });
+  const branch = b.ok ? ((await b.json()) as { protected?: boolean }) : {};
+  return { defaultBranch: json.default_branch, protected: branch.protected === true, canPush: json.permissions?.push === true };
 }
 
 // ---- API handlers -----------------------------------------------------------
 
-const SelectInput = z.object({ selected: z.array(z.string().regex(/^[\w.-]+\/[\w.-]+$/)).max(50) });
+const SelectInput = z.object({ selected: z.array(z.string().regex(REPO_NAME)).max(50) });
+const ExternalAddInput = z.object({ fullName: z.string().regex(REPO_NAME), token: z.string().min(1).max(400) });
+const ExternalRemoveInput = z.object({ fullName: z.string().regex(REPO_NAME) });
 
 /**
  * /api/workspaces/:id/github[…] — the Settings repository section.
- *   GET            → status: connection + selection + granted repos (fetched live)
- *   GET  /connect  → 302 to GitHub's install page with signed state (owner-only)
- *   PUT  /repos    → replace the selection, ⊆ granted (owner-only)
- *   DELETE         → disconnect (owner-only)
+ *   GET             → status: connection + selection + granted repos (live) + PAT repos (live badges)
+ *   GET  /connect   → 302 to GitHub's install page with signed state (owner-only)
+ *   PUT  /repos     → replace the installation selection, ⊆ granted (owner-only)
+ *   POST /external  → add a PAT repo: live-validate, seal, store (owner-only, ADR-0016)
+ *   PATCH /external → rotate a PAT repo's token: live-validate, re-seal (owner-only)
+ *   DELETE /external→ remove a PAT repo (owner-only)
+ *   DELETE          → disconnect the App installation (PAT repos survive; owner-only)
  */
 export async function handleGithubApi(
   request: Request,
@@ -156,13 +223,47 @@ export async function handleGithubApi(
   database: Database,
   user: GateUser,
   workspaceId: string,
-  sub: 'connect' | 'repos' | undefined,
+  sub: 'connect' | 'repos' | 'external' | undefined,
   deps: { nowMs: number; fetchImpl?: typeof fetch },
 ): Promise<Response> {
   const ws = await getWorkspace(database, workspaceId, user.id);
   if (!ws) return Response.json({ error: 'workspace not found' }, { status: 404 });
   const isOwner = ws.ownerUserId === user.id;
   const nowSec = Math.floor(deps.nowMs / 1000);
+
+  if (sub === 'external') {
+    if (!isOwner) return Response.json({ error: 'owner only' }, { status: 403 });
+    const key = env.REPO_TOKEN_KEY;
+    if (!key) return Response.json({ error: 'PAT repos not configured (REPO_TOKEN_KEY unset)' }, { status: 503 });
+
+    if (request.method === 'POST' || request.method === 'PATCH') {
+      const parsed = ExternalAddInput.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return Response.json({ error: 'invalid repo or token' }, { status: 400 });
+      const { fullName, token } = parsed.data;
+      const probe = await probePatRepo(fullName, token, deps.fetchImpl);
+      if (!probe) return Response.json({ error: `the token cannot reach ${fullName}` }, { status: 400 });
+      const encryptedToken = await sealSecret(key, token);
+      if (request.method === 'POST') {
+        const existing = await listWorkspaceRepos(database, ws.id);
+        if (existing.some((r) => r.fullName === fullName)) {
+          return Response.json({ error: `${fullName} is already in this workspace` }, { status: 409 });
+        }
+        await addPatRepo(database, { workspaceId: ws.id, fullName, encryptedToken, addedByUserId: user.id });
+      } else {
+        await updatePatRepoToken(database, { workspaceId: ws.id, fullName, encryptedToken });
+      }
+      return Response.json({ fullName, ...probe });
+    }
+
+    if (request.method === 'DELETE') {
+      const parsed = ExternalRemoveInput.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return Response.json({ error: 'invalid repo' }, { status: 400 });
+      await removePatRepo(database, { workspaceId: ws.id, fullName: parsed.data.fullName });
+      return new Response(null, { status: 204 });
+    }
+
+    return new Response('method not allowed', { status: 405 });
+  }
 
   if (request.method === 'GET' && sub === 'connect') {
     if (!isOwner) return Response.json({ error: 'owner only' }, { status: 403 });
@@ -176,8 +277,22 @@ export async function handleGithubApi(
 
   if (request.method === 'GET' && !sub) {
     const conn = workspaceGithub(env, ws);
+    const rows = await listWorkspaceRepos(database, ws.id);
+    // PAT repos report live badges (reachability doubles as token health, ADR-0016).
+    const key = env.REPO_TOKEN_KEY;
+    const patRepos = await Promise.all(
+      rows
+        .filter((r) => r.source === 'pat')
+        .map(async (r) => {
+          const token = key && r.encryptedToken ? await openSecret(key, r.encryptedToken) : null;
+          const probe = token ? await probePatRepo(r.fullName, token, deps.fetchImpl) : null;
+          return probe
+            ? { fullName: r.fullName, ...probe }
+            : { fullName: r.fullName, defaultBranch: null, protected: false, canPush: false, unreachable: true };
+        }),
+    );
     if (!conn.connected) {
-      return Response.json({ connected: false, selectedRepos: [], canConnect: isOwner && !!env.GITHUB_APP_SLUG });
+      return Response.json({ connected: false, selectedRepos: [], patRepos, canConnect: isOwner && !!env.GITHUB_APP_SLUG });
     }
     let grantedRepos: GrantedRepo[] | undefined;
     try {
@@ -185,11 +300,14 @@ export async function handleGithubApi(
     } catch (e: unknown) {
       console.error(`[github] granted-repo list failed for ws ${ws.id}: ${String(e)}`);
     }
+    const selectedRepos =
+      conn.source === 'env' ? conn.selectedRepos : rows.filter((r) => r.source === 'installation').map((r) => r.fullName);
     return Response.json({
       connected: true,
       source: conn.source,
-      selectedRepos: conn.selectedRepos,
+      selectedRepos,
       grantedRepos,
+      patRepos,
       canConnect: isOwner && !!env.GITHUB_APP_SLUG,
     });
   }
@@ -208,12 +326,14 @@ export async function handleGithubApi(
     if (outside.length > 0) {
       return Response.json({ error: `not granted to the installation: ${outside.join(', ')}` }, { status: 400 });
     }
-    await setWorkspaceSelectedRepos(database, { workspaceId: ws.id, repos: parsed.data.selected });
+    await replaceInstallationRepos(database, { workspaceId: ws.id, repos: parsed.data.selected });
     return Response.json({ selectedRepos: parsed.data.selected });
   }
 
   if (request.method === 'DELETE' && !sub) {
     if (!isOwner) return Response.json({ error: 'owner only' }, { status: 403 });
+    // Disconnecting the App clears its rows; PAT repos are separate connections and survive.
+    await clearInstallationRepos(database, ws.id);
     await clearWorkspaceGithubConnection(database, ws.id);
     return new Response(null, { status: 204 });
   }

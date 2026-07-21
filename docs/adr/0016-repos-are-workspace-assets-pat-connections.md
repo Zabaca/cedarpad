@@ -52,10 +52,12 @@ per-repo **fine-grained PAT** stored encrypted at rest.
 - AES-GCM via WebCrypto, keyed by a new platform secret (SOPS-delivered like
   `BETTER_AUTH_SECRET`). Decrypt only at the moment of use inside the mint choke point.
 - Why not plaintext like `githubInstallationId`: the installation id is inert without the App's
-  private key (platform env); a PAT is a live bearer credential. This is the first user-supplied
-  third-party bearer credential the schema holds — a DB-only compromise must not hand out
-  working GitHub access. Retrofitting encryption later would be a real migration; doing it first
-  is cheap.
+  private key (platform env); a PAT is a live bearer credential — a DB-only compromise must not
+  hand out working GitHub access. (Precedent check: `workspace_mcp_tokens.token` already stores
+  external-MCP bearer tokens plaintext — ADR-0013 train 2 predates this decision. That is now
+  the known debt, and the seal helper introduced here is its migration path, not a reason to
+  add a second plaintext credential column.) Retrofitting encryption later would be a real
+  migration; doing it first is cheap.
 - Better-auth's `apiKey` hashing was examined and rejected: one-way hashes serve verification;
   we must *use* the token outbound.
 

@@ -14,6 +14,7 @@
 import { createSign } from 'node:crypto';
 
 import type { Env } from './index.ts';
+import { openSecret } from './secret-box.ts';
 
 // The env var name the container git layer falls back to for clone/push/PR
 // (`GITHUB_TOKEN_ENV` in server/repo-worktree.ts). The per-turn token now rides a request
@@ -103,17 +104,38 @@ export function appConfigFromEnv(env: Env): GithubAppConfig | null {
   return { appId, installationId, privateKey };
 }
 
-// The coords-free mint core (ADR-0010 → ADR-0015): a freshly-minted installation token
-// scoped to ONE repo for ONE dev-agent turn — the edge mints it per dev-agent send and rides
-// it on the proxied request as a header (worker/inbox-bridge.ts). The installation + repo come
-// from the workspace's repository connection (github-connection.ts resolveDevAgentRepo) — no
-// hardcoded repo remains here. Best-effort: returns `null` (logging, never throwing) when the
-// App is unconfigured or the mint fails, so a send still proxies — the turn just runs without
-// `open_pr` and the push/PR path surfaces its own clear error.
+// How a repo authenticates (ADR-0016): via the workspace's App installation (edge mints
+// short-lived scoped tokens) or via a per-repo PAT (stored sealed, opened at use). The
+// discriminated union is the resolve→mint contract — callers spread a resolved repo into a
+// mint call and never branch on the kind themselves.
+export type RepoAuth =
+  | { kind: 'installation'; installationId: string }
+  | { kind: 'pat'; encryptedToken: string };
+
+async function openPat(env: Env, encryptedToken: string, context: string): Promise<string | null> {
+  const key = env.REPO_TOKEN_KEY;
+  if (!key) {
+    console.log(`[${context}] REPO_TOKEN_KEY unset — cannot open the stored PAT, no git token`);
+    return null;
+  }
+  const token = await openSecret(key, encryptedToken);
+  if (!token) console.error(`[${context}] stored PAT failed to open (key rotated or row corrupt) — no git token`);
+  return token;
+}
+
+// The coords-free mint core (ADR-0010 → ADR-0015 → ADR-0016): ONE repo credential for ONE
+// dev-agent turn — the edge produces it per dev-agent send and rides it on the proxied
+// request as a header (worker/inbox-bridge.ts). The repo + auth come from the workspace's
+// repository connection (github-connection.ts resolveDevAgentRepo). Installation repos get a
+// freshly-minted ~1h token scoped to exactly that repo; PAT repos get the sealed PAT opened
+// at use (a PAT cannot be down-scoped — the ADR-0016 custody caveat). Best-effort: returns
+// `null` (logging, never throwing) when unconfigured or the mint/open fails, so a send still
+// proxies — the turn just runs without `open_pr` and the push/PR path surfaces its own error.
 export async function mintDevAgentGitToken(
   env: Env,
-  opts: { nowSec: number; installationId: string; repoFullName: string; fetchImpl?: typeof fetch },
+  opts: { nowSec: number; repoFullName: string; auth: RepoAuth; fetchImpl?: typeof fetch },
 ): Promise<string | null> {
+  if (opts.auth.kind === 'pat') return openPat(env, opts.auth.encryptedToken, 'dev-agent');
   const appId = env.GITHUB_APP_ID;
   const privateKey = env.GITHUB_APP_PRIVATE_KEY;
   if (!appId || !privateKey) {
@@ -124,7 +146,7 @@ export async function mintDevAgentGitToken(
   const repoName = opts.repoFullName.split('/')[1] ?? opts.repoFullName;
   try {
     const { token } = await mintInstallationToken(
-      { appId, installationId: opts.installationId, privateKey },
+      { appId, installationId: opts.auth.installationId, privateKey },
       {
         repositories: [repoName],
         permissions: { ...DEV_AGENT_PERMISSIONS },
@@ -137,4 +159,24 @@ export async function mintDevAgentGitToken(
     console.error(`[dev-agent] installation-token mint failed — no git token minted: ${String(e)}`);
     return null;
   }
+}
+
+// Read-scoped repo credential (ADR-0016): job discovery and the repo checkout want read-only
+// reach. Installation repos mint `contents: read` only; PAT repos return the opened PAT
+// unchanged (down-scoping a PAT is not possible — its own scope is the boundary). Throws on
+// installation-mint failure (callers are per-repo best-effort loops that log and continue).
+export async function mintRepoReadToken(
+  env: Env,
+  opts: { nowSec: number; repoFullName: string; auth: RepoAuth; fetchImpl?: typeof fetch },
+): Promise<string | null> {
+  if (opts.auth.kind === 'pat') return openPat(env, opts.auth.encryptedToken, 'repo-read');
+  const appId = env.GITHUB_APP_ID;
+  const privateKey = env.GITHUB_APP_PRIVATE_KEY;
+  if (!appId || !privateKey) return null;
+  const repoName = opts.repoFullName.split('/')[1] ?? opts.repoFullName;
+  const { token } = await mintInstallationToken(
+    { appId, installationId: opts.auth.installationId, privateKey },
+    { repositories: [repoName], permissions: { contents: 'read' }, nowSec: opts.nowSec, fetchImpl: opts.fetchImpl },
+  );
+  return token;
 }

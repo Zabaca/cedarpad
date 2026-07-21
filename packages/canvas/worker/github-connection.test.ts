@@ -5,7 +5,8 @@ import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import * as schema from '../web-poc/lib/db/schema.ts';
 import { createWorkspace, getWorkspace, addWorkspaceMember } from '../web-poc/lib/db/queries/workspaces.ts';
-import { handleGithubApi, handleGithubSetup, signState, verifyState } from './github-connection.ts';
+import { listWorkspaceRepos } from '../web-poc/lib/db/queries/workspace-repos.ts';
+import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo, signState, verifyState } from './github-connection.ts';
 import type { Env } from './index.ts';
 
 // In-memory DB from the real migrations (mirrors members.test.ts).
@@ -205,6 +206,139 @@ describe('handleGithubApi — status/connect/repos/disconnect (#193)', () => {
     expect(res.status).toBe(204);
     const body = await readJson(await handleGithubApi(req('GET', '/x'), APP_ENV, database, OWNER, ws.id, undefined, { nowMs: NOW, fetchImpl }));
     expect(body.connected).toBe(false);
+  });
+});
+
+// ---- ADR-0016: PAT repos + the unified repo set ----------------------------
+
+/** Extends githubStub with a PAT-authed repo probe for `hudsonts/app`. */
+function githubStubWithPat(opts?: { patOk?: boolean; push?: boolean }) {
+  const base = githubStub();
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const auth = new Headers(init?.headers).get('authorization') ?? '';
+    if (/\/repos\/hudsonts\/app$/.test(url)) {
+      if (opts?.patOk === false || !auth.includes('github_pat_hudson')) return new Response('bad creds', { status: 401 });
+      return Response.json({ full_name: 'hudsonts/app', default_branch: 'main', permissions: { push: opts?.push !== false } });
+    }
+    if (/\/repos\/hudsonts\/app\/branches\/main$/.test(url)) return Response.json({ name: 'main', protected: false });
+    return base.fetchImpl(input as never, init);
+  }) as typeof fetch;
+  return { fetchImpl };
+}
+
+const PAT_ENV = { ...(APP_ENV as unknown as Record<string, unknown>), REPO_TOKEN_KEY: 'test-platform-key' } as unknown as Env;
+
+async function connectedWorkspace(name: string, fetchImpl: typeof fetch) {
+  const ws = await createWorkspace(database, { name, ownerUserId: OWNER.id });
+  await handleGithubSetup(
+    req('GET', `/api/github/setup?installation_id=999&state=${signState(SECRET, ws.id, NOW + 60_000)}`),
+    APP_ENV, database, OWNER, { nowMs: NOW, fetchImpl },
+  );
+  return ws;
+}
+
+describe('handleGithubApi — PAT repos (ADR-0016)', () => {
+  test('the owner adds a PAT repo: validated live, sealed at rest, listed with badges', async () => {
+    const { fetchImpl } = githubStubWithPat();
+    const ws = await connectedWorkspace('pat-ws-1', fetchImpl);
+
+    const add = await handleGithubApi(
+      req('POST', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }),
+      PAT_ENV, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl },
+    );
+    expect(add.status).toBe(200);
+    expect(await readJson(add)).toMatchObject({ fullName: 'hudsonts/app', canPush: true });
+
+    // Sealed at rest: the stored row never contains the plaintext PAT.
+    const rows = await listWorkspaceRepos(database, ws.id);
+    const pat = rows.find((r) => r.source === 'pat');
+    expect(pat?.fullName).toBe('hudsonts/app');
+    expect(pat?.encryptedToken ?? '').not.toContain('github_pat_hudson');
+
+    const status = await readJson(await handleGithubApi(req('GET', '/x'), PAT_ENV, database, OWNER, ws.id, undefined, { nowMs: NOW, fetchImpl }));
+    expect(status.patRepos).toEqual([{ fullName: 'hudsonts/app', defaultBranch: 'main', protected: false, canPush: true }]);
+  });
+
+  test('an invalid token is rejected live (nothing stored); members are 403; dup is 409', async () => {
+    const { fetchImpl } = githubStubWithPat();
+    const ws = await connectedWorkspace('pat-ws-2', fetchImpl);
+    await addWorkspaceMember(database, { workspaceId: ws.id, userId: MEMBER.id });
+
+    const bad = await handleGithubApi(
+      req('POST', '/x', { fullName: 'hudsonts/app', token: 'wrong' }),
+      PAT_ENV, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl },
+    );
+    expect(bad.status).toBe(400);
+    expect(await listWorkspaceRepos(database, ws.id)).toEqual([]);
+
+    const asMember = await handleGithubApi(
+      req('POST', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }),
+      PAT_ENV, database, MEMBER, ws.id, 'external', { nowMs: NOW, fetchImpl },
+    );
+    expect(asMember.status).toBe(403);
+
+    const ok = await handleGithubApi(
+      req('POST', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }),
+      PAT_ENV, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl },
+    );
+    expect(ok.status).toBe(200);
+    const dup = await handleGithubApi(
+      req('POST', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }),
+      PAT_ENV, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl },
+    );
+    expect(dup.status).toBe(409);
+  });
+
+  test('rotate re-validates and replaces the seal; remove deletes the row (owner-only)', async () => {
+    const { fetchImpl } = githubStubWithPat();
+    const ws = await connectedWorkspace('pat-ws-3', fetchImpl);
+    await handleGithubApi(req('POST', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }), PAT_ENV, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl });
+    const before = (await listWorkspaceRepos(database, ws.id))[0]?.encryptedToken;
+
+    const rot = await handleGithubApi(
+      req('PATCH', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }),
+      PAT_ENV, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl },
+    );
+    expect(rot.status).toBe(200);
+    const after = (await listWorkspaceRepos(database, ws.id))[0]?.encryptedToken;
+    expect(after).toBeDefined();
+    expect(after).not.toBe(before); // fresh IV ⇒ new seal
+
+    const del = await handleGithubApi(
+      req('DELETE', '/x', { fullName: 'hudsonts/app' }),
+      PAT_ENV, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl },
+    );
+    expect(del.status).toBe(204);
+    expect(await listWorkspaceRepos(database, ws.id)).toEqual([]);
+  });
+});
+
+describe('resolveDevAgentRepo — the unified repo set (ADR-0016)', () => {
+  test('resolves installation and PAT repos with their auth; unknown requested is null', async () => {
+    const { fetchImpl } = githubStubWithPat();
+    const ws = await connectedWorkspace('resolve-ws', fetchImpl);
+    await handleGithubApi(req('PUT', '/x', { selected: ['Zabaca/cedarpad'] }), APP_ENV, database, OWNER, ws.id, 'repos', { nowMs: NOW, fetchImpl });
+    await handleGithubApi(req('POST', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }), PAT_ENV, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl });
+
+    const first = await resolveDevAgentRepo(PAT_ENV, database, ws.id);
+    expect(first?.repoFullName).toBe('Zabaca/cedarpad');
+    expect(first?.auth).toEqual({ kind: 'installation', installationId: '999' });
+
+    const pat = await resolveDevAgentRepo(PAT_ENV, database, ws.id, 'hudsonts/app');
+    expect(pat?.repoFullName).toBe('hudsonts/app');
+    expect(pat?.auth.kind).toBe('pat');
+
+    expect(await resolveDevAgentRepo(PAT_ENV, database, ws.id, 'Evil/other')).toBeNull();
+  });
+
+  test('a PAT repo resolves even with NO App installation connected', async () => {
+    const ws = await createWorkspace(database, { name: 'pat-only-ws', ownerUserId: OWNER.id });
+    const { fetchImpl } = githubStubWithPat();
+    await handleGithubApi(req('POST', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }), PAT_ENV, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl });
+    const resolved = await resolveDevAgentRepo(PAT_ENV, database, ws.id);
+    expect(resolved?.repoFullName).toBe('hudsonts/app');
+    expect(resolved?.auth.kind).toBe('pat');
   });
 });
 

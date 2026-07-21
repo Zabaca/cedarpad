@@ -552,6 +552,37 @@ export type WorkspaceRow = typeof workspaces.$inferSelect;
 export type NewWorkspaceRow = typeof workspaces.$inferInsert;
 
 /* ------------------------------------------------------------------ *
+ * Workspace repos (ADR-0016) — the workspace's Repo assets, one row per
+ * repo. Replaces workspaces.selected_repos (the JSON array column, kept
+ * transitionally; listWorkspaceRepos backfills rows from it lazily).
+ * `source` is how the repo authenticates: 'installation' rides the
+ * workspace's GitHub App installation; 'pat' carries its own token,
+ * AES-GCM-encrypted with the platform key — never plaintext at rest.
+ * ------------------------------------------------------------------ */
+export const workspaceRepos = sqliteTable(
+  "workspace_repos",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    fullName: text("full_name").notNull(),
+    source: text("source", { enum: ["installation", "pat"] }).notNull(),
+    encryptedToken: text("encrypted_token"),
+    addedByUserId: text("added_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [
+    uniqueIndex("workspace_repos_ws_repo_ux").on(t.workspaceId, t.fullName),
+    index("workspace_repos_ws_idx").on(t.workspaceId),
+  ],
+);
+
+export type WorkspaceRepoRow = typeof workspaceRepos.$inferSelect;
+
+/* ------------------------------------------------------------------ *
  * Workspace membership + invitations (#179) — on the REGISTRY
  *
  * Membership belongs to the platform `workspaces` registry above, NOT the

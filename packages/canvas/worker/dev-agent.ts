@@ -1,6 +1,7 @@
 import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolver.ts';
 import type { mintDevAgentGitToken } from './github-app.ts';
+import type { WorkspaceRepoView } from './github-connection.ts';
 
 // The dev-agent, edge side (ADR-0010 → ADR-0011) — PURE core. The dev-agent is a ROLE the
 // warm default container plays, and a dev-agent RUN is a chat turn that container's bridge
@@ -17,14 +18,14 @@ export interface DevAgentKickDeps {
   /** The per-turn git-token mint (worker/github-app.ts). Best-effort: null ⇒ token-less kick. */
   mint: (
     env: Env,
-    opts: { nowSec: number; installationId: string; repoFullName: string },
+    opts: { nowSec: number } & WorkspaceRepoView,
   ) => ReturnType<typeof mintDevAgentGitToken>;
   /** The container proxy (sandbox-runtime's serveWorkspace) — injected so this module stays
    *  free of the `cloudflare:workers`-coupled sandbox layer. */
   serve: (request: Request, env: Env, coords: SandboxCoords) => Promise<Response>;
-  /** The workspace's repository connection, resolved to one (installation, repo) pair
-   *  (github-connection.ts resolveDevAgentRepo, ADR-0015). Null ⇒ token-less kick. */
-  resolveRepo: (env: Env, requested?: string) => Promise<{ installationId: string; repoFullName: string } | null>;
+  /** The workspace's repo, resolved to one (repo, auth) view (github-connection.ts
+   *  resolveDevAgentRepo, ADR-0015 → ADR-0016). Null ⇒ token-less kick. */
+  resolveRepo: (env: Env, requested?: string) => Promise<WorkspaceRepoView | null>;
 }
 
 /**

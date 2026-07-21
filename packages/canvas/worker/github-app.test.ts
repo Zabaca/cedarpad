@@ -7,7 +7,9 @@ import {
   buildAppJwt,
   mintDevAgentGitToken,
   mintInstallationToken,
+  mintRepoReadToken,
 } from './github-app.ts';
+import { sealSecret } from './secret-box.ts';
 import { GITHUB_TOKEN_ENV } from '../server/repo-worktree.ts';
 import type { Env } from './index.ts';
 
@@ -89,9 +91,12 @@ describe('appConfigFromEnv', () => {
   });
 });
 
-describe('mintDevAgentGitToken — the per-turn, per-repo mint core (ADR-0010 → ADR-0015)', () => {
+describe('mintDevAgentGitToken — the per-turn, per-repo mint core (ADR-0010 → ADR-0015 → ADR-0016)', () => {
   const env = { GITHUB_APP_ID: '4257337', GITHUB_APP_PRIVATE_KEY: privateKey } as Env;
-  const repo = { installationId: '145473731', repoFullName: 'Zabaca/cedarpad' };
+  const repo = {
+    repoFullName: 'Zabaca/cedarpad',
+    auth: { kind: 'installation', installationId: '145473731' },
+  } as const;
 
   test('mints a token scoped to the RESOLVED repo (contents/PRs/issues write) via the injected fetch', async () => {
     let captured: { url: string; body: unknown } | null = null;
@@ -127,6 +132,66 @@ describe('mintDevAgentGitToken — the per-turn, per-repo mint core (ADR-0010 �
     const token = await mintDevAgentGitToken(env, { nowSec: 1, ...repo, fetchImpl: okFetch });
     expect(token).toBe('ghs_minted');
     expect(token).not.toContain('PRIVATE KEY');
+  });
+});
+
+describe('mintDevAgentGitToken — the PAT arm (ADR-0016: no App call, decrypt-at-use)', () => {
+  test('opens the sealed PAT with the platform key — GitHub is never called', async () => {
+    const sealed = await sealSecret('platform-key', 'github_pat_hudson');
+    const neverFetch = (async () => {
+      throw new Error('the PAT arm must not call GitHub');
+    }) as unknown as typeof fetch;
+    const token = await mintDevAgentGitToken({ REPO_TOKEN_KEY: 'platform-key' } as Env, {
+      nowSec: 1,
+      repoFullName: 'hudsonts/app',
+      auth: { kind: 'pat', encryptedToken: sealed },
+      fetchImpl: neverFetch,
+    });
+    expect(token).toBe('github_pat_hudson');
+  });
+
+  test('best-effort: missing platform key or an unopenable seal ⇒ null, never a throw', async () => {
+    const sealed = await sealSecret('platform-key', 'tok');
+    expect(
+      await mintDevAgentGitToken({} as Env, { nowSec: 1, repoFullName: 'a/b', auth: { kind: 'pat', encryptedToken: sealed } }),
+    ).toBeNull();
+    expect(
+      await mintDevAgentGitToken({ REPO_TOKEN_KEY: 'other-key' } as Env, {
+        nowSec: 1,
+        repoFullName: 'a/b',
+        auth: { kind: 'pat', encryptedToken: sealed },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('mintRepoReadToken — read-scoped tokens for discovery/checkout (ADR-0016)', () => {
+  const env = { GITHUB_APP_ID: '4257337', GITHUB_APP_PRIVATE_KEY: privateKey } as Env;
+
+  test('installation repos mint a contents:read-only installation token', async () => {
+    let captured: { body: unknown } | null = null;
+    const fakeFetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      captured = { body: JSON.parse((init?.body as string) ?? 'null') };
+      return new Response(JSON.stringify({ token: 'ghs_read', expires_at: 'x' }), { status: 201 });
+    }) as unknown as typeof fetch;
+    const token = await mintRepoReadToken(env, {
+      nowSec: 1_700_000_000,
+      repoFullName: 'Zabaca/cedarpad',
+      auth: { kind: 'installation', installationId: '145473731' },
+      fetchImpl: fakeFetch,
+    });
+    expect(token).toBe('ghs_read');
+    expect(captured!.body).toEqual({ repositories: ['cedarpad'], permissions: { contents: 'read' } });
+  });
+
+  test('PAT repos return the decrypted PAT (a PAT cannot be down-scoped — ADR-0016 caveat)', async () => {
+    const sealed = await sealSecret('platform-key', 'github_pat_hudson');
+    const token = await mintRepoReadToken({ REPO_TOKEN_KEY: 'platform-key' } as Env, {
+      nowSec: 1,
+      repoFullName: 'hudsonts/app',
+      auth: { kind: 'pat', encryptedToken: sealed },
+    });
+    expect(token).toBe('github_pat_hudson');
   });
 });
 

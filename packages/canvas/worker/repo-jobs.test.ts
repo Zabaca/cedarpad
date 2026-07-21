@@ -134,6 +134,39 @@ describe('discoverJobs — the default branch IS the registry (ADR-0015)', () =>
     expect(counts.file).toBe(1); // the unchanged blob is not refetched
   });
 
+  test('PAT repos participate in discovery uniformly (ADR-0016), authed by the opened PAT', async () => {
+    clearJobsCache();
+    const { sealSecret } = await import('./secret-box.ts');
+    await db.insert(schema.workspaces).values({ id: 'ws_pat', name: 'p', ownerUserId: 'u_j' });
+    await db.insert(schema.workspaceRepos).values({
+      id: 'wr_pat_jobs',
+      workspaceId: 'ws_pat',
+      fullName: 'hudsonts/app',
+      source: 'pat',
+      encryptedToken: await sealSecret('k', 'github_pat_x'),
+    });
+    const seen: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      seen.push(`${new Headers(init?.headers).get('authorization')} ${url}`);
+      if (/\/repos\/hudsonts\/app$/.test(url)) return Response.json({ default_branch: 'main' });
+      if (url.includes('/repos/hudsonts/app/contents/.claude/jobs?ref=main')) {
+        return Response.json([{ name: 'triage.md', path: '.claude/jobs/triage.md', sha: 'sha_p', type: 'file' }]);
+      }
+      if (url.includes('/repos/hudsonts/app/contents/.claude/jobs/triage.md')) {
+        return Response.json({ content: Buffer.from('Triage the queue.').toString('base64'), encoding: 'base64' });
+      }
+      return new Response('stub 404', { status: 404 });
+    }) as typeof fetch;
+
+    const jobs = await discoverJobs({ REPO_TOKEN_KEY: 'k' } as Env, database, 'ws_pat', { nowSec: 1, fetchImpl });
+    expect(jobs).toEqual([
+      { repo: 'hudsonts/app', name: 'triage', description: '', schedule: 'manual', prompt: 'Triage the queue.' },
+    ]);
+    // Every call authed by the opened PAT — no App mint anywhere.
+    expect(seen.every((s) => s.startsWith('token github_pat_x '))).toBe(true);
+  });
+
   test('an unconnected workspace discovers nothing', async () => {
     await db.insert(schema.workspaces).values({ id: 'ws_nogit', name: 'n', ownerUserId: 'u_j' });
     const { fetchImpl } = githubStub();

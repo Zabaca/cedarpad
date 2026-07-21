@@ -89,6 +89,10 @@ export interface Env {
   // The App's public slug (github.com/apps/<slug>) for the workspace connect flow (#193,
   // ADR-0015). Plain var, not a secret. Unset ⇒ the Settings UI hides "Connect GitHub".
   GITHUB_APP_SLUG?: string;
+  // Platform key sealing stored per-repo PATs at rest (ADR-0016, worker/secret-box.ts).
+  // From workerSecrets. Unset ⇒ PAT repos can't be added and stored PATs can't be opened
+  // (their repos degrade to unreachable); installation repos are unaffected.
+  REPO_TOKEN_KEY?: string;
   // The single-tenant owner of everything the bridge files under a user id (Inbox
   // Conversations via `ask_human`, the dev-agent's promoted items): must be this
   // deployment's Better Auth user.id, NOT an email or display name — the Inbox query
@@ -402,7 +406,7 @@ export default {
 
     // Repository connection (#193, ADR-0015): status / connect redirect / repo selection /
     // disconnect, plus GitHub's post-install setup callback. Edge-only.
-    const githubMatch = /^\/api\/workspaces\/([^/]+)\/github(?:\/(connect|repos))?$/.exec(url.pathname);
+    const githubMatch = /^\/api\/workspaces\/([^/]+)\/github(?:\/(connect|repos|external))?$/.exec(url.pathname);
     if (githubMatch) {
       return handleGithubApi(
         request,
@@ -410,7 +414,7 @@ export default {
         createDbForWorker(env as unknown as Bindings),
         user,
         githubMatch[1],
-        githubMatch[2] as 'connect' | 'repos' | undefined,
+        githubMatch[2] as 'connect' | 'repos' | 'external' | undefined,
         { nowMs: Date.now() },
       );
     }

@@ -1,7 +1,7 @@
 import type { Database } from '../web-poc/lib/db/index.ts';
 import { getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
-import { mintInstallationToken } from './github-app.ts';
-import { workspaceGithub } from './github-connection.ts';
+import { mintRepoReadToken } from './github-app.ts';
+import { workspaceRepoSet } from './github-connection.ts';
 import type { Env } from './index.ts';
 
 // Repo-defined Jobs (#195, ADR-0015): `.claude/jobs/<name>.md` on a selected repo's DEFAULT
@@ -59,20 +59,11 @@ export function clearJobsCache(): void {
 }
 
 async function repoJobs(
-  env: Env,
-  installationId: string,
+  token: string,
   repo: string,
-  opts: { nowSec: number; fetchImpl?: typeof fetch },
+  opts: { fetchImpl?: typeof fetch },
 ): Promise<RepoJob[]> {
-  const appId = env.GITHUB_APP_ID;
-  const privateKey = env.GITHUB_APP_PRIVATE_KEY;
-  if (!appId || !privateKey) return [];
   const doFetch = opts.fetchImpl ?? fetch;
-  const repoName = repo.split('/')[1] ?? repo;
-  const { token } = await mintInstallationToken(
-    { appId, installationId, privateKey },
-    { repositories: [repoName], permissions: { contents: 'read' }, nowSec: opts.nowSec, fetchImpl: opts.fetchImpl },
-  );
 
   const repoRes = await doFetch(`https://api.github.com/repos/${repo}`, { headers: GH(token) });
   if (!repoRes.ok) throw new Error(`repo lookup ${repo}: ${repoRes.status}`);
@@ -105,8 +96,9 @@ async function repoJobs(
   return jobs;
 }
 
-/** Every job defined across the workspace's selected repos. Best-effort per repo: one
- *  unreachable repo degrades to its jobs missing from the list, never a thrown discovery. */
+/** Every job defined across the workspace's Repo set (ADR-0016: installation AND PAT
+ *  repos, uniformly). Best-effort per repo: one unreachable repo degrades to its jobs
+ *  missing from the list, never a thrown discovery. */
 export async function discoverJobs(
   env: Env,
   database: Database,
@@ -115,15 +107,18 @@ export async function discoverJobs(
 ): Promise<RepoJob[]> {
   const ws = await getWorkspaceRecord(database, workspaceId);
   if (!ws) return [];
-  const conn = workspaceGithub(env, ws);
-  if (!conn.connected) return [];
+  const views = await workspaceRepoSet(env, database, ws);
   const perRepo = await Promise.all(
-    conn.selectedRepos.map((repo) =>
-      repoJobs(env, conn.installationId, repo, opts).catch((e: unknown) => {
-        console.error(`[jobs] discovery failed for ${repo}: ${String(e)}`);
+    views.map(async (v) => {
+      try {
+        const token = await mintRepoReadToken(env, { nowSec: opts.nowSec, ...v, fetchImpl: opts.fetchImpl });
+        if (!token) return [] as RepoJob[];
+        return await repoJobs(token, v.repoFullName, opts);
+      } catch (e: unknown) {
+        console.error(`[jobs] discovery failed for ${v.repoFullName}: ${String(e)}`);
         return [] as RepoJob[];
-      }),
-    ),
+      }
+    }),
   );
   return perRepo.flat();
 }
