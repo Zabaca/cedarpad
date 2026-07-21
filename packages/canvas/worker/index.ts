@@ -1,5 +1,5 @@
 import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
-import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
+import { getWorkspace, getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
@@ -7,17 +7,17 @@ import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
 import { canvasHiddenFrom } from './visibility.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
-import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo } from './github-connection.ts';
+import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo, workspaceRepoSet } from './github-connection.ts';
 import { handleAdminApi } from './admin.ts';
 import { handleMembersApi } from './members.ts';
 import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { dispatchDevAgentRun, kickDevAgentRun, triggerDevAgentRun } from './dev-agent.ts';
-import { mintDevAgentGitToken } from './github-app.ts';
+import { mintDevAgentGitToken, mintRepoReadToken } from './github-app.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts';
-import { handleInboxBridge } from './inbox-bridge.ts';
+import { coordsForWorkspace, handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
 import { handleMcpTokenApi } from './mcp-tokens-api.ts';
 import { handleShareLinksApi } from './share-links-api.ts';
@@ -130,6 +130,19 @@ const defaultWorkspaceRepo = async (env: Env, requested?: string) => {
   }
 };
 
+/** Push one repo's read-only checkout refresh into a workspace's container (ADR-0016):
+ *  the read token rides a header, transient — the bridge fetches then scrubs it. */
+const pushCheckoutRefresh = (env: Env, workspaceId: string, repo: string, token: string): Promise<Response> =>
+  serveWorkspace(
+    new Request('https://bridge.internal/api/repos/refresh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-repo-git-token': token },
+      body: JSON.stringify({ repo }),
+    }),
+    env,
+    coordsForWorkspace(workspaceId),
+  );
+
 /** Domain cutover: a request on a non-canonical host (poc.cedarpad.com) 301s to the same
  * path+query on the canonical origin (WEB_ORIGIN). Same-host / unset / unparseable origin
  * ⇒ null (dev + preview + tests serve wherever they are). Exported for tests. */
@@ -155,6 +168,21 @@ export default {
       dispatchDevAgentRun(event, env, (e) =>
         kickDevAgentRun(e, { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo }),
       ),
+    );
+    // Read-only checkout cadence (ADR-0016): the daily tick re-syncs the default
+    // workspace's Repo checkouts. Best-effort, ungated (reads only), skipped while the
+    // container is asleep — refresh-on-add and the Settings button cover the gaps.
+    ctx.waitUntil(
+      (async () => {
+        const database = createDbForWorker(env as unknown as Bindings);
+        const ws = await getWorkspaceRecord(database, DEFAULT_WORKSPACE_ID);
+        if (!ws) return;
+        const views = await workspaceRepoSet(env, database, ws);
+        for (const v of views) {
+          const token = await mintRepoReadToken(env, { nowSec: Math.floor(Date.now() / 1000), ...v }).catch(() => null);
+          if (token) await pushCheckoutRefresh(env, DEFAULT_WORKSPACE_ID, v.repoFullName, token).catch(() => {});
+        }
+      })().catch((e: unknown) => console.error(`[repos] scheduled checkout refresh failed: ${String(e)}`)),
     );
     // Repo-defined scheduled jobs (#196, ADR-0015): the same tick evaluates the selected
     // repos' `daily` jobs against their lastRunAt stamps. Same master breaker as the
@@ -406,16 +434,17 @@ export default {
 
     // Repository connection (#193, ADR-0015): status / connect redirect / repo selection /
     // disconnect, plus GitHub's post-install setup callback. Edge-only.
-    const githubMatch = /^\/api\/workspaces\/([^/]+)\/github(?:\/(connect|repos|external))?$/.exec(url.pathname);
+    const githubMatch = /^\/api\/workspaces\/([^/]+)\/github(?:\/(connect|repos|external|refresh))?$/.exec(url.pathname);
     if (githubMatch) {
+      const wsId = githubMatch[1] as string;
       return handleGithubApi(
         request,
         env,
         createDbForWorker(env as unknown as Bindings),
         user,
-        githubMatch[1],
-        githubMatch[2] as 'connect' | 'repos' | 'external' | undefined,
-        { nowMs: Date.now() },
+        wsId,
+        githubMatch[2] as 'connect' | 'repos' | 'external' | 'refresh' | undefined,
+        { nowMs: Date.now(), pushRefresh: (repo, token) => pushCheckoutRefresh(env, wsId, repo, token) },
       );
     }
     if (url.pathname === '/api/github/setup') {

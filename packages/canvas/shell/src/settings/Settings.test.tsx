@@ -67,6 +67,9 @@ function stubEdge() {
     if (url === '/api/workspaces/ws_abc/github/repos' && method === 'PUT') {
       return Response.json({ selectedRepos: JSON.parse((init?.body as string) ?? '{}').selected });
     }
+    if (url === '/api/workspaces/ws_abc/github/refresh' && method === 'POST') {
+      return Response.json({ refreshed: ['Zabaca/cedarpad'], failed: [] });
+    }
     if (url === '/api/workspaces/ws_abc/github/external') {
       if (method === 'DELETE') return new Response(null, { status: 204 });
       const b = JSON.parse((init?.body as string) ?? '{}') as { fullName?: string };

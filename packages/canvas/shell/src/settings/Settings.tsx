@@ -154,6 +154,21 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
     void reload();
   };
 
+  // Re-sync the read-only checkouts (ADR-0016) — member-allowed, it grants nothing.
+  const refreshCheckouts = async () => {
+    const r = await fetch(`${base}/github/refresh`, { method: 'POST', credentials: 'same-origin' }).catch(() => null);
+    if (!r?.ok) {
+      window.alert('Could not refresh the repo checkouts.');
+      return;
+    }
+    const d = (await r.json()) as { refreshed: string[]; failed: string[] };
+    window.alert(
+      d.failed.length > 0
+        ? `Refreshed: ${d.refreshed.join(', ') || 'none'}. Failed: ${d.failed.join(', ')}.`
+        : `Refreshed ${d.refreshed.length} checkout${d.refreshed.length === 1 ? '' : 's'}.`,
+    );
+  };
+
   const addExternalRepo = async () => {
     const fullName = window.prompt('Add a repo by token — owner/name:');
     if (!fullName) return;
@@ -384,6 +399,14 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
         <section className="settings-section">
           <div className="settings-section-head">
             <h3>Repositories</h3>
+            <button
+              type="button"
+              className="settings-refresh-checkouts"
+              title="Re-sync the read-only repo checkouts agents read from"
+              onClick={() => void refreshCheckouts()}
+            >
+              Refresh checkouts
+            </button>
             {isOwnerView && (
               <button type="button" className="settings-add-external" onClick={() => void addExternalRepo()}>
                 Add repo by token…

@@ -61,6 +61,9 @@ export default cloudflareModule.instance({
       'LIVEKIT_URL',
       'LIVEKIT_API_KEY',
       'LIVEKIT_API_SECRET',
+      // Per-repo PAT sealing key (ADR-0016, worker/secret-box.ts) — edge-only; the
+      // container sees opened tokens transiently per turn/fetch, never this key.
+      'REPO_TOKEN_KEY',
     ],
     // Single always-warm DO-bound container; the gradual default never drains it,
     // so a redeployed image would silently never take effect. Roll immediately.

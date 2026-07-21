@@ -16,7 +16,7 @@ import {
   updatePatRepoToken,
 } from '../web-poc/lib/db/queries/workspace-repos.ts';
 import type { GateUser } from './auth-gate.ts';
-import { type RepoAuth, buildAppJwt, mintInstallationToken } from './github-app.ts';
+import { type RepoAuth, buildAppJwt, mintInstallationToken, mintRepoReadToken } from './github-app.ts';
 import type { Env } from './index.ts';
 import { openSecret, sealSecret } from './secret-box.ts';
 
@@ -223,13 +223,37 @@ export async function handleGithubApi(
   database: Database,
   user: GateUser,
   workspaceId: string,
-  sub: 'connect' | 'repos' | 'external' | undefined,
-  deps: { nowMs: number; fetchImpl?: typeof fetch },
+  sub: 'connect' | 'repos' | 'external' | 'refresh' | undefined,
+  deps: {
+    nowMs: number;
+    fetchImpl?: typeof fetch;
+    /** Push one repo's read-only checkout refresh to the workspace's container (ADR-0016).
+     *  The token rides a header, transient — the bridge scrubs it after the fetch. */
+    pushRefresh?: (repoFullName: string, token: string) => Promise<Response>;
+  },
 ): Promise<Response> {
   const ws = await getWorkspace(database, workspaceId, user.id);
   if (!ws) return Response.json({ error: 'workspace not found' }, { status: 404 });
   const isOwner = ws.ownerUserId === user.id;
   const nowSec = Math.floor(deps.nowMs / 1000);
+
+  // Checkout refresh (ADR-0016): member-allowed — it grants nothing (reads land in the
+  // container the member already uses); it just makes the Repo assets fresh.
+  if (sub === 'refresh') {
+    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+    const body = (await request.json().catch(() => ({}))) as { fullName?: string };
+    const views = await workspaceRepoSet(env, database, ws);
+    const targets = body.fullName ? views.filter((v) => v.repoFullName === body.fullName) : views;
+    if (body.fullName && targets.length === 0) return Response.json({ error: 'repo not in this workspace' }, { status: 404 });
+    const refreshed: string[] = [];
+    const failed: string[] = [];
+    for (const v of targets) {
+      const token = await mintRepoReadToken(env, { nowSec, ...v, fetchImpl: deps.fetchImpl }).catch(() => null);
+      const res = token && deps.pushRefresh ? await deps.pushRefresh(v.repoFullName, token).catch(() => null) : null;
+      (res?.ok ? refreshed : failed).push(v.repoFullName);
+    }
+    return Response.json({ refreshed, failed });
+  }
 
   if (sub === 'external') {
     if (!isOwner) return Response.json({ error: 'owner only' }, { status: 403 });
@@ -251,6 +275,13 @@ export async function handleGithubApi(
         await addPatRepo(database, { workspaceId: ws.id, fullName, encryptedToken, addedByUserId: user.id });
       } else {
         await updatePatRepoToken(database, { workspaceId: ws.id, fullName, encryptedToken });
+      }
+      // Seed/refresh the read-only checkout right away with the just-validated token, so
+      // "add repo → ask about it" works without waiting for a cadence tick. Best-effort.
+      if (deps.pushRefresh) {
+        void deps.pushRefresh(fullName, token).catch((e: unknown) => {
+          console.error(`[repos] post-add checkout refresh failed for ${fullName}: ${String(e)}`);
+        });
       }
       return Response.json({ fullName, ...probe });
     }

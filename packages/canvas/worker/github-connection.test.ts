@@ -314,6 +314,48 @@ describe('handleGithubApi — PAT repos (ADR-0016)', () => {
   });
 });
 
+describe('checkout refresh (ADR-0016) — the edge pushes read tokens to the container', () => {
+  test('POST /refresh pushes one transient read token per repo; a member may trigger it', async () => {
+    const { fetchImpl } = githubStubWithPat();
+    const ws = await connectedWorkspace('refresh-ws', fetchImpl);
+    await addWorkspaceMember(database, { workspaceId: ws.id, userId: MEMBER.id });
+    await handleGithubApi(req('PUT', '/x', { selected: ['Zabaca/cedarpad'] }), APP_ENV, database, OWNER, ws.id, 'repos', { nowMs: NOW, fetchImpl });
+    await handleGithubApi(req('POST', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }), PAT_ENV, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl });
+
+    const pushed: Array<{ repo: string; token: string }> = [];
+    const res = await handleGithubApi(req('POST', '/x'), PAT_ENV, database, MEMBER, ws.id, 'refresh', {
+      nowMs: NOW,
+      fetchImpl,
+      pushRefresh: async (repo, token) => {
+        pushed.push({ repo, token });
+        return new Response(null, { status: 200 });
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(await readJson(res)).toEqual({ refreshed: ['Zabaca/cedarpad', 'hudsonts/app'], failed: [] });
+    // The installation repo got a minted read token; the PAT repo got the OPENED PAT.
+    expect(pushed.find((p) => p.repo === 'Zabaca/cedarpad')?.token).toBe('ghs_stub');
+    expect(pushed.find((p) => p.repo === 'hudsonts/app')?.token).toBe('github_pat_hudson');
+  });
+
+  test('adding a PAT repo seeds its checkout immediately (fire-and-forget push)', async () => {
+    const { fetchImpl } = githubStubWithPat();
+    const ws = await connectedWorkspace('refresh-ws-2', fetchImpl);
+    const pushed: string[] = [];
+    await handleGithubApi(req('POST', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }), PAT_ENV, database, OWNER, ws.id, 'external', {
+      nowMs: NOW,
+      fetchImpl,
+      pushRefresh: async (repo, token) => {
+        pushed.push(`${repo}:${token}`);
+        return new Response(null, { status: 200 });
+      },
+    });
+    // let the fire-and-forget microtask settle
+    await new Promise((r) => setTimeout(r, 0));
+    expect(pushed).toEqual(['hudsonts/app:github_pat_hudson']);
+  });
+});
+
 describe('resolveDevAgentRepo — the unified repo set (ADR-0016)', () => {
   test('resolves installation and PAT repos with their auth; unknown requested is null', async () => {
     const { fetchImpl } = githubStubWithPat();

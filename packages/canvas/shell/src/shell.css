@@ -944,7 +944,8 @@ body,
   background: var(--accent-hi);
 }
 .settings-disconnect,
-.settings-add-external {
+.settings-add-external,
+.settings-refresh-checkouts {
   background: none;
   border: 1px solid var(--line);
   color: var(--muted, #9aa);
@@ -955,7 +956,8 @@ body,
   cursor: pointer;
 }
 .settings-disconnect:hover,
-.settings-add-external:hover {
+.settings-add-external:hover,
+.settings-refresh-checkouts:hover {
   border-color: var(--accent);
   color: var(--accent);
 }

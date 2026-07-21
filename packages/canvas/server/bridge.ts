@@ -26,6 +26,7 @@ import { loadSessionTranscript } from './session-transcript.ts';
 import { type Notify, attachConversationToCanvas, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
+import { refreshCheckout, removeCheckout } from './repo-checkout.ts';
 import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
@@ -981,6 +982,28 @@ export async function handleRequest(req: Request): Promise<Response> {
       // through the normal conversation path.
       dispatchChatTurn(chatId, composeRunPrompt(jobPrompt), null, [], DEV_AGENT_RUN_MODEL, undefined, undefined, undefined, token, undefined, repo, runAssignTo);
       return json({ chatId, joined: false }, 202);
+    }
+    // Read-only repo checkouts (ADR-0016): the edge pushes a refresh with a transient read
+    // token in a header — the same custody shape as the dev-agent git token (never env,
+    // never persisted; scrubbed from the on-disk origin after the op). Chat turns then read
+    // the checkout under .repos/ as plain files, holding no credential.
+    if (path === '/api/repos/refresh' && req.method === 'POST') {
+      const body = (await req.json().catch(() => null)) as { repo?: string } | null;
+      if (!body?.repo || !/^[\w.-]+\/[\w.-]+$/.test(body.repo)) return json({ error: 'invalid repo' }, 400);
+      const token = req.headers.get('x-repo-git-token') ?? undefined;
+      try {
+        const result = await refreshCheckout({ repo: body.repo, root: CANVAS_CWD, token });
+        return json({ repo: body.repo, branch: result.branch, head: result.head }, 200);
+      } catch (e: unknown) {
+        console.error(`[repos] checkout refresh failed for ${body.repo}: ${String(e)}`);
+        return json({ error: `refresh failed for ${body.repo}` }, 502);
+      }
+    }
+    if (path === '/api/repos/checkout' && req.method === 'DELETE') {
+      const body = (await req.json().catch(() => null)) as { repo?: string } | null;
+      if (!body?.repo || !/^[\w.-]+\/[\w.-]+$/.test(body.repo)) return json({ error: 'invalid repo' }, 400);
+      await removeCheckout(CANVAS_CWD, body.repo);
+      return new Response(null, { status: 204 });
     }
     // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
     // proxies here (never writes R2 itself; no second writer of skills.tar). Content only
