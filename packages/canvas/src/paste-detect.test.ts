@@ -227,3 +227,39 @@ describe('detectPaste: GitHub repo references', () => {
     expect(paste('see https://github.com/a/b for details')).toBeNull(); // prose, not a lone URL
   });
 });
+
+describe('detectPaste: YAML', () => {
+  const paste = (text: string) => detectPaste({ text });
+
+  test('nested YAML (k8s-style) becomes a yaml CodeCard', () => {
+    const d = paste('apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n  labels:\n    app: web');
+    expect(d).toMatchObject({ kind: 'code', lang: 'yaml' });
+  });
+
+  test('a --- document start is enough evidence, and list items are yaml-plausible', () => {
+    expect(paste('---\ntitle: Hello\ndraft: false')).toMatchObject({ kind: 'code', lang: 'yaml' });
+    expect(paste('services:\n  - name: api\n    port: 8080')).toMatchObject({ kind: 'code', lang: 'yaml' });
+  });
+
+  test('YAML whose top key is a mermaid keyword is yaml, not a blank mermaid diagram', () => {
+    expect(paste('timeline:\n  enabled: true\n  retention: 30d')).toMatchObject({ kind: 'code', lang: 'yaml' });
+    expect(paste('gantt:\n  bars: 3')).toMatchObject({ kind: 'code', lang: 'yaml' });
+  });
+
+  test('real keyword-only mermaid first lines still claim mermaid', () => {
+    expect(paste('timeline\n  title A day\n  9am : wake')).toMatchObject({ kind: 'mermaid' });
+    expect(paste('gantt\n  title Plan\n  section A\n  task :a1, 2024-01-01, 3d')).toMatchObject({ kind: 'mermaid' });
+    expect(paste('pie title Pets\n  "Dogs" : 42')).toMatchObject({ kind: 'mermaid' });
+  });
+
+  test('prose with colons, flat two-liners, and code-ish braces stay unclaimed', () => {
+    expect(paste('Note: buy milk\nAlso: call mom')).toBeNull(); // no structural evidence
+    expect(paste('const x = {\n  a: 1,\n}')).toBeNull(); // braces/commas are not yaml
+    expect(paste('- one\n- two')?.kind ?? null).not.toBe('code'); // a bare list has no key line
+  });
+
+  test('.yaml/.yml files map by extension — no content heuristics', () => {
+    expect(detectFromFile('deploy.yaml', 'anything: at all')).toMatchObject({ kind: 'code', lang: 'yaml' });
+    expect(detectFromFile('ci.yml', 'x')).toMatchObject({ kind: 'code', lang: 'yaml' });
+  });
+});

@@ -157,9 +157,31 @@ export function detectJson(text: string): DetectedPaste | null {
   return null;
 }
 
-const MERMAID_RE = /^(flowchart\s+\w+|graph\s+(TB|TD|BT|RL|LR)\b|sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|gantt|pie\b|mindmap|journey|timeline)/;
+// Keyword-only diagrams (gantt, timeline, …) must be the WHOLE first line — a YAML doc whose
+// top key is `timeline:` or `gantt:` must not be claimed (mermaid then renders a blank SVG).
+const MERMAID_RE = /^(flowchart\s+\w+|graph\s+(TB|TD|BT|RL|LR)\b|pie\b(?!:)|(sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|gantt|mindmap|journey|timeline)\s*$)/;
 
 /** Raw Mermaid source (first non-empty line names a diagram type). */
+// One YAML-plausible line: a document marker, comment, list item, or `key:`/`key: value`.
+const YAML_LINE = /^(---\s*|#.*|\s*-\s+\S.*|\s*[\w."'$-]+:\s*(\S.*)?)$/;
+
+/** YAML paste → a CodeCard (lang `yaml`). Conservative: every non-empty line must be
+ *  YAML-plausible AND there must be structural evidence — a `---` document start, an
+ *  indented block, or a top-level list item — so prose that merely contains colons stays
+ *  text. Rendered as source (no parser dependency); braces/semicolon lines (JSON, CSS,
+ *  JS object literals) are excluded. */
+export function detectYaml(text: string): DetectedPaste | null {
+  const lines = text.replace(/\n+$/, '').split('\n');
+  const content = lines.filter((l) => l.trim() !== '');
+  if (content.length < 2) return null;
+  if (!content.every((l) => YAML_LINE.test(l) && !/[,{};]\s*$/.test(l))) return null;
+  const first = content[0] as string;
+  const evidence = /^---\s*$/.test(first) || content.some((l) => /^\s+\S/.test(l)) || content.some((l) => /^-\s+\S/.test(l));
+  if (!evidence) return null;
+  if (!content.some((l) => /^\s*[\w."'$-]+:/.test(l))) return null; // an indented list alone isn't yaml
+  return { kind: 'code', code: text.trim(), lang: 'yaml' };
+}
+
 export function detectMermaid(text: string): DetectedPaste | null {
   const first = text.split('\n').find((l) => l.trim() !== '')?.trim() ?? '';
   return MERMAID_RE.test(first) ? { kind: 'mermaid', chart: text.trim() } : null;
@@ -251,13 +273,17 @@ export function detectFromFile(name: string, text: string): DetectedPaste | null
     case 'html':
     case 'htm':
       return { kind: 'html', html: text };
+    case 'yaml':
+    case 'yml':
+      // The extension is authoritative — no content heuristics for a named .yaml file.
+      return { kind: 'code', code: text.trim(), lang: 'yaml' };
     default:
       return null;
   }
 }
 
 /** Extensions the drop hook claims; anything else stays with tldraw. */
-export const STRUCTURED_FILE_RE = /\.(csv|tsv|json|md|markdown|mmd|mermaid|html|htm)$/i;
+export const STRUCTURED_FILE_RE = /\.(csv|tsv|json|md|markdown|mmd|mermaid|html|htm|yaml|yml)$/i;
 
 /** A `<table>` in pasted rich text (Sheets/Excel/Numbers all put one on the
  * clipboard). `<th>` cells mark an explicit header row; otherwise the same
@@ -302,6 +328,7 @@ export function detectPaste(input: { text: string; html?: string; sources?: Read
     detectHtml(text) ??
     detectMermaid(text) ??
     detectJson(text) ??
+    detectYaml(text) ??
     detectDelimited(text) ??
     (looksLikeMarkdown(text) ? { kind: 'markdown', md: text } : null)
   );
