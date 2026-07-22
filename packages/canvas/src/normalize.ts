@@ -2,7 +2,7 @@
 // validated CanvasShape, filling sensible defaults and minting an id when absent.
 // Throws with an agent-legible message on bad input so the model can self-correct.
 
-import { type CanvasShape, type ShapeColor, isColor } from './shapes';
+import { type CanvasShape, type ShapeColor, SHAPE_SIZE_DEFAULTS, isColor } from './shapes';
 
 let counter = 0;
 /** Mint a tldraw-compatible shape id. Not for seeds — runtime uniqueness only. */
@@ -83,8 +83,8 @@ function buildShape(raw: Record<string, unknown>, id: string, c: ShapeColor): Ca
         color: c,
         x: num(raw.x, 'x'),
         y: num(raw.y, 'y'),
-        w: num(raw.w ?? 160, 'w'),
-        h: num(raw.h ?? 100, 'h'),
+        w: num(raw.w ?? SHAPE_SIZE_DEFAULTS[type].w, 'w'),
+        h: num(raw.h ?? SHAPE_SIZE_DEFAULTS[type].h, 'h'),
         text: str(raw.text),
       };
     case 'text':
@@ -126,8 +126,8 @@ function buildShape(raw: Record<string, unknown>, id: string, c: ShapeColor): Ca
         color: c,
         x: num(raw.x, 'x'),
         y: num(raw.y, 'y'),
-        w: num(raw.w ?? 360, 'w'),
-        h: num(raw.h ?? 260, 'h'),
+        w: num(raw.w ?? SHAPE_SIZE_DEFAULTS.component.w, 'w'),
+        h: num(raw.h ?? SHAPE_SIZE_DEFAULTS.component.h, 'h'),
         module: moduleName(raw.module),
         data: dataObject(raw.data),
         rev: raw.rev == null ? 0 : num(raw.rev, 'rev'),
@@ -139,8 +139,8 @@ function buildShape(raw: Record<string, unknown>, id: string, c: ShapeColor): Ca
         color: c,
         x: num(raw.x, 'x'),
         y: num(raw.y, 'y'),
-        w: num(raw.w ?? 380, 'w'),
-        h: num(raw.h ?? 460, 'h'),
+        w: num(raw.w ?? SHAPE_SIZE_DEFAULTS.chat.w, 'w'),
+        h: num(raw.h ?? SHAPE_SIZE_DEFAULTS.chat.h, 'h'),
         title: str(raw.title) || 'Chat',
         // Attach flow: the card fronts an existing chat. Absent/'' stays absent.
         ...(str(raw.chatId) ? { chatId: str(raw.chatId) } : {}),
@@ -152,8 +152,8 @@ function buildShape(raw: Record<string, unknown>, id: string, c: ShapeColor): Ca
         color: c,
         x: num(raw.x, 'x'),
         y: num(raw.y, 'y'),
-        w: num(raw.w ?? 320, 'w'),
-        h: num(raw.h ?? 240, 'h'),
+        w: num(raw.w ?? SHAPE_SIZE_DEFAULTS.frame.w, 'w'),
+        h: num(raw.h ?? SHAPE_SIZE_DEFAULTS.frame.h, 'h'),
         name: str(raw.name),
       };
     case 'draw':
@@ -193,8 +193,8 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
       color: color(raw.color),
       x: num(raw.x, 'x'),
       y: num(raw.y, 'y'),
-      w: num(raw.w ?? 100, 'w'),
-      h: num(raw.h ?? 100, 'h'),
+      w: num(raw.w ?? SHAPE_SIZE_DEFAULTS.image.w, 'w'),
+      h: num(raw.h ?? SHAPE_SIZE_DEFAULTS.image.h, 'h'),
       src: str(raw.src),
       alt: str(raw.alt),
     };
@@ -213,8 +213,8 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
       color: color(raw.color),
       x: num(raw.x, 'x'),
       y: num(raw.y, 'y'),
-      w: num(raw.w ?? 480, 'w'),
-      h: num(raw.h ?? 270, 'h'),
+      w: num(raw.w ?? SHAPE_SIZE_DEFAULTS.embed.w, 'w'),
+      h: num(raw.h ?? SHAPE_SIZE_DEFAULTS.embed.h, 'h'),
       url: str(raw.url),
     };
     if (parentId) shape.parentId = parentId;
