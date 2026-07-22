@@ -3,49 +3,42 @@
 // app origin (sandbox="allow-scripts", no allow-same-origin) — the page can be
 // fully interactive but can't touch cedarpad's DOM, storage, or cookies.
 //
-// Drag vs interact: an iframe swallows pointer events, which would make the card
-// impossible to move. Default mode keeps the iframe pointer-inert so the whole
-// card drags/selects like any other; the corner button enters interact mode
-// (real clicks/scroll inside the page) and flips back to done.
-import { useState } from 'react';
-
+// Drag vs interact: an iframe swallows pointer events, so a full-bleed iframe
+// can't be dragged — and pointer-inerting it kills scrolling inside the page
+// (wheel can't be forwarded into an opaque-origin frame). So the page stays
+// live the whole time and the card moves by its slim grab bar, like a window.
 export default function HtmlCard({ html = '<p style="font-family:sans-serif">Paste HTML to preview it.</p>' }: { html?: string }) {
-  const [interactive, setInteractive] = useState(false);
+  const BAR = 20;
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', background: '#fff', borderRadius: 8 }}>
+    <div style={{ width: '100%', height: '100%', background: '#fff', borderRadius: 8, display: 'flex', flexDirection: 'column' }}>
+      <div
+        title="Drag to move"
+        style={{
+          height: BAR,
+          flex: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '0 8px',
+          background: '#f3f4f6',
+          borderBottom: '1px solid #e5e7eb',
+          borderRadius: '8px 8px 0 0',
+          cursor: 'grab',
+          userSelect: 'none',
+          font: '10px/1 ui-monospace, monospace',
+          color: '#9ca3af',
+          letterSpacing: '0.06em',
+        }}
+      >
+        <span style={{ letterSpacing: 2 }}>⠿</span>
+        <span>html</span>
+      </div>
       <iframe
         sandbox="allow-scripts"
         srcDoc={html}
         title="HTML preview"
-        style={{
-          width: '100%',
-          height: '100%',
-          border: 'none',
-          display: 'block',
-          borderRadius: 8,
-          pointerEvents: interactive ? 'auto' : 'none',
-        }}
+        style={{ width: '100%', flex: 1, minHeight: 0, border: 'none', display: 'block', borderRadius: '0 0 8px 8px' }}
       />
-      <button
-        type="button"
-        onClick={() => setInteractive((v) => !v)}
-        title={interactive ? 'Back to drag mode' : 'Click through to the page (buttons, links, scroll)'}
-        style={{
-          position: 'absolute',
-          top: 6,
-          right: 6,
-          padding: '3px 9px',
-          borderRadius: 999,
-          border: '1px solid rgba(0,0,0,0.15)',
-          background: interactive ? '#1f2937' : 'rgba(255,255,255,0.9)',
-          color: interactive ? '#fff' : '#374151',
-          font: '11px/1.4 ui-sans-serif, system-ui, sans-serif',
-          cursor: 'pointer',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-        }}
-      >
-        {interactive ? 'done' : 'interact'}
-      </button>
     </div>
   );
 }
