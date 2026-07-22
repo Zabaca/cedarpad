@@ -7,9 +7,10 @@ import * as schema from '../web-poc/lib/db/schema.ts';
 import { createWorkspace, getWorkspaceRecord, setWorkspaceSelectedRepos } from '../web-poc/lib/db/queries/workspaces.ts';
 import {
   addPatRepo,
+  addPublicRepo,
   clearInstallationRepos,
   listWorkspaceRepos,
-  removePatRepo,
+  removeAddedRepo,
   replaceInstallationRepos,
   updatePatRepoToken,
 } from '../web-poc/lib/db/queries/workspace-repos.ts';
@@ -61,8 +62,25 @@ describe('workspace repos (ADR-0016) — one row per Repo asset', () => {
     repos = await listWorkspaceRepos(database, ws.id);
     expect(repos[0]?.encryptedToken).toBe('v1.iv2.ct2');
 
-    await removePatRepo(database, { workspaceId: ws.id, fullName: 'hudsonts/app' });
+    await removeAddedRepo(database, { workspaceId: ws.id, fullName: 'hudsonts/app' });
     expect(await listWorkspaceRepos(database, ws.id)).toEqual([]);
+  });
+
+  test('a public repo is added token-less, listed, and removed; installation rows are safe from removeAddedRepo', async () => {
+    const ws = await freshWorkspace('public-lifecycle');
+    await addPublicRepo(database, { workspaceId: ws.id, fullName: 'vercel/next.js', addedByUserId: OWNER.id });
+    await replaceInstallationRepos(database, { workspaceId: ws.id, repos: ['Zabaca/cedarpad'] });
+
+    let repos = await listWorkspaceRepos(database, ws.id);
+    const pub = repos.find((r) => r.fullName === 'vercel/next.js');
+    expect(pub?.source).toBe('public');
+    expect(pub?.encryptedToken).toBeNull();
+
+    // removeAddedRepo only touches user-added rows (pat/public), never the installation selection.
+    await removeAddedRepo(database, { workspaceId: ws.id, fullName: 'Zabaca/cedarpad' });
+    await removeAddedRepo(database, { workspaceId: ws.id, fullName: 'vercel/next.js' });
+    repos = await listWorkspaceRepos(database, ws.id);
+    expect(repos.map((r) => [r.fullName, r.source])).toEqual([['Zabaca/cedarpad', 'installation']]);
   });
 
   test('adding a duplicate full name throws (unique per workspace)', async () => {

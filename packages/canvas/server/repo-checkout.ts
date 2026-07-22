@@ -1,5 +1,5 @@
 import { mkdir, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Read-only repo checkouts (ADR-0016): the bridge maintains a shallow copy of each of the
@@ -72,4 +72,27 @@ export async function refreshCheckout(
 /** Drop a repo's checkout (the Settings "Remove" reconcile). */
 export async function removeCheckout(root: string, repo: string): Promise<void> {
   await rm(join(root, CHECKOUTS_DIRNAME, checkoutDirName(repo)), { recursive: true, force: true });
+}
+
+/** The checkouts actually present on disk (a dir is one only once its clone landed). */
+export function listCheckouts(root: string): Array<{ repo: string; path: string }> {
+  let entries: string[];
+  try {
+    entries = readdirSync(join(root, CHECKOUTS_DIRNAME));
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e.includes('__') && existsSync(join(root, CHECKOUTS_DIRNAME, e, '.git')))
+    .sort()
+    .map((e) => ({ repo: e.replace('__', '/'), path: `${CHECKOUTS_DIRNAME}/${e}` }));
+}
+
+/** System-prompt line advertising the workspace's Repo checkouts to chat agents — without
+ *  it, agents don't spontaneously discover `.repos/`. Empty when nothing is checked out. */
+export function reposPromptAppend(root: string): string {
+  const list = listCheckouts(root);
+  if (list.length === 0) return '';
+  const items = list.map((c) => `${c.repo} → ${c.path}/`).join(', ');
+  return `\n\nREPOS: this workspace's GitHub repos are checked out READ-ONLY under ${CHECKOUTS_DIRNAME}/ — ${items}. Read/Grep/ls them like ordinary local files to answer questions about those repos. They mirror each repo's default branch (refreshed on a cadence); never edit inside them — changes there are discarded and go nowhere.`;
 }

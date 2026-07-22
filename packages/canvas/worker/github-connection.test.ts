@@ -314,6 +314,108 @@ describe('handleGithubApi — PAT repos (ADR-0016)', () => {
   });
 });
 
+// ---- Public repos (ADR-0016 addendum): pasted GitHub URL → canvas Clone ----
+
+/** Extends githubStubWithPat with public-repo probes: vercel/next.js is public,
+ *  acme/secret is invisible (private repos 404 to outsiders), acme/internal says private. */
+function githubStubWithPublic() {
+  const base = githubStubWithPat();
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (/\/repos\/vercel\/next\.js$/.test(url)) return Response.json({ full_name: 'vercel/next.js', private: false, default_branch: 'canary' });
+    if (/\/repos\/acme\/secret$/.test(url)) return new Response('not found', { status: 404 });
+    if (/\/repos\/acme\/internal$/.test(url)) return Response.json({ full_name: 'acme/internal', private: true, default_branch: 'main' });
+    return base.fetchImpl(input as never, init);
+  }) as typeof fetch;
+  return { fetchImpl };
+}
+
+describe('handleGithubApi — public repos (canvas GithubRepoCard Clone)', () => {
+  test('the owner clones a public repo: validated public, stored token-less, listed, checkout seeded without a token', async () => {
+    const { fetchImpl } = githubStubWithPublic();
+    const ws = await connectedWorkspace('pub-ws-1', fetchImpl);
+    const pushed: Array<{ repo: string; token: string | undefined }> = [];
+
+    const add = await handleGithubApi(req('POST', '/x', { fullName: 'vercel/next.js' }), PAT_ENV, database, OWNER, ws.id, 'public', {
+      nowMs: NOW,
+      fetchImpl,
+      pushRefresh: async (repo, token) => {
+        pushed.push({ repo, token });
+        return new Response(null, { status: 200 });
+      },
+    });
+    expect(add.status).toBe(200);
+    expect(await readJson(add)).toEqual({ fullName: 'vercel/next.js', defaultBranch: 'canary', source: 'public' });
+
+    const row = (await listWorkspaceRepos(database, ws.id)).find((r) => r.fullName === 'vercel/next.js');
+    expect(row?.source).toBe('public');
+    expect(row?.encryptedToken).toBeNull();
+
+    await new Promise((r) => setTimeout(r, 0)); // fire-and-forget seed settles
+    expect(pushed).toEqual([{ repo: 'vercel/next.js', token: undefined }]);
+
+    const status = await readJson(await handleGithubApi(req('GET', '/x'), PAT_ENV, database, OWNER, ws.id, undefined, { nowMs: NOW, fetchImpl }));
+    expect(status.publicRepos).toEqual([{ fullName: 'vercel/next.js' }]);
+  });
+
+  test('a private or missing repo is a 400 (nothing stored); members are 403; dup is 409', async () => {
+    const { fetchImpl } = githubStubWithPublic();
+    const ws = await connectedWorkspace('pub-ws-2', fetchImpl);
+    await addWorkspaceMember(database, { workspaceId: ws.id, userId: MEMBER.id });
+
+    for (const name of ['acme/secret', 'acme/internal']) {
+      const bad = await handleGithubApi(req('POST', '/x', { fullName: name }), PAT_ENV, database, OWNER, ws.id, 'public', { nowMs: NOW, fetchImpl });
+      expect(bad.status).toBe(400);
+    }
+    expect(await listWorkspaceRepos(database, ws.id)).toEqual([]);
+
+    const asMember = await handleGithubApi(req('POST', '/x', { fullName: 'vercel/next.js' }), PAT_ENV, database, MEMBER, ws.id, 'public', { nowMs: NOW, fetchImpl });
+    expect(asMember.status).toBe(403);
+
+    const ok = await handleGithubApi(req('POST', '/x', { fullName: 'vercel/next.js' }), PAT_ENV, database, OWNER, ws.id, 'public', { nowMs: NOW, fetchImpl });
+    expect(ok.status).toBe(200);
+    const dup = await handleGithubApi(req('POST', '/x', { fullName: 'vercel/next.js' }), PAT_ENV, database, OWNER, ws.id, 'public', { nowMs: NOW, fetchImpl });
+    expect(dup.status).toBe(409);
+  });
+
+  test('a public repo works with NO App and NO token key (unauthenticated probe), and DELETE /external removes it', async () => {
+    const ws = await createWorkspace(database, { name: 'pub-ws-3', ownerUserId: OWNER.id });
+    const { fetchImpl } = githubStubWithPublic();
+    const bareEnv = { BETTER_AUTH_SECRET: SECRET } as unknown as Env;
+
+    const add = await handleGithubApi(req('POST', '/x', { fullName: 'vercel/next.js' }), bareEnv, database, OWNER, ws.id, 'public', { nowMs: NOW, fetchImpl });
+    expect(add.status).toBe(200);
+
+    const resolved = await resolveDevAgentRepo(bareEnv, database, ws.id);
+    expect(resolved?.repoFullName).toBe('vercel/next.js');
+    expect(resolved?.auth).toEqual({ kind: 'public' });
+
+    const del = await handleGithubApi(req('DELETE', '/x', { fullName: 'vercel/next.js' }), { ...(bareEnv as unknown as Record<string, unknown>), REPO_TOKEN_KEY: 'k' } as unknown as Env, database, OWNER, ws.id, 'external', { nowMs: NOW, fetchImpl });
+    expect(del.status).toBe(204);
+    expect(await listWorkspaceRepos(database, ws.id)).toEqual([]);
+  });
+
+  test('refresh pushes public repos token-less alongside tokened repos', async () => {
+    const { fetchImpl } = githubStubWithPublic();
+    const ws = await connectedWorkspace('pub-ws-4', fetchImpl);
+    await handleGithubApi(req('PUT', '/x', { selected: ['Zabaca/cedarpad'] }), APP_ENV, database, OWNER, ws.id, 'repos', { nowMs: NOW, fetchImpl });
+    await handleGithubApi(req('POST', '/x', { fullName: 'vercel/next.js' }), PAT_ENV, database, OWNER, ws.id, 'public', { nowMs: NOW, fetchImpl });
+
+    const pushed: Array<{ repo: string; token: string | undefined }> = [];
+    const res = await handleGithubApi(req('POST', '/x'), PAT_ENV, database, OWNER, ws.id, 'refresh', {
+      nowMs: NOW,
+      fetchImpl,
+      pushRefresh: async (repo, token) => {
+        pushed.push({ repo, token });
+        return new Response(null, { status: 200 });
+      },
+    });
+    expect(await readJson(res)).toEqual({ refreshed: ['Zabaca/cedarpad', 'vercel/next.js'], failed: [] });
+    expect(pushed.find((p) => p.repo === 'Zabaca/cedarpad')?.token).toBe('ghs_stub');
+    expect(pushed.find((p) => p.repo === 'vercel/next.js')?.token).toBeUndefined();
+  });
+});
+
 describe('checkout refresh (ADR-0016) — the edge pushes read tokens to the container', () => {
   test('POST /refresh pushes one transient read token per repo; a member may trigger it', async () => {
     const { fetchImpl } = githubStubWithPat();

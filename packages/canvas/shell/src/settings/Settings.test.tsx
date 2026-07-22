@@ -239,6 +239,26 @@ describe('SettingsStage — members (#192)', () => {
     expect(host.textContent).toContain('token expired or revoked');
   });
 
+  test('public repos render with the read-only badge and an owner Remove (ADR-0016 addendum)', async () => {
+    githubStatus = { ...GITHUB_CONNECTED, publicRepos: [{ fullName: 'vercel/next.js' }] };
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+    expect(host.textContent).toContain('Public repos');
+    expect(host.textContent).toContain('vercel/next.js');
+    expect(host.textContent).toContain('public — read-only');
+
+    const confirmReal = window.confirm;
+    window.confirm = () => true;
+    const rows = [...host.querySelectorAll('.settings-row')];
+    const row = rows.find((r) => r.textContent?.includes('vercel/next.js'));
+    await act(async () => {
+      (row?.querySelector('.settings-remove') as HTMLButtonElement).click();
+    });
+    await flush();
+    window.confirm = confirmReal;
+    expect(calls).toContain('DELETE /api/workspaces/ws_abc/github/external');
+  });
+
   test('the owner adds a repo by token: POSTs fullName+token to the external endpoint', async () => {
     await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
     await flush();

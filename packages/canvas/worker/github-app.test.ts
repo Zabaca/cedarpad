@@ -193,6 +193,15 @@ describe('mintRepoReadToken — read-scoped tokens for discovery/checkout (ADR-0
     });
     expect(token).toBe('github_pat_hudson');
   });
+
+  test('public repos are token-less by nature: both mints return null, no fetch made', async () => {
+    const noFetch = (async () => {
+      throw new Error('a public repo must never hit the GitHub token API');
+    }) as unknown as typeof fetch;
+    const opts = { nowSec: 1, repoFullName: 'vercel/next.js', auth: { kind: 'public' as const }, fetchImpl: noFetch };
+    expect(await mintRepoReadToken(env, opts)).toBeNull();
+    expect(await mintDevAgentGitToken(env, opts)).toBeNull();
+  });
 });
 
 // The env-var NAME contract across the edge/container boundary: the per-turn token now rides a

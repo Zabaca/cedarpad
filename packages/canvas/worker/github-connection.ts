@@ -9,9 +9,10 @@ import {
 } from '../web-poc/lib/db/queries/workspaces.ts';
 import {
   addPatRepo,
+  addPublicRepo,
   clearInstallationRepos,
   listWorkspaceRepos,
-  removePatRepo,
+  removeAddedRepo,
   replaceInstallationRepos,
   updatePatRepoToken,
 } from '../web-poc/lib/db/queries/workspace-repos.ts';
@@ -144,6 +145,8 @@ export async function workspaceRepoSet(
   for (const r of rows) {
     if (r.source === 'pat') {
       if (r.encryptedToken) views.push({ repoFullName: r.fullName, auth: { kind: 'pat', encryptedToken: r.encryptedToken } });
+    } else if (r.source === 'public') {
+      views.push({ repoFullName: r.fullName, auth: { kind: 'public' } });
     } else if (conn.connected) {
       views.push({ repoFullName: r.fullName, auth: { kind: 'installation', installationId: conn.installationId } });
     }
@@ -201,11 +204,45 @@ async function probePatRepo(
   return { defaultBranch: json.default_branch, protected: branch.protected === true, canPush: json.permissions?.push === true };
 }
 
+/** Is `fullName` a public GitHub repo? Probes authenticated when the workspace has an App
+ *  installation (an unscoped read token can see any public repo; unauthenticated calls from
+ *  shared Worker egress IPs are rate-limit roulette), unauthenticated otherwise. Returns the
+ *  default branch, or null when the repo is private, missing, or unreachable. */
+async function probePublicRepo(
+  env: Env,
+  ws: { id: string; githubInstallationId: string | null; selectedRepos: string[] | null },
+  fullName: string,
+  opts: { nowSec: number; fetchImpl?: typeof fetch },
+): Promise<{ defaultBranch: string } | null> {
+  const doFetch = opts.fetchImpl ?? fetch;
+  const conn = workspaceGithub(env, ws);
+  let auth: string | null = null;
+  if (conn.connected && env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) {
+    try {
+      const { token } = await mintInstallationToken(
+        { appId: env.GITHUB_APP_ID, installationId: conn.installationId, privateKey: env.GITHUB_APP_PRIVATE_KEY },
+        { permissions: { contents: 'read' }, nowSec: opts.nowSec, fetchImpl: opts.fetchImpl },
+      );
+      auth = `token ${token}`;
+    } catch {
+      auth = null; // fall back to unauthenticated
+    }
+  }
+  const res = await doFetch(`https://api.github.com/repos/${fullName}`, {
+    headers: auth ? GH_HEADERS(auth) : { Accept: 'application/vnd.github+json', 'User-Agent': 'cedarpad-dev-agent' },
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as { private?: boolean; default_branch?: string };
+  if (json.private !== false) return null;
+  return { defaultBranch: json.default_branch ?? 'main' };
+}
+
 // ---- API handlers -----------------------------------------------------------
 
 const SelectInput = z.object({ selected: z.array(z.string().regex(REPO_NAME)).max(50) });
 const ExternalAddInput = z.object({ fullName: z.string().regex(REPO_NAME), token: z.string().min(1).max(400) });
 const ExternalRemoveInput = z.object({ fullName: z.string().regex(REPO_NAME) });
+const PublicAddInput = z.object({ fullName: z.string().regex(REPO_NAME) });
 
 /**
  * /api/workspaces/:id/github[…] — the Settings repository section.
@@ -214,7 +251,9 @@ const ExternalRemoveInput = z.object({ fullName: z.string().regex(REPO_NAME) });
  *   PUT  /repos     → replace the installation selection, ⊆ granted (owner-only)
  *   POST /external  → add a PAT repo: live-validate, seal, store (owner-only, ADR-0016)
  *   PATCH /external → rotate a PAT repo's token: live-validate, re-seal (owner-only)
- *   DELETE /external→ remove a PAT repo (owner-only)
+ *   DELETE /external→ remove a user-added repo, PAT or public (owner-only)
+ *   POST /public    → add a public repo by name — the canvas GithubRepoCard's Clone
+ *                     (owner-only; validates the repo is really public; no credential)
  *   DELETE          → disconnect the App installation (PAT repos survive; owner-only)
  */
 export async function handleGithubApi(
@@ -223,13 +262,14 @@ export async function handleGithubApi(
   database: Database,
   user: GateUser,
   workspaceId: string,
-  sub: 'connect' | 'repos' | 'external' | 'refresh' | undefined,
+  sub: 'connect' | 'repos' | 'external' | 'refresh' | 'public' | undefined,
   deps: {
     nowMs: number;
     fetchImpl?: typeof fetch;
     /** Push one repo's read-only checkout refresh to the workspace's container (ADR-0016).
-     *  The token rides a header, transient — the bridge scrubs it after the fetch. */
-    pushRefresh?: (repoFullName: string, token: string) => Promise<Response>;
+     *  The token rides a header, transient — the bridge scrubs it after the fetch.
+     *  Public repos push token-less (the checkout clones the public HTTPS remote). */
+    pushRefresh?: (repoFullName: string, token?: string) => Promise<Response>;
   },
 ): Promise<Response> {
   const ws = await getWorkspace(database, workspaceId, user.id);
@@ -249,10 +289,40 @@ export async function handleGithubApi(
     const failed: string[] = [];
     for (const v of targets) {
       const token = await mintRepoReadToken(env, { nowSec, ...v, fetchImpl: deps.fetchImpl }).catch(() => null);
-      const res = token && deps.pushRefresh ? await deps.pushRefresh(v.repoFullName, token).catch(() => null) : null;
+      // Public repos have no token by nature — the checkout pulls the public remote.
+      const usable = v.auth.kind === 'public' || token !== null;
+      const res =
+        usable && deps.pushRefresh ? await deps.pushRefresh(v.repoFullName, token ?? undefined).catch(() => null) : null;
       (res?.ok ? refreshed : failed).push(v.repoFullName);
     }
     return Response.json({ refreshed, failed });
+  }
+
+  // Public repo add (ADR-0016 addendum): the canvas GithubRepoCard's Clone button. A member
+  // clicking it gets this 403 — the card turns that into a visible "requested by" stamp.
+  if (sub === 'public') {
+    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+    if (!isOwner) return Response.json({ error: 'owner only' }, { status: 403 });
+    const parsed = PublicAddInput.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return Response.json({ error: 'invalid repo' }, { status: 400 });
+    const { fullName } = parsed.data;
+    const existing = await listWorkspaceRepos(database, ws.id);
+    if (existing.some((r) => r.fullName === fullName)) {
+      return Response.json({ error: `${fullName} is already in this workspace` }, { status: 409 });
+    }
+    const probe = await probePublicRepo(env, ws, fullName, { nowSec, fetchImpl: deps.fetchImpl }).catch(() => null);
+    if (!probe) {
+      return Response.json({ error: `${fullName} is not a public repo (private, missing, or unreachable)` }, { status: 400 });
+    }
+    await addPublicRepo(database, { workspaceId: ws.id, fullName, addedByUserId: user.id });
+    // Seed the read-only checkout right away (token-less), so "clone → ask about it" works
+    // without waiting for a cadence tick. Best-effort.
+    if (deps.pushRefresh) {
+      void deps.pushRefresh(fullName).catch((e: unknown) => {
+        console.error(`[repos] post-add checkout refresh failed for ${fullName}: ${String(e)}`);
+      });
+    }
+    return Response.json({ fullName, defaultBranch: probe.defaultBranch, source: 'public' });
   }
 
   if (sub === 'external') {
@@ -289,7 +359,7 @@ export async function handleGithubApi(
     if (request.method === 'DELETE') {
       const parsed = ExternalRemoveInput.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return Response.json({ error: 'invalid repo' }, { status: 400 });
-      await removePatRepo(database, { workspaceId: ws.id, fullName: parsed.data.fullName });
+      await removeAddedRepo(database, { workspaceId: ws.id, fullName: parsed.data.fullName });
       return new Response(null, { status: 204 });
     }
 
@@ -322,8 +392,9 @@ export async function handleGithubApi(
             : { fullName: r.fullName, defaultBranch: null, protected: false, canPush: false, unreachable: true };
         }),
     );
+    const publicRepos = rows.filter((r) => r.source === 'public').map((r) => ({ fullName: r.fullName }));
     if (!conn.connected) {
-      return Response.json({ connected: false, selectedRepos: [], patRepos, canConnect: isOwner && !!env.GITHUB_APP_SLUG });
+      return Response.json({ connected: false, selectedRepos: [], patRepos, publicRepos, canConnect: isOwner && !!env.GITHUB_APP_SLUG });
     }
     let grantedRepos: GrantedRepo[] | undefined;
     try {
@@ -339,6 +410,7 @@ export async function handleGithubApi(
       selectedRepos,
       grantedRepos,
       patRepos,
+      publicRepos,
       canConnect: isOwner && !!env.GITHUB_APP_SLUG,
     });
   }

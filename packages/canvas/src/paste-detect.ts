@@ -9,6 +9,7 @@ export type DetectedPaste =
   | { kind: 'markdown'; md: string }
   | { kind: 'mermaid'; chart: string }
   | { kind: 'html'; html: string }
+  | { kind: 'github'; repo: string; url: string }
   | { kind: 'code'; code: string; lang?: string };
 
 /** A clipboard source item as tldraw hands them to external-content handlers. */
@@ -182,6 +183,34 @@ function detectFence(text: string): DetectedPaste | null {
  * the clipboard's html item while its plain text is prose, so it never lands
  * here. Claims a full document (doctype/<html>) outright; a fragment needs a
  * real open tag AND a matching close tag, so `<hello>` prose stays text. */
+// github.com's first path segment is only an owner when it isn't one of GitHub's own
+// routes — pasting github.com/features/copilot must NOT become a repo card.
+const GITHUB_RESERVED = new Set([
+  'about', 'account', 'apps', 'codespaces', 'collections', 'contact', 'customer-stories',
+  'dashboard', 'enterprise', 'events', 'explore', 'features', 'issues', 'join', 'login',
+  'marketplace', 'new', 'notifications', 'orgs', 'pricing', 'pulls', 'readme', 'search',
+  'security', 'settings', 'signup', 'site', 'sponsors', 'team', 'topics', 'trending',
+]);
+
+/** A pasted GitHub repo reference → a GithubRepoCard. Claims the https URL in any depth
+ *  (repo root, /tree/, /blob/, /pull/…, all normalize to owner/name) and the SSH clone
+ *  string (git@github.com:owner/name.git). Single-line pastes only. */
+export function detectGithubUrl(text: string): DetectedPaste | null {
+  const t = text.trim();
+  if (!t || t.includes('\n')) return null;
+  const ssh = /^git@github\.com:([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(t);
+  if (ssh) {
+    const repo = `${ssh[1]}/${ssh[2]}`;
+    return { kind: 'github', repo, url: `https://github.com/${repo}` };
+  }
+  const web = /^https?:\/\/(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[/?#]\S*)?$/.exec(t);
+  if (!web) return null;
+  const owner = web[1] as string;
+  const name = web[2] as string;
+  if (GITHUB_RESERVED.has(owner.toLowerCase())) return null;
+  return { kind: 'github', repo: `${owner}/${name}`, url: t };
+}
+
 export function detectHtml(text: string): DetectedPaste | null {
   const t = text.trim();
   if (!t.startsWith('<')) return null;
@@ -269,6 +298,7 @@ export function detectPaste(input: { text: string; html?: string; sources?: Read
   if (!text.trim()) return null;
   return (
     detectFence(text) ??
+    detectGithubUrl(text) ??
     detectHtml(text) ??
     detectMermaid(text) ??
     detectJson(text) ??

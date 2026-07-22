@@ -94,3 +94,33 @@ and expiry, not by our mint. Containment therefore lives at the edge of our cont
   multi-identity case, but real schema + resolution rework for a problem held exactly once; the
   PAT path neither blocks nor forecloses it, and `workspace_repos` would absorb it as another
   auth source later.
+
+## Addendum (2026-07-22): public repos, added from the canvas
+
+A third auth source joins the union: `{ kind: 'public' }` — **no credential at all**. The front
+door is the canvas, not Settings: pasting any GitHub repo reference (repo-root URL, deep link,
+or the SSH clone string) places a **GithubRepoCard**, a *view* of the Repo asset that looks up
+cloned-ness live from the workspace repo set and never stores it. Its one **Clone** button calls
+the owner-only `POST /github/public` endpoint, which live-validates that the repo really is
+public (App-token-first probe; unauthenticated GitHub API from shared Worker egress IPs is
+rate-limit roulette), stores a token-less `source: 'public'` row, and seeds the checkout over
+the plain public HTTPS remote.
+
+Decisions folded in:
+
+- **The card is the request surface.** A member clicking Clone receives the honest 403 and the
+  card stamps `requestedBy` into its synced data — visible to the owner on the shared canvas,
+  whose own Clone click is the approval. Authorization lives only in the API gate; no request
+  rows, no approval endpoint.
+- **Uniform participation.** Public repos join `workspaceRepoSet` and every consumer: daily
+  cron, refresh endpoints (pushed token-less), job discovery, chat-prompt advertising. Both
+  mints return `null` for them — dev-agent PRs are impossible by nature, the same visible
+  "read-only" posture as a read-only PAT.
+- **Chat turns now learn about checkouts.** The bridge appends a per-turn REPOS line listing
+  what is actually under `.repos/` on disk; without it agents never discovered the checkouts.
+- **Removal stays in Settings** (owner-only, `DELETE /external` now covers PAT *and* public
+  rows); removing flips every card for that repo back to "not cloned".
+
+Rejected here: a paste-time public/private probe (the Clone attempt *is* the probe — fewer
+endpoints, no rate-limit exposure on the hot path) and member-allowed public adds (adding any
+repo feeds job discovery — a capability grant even with zero tokens).

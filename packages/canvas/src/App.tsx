@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { DefaultContextMenu, DefaultContextMenuContent, DefaultMenuPanel, DefaultNavigationPanel, DefaultPeopleMenu, DefaultSharePanel, DefaultStylePanel, DefaultToolbar, NoteShapeUtil, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, defaultHandleExternalTextContent, useEditor } from 'tldraw';
+import { DefaultContextMenu, DefaultContextMenuContent, DefaultMenuPanel, DefaultNavigationPanel, DefaultPeopleMenu, DefaultSharePanel, DefaultStylePanel, DefaultToolbar, NoteShapeUtil, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, defaultHandleExternalTextContent, defaultHandleExternalUrlContent, useEditor } from 'tldraw';
 import 'tldraw/tldraw.css';
 
 import { activeCanvasId } from './active-canvas';
@@ -316,6 +316,14 @@ function CanvasApp() {
         const d = detectPaste(content);
         if (d) return placeDetected(editor, d, content.point);
         return defaultHandleExternalTextContent(editor, content);
+      });
+      // A pasted bare URL rides tldraw's 'url' channel (not 'text'): a GitHub repo
+      // reference becomes a GithubRepoCard; anything else stays a stock bookmark. The
+      // handler opts only feed failure toasts, which we don't mount here — stubbed.
+      editor.registerExternalContentHandler('url', (content) => {
+        const d = detectPaste({ text: content.url });
+        if (d) return placeDetected(editor, d, content.point);
+        return defaultHandleExternalUrlContent(editor, content, { toasts: { addToast: () => '' }, msg: (id: string) => id } as never);
       });
       const unJsonPaste = wirePasteCapture(editor);
 

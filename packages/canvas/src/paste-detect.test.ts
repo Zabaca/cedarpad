@@ -196,3 +196,34 @@ describe('detectFromFile (drops)', () => {
     expect(detectFromFile('page.htm', 'anything')?.kind).toBe('html');
   });
 });
+
+describe('detectPaste: GitHub repo references', () => {
+  const paste = (text: string) => detectPaste({ text });
+
+  test('a repo-root URL becomes a github card, keeping the pasted URL', () => {
+    expect(paste('https://github.com/vercel/next.js')).toEqual({
+      kind: 'github', repo: 'vercel/next.js', url: 'https://github.com/vercel/next.js',
+    });
+    expect(paste('https://www.github.com/hudsonts/app.git')).toMatchObject({ repo: 'hudsonts/app' });
+  });
+
+  test('deep links (tree/blob/pull) normalize to owner/name but keep the deep URL', () => {
+    const d = paste('https://github.com/vercel/next.js/blob/canary/README.md');
+    expect(d).toEqual({ kind: 'github', repo: 'vercel/next.js', url: 'https://github.com/vercel/next.js/blob/canary/README.md' });
+    expect(paste('https://github.com/a/b/pull/123')).toMatchObject({ repo: 'a/b' });
+  });
+
+  test('the SSH clone string is claimed and normalized to an https URL', () => {
+    expect(paste('git@github.com:hudsonts/app.git')).toEqual({
+      kind: 'github', repo: 'hudsonts/app', url: 'https://github.com/hudsonts/app',
+    });
+  });
+
+  test("GitHub's own routes and non-GitHub URLs stay unclaimed (bookmark territory)", () => {
+    expect(paste('https://github.com/features/copilot')).toBeNull();
+    expect(paste('https://github.com/orgs/Zabaca/repositories')).toBeNull();
+    expect(paste('https://github.com/vercel')).toBeNull(); // owner page, no repo
+    expect(paste('https://gitlab.com/a/b')).toBeNull();
+    expect(paste('see https://github.com/a/b for details')).toBeNull(); // prose, not a lone URL
+  });
+});

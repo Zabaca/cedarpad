@@ -30,6 +30,12 @@ describe('detectedShapeSpec', () => {
     expect(spec.data).toEqual({ value: { a: 1 } });
   });
 
+  test('a github reference maps to GithubRepoCard carrying repo + url', () => {
+    const spec = detectedShapeSpec({ kind: 'github', repo: 'vercel/next.js', url: 'https://github.com/vercel/next.js' });
+    expect(spec.module).toBe('GithubRepoCard');
+    expect(spec.data).toEqual({ repo: 'vercel/next.js', url: 'https://github.com/vercel/next.js' });
+  });
+
   test('html maps to HtmlCard; a full document gets the larger frame', () => {
     const frag = detectedShapeSpec({ kind: 'html', html: '<div><b>hi</b></div>' });
     expect(frag.module).toBe('HtmlCard');

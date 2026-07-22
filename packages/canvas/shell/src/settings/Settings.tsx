@@ -13,12 +13,14 @@ type GrantedRepo = { fullName: string; defaultBranch: string; protected: boolean
 // ADR-0016: a PAT-backed repo row with its live badges. `unreachable` = the stored token
 // no longer opens the repo (expired/revoked) — the row needs "Update token…", not removal.
 type PatRepo = { fullName: string; defaultBranch: string | null; protected: boolean; canPush: boolean; unreachable?: boolean };
+type PublicRepo = { fullName: string };
 type GithubStatus = {
   connected: boolean;
   source?: 'workspace' | 'env';
   selectedRepos: string[];
   grantedRepos?: GrantedRepo[];
   patRepos?: PatRepo[];
+  publicRepos?: PublicRepo[];
   canConnect?: boolean;
 };
 type WaitlistEntry = { email: string; createdAt: string };
@@ -185,8 +187,8 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
     await patCall('PATCH', repo.fullName, token.trim());
   };
 
-  const removeExternalRepo = async (repo: PatRepo) => {
-    if (!window.confirm(`Remove ${repo.fullName} and its stored token from this workspace?`)) return;
+  const removeExternalRepo = async (repo: PatRepo | PublicRepo) => {
+    if (!window.confirm(`Remove ${repo.fullName} from this workspace?`)) return;
     await fetch(`${base}/github/external`, {
       method: 'DELETE',
       credentials: 'same-origin',
@@ -536,6 +538,31 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
               <p className="settings-row-sub">
                 Repos connected with their own token (e.g. a client-issued GitHub account). Tokens are stored encrypted and
                 used only at the moment of fetch or PR.
+              </p>
+            </>
+          )}
+
+          {(github?.publicRepos?.length ?? 0) > 0 && (
+            <>
+              <div className="settings-subhead">Public repos</div>
+              <ul className="settings-list">
+                {github?.publicRepos?.map((repo) => (
+                  <li key={repo.fullName} className="settings-row">
+                    <span className="settings-row-name">{repo.fullName}</span>
+                    <span className="settings-unprotected" title="No credential stored; reads clone the public remote — PRs unavailable">
+                      public — read-only
+                    </span>
+                    {isOwnerView && (
+                      <button type="button" className="settings-remove" onClick={() => void removeExternalRepo(repo)}>
+                        Remove
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="settings-row-sub">
+                Added by pasting a GitHub URL onto the canvas. Token-less: agents can read the checkout, but PRs are
+                impossible. Removing one flips its canvas cards back to "not cloned".
               </p>
             </>
           )}

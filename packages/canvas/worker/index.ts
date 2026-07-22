@@ -131,12 +131,13 @@ const defaultWorkspaceRepo = async (env: Env, requested?: string) => {
 };
 
 /** Push one repo's read-only checkout refresh into a workspace's container (ADR-0016):
- *  the read token rides a header, transient — the bridge fetches then scrubs it. */
-const pushCheckoutRefresh = (env: Env, workspaceId: string, repo: string, token: string): Promise<Response> =>
+ *  the read token rides a header, transient — the bridge fetches then scrubs it. Public
+ *  repos push no token at all; the bridge clones the public HTTPS remote. */
+const pushCheckoutRefresh = (env: Env, workspaceId: string, repo: string, token?: string): Promise<Response> =>
   serveWorkspace(
     new Request('https://bridge.internal/api/repos/refresh', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-repo-git-token': token },
+      headers: { 'content-type': 'application/json', ...(token ? { 'x-repo-git-token': token } : {}) },
       body: JSON.stringify({ repo }),
     }),
     env,
@@ -180,7 +181,9 @@ export default {
         const views = await workspaceRepoSet(env, database, ws);
         for (const v of views) {
           const token = await mintRepoReadToken(env, { nowSec: Math.floor(Date.now() / 1000), ...v }).catch(() => null);
-          if (token) await pushCheckoutRefresh(env, DEFAULT_WORKSPACE_ID, v.repoFullName, token).catch(() => {});
+          if (token || v.auth.kind === 'public') {
+            await pushCheckoutRefresh(env, DEFAULT_WORKSPACE_ID, v.repoFullName, token ?? undefined).catch(() => {});
+          }
         }
       })().catch((e: unknown) => console.error(`[repos] scheduled checkout refresh failed: ${String(e)}`)),
     );
@@ -434,7 +437,7 @@ export default {
 
     // Repository connection (#193, ADR-0015): status / connect redirect / repo selection /
     // disconnect, plus GitHub's post-install setup callback. Edge-only.
-    const githubMatch = /^\/api\/workspaces\/([^/]+)\/github(?:\/(connect|repos|external|refresh))?$/.exec(url.pathname);
+    const githubMatch = /^\/api\/workspaces\/([^/]+)\/github(?:\/(connect|repos|external|refresh|public))?$/.exec(url.pathname);
     if (githubMatch) {
       const wsId = githubMatch[1] as string;
       return handleGithubApi(
@@ -443,7 +446,7 @@ export default {
         createDbForWorker(env as unknown as Bindings),
         user,
         wsId,
-        githubMatch[2] as 'connect' | 'repos' | 'external' | 'refresh' | undefined,
+        githubMatch[2] as 'connect' | 'repos' | 'external' | 'refresh' | 'public' | undefined,
         { nowMs: Date.now(), pushRefresh: (repo, token) => pushCheckoutRefresh(env, wsId, repo, token) },
       );
     }

@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { checkoutDirName, checkoutUrls, refreshCheckout, removeCheckout } from './repo-checkout.ts';
+import { checkoutDirName, checkoutUrls, listCheckouts, refreshCheckout, removeCheckout, reposPromptAppend } from './repo-checkout.ts';
 
 const run = async (cwd: string, args: string[]): Promise<string> => {
   const proc = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
@@ -66,6 +66,31 @@ describe('refreshCheckout — clone-or-update a read-only copy under .repos/', (
 
       await removeCheckout(root, 'hudsonts/app');
       expect(await Bun.file(join(second.path, 'README.md')).exists()).toBe(false);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
+describe('reposPromptAppend — chat agents learn what is checked out', () => {
+  test('lists real checkouts by repo name and path; empty (no noise) when none exist', async () => {
+    const base = join(tmpdir(), `checkout-prompt-${crypto.randomUUID()}`);
+    try {
+      const root = join(base, 'workspace');
+      mkdirSync(root, { recursive: true });
+      expect(listCheckouts(root)).toEqual([]);
+      expect(reposPromptAppend(root)).toBe('');
+
+      const remote = await scratchRemote(base);
+      await refreshCheckout({ repo: 'hudsonts/app', root, remoteUrl: remote });
+      // A dir without a .git (e.g. a half-finished clone) is not a checkout yet.
+      mkdirSync(join(root, '.repos', 'acme__partial'), { recursive: true });
+
+      expect(listCheckouts(root)).toEqual([{ repo: 'hudsonts/app', path: '.repos/hudsonts__app' }]);
+      const line = reposPromptAppend(root);
+      expect(line).toContain('hudsonts/app → .repos/hudsonts__app/');
+      expect(line).toContain('READ-ONLY');
+      expect(line).not.toContain('acme');
     } finally {
       rmSync(base, { recursive: true, force: true });
     }

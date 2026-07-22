@@ -567,7 +567,7 @@ export const workspaceRepos = sqliteTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     fullName: text("full_name").notNull(),
-    source: text("source", { enum: ["installation", "pat"] }).notNull(),
+    source: text("source", { enum: ["installation", "pat", "public"] }).notNull(),
     encryptedToken: text("encrypted_token"),
     addedByUserId: text("added_by_user_id").references(() => user.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

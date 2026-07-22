@@ -105,12 +105,14 @@ export function appConfigFromEnv(env: Env): GithubAppConfig | null {
 }
 
 // How a repo authenticates (ADR-0016): via the workspace's App installation (edge mints
-// short-lived scoped tokens) or via a per-repo PAT (stored sealed, opened at use). The
-// discriminated union is the resolve→mint contract — callers spread a resolved repo into a
-// mint call and never branch on the kind themselves.
+// short-lived scoped tokens), via a per-repo PAT (stored sealed, opened at use), or not at
+// all — a public repo pasted onto the canvas carries no credential; reads ride the public
+// HTTPS remote and writes are simply impossible. The discriminated union is the resolve→mint
+// contract — callers spread a resolved repo into a mint call and never branch on the kind.
 export type RepoAuth =
   | { kind: 'installation'; installationId: string }
-  | { kind: 'pat'; encryptedToken: string };
+  | { kind: 'pat'; encryptedToken: string }
+  | { kind: 'public' };
 
 async function openPat(env: Env, encryptedToken: string, context: string): Promise<string | null> {
   const key = env.REPO_TOKEN_KEY;
@@ -135,6 +137,7 @@ export async function mintDevAgentGitToken(
   env: Env,
   opts: { nowSec: number; repoFullName: string; auth: RepoAuth; fetchImpl?: typeof fetch },
 ): Promise<string | null> {
+  if (opts.auth.kind === 'public') return null; // token-less by nature — no push/PR reach
   if (opts.auth.kind === 'pat') return openPat(env, opts.auth.encryptedToken, 'dev-agent');
   const appId = env.GITHUB_APP_ID;
   const privateKey = env.GITHUB_APP_PRIVATE_KEY;
@@ -169,6 +172,7 @@ export async function mintRepoReadToken(
   env: Env,
   opts: { nowSec: number; repoFullName: string; auth: RepoAuth; fetchImpl?: typeof fetch },
 ): Promise<string | null> {
+  if (opts.auth.kind === 'public') return null; // reads work unauthenticated (public remote)
   if (opts.auth.kind === 'pat') return openPat(env, opts.auth.encryptedToken, 'repo-read');
   const appId = env.GITHUB_APP_ID;
   const privateKey = env.GITHUB_APP_PRIVATE_KEY;

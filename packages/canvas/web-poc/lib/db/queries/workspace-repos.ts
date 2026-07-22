@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Database } from "../client.js";
 import { type WorkspaceRepoRow, workspaceRepos, workspaces } from "../schema.js";
 
@@ -76,16 +76,36 @@ export async function updatePatRepoToken(
     );
 }
 
-/** Remove a PAT repo (its row and encrypted token). Installation rows are managed
- *  through replaceInstallationRepos / clearInstallationRepos only. */
-export async function removePatRepo(db: Database, input: { workspaceId: string; fullName: string }): Promise<void> {
+/** Add a public (token-less) repo — pasted onto the canvas as a GitHub URL. Throws on a
+ *  duplicate full name (unique per workspace). */
+export async function addPublicRepo(
+  db: Database,
+  input: { workspaceId: string; fullName: string; addedByUserId: string },
+): Promise<WorkspaceRepoRow> {
+  const [row] = await db
+    .insert(workspaceRepos)
+    .values({
+      id: newRepoId(),
+      workspaceId: input.workspaceId,
+      fullName: input.fullName,
+      source: "public",
+      addedByUserId: input.addedByUserId,
+    })
+    .returning();
+  if (!row) throw new Error("addPublicRepo: insert returned no row");
+  return row;
+}
+
+/** Remove a user-added repo (PAT or public — its row and any encrypted token).
+ *  Installation rows are managed through replaceInstallationRepos / clearInstallationRepos only. */
+export async function removeAddedRepo(db: Database, input: { workspaceId: string; fullName: string }): Promise<void> {
   await db
     .delete(workspaceRepos)
     .where(
       and(
         eq(workspaceRepos.workspaceId, input.workspaceId),
         eq(workspaceRepos.fullName, input.fullName),
-        eq(workspaceRepos.source, "pat"),
+        inArray(workspaceRepos.source, ["pat", "public"]),
       ),
     );
 }

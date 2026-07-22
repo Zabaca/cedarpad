@@ -29,6 +29,7 @@ import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { type EndTurnDeps, type EndTurnInput, endTurn } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
 import { type McpRegistryEntry, MCP_REGISTRY } from './mcp-registry.ts';
+import { reposPromptAppend } from './repo-checkout.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 
 const MODEL = process.env.CANVAS_MODEL ?? 'sonnet';
@@ -576,7 +577,13 @@ export async function* runChat(
   // The canvas chat is a full Claude Code agent: all built-in tools (Bash, Read, Write,
   // Edit, Web*, Task, ...) plus the canvas MCP server, auto-approved.
   const fullOptions = {
-    systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: CANVAS_APPEND },
+    // Repo checkouts are advertised per turn from what's on disk (ADR-0016): always the
+    // workspace root's .repos/, even when a dev-agent turn runs in its own worktree cwd.
+    systemPrompt: {
+      type: 'preset' as const,
+      preset: 'claude_code' as const,
+      append: CANVAS_APPEND + reposPromptAppend(process.env.CANVAS_CWD ?? process.cwd()),
+    },
     tools: { type: 'preset' as const, preset: 'claude_code' as const }, // all built-in tools (Bash, Read, Write, Edit, Web*, Task...)
     ...(kind === 'chat' ? { disallowedTools: ['Write', 'Edit', 'NotebookEdit'] } : {}),
     // Load user + project .claude config (ADR-0013): 'user' discovers platform skills (baked

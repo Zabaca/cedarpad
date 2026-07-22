@@ -18,6 +18,7 @@ export function detectedShapeSpec(d: DetectedPaste): { module: string; data: Rec
     return { module: 'DataTable', data: { columns: d.columns, rows: d.rows, ...(d.totalRows ? { totalRows: d.totalRows } : {}) }, w, h };
   }
   if (d.kind === 'mermaid') return { module: 'MermaidDiagram', data: { chart: d.chart }, w: 480, h: 380 };
+  if (d.kind === 'github') return { module: 'GithubRepoCard', data: { repo: d.repo, url: d.url }, w: 400, h: 200 };
   if (d.kind === 'html') {
     // A full document usually wants room; a fragment less so.
     const full = /^\s*(<!doctype|<html)/i.test(d.html);
