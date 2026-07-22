@@ -60,3 +60,32 @@ export function decodeMcpTokens(raw: string | null | undefined): McpTokens {
     return {};
   }
 }
+
+// ---- Per-chat MCP selection --------------------------------------------------
+
+/** Per-chat opt-OUT of connected servers/tools (default: everything the workspace has is on).
+ * Lives in the chat's server-owned ChatMeta (anyone on the chat may change it, like model);
+ * an absent/empty selection means "all on". Shared contract: the UI posts it via /config,
+ * the bridge applies it at send time. */
+export const McpSelectionSchema = z.object({
+  disabledServers: z.array(z.string().max(64)).max(64).default([]),
+  disabledTools: z.record(z.string().max(64), z.array(z.string().max(128)).max(256)).default({}),
+});
+export type McpSelection = z.infer<typeof McpSelectionSchema>;
+
+/** Drop disabled servers' tokens entirely — a disabled server is never even connected. */
+export function applyMcpSelection(tokens: McpTokens, sel?: McpSelection): McpTokens {
+  if (!sel || sel.disabledServers.length === 0) return tokens;
+  const off = new Set(sel.disabledServers);
+  return Object.fromEntries(Object.entries(tokens).filter(([name]) => !off.has(name)));
+}
+
+/** Per-tool narrowing within still-enabled servers, as SDK disallowedTools names
+ * (`mcp__<server>__<tool>`). Wholly-disabled servers need no entries — they never connect. */
+export function mcpDisallowedTools(sel?: McpSelection): string[] {
+  if (!sel) return [];
+  const off = new Set(sel.disabledServers);
+  return Object.entries(sel.disabledTools)
+    .filter(([server]) => !off.has(server))
+    .flatMap(([server, tools]) => tools.map((t) => `mcp__${server}__${t}`));
+}

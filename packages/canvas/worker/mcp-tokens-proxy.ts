@@ -15,13 +15,17 @@ export const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
  * custody, a per-send header, never persisted container-side. No connected tokens ⇒ the
  * request passes through untouched (no header, no connection attempt).
  */
-export async function withMcpTokensHeader(request: Request, env: Env, workspaceId: string): Promise<Request> {
+/** The workspace's effective connected tokens: stored rows, plus the env fallback for the
+ *  DEFAULT workspace only (mirroring the GitHub installation fallback, github-connection.ts):
+ *  FREDRIN_KEY provisioned as a worker secret connects `fredrin` there until a real
+ *  per-workspace token row exists — a stored row wins over the env. */
+export async function effectiveMcpTokens(env: Env, workspaceId: string): Promise<Record<string, string>> {
   const stored = await listTokens(createDbForWorker(env as unknown as Bindings), workspaceId);
-  // Env fallback for the DEFAULT workspace only, mirroring the GitHub installation fallback
-  // (github-connection.ts): FREDRIN_KEY provisioned as a worker secret connects `fredrin`
-  // there until a real per-workspace token row exists — a stored row wins over the env.
-  const tokens =
-    workspaceId === 'default' && env.FREDRIN_KEY ? { fredrin: env.FREDRIN_KEY, ...stored } : stored;
+  return workspaceId === 'default' && env.FREDRIN_KEY ? { fredrin: env.FREDRIN_KEY, ...stored } : stored;
+}
+
+export async function withMcpTokensHeader(request: Request, env: Env, workspaceId: string): Promise<Request> {
+  const tokens = await effectiveMcpTokens(env, workspaceId);
   if (Object.keys(tokens).length === 0) return request;
   const proxied = new Request(request.url, request);
   proxied.headers.set(MCP_TOKENS_HEADER, encodeMcpTokens(tokens));

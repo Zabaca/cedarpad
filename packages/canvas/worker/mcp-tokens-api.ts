@@ -55,3 +55,43 @@ export async function handleMcpTokenApi(
   }
   return new Response('method not allowed', { status: 405 });
 }
+
+/**
+ * The member-readable half (per-chat MCP selection UI):
+ *   GET /api/workspaces/:id/mcp               → { servers: [{name, connected}] }
+ *   GET /api/workspaces/:id/mcp/:name/tools   → { tools: [{name, description?}] }
+ * Reads grant nothing (the token never leaves the edge — only tool NAMES are returned),
+ * so any workspace member may call them; the chat UI uses them to render checkboxes.
+ */
+export async function handleMcpReadApi(
+  request: Request,
+  env: Env,
+  user: GateUser,
+  workspaceId: string,
+  deps: {
+    registry: Readonly<Record<string, { url: string }>>;
+    tokens: (env: Env, workspaceId: string) => Promise<Record<string, string>>;
+    probeTools: (url: string, token: string) => Promise<Array<{ name: string; description?: string }>>;
+  },
+  mcpName?: string,
+): Promise<Response> {
+  if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
+  const access = await workspaceAccess(env, workspaceId, user);
+  if (access === 'none') return Response.json({ error: 'workspace not found' }, { status: 404 });
+  const tokens = await deps.tokens(env, workspaceId);
+
+  if (!mcpName) {
+    const servers = Object.keys(deps.registry).map((name) => ({ name, connected: !!tokens[name] }));
+    return Response.json({ servers });
+  }
+  const entry = deps.registry[mcpName];
+  if (!entry) return Response.json({ error: 'unknown server' }, { status: 404 });
+  const token = tokens[mcpName];
+  if (!token) return Response.json({ error: `${mcpName} is not connected` }, { status: 409 });
+  try {
+    return Response.json({ tools: await deps.probeTools(entry.url, token) });
+  } catch (e: unknown) {
+    console.error(`[mcp] tool probe failed for ${mcpName}: ${String(e)}`);
+    return Response.json({ error: `could not list ${mcpName} tools` }, { status: 502 });
+  }
+}

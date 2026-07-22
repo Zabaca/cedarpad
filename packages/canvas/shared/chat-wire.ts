@@ -46,8 +46,9 @@ export type ChatEvent =
   | { kind: 'todo'; todoId: string; subject?: string; todoStatus?: TodoStatus }
   | { kind: 'done'; sessionId: string | null; costUsd: number; error?: string; contextPct?: number }
   // Server-owned per-chat config (ADR 0004): broadcast when a tab POSTs a model/effort/fork
-  // change, so every open tab converges. Also carried in the rehydration GET's `config`.
-  | { kind: 'config'; model?: string; effort?: string; forkNext?: boolean };
+  // change (or the per-chat MCP selection), so every open tab converges. Also carried in the
+  // rehydration GET's `config`.
+  | { kind: 'config'; model?: string; effort?: string; forkNext?: boolean; mcp?: { disabledServers: string[]; disabledTools: Record<string, string[]> } };
 
 /**
  * The on-wire shape: a {@link ChatEvent} tagged with the chat it belongs to. The

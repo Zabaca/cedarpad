@@ -53,3 +53,25 @@ describe('encodeMcpTokens / decodeMcpTokens: the shared per-send header contract
     expect(decodeMcpTokens(JSON.stringify(['array', 'not', 'record']))).toEqual({});
   });
 });
+
+describe('per-chat MCP selection (opt-out; default all-on)', () => {
+  test('applyMcpSelection drops disabled servers; absent selection touches nothing', async () => {
+    const { applyMcpSelection } = await import('./mcp-registry.ts');
+    const tokens = { fredrin: 'a', ledgerbot: 'b' };
+    expect(applyMcpSelection(tokens, undefined)).toEqual(tokens);
+    expect(applyMcpSelection(tokens, { disabledServers: [], disabledTools: {} })).toEqual(tokens);
+    expect(applyMcpSelection(tokens, { disabledServers: ['ledgerbot'], disabledTools: {} })).toEqual({ fredrin: 'a' });
+    expect(applyMcpSelection(tokens, { disabledServers: ['ghost'], disabledTools: {} })).toEqual(tokens);
+  });
+
+  test('mcpDisallowedTools names disabled tools of still-ENABLED servers only', async () => {
+    const { mcpDisallowedTools } = await import('./mcp-registry.ts');
+    expect(mcpDisallowedTools(undefined)).toEqual([]);
+    expect(
+      mcpDisallowedTools({
+        disabledServers: ['ledgerbot'],
+        disabledTools: { fredrin: ['deploy', 'delete_repo'], ledgerbot: ['pay'] },
+      }),
+    ).toEqual(['mcp__fredrin__deploy', 'mcp__fredrin__delete_repo']);
+  });
+});

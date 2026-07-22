@@ -46,7 +46,7 @@ afterAll(() => {
   clearTokenImpl = realClearToken;
 });
 
-const { handleMcpTokenApi } = await import('./mcp-tokens-api.ts');
+const { handleMcpTokenApi, handleMcpReadApi } = await import('./mcp-tokens-api.ts');
 
 const user: GateUser = { id: 'u_1' } as GateUser;
 
@@ -111,5 +111,47 @@ describe('handleMcpTokenApi: disconnect (DELETE)', () => {
     workspaceRecord = null;
     expect((await del('ws_someone_elses', 'ledgerbot')).status).toBe(404);
     expect(clearCalls).toEqual([]);
+  });
+});
+
+describe('handleMcpReadApi: member-readable list + tool names (per-chat MCP selection UI)', () => {
+  const READ_DEPS = {
+    registry: { fredrin: { url: 'https://fredrin.example/mcp' }, ledgerbot: { url: 'https://lb.example/mcp' } },
+    tokens: () => Promise.resolve({ fredrin: 'fk_secret' }),
+    probeTools: (url: string, token: string) =>
+      url.includes('fredrin') && token === 'fk_secret'
+        ? Promise.resolve([{ name: 'search' }, { name: 'deploy', description: 'ship it' }])
+        : Promise.reject(new Error('bad probe')),
+  };
+  const get = (workspaceId: string, name?: string) =>
+    handleMcpReadApi(new Request('https://x/y'), {} as never, user, workspaceId, READ_DEPS, name);
+
+  test('a MEMBER lists servers with connected flags — reads grant nothing', async () => {
+    workspaceRecord = { id: 'ws_1', ownerUserId: 'someone_else' };
+    const res = await get('ws_1');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      servers: [
+        { name: 'fredrin', connected: true },
+        { name: 'ledgerbot', connected: false },
+      ],
+    });
+  });
+
+  test('tool names come back for a connected server; the token itself never crosses', async () => {
+    workspaceRecord = { id: 'ws_1', ownerUserId: 'someone_else' };
+    const res = await get('ws_1', 'fredrin');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ tools: [{ name: 'search' }, { name: 'deploy', description: 'ship it' }] });
+    expect(JSON.stringify(body)).not.toContain('fk_secret');
+  });
+
+  test('unknown server 404, unconnected server 409, invisible workspace 404', async () => {
+    workspaceRecord = { id: 'ws_1', ownerUserId: 'u_1' };
+    expect((await get('ws_1', 'nope')).status).toBe(404);
+    expect((await get('ws_1', 'ledgerbot')).status).toBe(409);
+    workspaceRecord = null;
+    expect((await get('ws_hidden')).status).toBe(404);
   });
 });

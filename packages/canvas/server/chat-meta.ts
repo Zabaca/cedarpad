@@ -6,10 +6,12 @@
 // propagates and the caller starts empty.
 
 import { DEFAULT_EFFORT, DEFAULT_MODEL } from '../shared/chat-store.ts';
+import type { McpSelection } from './mcp-registry.ts';
 import type { BlobStore } from './blob-store.ts';
 import type { Persistable } from './persistable.ts';
 
-export type ChatMeta = { sessionId: string | null; model: string; effort: string; forkNext: boolean };
+/** `mcp` is the per-chat opt-out of connected external MCP servers/tools (absent = all on). */
+export type ChatMeta = { sessionId: string | null; model: string; effort: string; forkNext: boolean; mcp?: McpSelection };
 
 const defaults = (): ChatMeta => ({ sessionId: null, model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, forkNext: false });
 

@@ -7,9 +7,126 @@
 import * as React from 'react';
 
 import { requestFork, setActiveChat } from '../src/agent-link';
-import { EFFORTS, ensureSession, getSnapshot, interrupt, MODELS, openStream, type PendingImage, send, setEffort, setModel, subscribe } from './chat-store';
+import { EFFORTS, ensureSession, getSnapshot, interrupt, type McpSelection, MODELS, openStream, type PendingImage, send, setEffort, setMcpSelection, setModel, subscribe } from './chat-store';
 import { useGuestScope } from './guest-scope';
 import { MarkdownMessage } from './MarkdownMessage';
+
+// Per-chat MCP selection (opt-out; default = every connected server/tool on). Server names
+// come from the member-readable edge list; tool names load lazily per server. Any member may
+// toggle — the selection is server-owned ChatMeta, converged across tabs like model/effort.
+function McpPopover({ chatId, mcp }: { chatId: string; mcp: McpSelection | null }) {
+  const [open, setOpen] = React.useState(false);
+  const [servers, setServers] = React.useState<Array<{ name: string; connected: boolean }> | 'error' | null>(null);
+  const [tools, setTools] = React.useState<Record<string, Array<{ name: string }> | 'loading' | 'error'>>({});
+  const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
+  const wsRef = React.useRef<string | null>(null);
+  const sel: McpSelection = mcp ?? { disabledServers: [], disabledTools: {} };
+  const offCount = sel.disabledServers.length + Object.values(sel.disabledTools).reduce((n, t) => n + t.length, 0);
+
+  const toggleOpen = () => {
+    setOpen((v) => !v);
+    if (servers !== null) return;
+    void (async () => {
+      try {
+        const cv = await fetch('/api/canvases', { credentials: 'same-origin' });
+        if (!cv.ok) throw new Error(String(cv.status));
+        const { workspaceId } = (await cv.json()) as { workspaceId: string };
+        wsRef.current = workspaceId;
+        const res = await fetch(`/api/workspaces/${workspaceId}/mcp`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(String(res.status));
+        setServers(((await res.json()) as { servers: Array<{ name: string; connected: boolean }> }).servers);
+      } catch {
+        setServers('error');
+      }
+    })();
+  };
+
+  const expand = (name: string) => {
+    setExpanded((e) => ({ ...e, [name]: !e[name] }));
+    if (tools[name] || !wsRef.current) return;
+    setTools((t) => ({ ...t, [name]: 'loading' }));
+    void fetch(`/api/workspaces/${wsRef.current}/mcp/${encodeURIComponent(name)}/tools`, { credentials: 'same-origin' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(String(res.status));
+        const body = (await res.json()) as { tools: Array<{ name: string }> };
+        setTools((t) => ({ ...t, [name]: body.tools }));
+      })
+      .catch(() => setTools((t) => ({ ...t, [name]: 'error' })));
+  };
+
+  const toggleServer = (name: string, enable: boolean) => {
+    const off = new Set(sel.disabledServers);
+    if (enable) off.delete(name);
+    else off.add(name);
+    setMcpSelection(chatId, { ...sel, disabledServers: [...off] });
+  };
+
+  const toggleTool = (server: string, tool: string, enable: boolean) => {
+    const off = new Set(sel.disabledTools[server] ?? []);
+    if (enable) off.delete(tool);
+    else off.add(tool);
+    const disabledTools = { ...sel.disabledTools };
+    if (off.size === 0) delete disabledTools[server];
+    else disabledTools[server] = [...off];
+    setMcpSelection(chatId, { ...sel, disabledTools });
+  };
+
+  return (
+    <span className="chat-mcp-wrap" onPointerDown={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        className={`chat-mcp-btn${offCount > 0 ? ' chat-mcp-btn-limited' : ''}`}
+        onClick={toggleOpen}
+        title={offCount > 0 ? `MCP tools for this chat (${offCount} turned off)` : 'MCP tools for this chat (all on)'}
+      >
+        mcp
+      </button>
+      {open && (
+        <div className="chat-mcp-pop">
+          {servers === null && <div className="chat-mcp-note">loading…</div>}
+          {servers === 'error' && <div className="chat-mcp-note">unavailable</div>}
+          {Array.isArray(servers) && servers.length === 0 && <div className="chat-mcp-note">no external MCP servers in the registry</div>}
+          {Array.isArray(servers) &&
+            servers.map((s) => {
+              const enabled = !sel.disabledServers.includes(s.name);
+              const t = tools[s.name];
+              return (
+                <div key={s.name} className="chat-mcp-server">
+                  <label className="chat-mcp-row" title={s.connected ? undefined : 'Not connected for this workspace'}>
+                    <input type="checkbox" checked={enabled} disabled={!s.connected} onChange={(e) => toggleServer(s.name, e.target.checked)} />
+                    <span>{s.name}</span>
+                    {!s.connected && <span className="chat-mcp-note">not connected</span>}
+                    {s.connected && (
+                      <button type="button" className="chat-mcp-expand" onClick={() => expand(s.name)} title="Choose individual tools">
+                        {expanded[s.name] ? '▾' : '▸'}
+                      </button>
+                    )}
+                  </label>
+                  {expanded[s.name] && enabled && (
+                    <div className="chat-mcp-tools">
+                      {t === 'loading' && <div className="chat-mcp-note">loading tools…</div>}
+                      {t === 'error' && <div className="chat-mcp-note">could not list tools</div>}
+                      {Array.isArray(t) &&
+                        t.map((tool) => (
+                          <label key={tool.name} className="chat-mcp-row">
+                            <input
+                              type="checkbox"
+                              checked={!(sel.disabledTools[s.name] ?? []).includes(tool.name)}
+                              onChange={(e) => toggleTool(s.name, tool.name, e.target.checked)}
+                            />
+                            <span>{tool.name}</span>
+                          </label>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+      )}
+    </span>
+  );
+}
 
 // `onDock` (optional) renders the dock affordance — only the embedded pad passes it
 // (ChatShape); the Inbox thread and the Shell's own docked panel render without one.
@@ -174,6 +291,7 @@ export function ChatView({ chatId, title, onDock }: { chatId: string; title: str
             </option>
           ))}
         </select>
+        {!guest && <McpPopover chatId={chatId} mcp={snap.mcp} />}
       </div>
       <div className="chat-card-body">
         {Object.keys(snap.tasks).length > 0 && (

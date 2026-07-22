@@ -496,3 +496,66 @@
   opacity: 0.45;
   cursor: default;
 }
+
+/* Per-chat MCP selection popover (opt-out of connected servers/tools) */
+.chat-mcp-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.chat-mcp-btn {
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.chat-mcp-btn-limited {
+  border-color: #d97706;
+  color: #d97706;
+}
+.chat-mcp-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--panel, #fff);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  font-size: 12px;
+}
+.chat-mcp-server + .chat-mcp-server {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+.chat-mcp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.chat-mcp-expand {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.chat-mcp-tools {
+  margin-left: 18px;
+}
+.chat-mcp-note {
+  color: var(--muted);
+  padding: 2px 4px;
+  font-size: 11px;
+}

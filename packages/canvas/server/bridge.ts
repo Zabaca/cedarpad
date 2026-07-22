@@ -30,7 +30,7 @@ import { refreshCheckout, removeCheckout } from './repo-checkout.ts';
 import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
-import { MCP_TOKENS_HEADER, decodeMcpTokens } from './mcp-registry.ts';
+import { MCP_TOKENS_HEADER, McpSelectionSchema, applyMcpSelection, decodeMcpTokens, mcpDisallowedTools } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { isShared, listComponentDetails, listComponents, readComponent, writeComponent, writeDataFile } from './components.ts';
 import { type TurnDeps, runTurn } from './turn.ts';
@@ -582,8 +582,8 @@ export function setTurnRunChat(fn: TurnDeps['runChat']): () => void {
  * Conversation (an inbox reply must never link a chat to the Default canvas by default).
  * `devAgentGitToken` (edge-minted, per dev-agent send) arms the `open_pr` tool for THIS turn
  * only — see prepareDevAgentTurn. The lifecycle itself lives in `server/turn.ts`. */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string, mcpTokens?: Record<string, string>, devAgentRepo?: string, assignTo?: string): void {
-  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo }, turnDeps);
+function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string, mcpTokens?: Record<string, string>, devAgentRepo?: string, assignTo?: string, mcpDisallowed?: string[]): void {
+  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo, mcpDisallowedTools: mcpDisallowed }, turnDeps);
 }
 
 // The dev-agent run's prompt — this IS the workflow now (ADR-0011: the harness dissolved
@@ -1077,8 +1077,11 @@ export async function handleRequest(req: Request): Promise<Response> {
       if (requestCanvasId) chatCanvas.set(chatId, requestCanvasId);
       // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, set by the edge
       // proxy (worker/inbox-bridge.ts, worker/index.ts) on this send only. `server/turn.ts` drops
-      // this for a dev-agent turn regardless — chat flavor only.
-      const mcpTokens = decodeMcpTokens(req.headers.get(MCP_TOKENS_HEADER));
+      // this for a dev-agent turn regardless — chat flavor only. The chat's own MCP selection
+      // (ChatMeta, default all-on) then opts out: a disabled server's token is dropped here, so
+      // it is never even connected; disabled tools ride as SDK disallowedTools.
+      const mcpSelection = chatMeta.get(chatId).mcp;
+      const mcpTokens = applyMcpSelection(decodeMcpTokens(req.headers.get(MCP_TOKENS_HEADER)), mcpSelection);
       // The dev-agent turn's target repo, stamped by the edge proxy beside the token (ADR-0015).
       const devAgentRepo = req.headers.get('x-dev-agent-repo') ?? undefined;
       // The send's HUMAN INITIATOR (shared inbox, CONTEXT.md), stamped by the edge proxies:
@@ -1099,6 +1102,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         guestCanvas ? undefined : mcpTokens,
         guestCanvas ? undefined : devAgentRepo,
         assignTo,
+        guestCanvas ? undefined : mcpDisallowedTools(mcpSelection),
       );
       return json({ ok: true }, 202);
     }
@@ -1108,10 +1112,15 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (configRoute && req.method === 'POST') {
       const chatId = decodeURIComponent(configRoute[1] as string);
       const body = await readBody(req);
-      const patch: { model?: string; effort?: string; forkNext?: boolean } = {};
+      const patch: { model?: string; effort?: string; forkNext?: boolean; mcp?: import('./mcp-registry.ts').McpSelection } = {};
       if (typeof body.model === 'string') patch.model = body.model;
       if (typeof body.effort === 'string') patch.effort = body.effort;
       if (typeof body.forkNext === 'boolean') patch.forkNext = body.forkNext;
+      if (body.mcp !== undefined) {
+        const sel = McpSelectionSchema.safeParse(body.mcp);
+        if (!sel.success) return json({ error: 'invalid mcp selection' }, 400);
+        patch.mcp = sel.data;
+      }
       chatMeta.set(chatId, patch);
       await sink.flush('chatMeta');
       broadcastChat(chatId, { kind: 'config', ...patch } satisfies ChatEvent);
@@ -1143,7 +1152,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const events = meta.sessionId ? await loadSessionTranscript(SESSIONS_DIR, meta.sessionId) : [];
       // `busy`: is a turn in flight for this chat RIGHT NOW (ADR-0011)? A mid-run opener
       // missed the init frame, so rehydrate is how it learns to queue sends instead of 409ing.
-      return json({ config: { model: meta.model, effort: meta.effort, forkNext: meta.forkNext }, events, busy: aborters.has(chatId) });
+      return json({ config: { model: meta.model, effort: meta.effort, forkNext: meta.forkNext, ...(meta.mcp ? { mcp: meta.mcp } : {}) }, events, busy: aborters.has(chatId) });
     }
     // POST /api/chat/:id/interrupt — abort the in-flight turn (Esc / Stop).
     const interruptRoute = /^\/api\/chat\/([^/]+)\/interrupt$/.exec(path);

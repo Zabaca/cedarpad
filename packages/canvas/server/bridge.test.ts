@@ -194,13 +194,13 @@ describe('/api/chat/:id/send: the x-inbox-assign header reaches the dispatched t
 // (pinned in server/turn.test.ts) — here we only pin the header → decode → dispatch wiring.
 describe('/api/chat/:id/send: the x-mcp-tokens header reaches the dispatched turn (decoded)', () => {
   let restore: () => void = () => {};
-  let dispatched: Array<{ chatId: string; mcpTokens?: Record<string, string> }> = [];
+  let dispatched: Array<{ chatId: string; mcpTokens?: Record<string, string>; mcpDisallowed?: string[] }> = [];
 
   beforeEach(() => {
     dispatched = [];
     chatClients.add(fakeSubscriber());
-    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, _devAgentGitToken, mcpTokens) => {
-      dispatched.push({ chatId, mcpTokens });
+    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, _devAgentGitToken, mcpTokens, _repo, _assign, mcpDisallowed) => {
+      dispatched.push({ chatId, mcpTokens, ...(mcpDisallowed && mcpDisallowed.length > 0 ? { mcpDisallowed } : {}) });
     });
   });
 
@@ -240,6 +240,38 @@ describe('/api/chat/:id/send: the x-mcp-tokens header reaches the dispatched tur
 
     expect(res.status).toBe(202);
     expect(dispatched).toEqual([{ chatId: 'chat_bad_mcp', mcpTokens: {} }]);
+  });
+
+  test('the chat’s stored MCP selection opts out: disabled servers dropped at the send, disabled tools ride as disallowed names', async () => {
+    const cfg = await handleRequest(
+      new Request('http://localhost/api/chat/chat_sel/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mcp: { disabledServers: ['ledgerbot'], disabledTools: { fredrin: ['deploy'] } } }),
+      }),
+    );
+    expect(cfg.status).toBe(200);
+
+    const res = await handleRequest(
+      new Request('http://localhost/api/chat/chat_sel/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-mcp-tokens': JSON.stringify({ ledgerbot: 'tok_a', fredrin: 'tok_f' }) },
+        body: JSON.stringify({ message: 'go' }),
+      }),
+    );
+    expect(res.status).toBe(202);
+    expect(dispatched).toEqual([{ chatId: 'chat_sel', mcpTokens: { fredrin: 'tok_f' }, mcpDisallowed: ['mcp__fredrin__deploy'] }]);
+  });
+
+  test('a garbage MCP selection on /config is a 400 — nothing stored', async () => {
+    const res = await handleRequest(
+      new Request('http://localhost/api/chat/chat_sel2/config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mcp: { disabledServers: 'ledgerbot' } }),
+      }),
+    );
+    expect(res.status).toBe(400);
   });
 });
 

@@ -19,13 +19,15 @@ import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 import { coordsForWorkspace, handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
-import { handleMcpTokenApi } from './mcp-tokens-api.ts';
+import { handleMcpReadApi, handleMcpTokenApi } from './mcp-tokens-api.ts';
+import { probeMcpTools } from './mcp-probe.ts';
+import { MCP_REGISTRY } from '../server/mcp-registry.ts';
 import { handleShareLinksApi } from './share-links-api.ts';
 import { handleShareAccept, readGuestSession } from './guest-session.ts';
 import { decideGuestGate } from './guest-gate.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
-import { IS_CHAT_SEND, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
+import { IS_CHAT_SEND, effectiveMcpTokens, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
   DEFAULT_CANVAS_ID,
@@ -516,6 +518,19 @@ export default {
     const mcpTokenApiMatch = /^\/api\/workspaces\/([^/]+)\/mcp\/([^/]+)\/token$/.exec(url.pathname);
     if (mcpTokenApiMatch) {
       return handleMcpTokenApi(request, env, user, mcpTokenApiMatch[1] as string, mcpTokenApiMatch[2] as string);
+    }
+    // Member-readable MCP reads (per-chat selection UI): registry list + a server's tool
+    // names. The token stays at the edge; only names cross to the browser.
+    const mcpReadApiMatch = /^\/api\/workspaces\/([^/]+)\/mcp(?:\/([^/]+)\/tools)?$/.exec(url.pathname);
+    if (mcpReadApiMatch) {
+      return handleMcpReadApi(
+        request,
+        env,
+        user,
+        mcpReadApiMatch[1] as string,
+        { registry: MCP_REGISTRY, tokens: effectiveMcpTokens, probeTools: probeMcpTools },
+        mcpReadApiMatch[2],
+      );
     }
 
     // Jobs trigger: run the dev-agent NOW on demand (Jobs stage "Run now" / API). Auth-gated (we're

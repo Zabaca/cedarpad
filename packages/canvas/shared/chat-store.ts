@@ -30,9 +30,14 @@ export interface ChatSnapshot {
   effort: string; // reasoning effort for this chat ('default' = omit, let the model decide)
   contextPct: number | null; // % of the model's context window used on the last turn
   forkNext: boolean; // one-shot: when true, the next turn forks the parent's SDK session instead of resuming it
+  mcp: McpSelection | null; // per-chat MCP opt-outs (server-owned, like model); null = all connected servers/tools on
   tasks: Record<string, TaskInfo>; // in-flight background jobs (keyed by task_id); ephemeral, not persisted
   todos: Record<string, TodoInfo>; // the agent's TaskCreate/TaskUpdate plan (keyed by todo id); ephemeral
 }
+
+/** Per-chat MCP opt-out selection (mirrors server/mcp-registry.ts McpSelection — the
+ *  shared shape rides ChatEvent 'config' frames and the /config POST). */
+export type McpSelection = { disabledServers: string[]; disabledTools: Record<string, string[]> };
 
 // Models offered in the chat card's selector. Aliases the Claude Agent SDK resolves.
 export const MODELS = ['sonnet', 'opus', 'haiku'] as const;
@@ -69,7 +74,7 @@ export interface PendingImage {
   dataUrl: string;
 }
 
-const EMPTY: ChatSnapshot = { items: [], sdk: null, busy: false, status: '', subscribed: false, queue: [], model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, contextPct: null, forkNext: false, tasks: {}, todos: {} };
+const EMPTY: ChatSnapshot = { items: [], sdk: null, busy: false, status: '', subscribed: false, queue: [], model: DEFAULT_MODEL, effort: DEFAULT_EFFORT, contextPct: null, forkNext: false, mcp: null, tasks: {}, todos: {} };
 
 const sessions = new Map<string, ChatSnapshot>();
 const listeners = new Map<string, Set<() => void>>();
@@ -186,7 +191,7 @@ async function rehydrate(chatId: string): Promise<void> {
   try {
     const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/transcript`), { headers: chatHeaders(chatId) });
     if (!res.ok) return;
-    const { config, events, busy } = (await res.json()) as { config?: { model?: string; effort?: string; forkNext?: boolean }; events?: ChatEvent[]; busy?: boolean };
+    const { config, events, busy } = (await res.json()) as { config?: { model?: string; effort?: string; forkNext?: boolean; mcp?: McpSelection }; events?: ChatEvent[]; busy?: boolean };
     clearBubbles(chatId);
     update(chatId, (s) => ({
       ...s,
@@ -194,6 +199,7 @@ async function rehydrate(chatId: string): Promise<void> {
       ...(config?.model ? { model: config.model } : {}),
       ...(config?.effort ? { effort: config.effort } : {}),
       ...(typeof config?.forkNext === 'boolean' ? { forkNext: config.forkNext } : {}),
+      ...(config?.mcp ? { mcp: config.mcp } : {}),
       // A turn is in flight server-side (ADR-0011): a mid-run opener missed the init frame,
       // so this is how it learns to queue sends. Only ever raises busy — a rehydrate racing
       // a just-settled turn must not clear a busy this tab's own dispatch set.
@@ -321,7 +327,15 @@ export function setEffort(chatId: string, effort: string): void {
   void postConfig(chatId, { effort });
 }
 
-function postConfig(chatId: string, patch: { model?: string; effort?: string; forkNext?: boolean }): Promise<unknown> {
+/** Set this chat's MCP opt-out selection (server-owned, same as setModel — anyone on the
+ *  chat may change it; tabs converge via the `config` frame). */
+export function setMcpSelection(chatId: string, mcp: McpSelection): void {
+  ensureSession(chatId);
+  update(chatId, { mcp });
+  void postConfig(chatId, { mcp });
+}
+
+function postConfig(chatId: string, patch: { model?: string; effort?: string; forkNext?: boolean; mcp?: McpSelection }): Promise<unknown> {
   return fetch(bridgeUrl(chatId, `/api/chat/${chatId}/config`), { method: 'POST', headers: chatHeaders(chatId, { 'content-type': 'application/json' }), body: JSON.stringify(patch) }).catch(() => {});
 }
 
@@ -411,6 +425,7 @@ function applyEvent(chatId: string, ev: ChatEvent) {
       ...(ev.model ? { model: ev.model } : {}),
       ...(ev.effort ? { effort: ev.effort } : {}),
       ...(typeof ev.forkNext === 'boolean' ? { forkNext: ev.forkNext } : {}),
+      ...(ev.mcp ? { mcp: ev.mcp } : {}),
     }));
   } else if (ev.kind === 'tool_start') {
     if (!ev.parentId) update(chatId, { status: `running ${ev.name}` }); // a subagent's tool_start must not hijack the main status line

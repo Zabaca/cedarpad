@@ -552,6 +552,9 @@ export async function* runChat(
   // Cross-chat messaging seam (bridge-bound: ChatMeta + the turn dispatcher). Present ⇒ the
   // agent gets a `send_message` tool targeting other chat cards on this canvas.
   sendToChat?: SendToChat,
+  // Per-chat MCP tool opt-outs (`mcp__<server>__<tool>`, from the chat's ChatMeta selection):
+  // appended to disallowedTools so a de-selected tool never reaches the model this turn.
+  mcpToolOptOuts?: string[],
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn; end_turn reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
@@ -585,7 +588,7 @@ export async function* runChat(
       append: CANVAS_APPEND + reposPromptAppend(process.env.CANVAS_CWD ?? process.cwd()),
     },
     tools: { type: 'preset' as const, preset: 'claude_code' as const }, // all built-in tools (Bash, Read, Write, Edit, Web*, Task...)
-    ...(kind === 'chat' ? { disallowedTools: ['Write', 'Edit', 'NotebookEdit'] } : {}),
+    ...(kind === 'chat' ? { disallowedTools: ['Write', 'Edit', 'NotebookEdit', ...(mcpToolOptOuts ?? [])] } : {}),
     // Load user + project .claude config (ADR-0013): 'user' discovers platform skills (baked
     // at the container's ~/.claude/skills), 'project' discovers workspace skills (the
     // package's .claude/skills, synced via skills.tar). Discovery and enable are two stages:

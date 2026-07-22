@@ -41,6 +41,10 @@ export interface TurnInput {
    * x-inbox-assign header: assigns the Conversation at birth / claims-if-unassigned on a
    * reply. Absent on unattended (cron) kicks ⇒ the row stays in the unassigned queue. */
   assignTo?: string;
+  /** Per-chat MCP tool opt-outs (`mcp__<server>__<tool>` names) from the chat's ChatMeta
+   * selection — appended to the SDK disallowedTools for chat turns. Wholly-disabled servers
+   * never appear here; their tokens were already dropped at the send. */
+  mcpDisallowedTools?: string[];
 }
 
 /** The stable collaborators a turn sequences. bridge.ts binds each to its singleton; every one
@@ -106,7 +110,7 @@ export interface TurnDeps {
  * first await) so a concurrent /send sees the in-flight turn.
  */
 export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<void> {
-  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo } = input;
+  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo, mcpDisallowedTools } = input;
   const ac = new AbortController();
   deps.aborters.set(chatId, ac);
   const flavor = deps.flavor(devAgentGitToken);
@@ -150,6 +154,8 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // Cross-chat messaging is a CANVAS capability — chat turns only (a dev-agent turn has no
       // chat cards to address).
       flavor.kind === 'chat' ? deps.sendToChat : undefined,
+      // Per-chat MCP tool opt-outs — meaningful for chat turns only (dev-agent has no MCP).
+      flavor.kind === 'chat' ? mcpDisallowedTools : undefined,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
       // Row-at-start: index the session the moment its id lands (the init event). Tracked (not
