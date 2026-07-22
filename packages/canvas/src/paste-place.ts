@@ -62,7 +62,27 @@ export function wirePasteCapture(editor: Editor): () => void {
     const ae = doc.activeElement as HTMLElement | null;
     if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
     const dt = e.clipboardData;
-    if (!dt || dt.types.includes('text/html') || dt.types.includes('Files')) return;
+    if (!dt) return;
+    // Files on the clipboard (Finder copy → paste): same claim rule as the drop
+    // hook — ours only when EVERY file is a structured type; images etc. stay
+    // with tldraw. Without this, pasting a .html/.csv file hits tldraw's
+    // "filetype not supported" toast while dropping the same file works.
+    const files = [...dt.files];
+    if (files.length > 0) {
+      if (!files.every((f) => STRUCTURED_FILE_RE.test(f.name))) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      editor.markHistoryStoppingPoint('paste');
+      const p = editor.getViewportPageBounds().center;
+      files.forEach((f, i) => {
+        void f.text().then((text) => {
+          const d = detectFromFile(f.name, text);
+          if (d) placeDetected(editor, d, { x: p.x + i * 24, y: p.y + i * 24 });
+        });
+      });
+      return;
+    }
+    if (dt.types.includes('text/html')) return;
     const d = detectJson(dt.getData('text/plain'));
     if (!d) return;
     e.preventDefault();
