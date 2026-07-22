@@ -4,6 +4,11 @@ import { describe, expect, test } from 'bun:test';
 // fresh dynamic imports with the env var toggled around each import — the module-level
 // MCP_REGISTRY constant is what a missing env var must degrade, never throw.
 describe('MCP_REGISTRY: a missing token/env means "not connected", never a failure', () => {
+  test('fredrin is a permanent reviewed entry (literal URL, bearer)', async () => {
+    const { MCP_REGISTRY } = await import(`./mcp-registry.ts?fredrin=${Date.now()}`);
+    expect(MCP_REGISTRY.fredrin).toEqual({ url: 'https://www.fredrin.com/api/mcp', auth: 'bearer' });
+  });
+
   test('LEDGERBOT_MCP_URL unset ⇒ no ledgerbot entry at all', async () => {
     const prev = process.env.LEDGERBOT_MCP_URL;
     delete process.env.LEDGERBOT_MCP_URL;

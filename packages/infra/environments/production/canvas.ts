@@ -64,6 +64,9 @@ export default cloudflareModule.instance({
       // Per-repo PAT sealing key (ADR-0016, worker/secret-box.ts) — edge-only; the
       // container sees opened tokens transiently per turn/fetch, never this key.
       'REPO_TOKEN_KEY',
+      // fredrin MCP bearer (ADR-0013 train 2) — edge-only; rides each chat send as the
+      // x-mcp-tokens header, never container env.
+      'FREDRIN_KEY',
     ],
     // Single always-warm DO-bound container; the gradual default never drains it,
     // so a redeployed image would silently never take effect. Roll immediately.

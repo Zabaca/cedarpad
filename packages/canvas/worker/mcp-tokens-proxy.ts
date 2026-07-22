@@ -16,7 +16,12 @@ export const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
  * request passes through untouched (no header, no connection attempt).
  */
 export async function withMcpTokensHeader(request: Request, env: Env, workspaceId: string): Promise<Request> {
-  const tokens = await listTokens(createDbForWorker(env as unknown as Bindings), workspaceId);
+  const stored = await listTokens(createDbForWorker(env as unknown as Bindings), workspaceId);
+  // Env fallback for the DEFAULT workspace only, mirroring the GitHub installation fallback
+  // (github-connection.ts): FREDRIN_KEY provisioned as a worker secret connects `fredrin`
+  // there until a real per-workspace token row exists — a stored row wins over the env.
+  const tokens =
+    workspaceId === 'default' && env.FREDRIN_KEY ? { fredrin: env.FREDRIN_KEY, ...stored } : stored;
   if (Object.keys(tokens).length === 0) return request;
   const proxied = new Request(request.url, request);
   proxied.headers.set(MCP_TOKENS_HEADER, encodeMcpTokens(tokens));

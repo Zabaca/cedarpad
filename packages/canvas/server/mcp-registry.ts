@@ -26,6 +26,11 @@ export interface McpRegistryEntry {
  * `ledgerbot` (zabaca/ceo, the ADR's first consumer): guarded by its own URL env var so an
  * unconfigured deploy simply has no ledgerbot entry (not a broken one). */
 export const MCP_REGISTRY: Readonly<Record<string, McpRegistryEntry>> = {
+  // fredrin (fredrin.com, the agentic development environment): public stable URL, so it's a
+  // reviewed literal — no env plumbing. Bearer: the platform token rides the edge as the
+  // FREDRIN_KEY worker secret (default-workspace fallback, worker/mcp-tokens-proxy.ts) until
+  // a per-workspace token row replaces it.
+  fredrin: { url: 'https://www.fredrin.com/api/mcp', auth: 'bearer' },
   ...(process.env.LEDGERBOT_MCP_URL ? { ledgerbot: { url: process.env.LEDGERBOT_MCP_URL, auth: 'bearer' } } : {}),
 };
 

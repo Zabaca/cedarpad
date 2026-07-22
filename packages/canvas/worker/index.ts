@@ -93,6 +93,10 @@ export interface Env {
   // From workerSecrets. Unset ⇒ PAT repos can't be added and stored PATs can't be opened
   // (their repos degrade to unreachable); installation repos are unaffected.
   REPO_TOKEN_KEY?: string;
+  // Bearer token for the `fredrin` MCP registry entry (ADR-0013 train 2): default-workspace
+  // env fallback attached per chat send (worker/mcp-tokens-proxy.ts). Unset ⇒ fredrin is
+  // simply not connected; a stored per-workspace token row overrides it.
+  FREDRIN_KEY?: string;
   // The single-tenant owner of everything the bridge files under a user id (Inbox
   // Conversations via `ask_human`, the dev-agent's promoted items): must be this
   // deployment's Better Auth user.id, NOT an email or display name — the Inbox query

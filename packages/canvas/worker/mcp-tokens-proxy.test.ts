@@ -32,6 +32,22 @@ describe('withMcpTokensHeader', () => {
     expect(out).toBe(req);
     expect(out.headers.get('x-mcp-tokens')).toBeNull();
   });
+
+  test('FREDRIN_KEY connects fredrin for the DEFAULT workspace only (env fallback)', async () => {
+    const env = { FREDRIN_KEY: 'fk_secret' } as never;
+    const def = await withMcpTokensHeader(new Request('https://x/api/chat/c1/send', { method: 'POST' }), env, 'default');
+    expect(def.headers.get('x-mcp-tokens')).toBe(JSON.stringify({ fredrin: 'fk_secret' }));
+
+    const other = await withMcpTokensHeader(new Request('https://x/api/chat/c1/send', { method: 'POST' }), env, 'ws_1');
+    expect(other.headers.get('x-mcp-tokens')).toBeNull();
+  });
+
+  test('a stored per-workspace fredrin token wins over the env fallback', async () => {
+    tokens = { fredrin: 'tok_db' };
+    const env = { FREDRIN_KEY: 'fk_secret' } as never;
+    const out = await withMcpTokensHeader(new Request('https://x/api/chat/c1/send', { method: 'POST' }), env, 'default');
+    expect(JSON.parse(out.headers.get('x-mcp-tokens') ?? '{}')).toEqual({ fredrin: 'tok_db' });
+  });
 });
 
 describe('IS_CHAT_SEND', () => {
