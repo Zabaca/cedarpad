@@ -13,7 +13,7 @@
 
 import type { TLShape, TLShapePartial, TLShapeId } from 'tldraw';
 
-import { SHAPE_COLORS } from './shapes';
+import { SHAPE_COLORS, SHAPE_SIZE_DEFAULTS } from './shapes';
 import type { CanvasShape, ComponentStatus, ShapeColor } from './shapes';
 
 const KNOWN = new Set<string>(SHAPE_COLORS);
@@ -209,8 +209,8 @@ function decodeFromTldraw(
         type: isEllipse ? 'ellipse' : 'rectangle',
         x: shape.x,
         y: shape.y,
-        w: Number(p.w ?? 100),
-        h: Number(p.h ?? 100),
+        w: Number(p.w ?? SHAPE_SIZE_DEFAULTS.rectangle.w),
+        h: Number(p.h ?? SHAPE_SIZE_DEFAULTS.rectangle.h),
         color,
         text: ctx.plaintext,
       };
@@ -249,8 +249,8 @@ function decodeFromTldraw(
         type: 'component',
         x: shape.x,
         y: shape.y,
-        w: Number(p.w ?? 360),
-        h: Number(p.h ?? 260),
+        w: Number(p.w ?? SHAPE_SIZE_DEFAULTS.component.w),
+        h: Number(p.h ?? SHAPE_SIZE_DEFAULTS.component.h),
         module: String(p.module ?? 'Missing'),
         data: (p.data ?? {}) as Record<string, unknown>,
         rev: Number(p.rev ?? 0),
@@ -266,8 +266,8 @@ function decodeFromTldraw(
         type: 'chat',
         x: shape.x,
         y: shape.y,
-        w: Number(p.w ?? 380),
-        h: Number(p.h ?? 460),
+        w: Number(p.w ?? SHAPE_SIZE_DEFAULTS.chat.w),
+        h: Number(p.h ?? SHAPE_SIZE_DEFAULTS.chat.h),
         title: String(p.title ?? 'Chat'),
         // '' is the tldraw-props encoding of "no override" — drop it so the model stays
         // byte-stable with pre-chatId docs and canvas-born cards.
@@ -280,8 +280,8 @@ function decodeFromTldraw(
         type: 'frame',
         x: shape.x,
         y: shape.y,
-        w: Number(p.w ?? 320),
-        h: Number(p.h ?? 240),
+        w: Number(p.w ?? SHAPE_SIZE_DEFAULTS.frame.w),
+        h: Number(p.h ?? SHAPE_SIZE_DEFAULTS.frame.h),
         name: String(p.name ?? ''),
         color,
       };
@@ -293,8 +293,8 @@ function decodeFromTldraw(
         type: 'image',
         x: shape.x,
         y: shape.y,
-        w: Number(p.w ?? 100),
-        h: Number(p.h ?? 100),
+        w: Number(p.w ?? SHAPE_SIZE_DEFAULTS.image.w),
+        h: Number(p.h ?? SHAPE_SIZE_DEFAULTS.image.h),
         src: ctx.imageSrc ?? '',
         alt: String(p.altText ?? ''),
         color,
@@ -311,8 +311,8 @@ function decodeFromTldraw(
         type: 'embed',
         x: shape.x,
         y: shape.y,
-        w: Number(p.w ?? 480),
-        h: Number(p.h ?? 270),
+        w: Number(p.w ?? SHAPE_SIZE_DEFAULTS.embed.w),
+        h: Number(p.h ?? SHAPE_SIZE_DEFAULTS.embed.h),
         url: String(p.url ?? ''),
         color,
       };

@@ -209,6 +209,25 @@ export type ShapeType = CanvasShape['type'];
 /** Types an agent is allowed to author. Freehand `draw` is human-only. */
 export const AGENT_DRAWABLE_TYPES = ['rectangle', 'ellipse', 'text', 'note', 'arrow', 'component'] as const;
 
+/**
+ * Default box size (w × h) per shape type — the single source of truth for the
+ * dimensions a shape gets when width/height are omitted. Consulted by BOTH the
+ * create/validate path (`normalize.ts`) and the tldraw decode fallback
+ * (`tldraw-conventions.ts` `decodeFromTldraw`). These defaults previously lived
+ * inline in each place and had silently drifted — `rectangle` was `160×100` on
+ * create but `100×100` on decode. Only box shapes appear here; `text`/`note`/
+ * `arrow`/`draw` carry no width/height.
+ */
+export const SHAPE_SIZE_DEFAULTS = {
+  rectangle: { w: 160, h: 100 },
+  ellipse: { w: 160, h: 100 },
+  component: { w: 360, h: 260 },
+  chat: { w: 380, h: 460 },
+  image: { w: 100, h: 100 },
+  frame: { w: 320, h: 240 },
+  embed: { w: 480, h: 270 },
+} as const satisfies Partial<Record<ShapeType, { w: number; h: number }>>;
+
 export interface CanvasState {
   /** Monotonic counter, bumped on every mutation. Drives client reconciliation. */
   version: number;
