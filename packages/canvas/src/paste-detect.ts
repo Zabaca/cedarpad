@@ -8,6 +8,7 @@ export type DetectedPaste =
   | { kind: 'json'; value: unknown }
   | { kind: 'markdown'; md: string }
   | { kind: 'mermaid'; chart: string }
+  | { kind: 'html'; html: string }
   | { kind: 'code'; code: string; lang?: string };
 
 /** A clipboard source item as tldraw hands them to external-content handlers. */
@@ -163,15 +164,31 @@ export function detectMermaid(text: string): DetectedPaste | null {
   return MERMAID_RE.test(first) ? { kind: 'mermaid', chart: text.trim() } : null;
 }
 
-/** A paste that is exactly one fenced code block: ```mermaid → diagram, any
- * other lang → code card. (Fences inside a longer text read as markdown.) */
+/** A paste that is exactly one fenced code block: ```mermaid → diagram, ```html
+ * → live html card, any other lang → code card. (Fences inside a longer text
+ * read as markdown.) */
 function detectFence(text: string): DetectedPaste | null {
   const m = text.trim().match(/^```([\w-]*)[ \t]*\n([\s\S]*?)\n?```$/);
   if (!m) return null;
   const [, lang = '', code = ''] = m;
   if (!code.trim()) return null;
   if (lang === 'mermaid') return { kind: 'mermaid', chart: code };
+  if (lang === 'html' || lang === 'htm') return { kind: 'html', html: code };
   return { kind: 'code', code, ...(lang ? { lang } : {}) };
+}
+
+/** Pasted HTML SOURCE (the plain text is markup — from an editor, a view-source,
+ * an LLM reply), not a rich-text copy: a rendered-page copy carries tags only in
+ * the clipboard's html item while its plain text is prose, so it never lands
+ * here. Claims a full document (doctype/<html>) outright; a fragment needs a
+ * real open tag AND a matching close tag, so `<hello>` prose stays text. */
+export function detectHtml(text: string): DetectedPaste | null {
+  const t = text.trim();
+  if (!t.startsWith('<')) return null;
+  if (/^<!doctype html/i.test(t) || /^<html[\s>]/i.test(t)) return { kind: 'html', html: t };
+  const open = /^<([a-zA-Z][\w-]*)[\s>/]/.exec(t);
+  if (!open) return null;
+  return new RegExp(`</[a-zA-Z][\\w-]*>`).test(t) && /<\w[^>]*>[\s\S]*<\/\w/.test(t) ? { kind: 'html', html: t } : null;
 }
 
 /** Markdown wants a strong signal: a heading, three-plus list lines, a pipe
@@ -202,13 +219,16 @@ export function detectFromFile(name: string, text: string): DetectedPaste | null
     case 'mmd':
     case 'mermaid':
       return { kind: 'mermaid', chart: text.trim() };
+    case 'html':
+    case 'htm':
+      return { kind: 'html', html: text };
     default:
       return null;
   }
 }
 
 /** Extensions the drop hook claims; anything else stays with tldraw. */
-export const STRUCTURED_FILE_RE = /\.(csv|tsv|json|md|markdown|mmd|mermaid)$/i;
+export const STRUCTURED_FILE_RE = /\.(csv|tsv|json|md|markdown|mmd|mermaid|html|htm)$/i;
 
 /** A `<table>` in pasted rich text (Sheets/Excel/Numbers all put one on the
  * clipboard). `<th>` cells mark an explicit header row; otherwise the same
@@ -249,6 +269,7 @@ export function detectPaste(input: { text: string; html?: string; sources?: Read
   if (!text.trim()) return null;
   return (
     detectFence(text) ??
+    detectHtml(text) ??
     detectMermaid(text) ??
     detectJson(text) ??
     detectDelimited(text) ??

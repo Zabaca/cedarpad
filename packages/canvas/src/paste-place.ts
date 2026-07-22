@@ -18,6 +18,11 @@ export function detectedShapeSpec(d: DetectedPaste): { module: string; data: Rec
     return { module: 'DataTable', data: { columns: d.columns, rows: d.rows, ...(d.totalRows ? { totalRows: d.totalRows } : {}) }, w, h };
   }
   if (d.kind === 'mermaid') return { module: 'MermaidDiagram', data: { chart: d.chart }, w: 480, h: 380 };
+  if (d.kind === 'html') {
+    // A full document usually wants room; a fragment less so.
+    const full = /^\s*(<!doctype|<html)/i.test(d.html);
+    return { module: 'HtmlCard', data: { html: d.html }, w: full ? 720 : 520, h: full ? 540 : 400 };
+  }
   if (d.kind === 'markdown') {
     const lines = d.md.split('\n').length;
     return { module: 'MarkdownCard', data: { markdown: d.md }, w: 460, h: Math.round(Math.min(560, Math.max(200, lines * 20 + 40))) };

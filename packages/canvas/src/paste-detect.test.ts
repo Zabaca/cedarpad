@@ -141,6 +141,39 @@ describe('detectPaste: mermaid / code / markdown', () => {
   });
 });
 
+describe('detectPaste: HTML source', () => {
+  test('a full document (doctype or <html>) becomes an html card', () => {
+    const doc = '<!DOCTYPE html>\n<html><body><h1>Hi</h1></body></html>';
+    expect(detectPaste({ text: doc })).toEqual({ kind: 'html', html: doc });
+    expect(detectPaste({ text: '<html>\n<body>x</body>\n</html>' })?.kind).toBe('html');
+  });
+
+  test('a fragment with real open+close tags becomes an html card', () => {
+    const frag = '<div class="hero">\n  <h1>Title</h1>\n  <p>Copy</p>\n</div>';
+    expect(detectPaste({ text: frag })).toEqual({ kind: 'html', html: frag });
+  });
+
+  test('an ```html fence renders live instead of becoming a code card', () => {
+    expect(detectPaste({ text: '```html\n<div><b>hi</b></div>\n```' })).toEqual({ kind: 'html', html: '<div><b>hi</b></div>' });
+  });
+
+  test('angle-bracket prose, lone tags, and xml declarations are NOT html cards', () => {
+    expect(detectPaste({ text: 'i <3 canvases\nand <you> too' })).toBeNull();
+    expect(detectPaste({ text: '<hello>' })).toBeNull();
+    expect(detectPaste({ text: '<?xml version="1.0"?>\n<note><to>x</to></note>' })?.kind).not.toBe('html');
+  });
+
+  test('a rendered rich-text copy (visible text has no tags) is untouched', () => {
+    // Copying styled prose from a web page: clipboard html exists, plain text is prose.
+    expect(detectPaste({ text: 'Just some copied prose.', html: '<p style="x">Just some copied prose.</p>' })).toBeNull();
+  });
+
+  test('a rich paste containing a real <table> still wins as a DataTable', () => {
+    const html = '<table><tr><th>name</th><th>rev</th></tr><tr><td>Acme</td><td>100</td></tr></table>';
+    expect(detectPaste({ text: 'name\trev\nAcme\t100', html })?.kind).toBe('table');
+  });
+});
+
 describe('detectFromFile (drops)', () => {
   test('csv and tsv files become tables even below the paste thresholds', () => {
     expect(detectFromFile('data.csv', 'name,rev\nAcme,100')?.kind).toBe('table');
@@ -156,5 +189,10 @@ describe('detectFromFile (drops)', () => {
     expect(detectFromFile('notes.md', 'plain prose, no markers')).toEqual({ kind: 'markdown', md: 'plain prose, no markers' });
     expect(detectFromFile('flow.mmd', 'flowchart LR\nA-->B')?.kind).toBe('mermaid');
     expect(detectFromFile('pic.png', 'binary-ish')).toBeNull();
+  });
+
+  test('html files map by extension — no content heuristics needed', () => {
+    expect(detectFromFile('page.html', '<h1>x</h1>')).toEqual({ kind: 'html', html: '<h1>x</h1>' });
+    expect(detectFromFile('page.htm', 'anything')?.kind).toBe('html');
   });
 });

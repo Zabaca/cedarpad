@@ -29,4 +29,13 @@ describe('detectedShapeSpec', () => {
     expect(spec.module).toBe('JsonCard');
     expect(spec.data).toEqual({ value: { a: 1 } });
   });
+
+  test('html maps to HtmlCard; a full document gets the larger frame', () => {
+    const frag = detectedShapeSpec({ kind: 'html', html: '<div><b>hi</b></div>' });
+    expect(frag.module).toBe('HtmlCard');
+    expect(frag.data).toEqual({ html: '<div><b>hi</b></div>' });
+    const doc = detectedShapeSpec({ kind: 'html', html: '<!DOCTYPE html><html><body>x</body></html>' });
+    expect(doc.w).toBeGreaterThan(frag.w);
+    expect(doc.h).toBeGreaterThan(frag.h);
+  });
 });
