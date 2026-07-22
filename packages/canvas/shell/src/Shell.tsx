@@ -538,6 +538,13 @@ function CanvasStage({ registry }: { registry: Registry }) {
   const [dockWidth, setDockWidth] = useState(() => parseDockWidth(localStorage.getItem(DOCK_WIDTH_KEY)));
   const startDockResize = (e: React.PointerEvent) => {
     e.preventDefault();
+    // The pad iframe next door swallows pointer events the moment the cursor
+    // crosses into it: the drag freezes unless moved slowly, and a release over
+    // the iframe never reaches this document (the divider "sticks" to the
+    // cursor). Pointer capture pins the whole stream to the divider element —
+    // captured events retarget there and bubble to these document listeners —
+    // so what's under the cursor stops mattering.
+    e.currentTarget.setPointerCapture(e.pointerId);
     const startX = e.clientX;
     const startWidth = dockWidth;
     const onMove = (ev: PointerEvent) => {
@@ -546,6 +553,7 @@ function CanvasStage({ registry }: { registry: Registry }) {
     const onUp = () => {
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
       setDockWidth((w) => {
         localStorage.setItem(DOCK_WIDTH_KEY, String(w));
         return w;
@@ -553,6 +561,7 @@ function CanvasStage({ registry }: { registry: Registry }) {
     };
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
   };
 
   useEffect(() => {
