@@ -155,7 +155,7 @@ export default function MarkdownCard({ title, markdown = '', accent = '#4a9eff' 
         )}
         <div ref={scrollRef} style={{flex:1,overflowY:'auto',padding:'12px 14px',minWidth:0,position:'relative'}}>
           {blocks.map((b, idx) => b.t === 'h'
-            ? React.cloneElement(renderBlock(b, idx) as React.ReactElement, { ref: (el: HTMLElement | null) => {
+            ? React.cloneElement(renderBlock(b, idx) as React.ReactElement<{ ref?: React.Ref<HTMLElement> }>, { ref: (el: HTMLElement | null) => {
                 if (el) headingRefs.current.set(idx, el); else headingRefs.current.delete(idx);
               } })
             : renderBlock(b, idx))}
