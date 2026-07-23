@@ -466,7 +466,11 @@ export default {
         user,
         wsId,
         githubMatch[2] as 'connect' | 'repos' | 'external' | 'refresh' | 'public' | undefined,
-        { nowMs: Date.now(), pushRefresh: (repo, token) => pushCheckoutRefresh(env, wsId, repo, token) },
+        {
+          nowMs: Date.now(),
+          pushRefresh: (repo, token) => pushCheckoutRefresh(env, wsId, repo, token),
+          waitUntil: (p) => ctx.waitUntil(p),
+        },
       );
     }
     if (url.pathname === '/api/github/setup') {

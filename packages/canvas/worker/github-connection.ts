@@ -270,6 +270,9 @@ export async function handleGithubApi(
      *  The token rides a header, transient — the bridge scrubs it after the fetch.
      *  Public repos push token-less (the checkout clones the public HTTPS remote). */
     pushRefresh?: (repoFullName: string, token?: string) => Promise<Response>;
+    /** ctx.waitUntil — the post-add checkout seed MUST ride it: a floating promise is
+     *  killed when the Worker response returns, so the clone silently never happened. */
+    waitUntil?: (p: Promise<unknown>) => void;
   },
 ): Promise<Response> {
   const ws = await getWorkspace(database, workspaceId, user.id);
@@ -316,11 +319,12 @@ export async function handleGithubApi(
     }
     await addPublicRepo(database, { workspaceId: ws.id, fullName, addedByUserId: user.id });
     // Seed the read-only checkout right away (token-less), so "clone → ask about it" works
-    // without waiting for a cadence tick. Best-effort.
+    // without waiting for a cadence tick. Best-effort, but kept alive past the response.
     if (deps.pushRefresh) {
-      void deps.pushRefresh(fullName).catch((e: unknown) => {
+      const seed = deps.pushRefresh(fullName).catch((e: unknown) => {
         console.error(`[repos] post-add checkout refresh failed for ${fullName}: ${String(e)}`);
       });
+      deps.waitUntil?.(seed);
     }
     return Response.json({ fullName, defaultBranch: probe.defaultBranch, source: 'public' });
   }
@@ -347,11 +351,13 @@ export async function handleGithubApi(
         await updatePatRepoToken(database, { workspaceId: ws.id, fullName, encryptedToken });
       }
       // Seed/refresh the read-only checkout right away with the just-validated token, so
-      // "add repo → ask about it" works without waiting for a cadence tick. Best-effort.
+      // "add repo → ask about it" works without waiting for a cadence tick. Best-effort,
+      // but kept alive past the response.
       if (deps.pushRefresh) {
-        void deps.pushRefresh(fullName, token).catch((e: unknown) => {
+        const seed = deps.pushRefresh(fullName, token).catch((e: unknown) => {
           console.error(`[repos] post-add checkout refresh failed for ${fullName}: ${String(e)}`);
         });
+        deps.waitUntil?.(seed);
       }
       return Response.json({ fullName, ...probe });
     }

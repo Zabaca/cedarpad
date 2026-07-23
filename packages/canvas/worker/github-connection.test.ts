@@ -456,6 +456,25 @@ describe('checkout refresh (ADR-0016) — the edge pushes read tokens to the con
     await new Promise((r) => setTimeout(r, 0));
     expect(pushed).toEqual(['hudsonts/app:github_pat_hudson']);
   });
+
+  test('the post-add seed is registered with waitUntil — a floating promise dies with the Worker response', async () => {
+    const { fetchImpl } = githubStubWithPat();
+    const ws = await connectedWorkspace('refresh-ws-3', fetchImpl);
+    const kept: Promise<unknown>[] = [];
+    let seeded = false;
+    await handleGithubApi(req('POST', '/x', { fullName: 'hudsonts/app', token: 'github_pat_hudson' }), PAT_ENV, database, OWNER, ws.id, 'external', {
+      nowMs: NOW,
+      fetchImpl,
+      pushRefresh: async () => {
+        seeded = true;
+        return new Response(null, { status: 200 });
+      },
+      waitUntil: (p) => kept.push(p),
+    });
+    expect(kept).toHaveLength(1);
+    await Promise.all(kept);
+    expect(seeded).toBe(true);
+  });
 });
 
 describe('resolveDevAgentRepo — the unified repo set (ADR-0016)', () => {
