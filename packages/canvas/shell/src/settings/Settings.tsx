@@ -474,7 +474,7 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
           {github?.connected && (
             <>
               {github.source === 'env' && (
-                <div className="settings-row-sub">
+                <div className="settings-row-sub settings-banner">
                   Connected via the deployment's environment (transitional) — connect through GitHub to manage the selection here.
                   {github.canConnect && (
                     <>

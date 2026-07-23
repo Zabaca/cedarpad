@@ -843,8 +843,10 @@ function SharePanel({ canvasId }: { canvasId: string }) {
         <div key={l.id} className="share-row">
           <span className="share-url" title={urlFor(l.id)}>
             {urlFor(l.id)}
-            {l.guestChat ? ' · chat' : ''}
           </span>
+          {/* Outside .share-url: the URL span truncates with ellipsis, which made the
+              old inline " · chat" suffix invisible — links looked identical. */}
+          {l.guestChat && <span className="share-chat-badge">chat</span>}
           <button
             type="button"
             className="share-copy"

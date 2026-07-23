@@ -880,6 +880,12 @@ body,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Standalone notice (not a row subtitle): wraps instead of clipping — the env-mode
+   banner ends in the "Connect GitHub…" link, which nowrap+hidden was cutting off. */
+.settings-banner {
+  white-space: normal;
+  overflow: visible;
+}
 .settings-role {
   flex: none;
   font-size: 11.5px;
@@ -1035,6 +1041,14 @@ body,
 .share-copy:hover,
 .share-revoke:hover {
   opacity: 1;
+}
+.share-chat-badge {
+  flex: none;
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
 }
 .share-chat-toggle {
   display: flex;
