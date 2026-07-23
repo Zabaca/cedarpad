@@ -93,6 +93,7 @@ export default function MarkdownCard({ title, markdown = '', accent = '#4a9eff' 
   const toc = React.useMemo(() => tocEntries(markdown), [markdown]);
   const showToggle = toc.length >= 2;
   const rootRef = React.useRef<HTMLDivElement>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
   const headingRefs = React.useRef(new Map<number, HTMLElement>());
   const [open, setOpen] = React.useState(false);
 
@@ -101,8 +102,13 @@ export default function MarkdownCard({ title, markdown = '', accent = '#4a9eff' 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Scroll the content div directly by offsetTop: scrollIntoView misbehaves inside
+  // the canvas's CSS-transformed (scaled) shape container and can drag ancestor
+  // scrollers along with it; offsetTop is pure layout, unaffected by transforms.
   const scrollToHeading = (index: number) => {
-    headingRefs.current.get(index)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    const el = headingRefs.current.get(index);
+    const sc = scrollRef.current;
+    if (el && sc) sc.scrollTo({ top: Math.max(0, el.offsetTop - 8), behavior: 'smooth' });
   };
 
   return (
@@ -114,13 +120,14 @@ export default function MarkdownCard({ title, markdown = '', accent = '#4a9eff' 
       position:'relative',
     }}>
       {title && (
-        <div style={{padding:'8px 14px',borderBottom:`1px solid ${LINE}`,background:'#0d1017',fontSize:11,fontWeight:600,color:accent,letterSpacing:'0.06em',textTransform:'uppercase',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-          <span>{title}</span>
+        <div style={{padding:'8px 14px',borderBottom:`1px solid ${LINE}`,background:'#0d1017',fontSize:11,fontWeight:600,color:accent,letterSpacing:'0.06em',textTransform:'uppercase',flexShrink:0,display:'flex',alignItems:'center',gap:8}}>
+          {/* toggle sits LEFT: the shape's fullscreen control owns the top-right corner */}
           {showToggle && <TocToggle open={open} onClick={() => setOpen(o => !o)} accent={accent}/>}
+          <span>{title}</span>
         </div>
       )}
       {!title && showToggle && (
-        <div style={{position:'absolute',top:6,right:6,zIndex:1}}>
+        <div style={{position:'absolute',top:6,left:6,zIndex:1}}>
           <TocToggle open={open} onClick={() => setOpen(o => !o)} accent={accent}/>
         </div>
       )}
@@ -143,7 +150,7 @@ export default function MarkdownCard({ title, markdown = '', accent = '#4a9eff' 
             ))}
           </div>
         )}
-        <div style={{flex:1,overflowY:'auto',padding:'12px 14px',minWidth:0}}>
+        <div ref={scrollRef} style={{flex:1,overflowY:'auto',padding:'12px 14px',minWidth:0,position:'relative'}}>
           {blocks.map((b, idx) => b.t === 'h'
             ? React.cloneElement(renderBlock(b, idx) as React.ReactElement, { ref: (el: HTMLElement | null) => {
                 if (el) headingRefs.current.set(idx, el); else headingRefs.current.delete(idx);
