@@ -137,6 +137,9 @@ export default function MarkdownCard({ title, markdown = '', accent = '#4a9eff' 
             {toc.map(entry => (
               <div
                 key={entry.index}
+                // role="button" matches the shape's isInteractiveControl pointer guard —
+                // without it, pointerdown bubbles to tldraw (drag) and the click never fires
+                role="button"
                 onClick={() => scrollToHeading(entry.index)}
                 style={{
                   fontSize:11,color:'#7a7f8c',cursor:'pointer',paddingLeft:(entry.level-1)*10,
