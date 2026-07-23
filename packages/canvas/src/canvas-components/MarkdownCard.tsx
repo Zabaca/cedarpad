@@ -55,6 +55,18 @@ function parse(md: string): Block[] {
   return blocks;
 }
 
+// Rail entries are plain-text labels: inline markers are stripped, not rendered
+// (rendering would also make heading links clickable inside the nav rail).
+const stripInline = (text: string): string =>
+  text.replace(INLINE_RE, (_, bold, italic, code, label) => bold ?? italic ?? code ?? label ?? '');
+
+export function tocEntries(md: string): Array<{ level: number; text: string; index: number }> {
+  return parse(md).reduce<Array<{ level: number; text: string; index: number }>>((out, b, index) => {
+    if (b.t === 'h') out.push({ level: b.level, text: stripInline(b.text), index });
+    return out;
+  }, []);
+}
+
 const LINE='#2a2e3d', TH='#1a1e29';
 
 function renderBlock(b: Block, idx: number): React.ReactNode {
@@ -78,21 +90,82 @@ function renderBlock(b: Block, idx: number): React.ReactNode {
 
 export default function MarkdownCard({ title, markdown = '', accent = '#4a9eff' }: { title?: string; markdown?: string; accent?: string }) {
   const blocks = React.useMemo(() => parse(markdown), [markdown]);
+  const toc = React.useMemo(() => tocEntries(markdown), [markdown]);
+  const showToggle = toc.length >= 2;
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const headingRefs = React.useRef(new Map<number, HTMLElement>());
+  const [open, setOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (showToggle && (rootRef.current?.offsetWidth ?? 0) >= 520) setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const scrollToHeading = (index: number) => {
+    headingRefs.current.get(index)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
+
   return (
-    <div style={{
+    <div ref={rootRef} style={{
       width:'100%', height:'100%', boxSizing:'border-box',
       background:'#11141a', border:`1px solid ${LINE}`, borderRadius:12,
       color:'#c9cdd6', fontFamily:'-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
       fontSize:13, lineHeight:1.55, display:'flex', flexDirection:'column', overflow:'hidden',
+      position:'relative',
     }}>
       {title && (
-        <div style={{padding:'8px 14px',borderBottom:`1px solid ${LINE}`,background:'#0d1017',fontSize:11,fontWeight:600,color:accent,letterSpacing:'0.06em',textTransform:'uppercase',flexShrink:0}}>
-          {title}
+        <div style={{padding:'8px 14px',borderBottom:`1px solid ${LINE}`,background:'#0d1017',fontSize:11,fontWeight:600,color:accent,letterSpacing:'0.06em',textTransform:'uppercase',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <span>{title}</span>
+          {showToggle && <TocToggle open={open} onClick={() => setOpen(o => !o)} accent={accent}/>}
         </div>
       )}
-      <div style={{flex:1,overflowY:'auto',padding:'12px 14px'}}>
-        {blocks.map(renderBlock)}
+      {!title && showToggle && (
+        <div style={{position:'absolute',top:6,right:6,zIndex:1}}>
+          <TocToggle open={open} onClick={() => setOpen(o => !o)} accent={accent}/>
+        </div>
+      )}
+      <div style={{flex:1,display:'flex',minHeight:0}}>
+        {showToggle && open && (
+          <div style={{width:140,flexShrink:0,overflowY:'auto',borderRight:`1px solid ${LINE}`,padding:'10px 8px'}}>
+            {toc.map(entry => (
+              <div
+                key={entry.index}
+                onClick={() => scrollToHeading(entry.index)}
+                style={{
+                  fontSize:11,color:'#7a7f8c',cursor:'pointer',paddingLeft:(entry.level-1)*10,
+                  whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',margin:'3px 0',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.color = accent; }}
+                onMouseLeave={e => { e.currentTarget.style.color = '#7a7f8c'; }}
+              >
+                {entry.text}
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{flex:1,overflowY:'auto',padding:'12px 14px',minWidth:0}}>
+          {blocks.map((b, idx) => b.t === 'h'
+            ? React.cloneElement(renderBlock(b, idx) as React.ReactElement, { ref: (el: HTMLElement | null) => {
+                if (el) headingRefs.current.set(idx, el); else headingRefs.current.delete(idx);
+              } })
+            : renderBlock(b, idx))}
+        </div>
       </div>
     </div>
+  );
+}
+
+function TocToggle({ open, onClick, accent }: { open: boolean; onClick: () => void; accent: string }) {
+  return (
+    <button
+      onClick={onClick}
+      title={open ? 'Hide table of contents' : 'Show table of contents'}
+      style={{
+        background:'transparent',border:`1px solid ${LINE}`,borderRadius:4,color:open?accent:'#7a7f8c',
+        cursor:'pointer',fontSize:11,lineHeight:1,padding:'3px 6px',flexShrink:0,
+      }}
+    >
+      ☰
+    </button>
   );
 }
