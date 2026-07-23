@@ -184,14 +184,29 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
     );
   };
 
+  // Accept the forms people naturally paste — `git@github.com:owner/name.git`,
+  // `https://github.com/owner/name` — and normalize to the API's `owner/name`.
+  const normalizeRepoName = (input: string): string =>
+    input
+      .trim()
+      .replace(/^git@github\.com:/, '')
+      .replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\//, '')
+      .replace(/\.git$/, '')
+      .replace(/\/+$/, '');
+
   const addExternalRepo = async () => {
-    const fullName = window.prompt('Add a repo by token — owner/name:');
-    if (!fullName) return;
+    const entered = window.prompt('Add a repo by token — owner/name:');
+    if (!entered) return;
+    const fullName = normalizeRepoName(entered);
+    if (!/^[\w.-]+\/[\w.-]+$/.test(fullName)) {
+      window.alert(`"${entered}" doesn't look like a repo — enter owner/name, e.g. fredrincom/fredrin.`);
+      return;
+    }
     const token = window.prompt(
       `Personal access token for ${fullName}. Use a fine-grained PAT scoped to ONLY that repo, with an expiry (read-write to allow PRs):`,
     );
     if (!token) return;
-    await patCall('POST', fullName.trim(), token.trim());
+    await patCall('POST', fullName, token.trim());
   };
 
   const updateExternalToken = async (repo: PatRepo) => {
