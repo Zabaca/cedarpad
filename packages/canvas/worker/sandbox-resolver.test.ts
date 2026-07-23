@@ -6,6 +6,8 @@ import {
   LEGACY_SANDBOX_ID,
   decideWarm,
   resolve,
+  sseRetryResponse,
+  wantsEventStream,
 } from './sandbox-resolver.ts';
 
 describe('resolve', () => {
@@ -64,5 +66,26 @@ describe('decideWarm — warm-vs-cold path selection (matches today)', () => {
       return '';
     });
     expect(read).toBe(0);
+  });
+});
+
+describe('SSE cold-boot fallback — keep the browser reconnecting', () => {
+  // An EventSource treats any non-200 / non-`text/event-stream` response as a
+  // PERMANENT failure (no auto-reconnect). During a cold boot the worker used to
+  // answer stream reconnects with a 500 HTML page, killing every open tab's canvas
+  // sync until a manual refresh.
+
+  test('wantsEventStream recognizes an EventSource request by its Accept header', () => {
+    expect(wantsEventStream('text/event-stream')).toBe(true);
+    expect(wantsEventStream('text/html,application/xhtml+xml')).toBe(false);
+    expect(wantsEventStream(null)).toBe(false);
+  });
+
+  test('the fallback is a valid, immediately-ending event stream with a retry hint', async () => {
+    const res = sseRetryResponse();
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/event-stream');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(await res.text()).toBe('retry: 2000\n\n');
   });
 });

@@ -23,6 +23,7 @@ import { fromTldrawShape } from './tldraw-bridge';
 import { canon } from './tldraw-conventions';
 import { planReconcile, type ArrowBindingPair, type EditorSnapshot, type ReconcileOp } from './sync-plan';
 import { registerStream } from './idle';
+import { createRecoveringStream } from './stream-recovery';
 import { onPresenceFrame } from './presence';
 import { withCanvasHeader, withCanvasParam } from './active-canvas';
 
@@ -207,11 +208,12 @@ export function wireSync(editor: Editor): () => void {
   };
   // Canvas inbound stream, wrapped in open/close so the idle gate (src/idle.ts) can drop
   // it when the tab is hidden — an always-open EventSource auto-reconnects, which would
-  // re-wake a slept CF container.
-  let es: EventSource | null = null;
-  const openCanvasStream = (): void => {
-    if (es) return;
-    es = new EventSource(withCanvasParam(`${API}/canvas/stream`));
+  // re-wake a slept CF container. The recovery wrapper rebuilds the source when the
+  // browser closes it PERMANENTLY (an HTTP-error/non-SSE response during a container
+  // cold boot) — the one case native auto-reconnect never retries; it used to kill
+  // sync + presence for the tab until a manual page refresh.
+  const stream = createRecoveringStream(() => {
+    const es = new EventSource(withCanvasParam(`${API}/canvas/stream`));
     // A freshly (re)established SSE connection means the bridge may have restarted
     // and reset its monotonic version counter (it does on every server-code reload).
     // Drop our high-water mark so the next primed frame is accepted as authoritative;
@@ -232,13 +234,10 @@ export function wireSync(editor: Editor): () => void {
     // Presence (#212): remote cursors/cameras ride the same stream as ephemeral
     // `instance_presence` records — invisible to the shape push/reconcile above.
     es.addEventListener('presence', (e) => onPresenceFrame(editor, (e as MessageEvent).data as string));
-  };
-  const closeCanvasStream = (): void => {
-    es?.close();
-    es = null;
-  };
-  openCanvasStream();
-  const unregisterIdle = registerStream({ open: openCanvasStream, close: closeCanvasStream });
+    return es;
+  });
+  stream.open();
+  const unregisterIdle = registerStream(stream);
 
   // --- editor -> remote (debounced) ---
   const pendingUpsert = new Map<string, CanvasShape>();
@@ -386,7 +385,7 @@ export function wireSync(editor: Editor): () => void {
 
   return () => {
     unregisterIdle();
-    closeCanvasStream();
+    stream.close();
     unlisten();
     if (timer) clearTimeout(timer);
     if (pollTimer) clearTimeout(pollTimer);

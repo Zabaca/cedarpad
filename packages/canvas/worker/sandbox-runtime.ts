@@ -2,7 +2,7 @@ import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from './index.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
 import { singleFlight } from './single-flight.ts';
-import { type SandboxCoords, decideWarm } from './sandbox-resolver.ts';
+import { type SandboxCoords, decideWarm, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 
 // The Sandbox resolver's runtime half: the wake/expose/proxy orchestration that used
 // to be inline in the Worker's fetch handler keyed by the constant `'canvas'`. The
@@ -128,6 +128,12 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
   // slept or been recycled. This log is the observer-effect-free PROOF of a sleep→wake
   // cycle: watch for it under `wrangler tail` after an idle window.
   console.log(`[cold] boot — container asleep/gone, cold-starting ${sandboxId} for ${url.pathname}`);
+  // A stream (EventSource) request must NEVER see a non-SSE error out of the cold
+  // path — that closes the client permanently (no auto-reconnect) and the tab's
+  // canvas sync/presence is dead until a manual refresh. Errors on this path are
+  // transient by construction (the container is booting), so hand streams a
+  // retryable empty event stream instead. Warm-path app responses are untouched.
+  const streamReq = wantsEventStream(request.headers.get('accept'));
   try {
     // Single-flight the boot: without this, every concurrent cold request ran its own
     // ensureStack (kill+startProcess) and they canceled each other's vite process, so the
@@ -139,8 +145,10 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
       await ensureStack(sandbox, env, coords);
       await sandbox.exposePort(VITE_PORT, { hostname: 'localhost', token: PREVIEW_TOKEN });
     });
-    return await proxy(sandbox, retryReq, sandboxId);
+    const res = await proxy(sandbox, retryReq, sandboxId);
+    return streamReq && res.status >= 400 ? sseRetryResponse() : res;
   } catch (e: unknown) {
+    if (streamReq) return sseRetryResponse();
     return new Response('canvas error:\n' + String((e as Error)?.stack ?? e), { status: 500 });
   }
 }

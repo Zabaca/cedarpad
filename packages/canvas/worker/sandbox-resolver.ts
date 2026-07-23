@@ -61,3 +61,23 @@ export function decideWarm(status: number, peekBody: () => string): WarmDecision
   if (status < 400) return 'serve';
   return /INVALID_TOKEN|port not exposed/.test(peekBody()) ? 'cold-start' : 'serve';
 }
+
+// An EventSource auto-reconnects only after a NETWORK-level drop; any non-200 or
+// non-`text/event-stream` response — the only kind the worker can produce when a cold
+// boot fails — closes it PERMANENTLY, killing the tab's canvas sync/presence until a
+// manual page refresh. So on the cold path, a stream request that can't be served yet
+// gets an immediately-ending VALID event stream carrying only a `retry:` hint: the
+// browser's native reconnect stays alive and lands once the container is up.
+
+/** Is this request an EventSource asking for a stream? (EventSource always sends this Accept.) */
+export function wantsEventStream(accept: string | null): boolean {
+  return accept?.includes('text/event-stream') ?? false;
+}
+
+/** The retryable stand-in for a stream response during a failed/incomplete cold boot. */
+export function sseRetryResponse(): Response {
+  return new Response('retry: 2000\n\n', {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store' },
+  });
+}
