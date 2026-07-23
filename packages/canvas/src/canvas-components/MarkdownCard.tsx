@@ -55,9 +55,14 @@ function parse(md: string): Block[] {
   return blocks;
 }
 
+// Rail entries are plain-text labels: inline markers are stripped, not rendered
+// (rendering would also make heading links clickable inside the nav rail).
+const stripInline = (text: string): string =>
+  text.replace(INLINE_RE, (_, bold, italic, code, label) => bold ?? italic ?? code ?? label ?? '');
+
 export function tocEntries(md: string): Array<{ level: number; text: string; index: number }> {
   return parse(md).reduce<Array<{ level: number; text: string; index: number }>>((out, b, index) => {
-    if (b.t === 'h') out.push({ level: b.level, text: b.text, index });
+    if (b.t === 'h') out.push({ level: b.level, text: stripInline(b.text), index });
     return out;
   }, []);
 }
@@ -88,7 +93,6 @@ export default function MarkdownCard({ title, markdown = '', accent = '#4a9eff' 
   const toc = React.useMemo(() => tocEntries(markdown), [markdown]);
   const showToggle = toc.length >= 2;
   const rootRef = React.useRef<HTMLDivElement>(null);
-  const scrollRef = React.useRef<HTMLDivElement>(null);
   const headingRefs = React.useRef(new Map<number, HTMLElement>());
   const [open, setOpen] = React.useState(false);
 
@@ -139,7 +143,7 @@ export default function MarkdownCard({ title, markdown = '', accent = '#4a9eff' 
             ))}
           </div>
         )}
-        <div ref={scrollRef} style={{flex:1,overflowY:'auto',padding:'12px 14px',minWidth:0}}>
+        <div style={{flex:1,overflowY:'auto',padding:'12px 14px',minWidth:0}}>
           {blocks.map((b, idx) => b.t === 'h'
             ? React.cloneElement(renderBlock(b, idx) as React.ReactElement, { ref: (el: HTMLElement | null) => {
                 if (el) headingRefs.current.set(idx, el); else headingRefs.current.delete(idx);

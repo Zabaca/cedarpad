@@ -41,10 +41,10 @@ describe('tocEntries', () => {
     ]);
   });
 
-  test('inline markdown in a heading passes through as raw heading text', () => {
-    const md = '## The **plan**';
+  test('inline markdown in a heading is stripped to plain text', () => {
+    const md = '## The **plan** for `sync` and [links](https://example.com)';
     expect(tocEntries(md)).toEqual([
-      { level: 2, text: 'The **plan**', index: 0 },
+      { level: 2, text: 'The plan for sync and links', index: 0 },
     ]);
   });
 });
