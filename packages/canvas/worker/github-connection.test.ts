@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { createClient } from '@libsql/client';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/libsql';
 import * as schema from '../web-poc/lib/db/schema.ts';
 import { createWorkspace, getWorkspace, addWorkspaceMember } from '../web-poc/lib/db/queries/workspaces.ts';
@@ -534,5 +535,99 @@ describe('handleGithubSetup — the install callback (#193)', () => {
     expect(res.status).toBe(400);
     const row = await getWorkspace(database, ws.id, OWNER.id);
     expect(row?.githubInstallationId ?? null).toBeNull();
+    expect(row?.githubInstallations ?? null).toBeNull();
+  });
+});
+
+// ---- Multi-account installations (one App installation per GitHub org/user) --
+
+/** Two accounts, each with its own installation: 999 = Zabaca, 555/556 = fredrincom
+ *  (556 is a reinstall of the same account — GitHub mints a new id). Granted-repo
+ *  listings are keyed by the minted token so each installation only sees its own. */
+function multiAccountStub() {
+  const accounts: Record<string, { login: string; repos: { full_name: string; default_branch: string }[] }> = {
+    '999': { login: 'Zabaca', repos: [{ full_name: 'Zabaca/cedarpad', default_branch: 'main' }] },
+    '555': { login: 'fredrincom', repos: [{ full_name: 'fredrincom/fredrin', default_branch: 'main' }] },
+    '556': { login: 'fredrincom', repos: [{ full_name: 'fredrincom/fredrin', default_branch: 'main' }] },
+  };
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const inst = /\/app\/installations\/(\d+)/.exec(url)?.[1];
+    if (inst && url.endsWith(`/installations/${inst}`)) {
+      const acct = accounts[inst];
+      return acct
+        ? Response.json({ id: Number(inst), app_id: 12345, account: { login: acct.login } })
+        : new Response('not found', { status: 404 });
+    }
+    if (inst && url.endsWith('/access_tokens')) return Response.json({ token: `ghs_${inst}`, expires_at: 'later' });
+    if (url.endsWith('/installation/repositories')) {
+      const tokenInst = /ghs_(\d+)/.exec(new Headers(init?.headers).get('authorization') ?? '')?.[1];
+      const acct = tokenInst ? accounts[tokenInst] : undefined;
+      return acct ? Response.json({ repositories: acct.repos }) : new Response('bad token', { status: 401 });
+    }
+    if (/\/branches\/[^/]+$/.test(url)) return Response.json({ protected: false });
+    return new Response('stub 404', { status: 404 });
+  }) as typeof fetch;
+  return { fetchImpl };
+}
+
+describe('multi-account installations — a workspace spans several orgs/users', () => {
+  const connect = (wsId: string, installationId: string, fetchImpl: typeof fetch) =>
+    handleGithubSetup(
+      req('GET', `/api/github/setup?installation_id=${installationId}&state=${signState(SECRET, wsId, NOW + 60_000)}`),
+      APP_ENV, database, OWNER, { nowMs: NOW, fetchImpl },
+    );
+
+  test('a second account merges its granted repos; each selected repo auths via its owning installation', async () => {
+    const ws = await createWorkspace(database, { name: 'gh-multi', ownerUserId: OWNER.id });
+    const { fetchImpl } = multiAccountStub();
+    expect((await connect(ws.id, '999', fetchImpl)).status).toBe(302);
+    expect((await connect(ws.id, '555', fetchImpl)).status).toBe(302);
+
+    const body = await readJson(await handleGithubApi(req('GET', '/x'), APP_ENV, database, OWNER, ws.id, undefined, { nowMs: NOW, fetchImpl }));
+    expect(body.source).toBe('workspace');
+    expect(body.accounts).toEqual(['Zabaca', 'fredrincom']);
+    expect(body.grantedRepos.map((r: { fullName: string }) => r.fullName).sort()).toEqual([
+      'Zabaca/cedarpad',
+      'fredrincom/fredrin',
+    ]);
+
+    const put = await handleGithubApi(
+      req('PUT', '/x', { selected: ['Zabaca/cedarpad', 'fredrincom/fredrin'] }),
+      APP_ENV, database, OWNER, ws.id, 'repos', { nowMs: NOW, fetchImpl },
+    );
+    expect(put.status).toBe(200);
+    const zabaca = await resolveDevAgentRepo(APP_ENV, database, ws.id, 'Zabaca/cedarpad');
+    expect(zabaca?.auth).toEqual({ kind: 'installation', installationId: '999' });
+    const fredrin = await resolveDevAgentRepo(APP_ENV, database, ws.id, 'fredrincom/fredrin');
+    expect(fredrin?.auth).toEqual({ kind: 'installation', installationId: '555' });
+  });
+
+  test('reinstalling an account replaces its entry — no duplicate account rows', async () => {
+    const ws = await createWorkspace(database, { name: 'gh-multi-2', ownerUserId: OWNER.id });
+    const { fetchImpl } = multiAccountStub();
+    for (const id of ['999', '555', '556']) await connect(ws.id, id, fetchImpl);
+    const row = await getWorkspace(database, ws.id, OWNER.id);
+    expect(row?.githubInstallations).toEqual([
+      { installationId: '999', accountLogin: 'Zabaca' },
+      { installationId: '556', accountLogin: 'fredrincom' },
+    ]);
+  });
+
+  test('a legacy single-column row still reports connected, and the next connect folds it in', async () => {
+    const ws = await createWorkspace(database, { name: 'gh-legacy', ownerUserId: OWNER.id });
+    await db.update(schema.workspaces).set({ githubInstallationId: '999' }).where(eq(schema.workspaces.id, ws.id));
+    const { fetchImpl } = multiAccountStub();
+    const before = await readJson(await handleGithubApi(req('GET', '/x'), APP_ENV, database, OWNER, ws.id, undefined, { nowMs: NOW, fetchImpl }));
+    expect(before.connected).toBe(true);
+    expect(before.source).toBe('workspace');
+
+    await connect(ws.id, '555', fetchImpl);
+    const row = await getWorkspace(database, ws.id, OWNER.id);
+    expect(row?.githubInstallationId).toBeNull();
+    expect(row?.githubInstallations).toEqual([
+      { installationId: '999', accountLogin: null },
+      { installationId: '555', accountLogin: 'fredrincom' },
+    ]);
   });
 });

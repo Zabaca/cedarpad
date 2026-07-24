@@ -169,6 +169,13 @@
       "when": 1784971635194,
       "tag": "0023_short_nightmare",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1784973324945,
+      "tag": "0024_slim_zuras",
+      "breakpoints": true
     }
   ]
 }

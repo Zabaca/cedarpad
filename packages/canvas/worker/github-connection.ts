@@ -2,10 +2,10 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import {
+  addWorkspaceGithubInstallation,
   clearWorkspaceGithubConnection,
   getWorkspace,
   getWorkspaceRecord,
-  setWorkspaceGithubInstallation,
 } from '../web-poc/lib/db/queries/workspaces.ts';
 import {
   addPatRepo,
@@ -108,23 +108,52 @@ async function listGrantedRepos(
 
 // ---- The workspace's effective connection -----------------------------------
 
+/** One App installation the workspace holds. `accountLogin` is the installed GitHub
+ *  account (org or user) — null only on legacy rows connected before multi-account. */
+export type ConnectedInstallation = { installationId: string; accountLogin: string | null };
+
 export type WorkspaceGithub =
   | { connected: false }
-  | { connected: true; source: 'workspace' | 'env'; installationId: string; selectedRepos: string[] };
+  | { connected: true; source: 'workspace' | 'env'; installations: ConnectedInstallation[]; selectedRepos: string[] };
 
-/** The connection the rest of the platform should use for a workspace: its row, or the
+/** The workspace-row shape the connection helpers read. */
+type WsGithubRow = {
+  id: string;
+  githubInstallationId: string | null;
+  githubInstallations: ConnectedInstallation[] | null;
+  selectedRepos: string[] | null;
+};
+
+/** The connection the rest of the platform should use for a workspace: its rows, or the
  *  transitional env fallback for the default workspace. */
-export function workspaceGithub(
-  env: Env,
-  ws: { id: string; githubInstallationId: string | null; selectedRepos: string[] | null },
-): WorkspaceGithub {
-  if (ws.githubInstallationId) {
-    return { connected: true, source: 'workspace', installationId: ws.githubInstallationId, selectedRepos: ws.selectedRepos ?? [] };
+export function workspaceGithub(env: Env, ws: WsGithubRow): WorkspaceGithub {
+  const list =
+    ws.githubInstallations && ws.githubInstallations.length > 0
+      ? ws.githubInstallations
+      : ws.githubInstallationId
+        ? [{ installationId: ws.githubInstallationId, accountLogin: null }]
+        : null;
+  if (list) {
+    return { connected: true, source: 'workspace', installations: list, selectedRepos: ws.selectedRepos ?? [] };
   }
   if (ws.id === ENV_FALLBACK_WORKSPACE && env.GITHUB_APP_INSTALLATION_ID) {
-    return { connected: true, source: 'env', installationId: env.GITHUB_APP_INSTALLATION_ID, selectedRepos: [ENV_FALLBACK_REPO] };
+    return {
+      connected: true,
+      source: 'env',
+      installations: [{ installationId: env.GITHUB_APP_INSTALLATION_ID, accountLogin: null }],
+      selectedRepos: [ENV_FALLBACK_REPO],
+    };
   }
   return { connected: false };
+}
+
+/** The installation that can mint for `fullName`. An installation only ever grants repos
+ *  owned by its account, so the owner segment picks it; legacy entries (null login) and
+ *  unmatched owners fall back to the first installation. */
+function installationFor(installations: ConnectedInstallation[], fullName: string): string {
+  const owner = fullName.split('/')[0]?.toLowerCase();
+  const match = installations.find((i) => i.accountLogin?.toLowerCase() === owner);
+  return (match ?? installations[0]).installationId;
 }
 
 /** One repo of the workspace's set, with how it authenticates (ADR-0016). The
@@ -137,7 +166,7 @@ export type WorkspaceRepoView = { repoFullName: string; auth: RepoAuth };
 export async function workspaceRepoSet(
   env: Env,
   database: Database,
-  ws: { id: string; githubInstallationId: string | null; selectedRepos: string[] | null },
+  ws: WsGithubRow,
 ): Promise<WorkspaceRepoView[]> {
   const conn = workspaceGithub(env, ws);
   const rows = await listWorkspaceRepos(database, ws.id);
@@ -148,13 +177,13 @@ export async function workspaceRepoSet(
     } else if (r.source === 'public') {
       views.push({ repoFullName: r.fullName, auth: { kind: 'public' } });
     } else if (conn.connected) {
-      views.push({ repoFullName: r.fullName, auth: { kind: 'installation', installationId: conn.installationId } });
+      views.push({ repoFullName: r.fullName, auth: { kind: 'installation', installationId: installationFor(conn.installations, r.fullName) } });
     }
   }
   if (conn.connected && conn.source === 'env') {
     for (const fullName of conn.selectedRepos) {
       if (!views.some((v) => v.repoFullName === fullName)) {
-        views.push({ repoFullName: fullName, auth: { kind: 'installation', installationId: conn.installationId } });
+        views.push({ repoFullName: fullName, auth: { kind: 'installation', installationId: installationFor(conn.installations, fullName) } });
       }
     }
   }
@@ -210,7 +239,7 @@ async function probePatRepo(
  *  default branch, or null when the repo is private, missing, or unreachable. */
 async function probePublicRepo(
   env: Env,
-  ws: { id: string; githubInstallationId: string | null; selectedRepos: string[] | null },
+  ws: WsGithubRow,
   fullName: string,
   opts: { nowSec: number; fetchImpl?: typeof fetch },
 ): Promise<{ defaultBranch: string } | null> {
@@ -220,7 +249,7 @@ async function probePublicRepo(
   if (conn.connected && env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) {
     try {
       const { token } = await mintInstallationToken(
-        { appId: env.GITHUB_APP_ID, installationId: conn.installationId, privateKey: env.GITHUB_APP_PRIVATE_KEY },
+        { appId: env.GITHUB_APP_ID, installationId: conn.installations[0].installationId, privateKey: env.GITHUB_APP_PRIVATE_KEY },
         { permissions: { contents: 'read' }, nowSec: opts.nowSec, fetchImpl: opts.fetchImpl },
       );
       auth = `token ${token}`;
@@ -402,17 +431,26 @@ export async function handleGithubApi(
     if (!conn.connected) {
       return Response.json({ connected: false, selectedRepos: [], patRepos, publicRepos, canConnect: isOwner && !!env.GITHUB_APP_SLUG });
     }
-    let grantedRepos: GrantedRepo[] | undefined;
-    try {
-      grantedRepos = await listGrantedRepos(env, conn.installationId, { nowSec, fetchImpl: deps.fetchImpl });
-    } catch (e: unknown) {
-      console.error(`[github] granted-repo list failed for ws ${ws.id}: ${String(e)}`);
-    }
+    // Granted repos merge across all installations; one account failing to list must not
+    // blank the others (undefined only when EVERY listing failed — the UI's fallback).
+    const grantedLists = await Promise.all(
+      conn.installations.map(async (inst) => {
+        try {
+          return await listGrantedRepos(env, inst.installationId, { nowSec, fetchImpl: deps.fetchImpl });
+        } catch (e: unknown) {
+          console.error(`[github] granted-repo list failed for ws ${ws.id} installation ${inst.installationId}: ${String(e)}`);
+          return null;
+        }
+      }),
+    );
+    const okLists = grantedLists.filter((l): l is GrantedRepo[] => l !== null);
+    const grantedRepos = okLists.length > 0 ? okLists.flat() : undefined;
     const selectedRepos =
       conn.source === 'env' ? conn.selectedRepos : rows.filter((r) => r.source === 'installation').map((r) => r.fullName);
     return Response.json({
       connected: true,
       source: conn.source,
+      accounts: conn.installations.map((i) => i.accountLogin).filter((l): l is string => l !== null),
       selectedRepos,
       grantedRepos,
       patRepos,
@@ -429,7 +467,9 @@ export async function handleGithubApi(
     }
     const parsed = SelectInput.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return Response.json({ error: 'invalid selection' }, { status: 400 });
-    const granted = await listGrantedRepos(env, conn.installationId, { nowSec, fetchImpl: deps.fetchImpl });
+    const granted = (
+      await Promise.all(conn.installations.map((i) => listGrantedRepos(env, i.installationId, { nowSec, fetchImpl: deps.fetchImpl })))
+    ).flat();
     const grantedNames = new Set(granted.map((r) => r.fullName));
     const outside = parsed.data.selected.filter((r) => !grantedNames.has(r));
     if (outside.length > 0) {
@@ -487,11 +527,17 @@ export async function handleGithubSetup(
   const res = await doFetch(`https://api.github.com/app/installations/${installationId}`, {
     headers: GH_HEADERS(`Bearer ${jwt}`),
   });
-  const info = res.ok ? ((await res.json()) as { app_id?: number }) : null;
+  const info = res.ok ? ((await res.json()) as { app_id?: number; account?: { login?: string } }) : null;
   if (!info || String(info.app_id) !== appId) {
     return Response.json({ error: 'installation does not belong to this App' }, { status: 400 });
   }
 
-  await setWorkspaceGithubInstallation(database, { workspaceId: ws.id, installationId });
+  // Appends (one installation per GitHub account, so a workspace can span several
+  // orgs/users); reinstalling an account replaces its entry.
+  await addWorkspaceGithubInstallation(database, {
+    workspaceId: ws.id,
+    installationId,
+    accountLogin: info.account?.login ?? null,
+  });
   return new Response(null, { status: 302, headers: { location: '/?stage=settings' } });
 }

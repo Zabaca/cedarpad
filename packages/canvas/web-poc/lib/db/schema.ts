@@ -533,6 +533,13 @@ export const workspaces = sqliteTable(
     // platform env; these are workspace config. Null installation ⇒ not connected (the
     // default workspace transitionally falls back to the env installation, #193).
     githubInstallationId: text("github_installation_id"),
+    // Multi-account connection: one App installation per GitHub org/user account, so a
+    // workspace can span several. `accountLogin` is the installed account (owner segment
+    // of its repos) — how a repo is matched back to the installation that can mint for
+    // it. Supersedes `github_installation_id` (kept transitionally, read as a fallback).
+    githubInstallations: text("github_installations", { mode: "json" }).$type<
+      { installationId: string; accountLogin: string | null }[]
+    >(),
     selectedRepos: text("selected_repos", { mode: "json" }).$type<string[]>(),
     ownerUserId: text("owner_user_id")
       .notNull()

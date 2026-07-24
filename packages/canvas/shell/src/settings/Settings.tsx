@@ -19,6 +19,7 @@ type PublicRepo = { fullName: string };
 type GithubStatus = {
   connected: boolean;
   source?: 'workspace' | 'env';
+  accounts?: string[];
   selectedRepos: string[];
   grantedRepos?: GrantedRepo[];
   patRepos?: PatRepo[];
@@ -470,6 +471,17 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
               </button>
             )}
           </div>
+
+          {/* One App installation covers one GitHub org/user — connecting again adds
+              another account's repos alongside the existing ones. */}
+          {github?.connected && github.source === 'workspace' && isOwnerView && github.canConnect && (
+            <div className="settings-row-sub settings-banner">
+              {(github.accounts?.length ?? 0) > 0 && <>Connected accounts: {github.accounts?.join(', ')}. </>}
+              <a className="settings-connect" href={`${base}/github/connect`}>
+                Connect another account…
+              </a>
+            </div>
+          )}
 
           {!github && <div className="settings-row-sub">Loading…</div>}
 
