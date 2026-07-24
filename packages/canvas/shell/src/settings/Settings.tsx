@@ -126,9 +126,11 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
 
   const toggleRepo = async (fullName: string) => {
     if (!github) return;
-    const selected = github.selectedRepos.includes(fullName)
-      ? github.selectedRepos.filter((r) => r !== fullName)
-      : [...github.selectedRepos, fullName];
+    const previous = github.selectedRepos;
+    const selected = previous.includes(fullName) ? previous.filter((r) => r !== fullName) : [...previous, fullName];
+    // Optimistic: the PUT takes a few seconds, and a checkbox that doesn't move until it
+    // resolves reads as broken — a fast second click then reverts against the stale list.
+    setGithub({ ...github, selectedRepos: selected });
     const r = await fetch(`${base}/github/repos`, {
       method: 'PUT',
       credentials: 'same-origin',
@@ -137,9 +139,8 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
     }).catch(() => null);
     if (!r?.ok) {
       window.alert('Could not update the repo selection.');
-      return;
+      setGithub((g) => (g ? { ...g, selectedRepos: previous } : g));
     }
-    setGithub({ ...github, selectedRepos: selected });
   };
 
   const disconnect = async () => {
