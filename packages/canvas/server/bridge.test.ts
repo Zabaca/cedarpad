@@ -942,6 +942,16 @@ describe('POST /api/canvas/shapes/{create,update} + /api/components/place — di
     expect((await post('/api/canvas/shapes/update', { shapes: [{ id: 'zz_ghost', text: 'x' }] })).status).toBe(400);
     expect((await post('/api/components/place', { x: 1, y: 2 })).status).toBe(400);
   });
+
+  // #223: `module` now goes through the shared COMPONENT_NAME_RE (shared/bridge-wire.ts),
+  // the same rule the edge and server/components.ts already enforce — a module name that
+  // could never resolve to a file is rejected here instead of landing an unloadable card.
+  test('place_component: a module name that fails the component-name rule is a 400', async () => {
+    for (const module of ['../evil', 'Bad.Name', '9leading', 'has space', '']) {
+      expect((await post('/api/components/place', { module, x: 1, y: 2 })).status).toBe(400);
+    }
+    expect((await readShapes()).some((s) => s.type === 'component' && typeof s.module === 'string' && s.module.includes('evil'))).toBe(false);
+  });
 });
 
 // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`

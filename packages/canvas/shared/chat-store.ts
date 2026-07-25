@@ -11,6 +11,7 @@
 import { type ChatEvent, type ChatFrame, type TaskStatus, type TodoStatus, isChatFrame } from './chat-wire.ts';
 import { registerStream, setBeatTargets, setBusyCheck } from '../src/idle.ts';
 import { withCanvasParam, withPadCanvasHeader } from '../src/active-canvas.ts';
+import { CANVAS_ID_HEADER } from './bridge-wire.ts';
 
 // `parentId` (set on subagent items) is the spawning Task chip's tool_use id, so the
 // view can indent them under it. Tool items carry their own `toolUseId` so a `task`
@@ -117,7 +118,7 @@ export function setCanvasOverride(chatId: string, canvasId: string): void {
 function chatHeaders(chatId: string, headers?: HeadersInit): Record<string, string> {
   const id = canvasOverrides.get(chatId);
   const base = withPadCanvasHeader(headers);
-  return id ? { ...base, 'x-canvas-id': id } : base;
+  return id ? { ...base, [CANVAS_ID_HEADER]: id } : base;
 }
 
 /** The distinct set of bridge prefixes the idle beat must reach — one per bridge that

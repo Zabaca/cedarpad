@@ -13,6 +13,7 @@ import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolver.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { CANVAS_ID_HEADER, DEV_AGENT_GIT_TOKEN_HEADER, DEV_AGENT_REPO_HEADER } from '../shared/bridge-wire.ts';
 
 // The edge chat proxy (ADR-0009, PRD #119 slice #122). Under "one chat system" every chat
 // surface is a LIVE VIEW of its session's runner bridge; a Shell-mounted <ChatView> points
@@ -99,9 +100,9 @@ export async function handleInboxBridge(
   if (isChatSend && isDevAgentConversation(conv)) {
     const resolved = await resolveRepo(env, database, conv.workspaceId, conv.repo ?? undefined);
     if (resolved) {
-      proxied.headers.set('x-dev-agent-repo', resolved.repoFullName);
+      proxied.headers.set(DEV_AGENT_REPO_HEADER, resolved.repoFullName);
       const token = await mint(env, { nowSec: Math.floor(Date.now() / 1000), ...resolved });
-      if (token) proxied.headers.set('x-dev-agent-git-token', token);
+      if (token) proxied.headers.set(DEV_AGENT_GIT_TOKEN_HEADER, token);
     }
   }
 
@@ -114,7 +115,7 @@ export async function handleInboxBridge(
   // A linked Conversation's SEND gets the stamp from its row instead, so the resumed turn
   // runs against the chat's own canvas store (the agent reads/draws the canvas it lives on).
   // Sends only — reads route by path, not by canvas claim.
-  if (isChatSend && conv.canvasId) proxied.headers.set('x-canvas-id', conv.canvasId);
+  if (isChatSend && conv.canvasId) proxied.headers.set(CANVAS_ID_HEADER, conv.canvasId);
 
   // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens ride a single JSON
   // header on the send — mirrors x-dev-agent-git-token above. `server/turn.ts` drops this for a
