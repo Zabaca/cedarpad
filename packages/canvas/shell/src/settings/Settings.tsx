@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { disablePush, enablePush, pushState, type PushState } from '../push.ts';
+
 // The Settings stage (#192): workspace administration in the one chrome. V1 holds the
 // Members section — roster (workspace-visible) + invitations (owner-only). The server
 // decides "owner": the invitations GET is 200 for the owner only (403 member), and a
@@ -41,6 +43,9 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
   const [github, setGithub] = useState<GithubStatus | null>(null);
   const [waitlist, setWaitlist] = useState<WaitlistEntry[] | null>(null); // null = not admin
   const [lockedCanvases, setLockedCanvases] = useState<CanvasRowView[]>([]);
+  // Web push (#87) — PER DEVICE, so this is deliberately not part of `reload()`'s
+  // workspace payload: it describes the browser you're sitting at, not the workspace.
+  const [push, setPush] = useState<PushState | null>(null);
   const base = `/api/workspaces/${encodeURIComponent(workspaceId)}`;
 
   const reload = useCallback(async () => {
@@ -63,6 +68,14 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
   useEffect(() => {
     if (workspaceId) void reload();
   }, [workspaceId, reload]);
+
+  useEffect(() => {
+    void pushState().then(setPush);
+  }, []);
+
+  const togglePush = async () => {
+    setPush(await (push === 'on' ? disablePush() : enablePush()));
+  };
 
   const isOwnerView = invitations !== null;
   // Global admin role (ADR-0014) — same probe as the Waitlist section, since
@@ -395,6 +408,28 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
                 </li>
               ))}
             </ul>
+          </section>
+        )}
+
+        {push !== null && push !== 'unconfigured' && (
+          <section className="settings-section">
+            <div className="settings-section-head">
+              <h3>Notifications</h3>
+              {(push === 'on' || push === 'off') && (
+                <button type="button" className="settings-push-toggle" onClick={() => void togglePush()}>
+                  {push === 'on' ? 'Turn off on this device' : 'Turn on for this device'}
+                </button>
+              )}
+            </div>
+            <p className="settings-row-sub">
+              {push === 'unsupported'
+                ? 'This browser cannot receive push notifications.'
+                : push === 'denied'
+                  ? 'Notifications are blocked for this site — re-allow them in your browser settings, then reload.'
+                  : push === 'on'
+                    ? 'This device gets a notification when a session needs your input. Each device opts in separately.'
+                    : 'Get a notification when a background session needs your input. Applies to this device only.'}
+            </p>
           </section>
         )}
 

@@ -67,6 +67,15 @@ export default cloudflareModule.instance({
       // fredrin MCP bearer (ADR-0013 train 2) — edge-only; rides each chat send as the
       // x-mcp-tokens header, never container env.
       'FREDRIN_KEY',
+      // Web push VAPID keypair (#87). Unlike the secrets above, the PRIVATE half IS
+      // forwarded into the container (worker/container-env.ts): the `notify` seam that
+      // signs and sends lives in the bridge, not at the edge. Deliberate, narrow exception
+      // to the ADR-0008 edge-only rule — the capability it grants is "send a notification
+      // to an endpoint already in push_subscriptions", and it reads nothing. VAPID_SUBJECT
+      // is the RFC 8292 contact the push service may reach us at.
+      'VAPID_PUBLIC_KEY',
+      'VAPID_PRIVATE_KEY',
+      'VAPID_SUBJECT',
     ],
     // Single always-warm DO-bound container; the gradual default never drains it,
     // so a redeployed image would silently never take effect. Roll immediately.

@@ -19,6 +19,7 @@ import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 import { coordsForWorkspace, handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
+import { handlePushApi } from './push.ts';
 import { handleMcpReadApi, handleMcpTokenApi } from './mcp-tokens-api.ts';
 import { probeMcpTools } from './mcp-probe.ts';
 import { MCP_REGISTRY } from '../server/mcp-registry.ts';
@@ -99,6 +100,13 @@ export interface Env {
   // env fallback attached per chat send (worker/mcp-tokens-proxy.ts). Unset ⇒ fredrin is
   // simply not connected; a stored per-workspace token row overrides it.
   FREDRIN_KEY?: string;
+  // Web push (#87). The edge only ever hands out the PUBLIC half — the browser needs it as
+  // `applicationServerKey` to subscribe. The private key is forwarded to the container, which
+  // is where the `notify` seam signs and sends. Unset ⇒ /api/push/key answers `''` and the
+  // shell's opt-in toggle stays hidden, so push is simply off (the local-dev default).
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
   // The single-tenant owner of everything the bridge files under a user id (Inbox
   // Conversations via `ask_human`, the dev-agent's promoted items): must be this
   // deployment's Better Auth user.id, NOT an email or display name — the Inbox query
@@ -386,6 +394,12 @@ export default {
     if (url.pathname === '/') return asset('/');
     if (url.pathname.startsWith('/assets/')) return asset(url.pathname);
 
+    // The push service worker (#87). Served from the ROOT path on purpose: a service worker's
+    // default scope is its own directory, and it must control `/` to focus an existing shell
+    // tab on notification click. It sits behind the gate like the shell itself — the browser
+    // sends cookies on a same-origin SW fetch, and it's only ever registered post-login.
+    if (url.pathname === '/sw.js') return asset('/sw.js');
+
     // Notebook is a Shell stage now (ADR-0007, PRD #103 slice #107), not its own SPA
     // surface — the bare URL bounces to the shell with the stage selected, so a bookmark
     // or link to `/notebook` still lands on Notebook, just inside the one chrome. Its
@@ -509,6 +523,13 @@ export default {
     const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen|assign|visibility))?)?$/.exec(url.pathname);
     if (inboxApiMatch) {
       return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
+    }
+
+    // Web push device registry (#87) — the opt-in behind the Inbox's `notify` seam. Edge-only
+    // (no container woken); the bridge reads the rows back when it needs to ping.
+    const pushApiMatch = /^\/api\/push\/([^/]+)$/.exec(url.pathname);
+    if (pushApiMatch) {
+      return handlePushApi(request, env, user, pushApiMatch[1]);
     }
 
     // External MCP owner consent (ADR-0013 train 2, #176): connect/disconnect a registry

@@ -50,4 +50,12 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
   // sessions with `cwd: CANVAS_CWD`, matching START's cd — one derivation, no drift that
   // could orphan a session's JSONL by project-dir name.
   CANVAS_CWD: CANVAS_CONTAINER_CWD,
+  // Web push (#87): the `notify` seam lives in the bridge, so the VAPID keypair has to reach
+  // the container — the one deliberate exception to "signing keys stay at the edge"
+  // (GITHUB_APP_PRIVATE_KEY, LIVEKIT_*, REPO_TOKEN_KEY all stay behind). The capability is
+  // narrow: sign a push to an endpoint already in `push_subscriptions`, read nothing. Unset ⇒
+  // `webPushSender` returns null and notify degrades to its log line.
+  VAPID_PUBLIC_KEY: env.VAPID_PUBLIC_KEY ?? '',
+  VAPID_PRIVATE_KEY: env.VAPID_PRIVATE_KEY ?? '',
+  VAPID_SUBJECT: env.VAPID_SUBJECT ?? '',
 });

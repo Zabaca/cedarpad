@@ -59,6 +59,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tldraw": "^5.1.1",
+    "web-push": "^3.6.7",
     "zod": "^3.25.0",
     "zustand": "^5.0.2"
   },
@@ -71,6 +72,7 @@
     "@types/node": "^25.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^4.3.4",
     "drizzle-kit": "^0.30.1",
     "jsdom": "^29.1.0",
