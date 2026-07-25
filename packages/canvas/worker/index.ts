@@ -12,7 +12,7 @@ import { handleAdminApi } from './admin.ts';
 import { handleMembersApi } from './members.ts';
 import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
-import { dispatchDevAgentRun, kickDevAgentRun, triggerDevAgentRun } from './dev-agent.ts';
+import { kickDevAgentRun, triggerDevAgentRun } from './dev-agent.ts';
 import { mintDevAgentGitToken, mintRepoReadToken } from './github-app.ts';
 import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
@@ -174,16 +174,11 @@ export function canonicalRedirect(url: URL, webOrigin: string | undefined): Resp
 }
 
 export default {
-  // Cron trigger (ADR-0007 PRD #51, re-shaped by ADR-0011). A scheduled dev-agent run is a
-  // chat turn kicked headlessly on the warm default container's bridge: mint the per-turn
-  // git token, proxy POST /api/dev-agent/run. `waitUntil` keeps the isolate alive for the
-  // kick (which may pay a cold boot) past the handler return.
-  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(
-      dispatchDevAgentRun(event, env, (e) =>
-        kickDevAgentRun(e, { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo }),
-      ),
-    );
+  // Cron trigger (ADR-0007 PRD #51, re-shaped by ADR-0011, narrowed by #100). The tick is an
+  // EVALUATOR only: it dispatches repo-defined jobs that are due (see below). There is no
+  // built-in jobless run any more — one mechanism, `.claude/jobs/`. `waitUntil` keeps the
+  // isolate alive for the kicks (which may pay a cold boot) past the handler return.
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     // Read-only checkout cadence (ADR-0016): the daily tick re-syncs the default
     // workspace's Repo checkouts. Best-effort, ungated (reads only), skipped while the
     // container is asleep — refresh-on-add and the Settings button cover the gaps.
@@ -202,8 +197,9 @@ export default {
       })().catch((e: unknown) => console.error(`[repos] scheduled checkout refresh failed: ${String(e)}`)),
     );
     // Repo-defined scheduled jobs (#196, ADR-0015): the same tick evaluates the selected
-    // repos' `daily` jobs against their lastRunAt stamps. Same master breaker as the
-    // built-in run; best-effort — an evaluator failure never breaks the tick.
+    // repos' `daily` jobs against their lastRunAt stamps — the ONLY scheduled dispatch (#100).
+    // DEV_AGENT_ENABLED stays the master breaker for scheduled work; best-effort — an
+    // evaluator failure never breaks the tick.
     if (env.DEV_AGENT_ENABLED === 'true') {
       const database = createDbForWorker(env as unknown as Bindings);
       ctx.waitUntil(
@@ -566,10 +562,10 @@ export default {
     // bridge single-flights runs with JOIN semantics; repeated clicks answer with the same run.
     if (url.pathname === '/api/jobs/dev-agent/run') {
       if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
-      // Optional body { repo, job }: `repo` is the Jobs picker's explicit target (ADR-0015 —
-      // a platform job picks a repo at trigger; must be within the selected set, 400
-      // otherwise). `job` names a repo-defined job (#195): its body is (re-)read off the
-      // repo's DEFAULT branch here — the merge armed it; a caller can never inject a prompt.
+      // Body { job, repo? }: `job` is REQUIRED (#100 — a jobless kick is a 400, never a
+      // default run) and names a repo-defined job (#195); its body is (re-)read off the repo's
+      // DEFAULT branch here — the merge armed it; a caller can never inject a prompt. `repo`
+      // optionally disambiguates a job name across selected repos (must be in the set).
       const body = (await request.json().catch(() => null)) as { repo?: string; job?: string } | null;
       return triggerDevAgentRun(
         env,

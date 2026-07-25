@@ -7,7 +7,7 @@ import * as schema from '../web-poc/lib/db/schema.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { addWorkspaceMember, createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
-import { buildMcpTools, WriteComponentInput } from './mcp-tools.ts';
+import { buildMcpTools, RunDevAgentInput, WriteComponentInput } from './mcp-tools.ts';
 
 // In-memory DB built from the real migrations (mirrors shell.test.ts).
 const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
@@ -427,5 +427,12 @@ describe('run_dev_agent — proxies the manual trigger; the bridge’s join answ
       kickDevAgent: async () => Response.json({ error: 'job not found' }, { status: 404 }),
     });
     await expect(t.runDevAgent({ job: 'nope' })).rejects.toThrow(/404/);
+  });
+
+  // #100: one mechanism — the tool's schema itself requires a job (no built-in default task).
+  test('the input schema requires `job`', () => {
+    expect(RunDevAgentInput.safeParse({}).success).toBe(false);
+    expect(RunDevAgentInput.safeParse({ repo: 'Zabaca/cedarpad' }).success).toBe(false);
+    expect(RunDevAgentInput.safeParse({ job: 'deps-audit' }).success).toBe(true);
   });
 });

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { LEGACY_SANDBOX_ID, resolve } from './sandbox-resolver.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 import { sandboxId as deriveSandboxId } from '../web-poc/lib/db/queries/workspaces.ts';
-import { DEV_AGENT_RUN_PATH, dispatchDevAgentRun, kickDevAgentRun, triggerDevAgentRun } from './dev-agent.ts';
+import { DEV_AGENT_RUN_PATH, kickDevAgentRun, triggerDevAgentRun } from './dev-agent.ts';
 import type { Env } from './index.ts';
 
 // ADR-0011: a dev-agent run is a chat turn kicked headlessly — the edge's whole job is
@@ -12,6 +12,8 @@ describe('kickDevAgentRun — mint + proxy the kick to the warm bridge', () => {
   const env = { CANVAS_USER: 'u' } as Env;
 
   const CONN = { installationId: '145473731', repoFullName: 'Zabaca/cedarpad' };
+  // Every kick carries a job now (#100): there is no built-in task to fall back to.
+  const JOB_ARG = { name: 'deps-audit', prompt: 'Audit the dependencies.' };
 
   const record = () => {
     const calls: Array<{ path: string; method: string; token: string | null; repo: string | null; coords: SandboxCoords }> = [];
@@ -32,14 +34,19 @@ describe('kickDevAgentRun — mint + proxy the kick to the warm bridge', () => {
     const { calls, serve } = record();
     const minted: Array<{ installationId: string; repoFullName: string }> = [];
 
-    const res = await kickDevAgentRun(env, {
-      mint: async (_e, opts) => {
-        minted.push({ installationId: opts.installationId, repoFullName: opts.repoFullName });
-        return 'ghs_run';
+    const res = await kickDevAgentRun(
+      env,
+      {
+        mint: async (_e, opts) => {
+          minted.push({ installationId: opts.installationId, repoFullName: opts.repoFullName });
+          return 'ghs_run';
+        },
+        serve,
+        resolveRepo: async () => CONN,
       },
-      serve,
-      resolveRepo: async () => CONN,
-    });
+      undefined,
+      JOB_ARG,
+    );
 
     expect(res.status).toBe(202);
     // The mint is scoped to the RESOLVED (installation, repo) — never a hardcoded repo (ADR-0015).
@@ -58,7 +65,7 @@ describe('kickDevAgentRun — mint + proxy the kick to the warm bridge', () => {
   test('a failed mint (null) kicks token-less but still repo-tagged — best-effort (no open_pr)', async () => {
     const { calls, serve } = record();
 
-    const res = await kickDevAgentRun(env, { mint: async () => null, serve, resolveRepo: async () => CONN });
+    const res = await kickDevAgentRun(env, { mint: async () => null, serve, resolveRepo: async () => CONN }, undefined, JOB_ARG);
 
     expect(res.status).toBe(202);
     expect(calls[0]!.token).toBeNull();
@@ -68,13 +75,18 @@ describe('kickDevAgentRun — mint + proxy the kick to the warm bridge', () => {
   test('no connection resolved ⇒ token-less, repo-less kick (the run explores the default cwd)', async () => {
     const { calls, serve } = record();
 
-    const res = await kickDevAgentRun(env, {
-      mint: async () => {
-        throw new Error('mint must not be called with no repo');
+    const res = await kickDevAgentRun(
+      env,
+      {
+        mint: async () => {
+          throw new Error('mint must not be called with no repo');
+        },
+        serve,
+        resolveRepo: async () => null,
       },
-      serve,
-      resolveRepo: async () => null,
-    });
+      undefined,
+      JOB_ARG,
+    );
 
     expect(res.status).toBe(202);
     expect(calls[0]!.token).toBeNull();
@@ -106,6 +118,7 @@ describe('kickDevAgentRun — mint + proxy the kick to the warm bridge', () => {
       env,
       { mint: async () => 'ghs_run', serve, resolveRepo: async (_e, requested) => (requested === 'Zabaca/cedarpad' ? CONN : null) },
       'Evil/other',
+      JOB_ARG,
     );
 
     expect(res.status).toBe(400);
@@ -129,15 +142,18 @@ describe('triggerDevAgentRun — validate the repo/job request, then kick', () =
     return { kicks, serve };
   };
 
-  test('a bare trigger (no body) kicks against the resolved default repo', async () => {
+  // #100: one mechanism. A jobless kick used to silently run a built-in prompt against an
+  // arbitrary repo; it is now a 400 that names where jobs come from.
+  test('a jobless trigger is a 400 naming .claude/jobs/ — nothing kicked', async () => {
     const { kicks, serve } = record();
-    const res = await triggerDevAgentRun(
-      env,
-      { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [JOB] },
-      null,
-    );
-    expect(res.status).toBe(202);
-    expect(kicks).toEqual([{ repo: 'Zabaca/cedarpad', body: null }]);
+    const deps = { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [JOB] };
+
+    for (const body of [null, {}, { repo: 'Zabaca/cedarpad' }, { job: '  ' }] as Array<{ repo?: string; job?: string } | null>) {
+      const res = await triggerDevAgentRun(env, deps, body);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toContain('.claude/jobs/');
+    }
+    expect(kicks).toEqual([]);
   });
 
   test('a named job is re-read off the selected repos (never caller-supplied prompt) and forwarded', async () => {
@@ -159,8 +175,8 @@ describe('triggerDevAgentRun — validate the repo/job request, then kick', () =
     };
     const deps = { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [JOB] };
 
-    await triggerDevAgentRun(env, deps, null, 'user_james');
-    await triggerDevAgentRun(env, deps, null);
+    await triggerDevAgentRun(env, deps, { job: 'deps-audit' }, 'user_james');
+    await triggerDevAgentRun(env, deps, { job: 'deps-audit' });
     expect(assigns).toEqual(['user_james', null]);
   });
 
@@ -170,32 +186,5 @@ describe('triggerDevAgentRun — validate the repo/job request, then kick', () =
     expect((await triggerDevAgentRun(env, deps, { job: 'nope' })).status).toBe(404);
     expect((await triggerDevAgentRun(env, deps, { job: 'deps-audit', repo: 'Other/repo' })).status).toBe(404);
     expect(kicks).toEqual([]);
-  });
-});
-
-describe('dispatchDevAgentRun — the scheduled dispatch (cron gate)', () => {
-  const event = { cron: '0 9 * * *', scheduledTime: Date.UTC(2026, 6, 7, 9, 0, 0) };
-
-  test('skips entirely when DEV_AGENT_ENABLED is not "true" (cron kill-switch)', async () => {
-    let kicked = 0;
-    await dispatchDevAgentRun(event, { CANVAS_USER: 'u' } as Env, async () => {
-      kicked += 1;
-      return new Response(null, { status: 202 });
-    });
-    expect(kicked).toBe(0);
-  });
-
-  test('when enabled, kicks the run and surfaces a non-2xx kick as an error', async () => {
-    const env = { DEV_AGENT_ENABLED: 'true', CANVAS_USER: 'u' } as Env;
-    let kicked = 0;
-    await dispatchDevAgentRun(event, env, async () => {
-      kicked += 1;
-      return new Response(null, { status: 202 });
-    });
-    expect(kicked).toBe(1);
-
-    await expect(
-      dispatchDevAgentRun(event, env, async () => new Response('boom', { status: 500 })),
-    ).rejects.toThrow('500');
   });
 });

@@ -179,7 +179,8 @@ describe('/api/chat/:id/send: the x-inbox-assign header reaches the dispatched t
   test('a dev-agent /run kick forwards its initiator too (manual trigger = a human act)', async () => {
     const req = new Request('http://localhost/api/dev-agent/run', {
       method: 'POST',
-      headers: { 'x-inbox-assign': 'user_james' },
+      headers: { 'x-inbox-assign': 'user_james', 'content-type': 'application/json' },
+      body: JSON.stringify({ job: { name: 'deps-audit', prompt: 'Audit the dependencies.' } }),
     });
     const res = await handleRequest(req);
     expect(res.status).toBe(202);
@@ -409,11 +410,15 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
   let dispatched: Array<{ chatId: string; message: string; sessionId: string | null; model?: string; devAgentGitToken?: string; devAgentRepo?: string }> = [];
   const kicked: string[] = [];
 
+  // Every kick carries a repo-defined job (#100): the bridge has no built-in task.
+  const JOB = { name: 'improve-codebase-architecture', prompt: 'Architecture explore: survey this repo for deepening opportunities.' };
+
   const kick = async (token = 'ghs_run') => {
     const res = await handleRequest(
       new Request('http://localhost/api/dev-agent/run', {
         method: 'POST',
-        headers: { 'x-dev-agent-git-token': token, 'x-dev-agent-repo': 'Zabaca/cedarpad' },
+        headers: { 'x-dev-agent-git-token': token, 'x-dev-agent-repo': 'Zabaca/cedarpad', 'content-type': 'application/json' },
+        body: JSON.stringify({ job: JOB }),
       }),
     );
     const body = (await res.json()) as { chatId: string; joined: boolean };
@@ -445,8 +450,9 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     expect(dispatched).toHaveLength(1);
     expect(dispatched[0]!.chatId).toBe(body.chatId);
     expect(dispatched[0]!.sessionId).toBeNull(); // every run is a fresh session
-    // First sentence = the Conversation row's title (row-at-start slices the message).
-    expect(dispatched[0]!.message.startsWith('Architecture explore:')).toBe(true);
+    // First sentence = the Conversation row's title (row-at-start slices the message): the
+    // JOB's body leads (#100 — the task is always a job's).
+    expect(dispatched[0]!.message.startsWith(JOB.prompt)).toBe(true);
     // The prompt carries the workflow the harness used to enforce in code (ADR-0011 2a).
     expect(dispatched[0]!.message).toContain('docs/adr/declined/');
     expect(dispatched[0]!.message).toContain('end_turn');
@@ -477,10 +483,6 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     expect(p).toContain('docs/adr/declined/');
     // Decision record in the closing end_turn.
     expect(p).toContain('decision record');
-    // Exploration fans out to the repo-defined Sonnet subagent — gracefully degrading on
-    // repos that define none (ADR-0015: arbitrary connected repos must not break the run).
-    expect(p).toContain('explorer');
-    expect(p).toContain('If it defines none, do the reading yourself without fan-out');
   });
 
   // ADR-0015 (#195): a repo-defined job is PR-gated content; its body becomes the run's TASK,
@@ -506,8 +508,26 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     // …and the platform wrapper is still around it — not opt-out-able.
     expect(p).toContain('Executing zero is a fully successful run');
     expect(p).toContain('end_turn');
-    // The default explore task is NOT included when a job supplies the task.
+    // Nothing but the job supplies the task — no built-in explore text (#100).
     expect(p).not.toContain('Architecture explore:');
+  });
+
+  // #100: one mechanism. A jobless kick used to fall back to a built-in prompt; it is now a
+  // 400 that names where a job comes from, and nothing is dispatched.
+  test('a jobless kick is a 400 naming .claude/jobs/ — no run dispatched', async () => {
+    for (const init of [
+      { method: 'POST', headers: { 'x-dev-agent-repo': 'Zabaca/cedarpad' } },
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ job: { name: 'blank', prompt: '   ' } }),
+      },
+    ] as RequestInit[]) {
+      const res = await handleRequest(new Request('http://localhost/api/dev-agent/run', init));
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toContain('.claude/jobs/');
+    }
+    expect(dispatched).toEqual([]);
   });
 
   test('join semantics: a kick during a running run returns THAT run, dispatching nothing new', async () => {
