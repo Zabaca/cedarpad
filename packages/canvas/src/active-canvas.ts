@@ -5,6 +5,8 @@
 // iframed pad is self-describing and two tabs can hold two canvases (#105). Absent
 // selection ⇒ `default`, so today's un-namespaced calls are byte-for-byte preserved.
 
+import { CANVAS_ID_HEADER } from '../shared/bridge-wire.ts';
+
 /** The default canvas id (mirrors component-loader / worker DEFAULT_CANVAS_ID). */
 export const DEFAULT_CANVAS_ID = 'default';
 
@@ -22,7 +24,7 @@ export function activeCanvasId(): string {
 
 /** Merge the `x-canvas-id` selection header into a bridge fetch's headers. */
 export function withCanvasHeader(headers?: HeadersInit): Record<string, string> {
-  return { ...(headers as Record<string, string> | undefined), 'x-canvas-id': activeCanvasId() };
+  return { ...(headers as Record<string, string> | undefined), [CANVAS_ID_HEADER]: activeCanvasId() };
 }
 
 /** `x-canvas-id` for CHAT calls: stamped only when this surface IS a pad. The chat-store is
@@ -33,7 +35,7 @@ export function withPadCanvasHeader(headers?: HeadersInit): Record<string, strin
   const path = typeof window === 'undefined' ? null : window.location.pathname;
   const id = path ? canvasIdFromPath(path) : null;
   const base = { ...(headers as Record<string, string> | undefined) };
-  return id ? { ...base, 'x-canvas-id': id } : base;
+  return id ? { ...base, [CANVAS_ID_HEADER]: id } : base;
 }
 
 /** Append `?canvas=<id>` to a stream URL (EventSource can't send headers). */

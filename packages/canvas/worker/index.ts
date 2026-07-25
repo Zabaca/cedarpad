@@ -41,6 +41,7 @@ import {
   parseWorkspaceRoute,
   readWorkspaceCookie,
 } from './shell-routing.ts';
+import { CANVAS_ID_HEADER, GUEST_CANVAS_HEADER } from '../shared/bridge-wire.ts';
 
 // One container = one workspace = one canvas (v1). The Worker is the proxy into the
 // in-container vite dev server, which serves the app and forwards /api/* to the bridge.
@@ -313,7 +314,7 @@ export default {
         ? await readGuestSession(request.headers.get('cookie'), env.BETTER_AUTH_SECRET)
         : null;
       if (guest) {
-        const canvas = request.headers.get('x-canvas-id') ?? url.searchParams.get('canvas');
+        const canvas = request.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas');
         // The one guest-only edge endpoint sits OUTSIDE decideGuestGate's proxy allowlist:
         // it's answered here, never proxied. The Shell probes it on boot to pick guest mode.
         const isGuestProbe = url.pathname === '/api/guest-session' && request.method === 'GET';
@@ -361,7 +362,7 @@ export default {
             // filtering, view-only member conversations) — stamped HERE, overwriting
             // anything the client sent, so it can never be spoofed upward.
             const guestProxied = new Request(request);
-            guestProxied.headers.set('x-guest-canvas', guest.canvasId);
+            guestProxied.headers.set(GUEST_CANVAS_HEADER, guest.canvasId);
             return serveWorkspace(guestProxied, env, coordsForWorkspace(guest.workspaceId));
           }
         }

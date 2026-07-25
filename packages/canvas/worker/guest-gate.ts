@@ -1,3 +1,4 @@
+import { BRIDGE_ROUTES } from '../shared/bridge-wire.ts';
 import type { GuestSession } from './guest-session.ts';
 
 // The guest confinement boundary (canvas ADR-0015, PRD #220 slice 4). PURE — unit-tested
@@ -30,15 +31,15 @@ const VITE_PREFIXES = ['/src/', '/shared/', '/@vite/', '/@fs/', '/@id/', '/node_
  * denied outright (the write_component canvas_id lesson — a wrong-canvas write is
  * invisible until something 404s; force the address, surface the mistake). */
 const CANVAS_API = new Set([
-  'GET /api/canvas',
-  'GET /api/canvas/stream',
-  'POST /api/canvas/presence',
-  'POST /api/canvas/shapes',
-  'POST /api/canvas/shapes/create',
-  'POST /api/canvas/shapes/update',
-  'POST /api/canvas/delete',
-  'GET /api/components',
-  'POST /api/components/place',
+  `GET ${BRIDGE_ROUTES.canvas}`,
+  `GET ${BRIDGE_ROUTES.canvasStream}`,
+  `POST ${BRIDGE_ROUTES.presence}`,
+  `POST ${BRIDGE_ROUTES.shapes}`,
+  `POST ${BRIDGE_ROUTES.shapesCreate}`,
+  `POST ${BRIDGE_ROUTES.shapesUpdate}`,
+  `POST ${BRIDGE_ROUTES.deleteShapes}`,
+  `GET ${BRIDGE_ROUTES.components}`,
+  `POST ${BRIDGE_ROUTES.componentsPlace}`,
 ]);
 
 /** Per-module component ops (own-dir read/write + data write for THAT canvas). Promote/

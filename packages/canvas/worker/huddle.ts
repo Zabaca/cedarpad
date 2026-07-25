@@ -3,6 +3,13 @@ import type { Database } from '../web-poc/lib/db/client.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { GuestSession } from './guest-session.ts';
 import { resolveCanvasWorkspace } from './access.ts';
+import {
+  HUDDLE_AGENT_TOKEN_HEADER,
+  HUDDLE_CANVAS_HEADER,
+  LIVEKIT_API_KEY_HEADER,
+  LIVEKIT_API_SECRET_HEADER,
+  LIVEKIT_URL_HEADER,
+} from '../shared/bridge-wire.ts';
 
 // Huddles (ADR-0017): a voice room per canvas. The edge holds the LiveKit signing keys
 // and mints short-lived room tokens; the room IS the canvas id. Access is checked through
@@ -69,15 +76,15 @@ export async function ensureHuddleWorker(
     const req = new Request(`https://bridge.internal${HUDDLE_ENSURE_PATH}`, {
       method: 'POST',
       headers: {
-        'x-huddle-canvas': canvasId,
-        'x-huddle-agent-token': agentToken,
-        'x-livekit-url': env.LIVEKIT_URL,
+        [HUDDLE_CANVAS_HEADER]: canvasId,
+        [HUDDLE_AGENT_TOKEN_HEADER]: agentToken,
+        [LIVEKIT_URL_HEADER]: env.LIVEKIT_URL,
         // Deliberate ADR-0017 custody deviation: LiveKit Inference (STT/TTS) mints its
         // own short-lived gateway tokens from key+secret INSIDE the worker process — no
         // pre-minted-token seam exists. Scope: per-spawn process env, never persisted
         // container config; blast radius is the LiveKit project, not the RCE boundary.
-        'x-livekit-api-key': env.LIVEKIT_API_KEY,
-        'x-livekit-api-secret': env.LIVEKIT_API_SECRET,
+        [LIVEKIT_API_KEY_HEADER]: env.LIVEKIT_API_KEY,
+        [LIVEKIT_API_SECRET_HEADER]: env.LIVEKIT_API_SECRET,
       },
     });
     const res = await serve(req);

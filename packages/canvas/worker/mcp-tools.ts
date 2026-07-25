@@ -1,4 +1,16 @@
 import { z } from 'zod';
+import {
+  BRIDGE_ROUTES,
+  CANVAS_ID_HEADER,
+  ComponentName,
+  CreateShapesBody,
+  DataFileName,
+  DeleteShapesBody,
+  PlaceComponentBody,
+  UpdateShapesBody,
+  WriteComponentBody,
+  WriteDataBody,
+} from '../shared/bridge-wire.ts';
 import { SkillName, UploadSkillInput as UploadSkillFiles } from '../shared/skills-wire.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
@@ -48,38 +60,20 @@ export const ReadCanvasInput = z.object({
   canvas_id: z.string().min(1).optional(),
 });
 export const ListComponentsInput = ReadCanvasInput;
-const ComponentModule = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/, 'component name: letters/digits/_/-, no extension');
-export const ReadComponentInput = ReadCanvasInput.extend({ module: ComponentModule });
+export const ReadComponentInput = ReadCanvasInput.extend({ module: ComponentName });
 // canvas_id is REQUIRED here (unlike the read paths' default-canvas fallback): a write
 // silently landing in the default canvas's own dir when the caller meant a specific one
 // is invisible until something tries to place/resolve the module there — an omitted
 // canvas_id here, followed by place_component on a different canvas, 404s with no hint
 // why. Forcing the caller to say which canvas surfaces the mistake immediately.
-export const WriteComponentInput = ReadComponentInput.extend({ canvas_id: z.string().min(1), source: z.string().min(1) });
-export const WriteDataInput = ReadCanvasInput.extend({
-  name: z
-    .string()
-    .regex(/^[A-Za-z][A-Za-z0-9_-]*\.(json|csv|txt|md)$/, 'data file name: letters/digits/_/- with a .json/.csv/.txt/.md extension'),
-  source: z.string().min(1),
-});
-// Direct canvas mutation. Shapes ride as loose records on purpose: the bridge's
-// normalizeShape is the single validator (same permissive-schema-strict-normalize split
-// the in-canvas agent tools use), and its errors come back agent-legible.
-const ShapeRecord = z.record(z.unknown());
-export const CreateShapesInput = ReadCanvasInput.extend({ shapes: z.array(ShapeRecord).min(1) });
-export const UpdateShapesInput = ReadCanvasInput.extend({
-  shapes: z.array(ShapeRecord.and(z.object({ id: z.string().min(1) }))).min(1),
-});
-export const DeleteShapesInput = ReadCanvasInput.extend({ ids: z.array(z.string().min(1)).min(1) });
-export const PlaceComponentInput = ReadCanvasInput.extend({
-  id: z.string().min(1).optional(),
-  module: ComponentModule,
-  x: z.number(),
-  y: z.number(),
-  w: z.number().optional(),
-  h: z.number().optional(),
-  data: z.record(z.unknown()).optional(),
-});
+export const WriteComponentInput = ReadComponentInput.extend({ canvas_id: z.string().min(1) }).merge(WriteComponentBody);
+export const WriteDataInput = ReadCanvasInput.extend({ name: DataFileName }).merge(WriteDataBody);
+// Direct canvas mutation: the tool input is the canvas address plus the bridge's own body
+// schema (shared/bridge-wire.ts), so the edge validates exactly what the bridge parses.
+export const CreateShapesInput = ReadCanvasInput.merge(CreateShapesBody);
+export const UpdateShapesInput = ReadCanvasInput.merge(UpdateShapesBody);
+export const DeleteShapesInput = ReadCanvasInput.merge(DeleteShapesBody);
+export const PlaceComponentInput = ReadCanvasInput.merge(PlaceComponentBody);
 
 export interface McpToolDeps {
   db: Database;
@@ -143,7 +137,7 @@ export function buildMcpTools(deps: McpToolDeps) {
     if (!(await resolveCanvas(deps.db, workspaceId, canvasId, deps.userId))) {
       throw new Error(`canvas not found in workspace: ${canvasId}`);
     }
-    return { 'x-canvas-id': canvasId };
+    return { [CANVAS_ID_HEADER]: canvasId };
   };
 
   /** Proxy + parse: a non-2xx bridge answer becomes a thrown error the MCP layer surfaces. */
@@ -277,7 +271,7 @@ export function buildMcpTools(deps: McpToolDeps) {
     async readCanvas(input: z.infer<typeof ReadCanvasInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, '/api/canvas', { headers });
+      return bridgeJson(ws.id, BRIDGE_ROUTES.canvas, { headers });
     },
 
     // The component library over the wire: the same list/read/write the in-canvas agent
@@ -285,19 +279,19 @@ export function buildMcpTools(deps: McpToolDeps) {
     async listComponents(input: z.infer<typeof ListComponentsInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, '/api/components', { headers });
+      return bridgeJson(ws.id, BRIDGE_ROUTES.components, { headers });
     },
 
     async readComponent(input: z.infer<typeof ReadComponentInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, `/api/components/${encodeURIComponent(input.module)}`, { headers });
+      return bridgeJson(ws.id, `${BRIDGE_ROUTES.components}/${encodeURIComponent(input.module)}`, { headers });
     },
 
     async writeComponent(input: z.infer<typeof WriteComponentInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, `/api/components/${encodeURIComponent(input.module)}`, {
+      return bridgeJson(ws.id, `${BRIDGE_ROUTES.components}/${encodeURIComponent(input.module)}`, {
         method: 'PUT',
         headers,
         body: { source: input.source },
@@ -307,7 +301,7 @@ export function buildMcpTools(deps: McpToolDeps) {
     async writeData(input: z.infer<typeof WriteDataInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, `/api/components/data/${encodeURIComponent(input.name)}`, {
+      return bridgeJson(ws.id, `${BRIDGE_ROUTES.components}/data/${encodeURIComponent(input.name)}`, {
         method: 'PUT',
         headers,
         body: { source: input.source },
@@ -319,26 +313,26 @@ export function buildMcpTools(deps: McpToolDeps) {
     async createShapes(input: z.infer<typeof CreateShapesInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, '/api/canvas/shapes/create', { method: 'POST', headers, body: { shapes: input.shapes } });
+      return bridgeJson(ws.id, BRIDGE_ROUTES.shapesCreate, { method: 'POST', headers, body: { shapes: input.shapes } });
     },
 
     async updateShapes(input: z.infer<typeof UpdateShapesInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, '/api/canvas/shapes/update', { method: 'POST', headers, body: { shapes: input.shapes } });
+      return bridgeJson(ws.id, BRIDGE_ROUTES.shapesUpdate, { method: 'POST', headers, body: { shapes: input.shapes } });
     },
 
     async deleteShapes(input: z.infer<typeof DeleteShapesInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, '/api/canvas/delete', { method: 'POST', headers, body: { ids: input.ids } });
+      return bridgeJson(ws.id, BRIDGE_ROUTES.deleteShapes, { method: 'POST', headers, body: { ids: input.ids } });
     },
 
     async placeComponent(input: z.infer<typeof PlaceComponentInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
       const { workspace_id: _ws, canvas_id: _cv, ...placement } = input;
-      return bridgeJson(ws.id, '/api/components/place', { method: 'POST', headers, body: placement });
+      return bridgeJson(ws.id, BRIDGE_ROUTES.componentsPlace, { method: 'POST', headers, body: placement });
     },
 
     /** Skills are workspace CONTENT (ADR-0013): any member may add one — the same actor

@@ -28,6 +28,26 @@ import { loadSessionTranscript } from './session-transcript.ts';
 import { makeAssignmentPushNotify, webPushSender } from './push-notify.ts';
 import { type Notify, attachConversationToCanvas, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
+import {
+  BRIDGE_ROUTES,
+  CANVAS_ID_HEADER,
+  CreateShapesBody,
+  DEV_AGENT_GIT_TOKEN_HEADER,
+  DEV_AGENT_REPO_HEADER,
+  DeleteShapesBody,
+  GUEST_CANVAS_HEADER,
+  HEADLESS_SEND_HEADER,
+  HUDDLE_AGENT_TOKEN_HEADER,
+  HUDDLE_CANVAS_HEADER,
+  LIVEKIT_API_KEY_HEADER,
+  LIVEKIT_API_SECRET_HEADER,
+  LIVEKIT_URL_HEADER,
+  PlaceComponentBody,
+  UpdateShapesBody,
+  WriteComponentBody,
+  WriteDataBody,
+  wireError,
+} from '../shared/bridge-wire.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { refreshCheckout, removeCheckout } from './repo-checkout.ts';
 import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
@@ -166,7 +186,7 @@ const canvasSessions = createSessionRegistry(async (id) => {
   return session;
 });
 function canvasIdFrom(req: Request, url: URL): string {
-  return req.headers.get('x-canvas-id') ?? url.searchParams.get('canvas') ?? DEFAULT_CANVAS_ID;
+  return req.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas') ?? DEFAULT_CANVAS_ID;
 }
 // Build the default session at boot so it restores from R2 before the first request —
 // preserving today's boot-time load. Chats (multiplexed, not yet per-canvas) run
@@ -691,16 +711,16 @@ export async function handleRequest(req: Request): Promise<Response> {
     // canvas's voice room. The agent's room token arrives edge-minted in a header (signing
     // keys never enter the container); single-flight per canvas via the supervisor.
     if (path === '/api/huddle/ensure' && req.method === 'POST') {
-      const canvasId = req.headers.get('x-huddle-canvas');
-      const agentToken = req.headers.get('x-huddle-agent-token');
-      const livekitUrl = req.headers.get('x-livekit-url');
+      const canvasId = req.headers.get(HUDDLE_CANVAS_HEADER);
+      const agentToken = req.headers.get(HUDDLE_AGENT_TOKEN_HEADER);
+      const livekitUrl = req.headers.get(LIVEKIT_URL_HEADER);
       if (!canvasId || !agentToken || !livekitUrl) return json({ error: 'missing huddle headers' }, 400);
       const { joined } = huddleSupervisor.ensure(canvasId, {
         agentToken,
         livekitUrl,
         // Inference credentials (documented custody deviation — see worker/huddle.ts).
-        apiKey: req.headers.get('x-livekit-api-key') ?? '',
-        apiSecret: req.headers.get('x-livekit-api-secret') ?? '',
+        apiKey: req.headers.get(LIVEKIT_API_KEY_HEADER) ?? '',
+        apiSecret: req.headers.get(LIVEKIT_API_SECRET_HEADER) ?? '',
       });
       return json({ ok: true, joined });
     }
@@ -717,13 +737,13 @@ export async function handleRequest(req: Request): Promise<Response> {
     // (x-canvas-id header / ?canvas=, default 'default'), so N canvases share one
     // bridge with per-canvas stores. Un-namespaced calls resolve to the default
     // canvas, so today's single-canvas frontend is unchanged.
-    if (path === '/api/canvas' && req.method === 'GET') {
+    if (path === BRIDGE_ROUTES.canvas && req.method === 'GET') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
       return json(session.store.getState() satisfies CanvasState);
     }
     // Presence heartbeat (#212): merge this client's {cursor, camera} into the canvas's
     // ephemeral room and fan the merged set out over the EXISTING SSE stream (throttled).
-    if (path === '/api/canvas/presence' && req.method === 'POST') {
+    if (path === BRIDGE_ROUTES.presence && req.method === 'POST') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
       const beat = parseHeartbeat(await readBody(req));
       if (!beat) return json({ error: 'userId (string) and color (string) are required' }, 400);
@@ -770,10 +790,10 @@ export async function handleRequest(req: Request): Promise<Response> {
         at: Date.now(),
       });
     }
-    if (path === '/api/canvas/stream' && req.method === 'GET') {
+    if (path === BRIDGE_ROUTES.canvasStream && req.method === 'GET') {
       return canvasStream(await canvasSessions.get(canvasIdFrom(req, url)));
     }
-    if (path === '/api/canvas/shapes' && req.method === 'POST') {
+    if (path === BRIDGE_ROUTES.shapes && req.method === 'POST') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
       const body = await readBody(req);
       const raw = Array.isArray(body.shapes) ? body.shapes : [];
@@ -785,11 +805,11 @@ export async function handleRequest(req: Request): Promise<Response> {
         return json({ error: (e as Error).message }, 400);
       }
     }
-    if (path === '/api/canvas/delete' && req.method === 'POST') {
+    if (path === BRIDGE_ROUTES.deleteShapes && req.method === 'POST') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
-      const body = await readBody(req);
-      const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
-      return json({ version: session.store.remove(ids) });
+      const parsed = DeleteShapesBody.safeParse(await readBody(req));
+      if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
+      return json({ version: session.store.remove(parsed.data.ids) });
     }
     if (path === '/api/canvas/clear' && req.method === 'POST') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
@@ -832,45 +852,30 @@ export async function handleRequest(req: Request): Promise<Response> {
     // component rev), minus the chat-card linking — an external client has no chat card.
     // normalizeShape (inside the ops) stays the single shape validator.
     const opJson = (r: OpResult) => (r.isError ? json({ error: r.text }, 400) : json({ text: r.text }));
-    if (path === '/api/canvas/shapes/create' && req.method === 'POST') {
+    if (path === BRIDGE_ROUTES.shapesCreate && req.method === 'POST') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
-      const body = await readBody(req);
-      const shapes = Array.isArray(body.shapes) ? (body.shapes as Array<Record<string, unknown>>) : [];
-      if (shapes.length === 0) return json({ error: 'shapes: non-empty array required' }, 400);
-      return opJson(createShapesOp(session.store, shapes));
+      const parsed = CreateShapesBody.safeParse(await readBody(req));
+      if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
+      return opJson(createShapesOp(session.store, parsed.data.shapes));
     }
-    if (path === '/api/canvas/shapes/update' && req.method === 'POST') {
+    if (path === BRIDGE_ROUTES.shapesUpdate && req.method === 'POST') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
-      const body = await readBody(req);
-      const shapes = Array.isArray(body.shapes) ? (body.shapes as Array<Record<string, unknown>>) : [];
-      if (shapes.length === 0) return json({ error: 'shapes: non-empty array required' }, 400);
-      return opJson(updateShapesOp(session.store, shapes));
+      const parsed = UpdateShapesBody.safeParse(await readBody(req));
+      if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
+      return opJson(updateShapesOp(session.store, parsed.data.shapes));
     }
-    if (path === '/api/components/place' && req.method === 'POST') {
+    if (path === BRIDGE_ROUTES.componentsPlace && req.method === 'POST') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
-      const body = await readBody(req);
-      if (typeof body.module !== 'string' || typeof body.x !== 'number' || typeof body.y !== 'number') {
-        return json({ error: 'module (string), x and y (numbers) are required' }, 400);
-      }
-      return opJson(
-        placeComponentOp(session.store, {
-          id: typeof body.id === 'string' ? body.id : undefined,
-          module: body.module,
-          x: body.x,
-          y: body.y,
-          w: typeof body.w === 'number' ? body.w : undefined,
-          h: typeof body.h === 'number' ? body.h : undefined,
-          data: body.data && typeof body.data === 'object' ? (body.data as Record<string, unknown>) : undefined,
-          rev: nextComponentRev(session.store),
-        }),
-      );
+      const parsed = PlaceComponentBody.safeParse(await readBody(req));
+      if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
+      return opJson(placeComponentOp(session.store, { ...parsed.data, rev: nextComponentRev(session.store) }));
     }
 
     // The component library over the wire (MCP full access): the edge MCP tools proxy
     // here — the bridge owns the container filesystem (single writer, like /api/skills).
     // Canvas-scoped via x-canvas-id; PUT mirrors the agent's write_component (write +
     // hot-reload bump + persist via the components sink).
-    if (path === '/api/components' && req.method === 'GET') {
+    if (path === BRIDGE_ROUTES.components && req.method === 'GET') {
       const cid = canvasIdFrom(req, url);
       // `details` (name/description/tier) feeds the gallery; `components` stays for
       // existing consumers of the bare name list.
@@ -882,11 +887,10 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (dataRoute && req.method === 'PUT') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
       const name = decodeURIComponent(dataRoute[1] as string);
-      const body = await readBody(req);
-      const source = typeof body.source === 'string' ? body.source : '';
+      const parsed = WriteDataBody.safeParse(await readBody(req));
+      if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
       try {
-        if (!source) throw new Error('source must be non-empty');
-        writeDataFile(name, source, session.canvasId);
+        writeDataFile(name, parsed.data.source, session.canvasId);
         const reloaded = bumpAllComponents(session.store, nextComponentRev(session.store));
         await flushComponentTrees();
         return json({ ok: true, name, reloaded });
@@ -906,10 +910,10 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (componentRoute && req.method === 'PUT') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
       const module = decodeURIComponent(componentRoute[1] as string);
-      const body = await readBody(req);
-      const source = typeof body.source === 'string' ? body.source : '';
+      const parsed = WriteComponentBody.safeParse(await readBody(req));
+      if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
       try {
-        writeComponent(module, source, session.canvasId);
+        writeComponent(module, parsed.data.source, session.canvasId);
         const reloaded = isShared(module)
           ? bumpSharedModuleAcrossCanvases(module)
           : bumpAllComponents(session.store, nextComponentRev(session.store));
@@ -924,7 +928,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     // GET  /api/chat/stream    — subscribe to ALL chats' events (one SSE per client)
     // POST /api/chat/:id/send  — run a turn in a chat; events broadcast (tagged) to subscribers
     if (path === '/api/chat/stream' && req.method === 'GET') {
-      return chatStream(req.headers.get('x-guest-canvas') ?? undefined);
+      return chatStream(req.headers.get(GUEST_CANVAS_HEADER) ?? undefined);
     }
     // POST /api/dev-agent/run — kick one dev-agent run as a HEADLESS chat turn (ADR-0011).
     // The edge Jobs/cron handler proxies here with the freshly-minted token header; the token
@@ -950,10 +954,10 @@ export async function handleRequest(req: Request): Promise<Response> {
       // #184 §4: the whole run CONVERSATION judges on Opus — later grill replies resume
       // through the normal /send path, which reads the model from ChatMeta.
       chatMeta.set(chatId, { model: DEV_AGENT_RUN_MODEL });
-      const token = req.headers.get('x-dev-agent-git-token') ?? undefined;
+      const token = req.headers.get(DEV_AGENT_GIT_TOKEN_HEADER) ?? undefined;
       // The run's target repo (ADR-0015: one run = one repo), resolved and stamped by the
       // edge next to the token. It binds the Conversation (row repo edge) and the worktree.
-      const repo = req.headers.get('x-dev-agent-repo') ?? undefined;
+      const repo = req.headers.get(DEV_AGENT_REPO_HEADER) ?? undefined;
       // A MANUAL trigger's human initiator (shared inbox): the edge stamps who clicked
       // "Run now" / called run_dev_agent; a cron kick carries none ⇒ unassigned queue work.
       const runAssignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
@@ -1017,7 +1021,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       // /api/dev-agent/run above, no subscriber exists BY DESIGN — the caller polls
       // read_conversation instead of watching the stream, the turn persists to the
       // session JSONL regardless, and the Inbox attaches live if opened mid-turn.
-      const headless = req.headers.get('x-headless-send') === '1';
+      const headless = req.headers.get(HEADLESS_SEND_HEADER) === '1';
       if (!headless && chatHub.subscriberCount() === 0) return json({ error: 'no_subscribers', chatId }, 425);
       // One turn per chat, enforced at the wire (ADR-0011): a send while this chat's turn
       // runs would resume the SAME session concurrently (two SDK queries, one JSONL). The
@@ -1038,14 +1042,14 @@ export async function handleRequest(req: Request): Promise<Response> {
       // human is on (x-canvas-id / ?canvas), exactly how the canvas reads/SSE already resolve.
       // The edge-minted dev-agent git token (ADR-0010) rides a request header — set by the edge
       // chat proxy on a dev-agent Conversation's send only — and arms open_pr for this turn.
-      const devAgentGitToken = req.headers.get('x-dev-agent-git-token') ?? undefined;
+      const devAgentGitToken = req.headers.get(DEV_AGENT_GIT_TOKEN_HEADER) ?? undefined;
       // EXPLICIT canvas only (no default): the pad stamps x-canvas-id; an unaddressed send
       // (inbox thread) routes to the default store without claiming a canvas edge.
-      const requestCanvasId = req.headers.get('x-canvas-id') ?? url.searchParams.get('canvas') ?? undefined;
+      const requestCanvasId = req.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas') ?? undefined;
       // #220 slice 6: a GUEST send (edge-stamped x-guest-canvas). Member conversations are
       // view-only — a guest may address only the link's canvas, and only chats they started
       // themselves (an established chat that isn't guest-owned is somebody else's thread).
-      const guestCanvas = req.headers.get('x-guest-canvas') ?? undefined;
+      const guestCanvas = req.headers.get(GUEST_CANVAS_HEADER) ?? undefined;
       if (guestCanvas) {
         if (requestCanvasId !== guestCanvas) return json({ error: 'guest_canvas_mismatch', chatId }, 403);
         if (chatMeta.get(chatId).sessionId && !chatHub.isGuestChat(chatId)) {
@@ -1062,7 +1066,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const mcpSelection = chatMeta.get(chatId).mcp;
       const mcpTokens = applyMcpSelection(decodeMcpTokens(req.headers.get(MCP_TOKENS_HEADER)), mcpSelection);
       // The dev-agent turn's target repo, stamped by the edge proxy beside the token (ADR-0015).
-      const devAgentRepo = req.headers.get('x-dev-agent-repo') ?? undefined;
+      const devAgentRepo = req.headers.get(DEV_AGENT_REPO_HEADER) ?? undefined;
       // The send's HUMAN INITIATOR (shared inbox, CONTEXT.md), stamped by the edge proxies:
       // assigns the Conversation at birth / claims-if-unassigned on a reply.
       const assignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
@@ -1125,7 +1129,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const chatId = decodeURIComponent(transcriptRoute[1] as string);
       // #220: a guest may read only transcripts of chats bound to the link's canvas.
       // Unknown binding fails CLOSED (404 — don't confirm the chat exists).
-      const guestCanvas = req.headers.get('x-guest-canvas');
+      const guestCanvas = req.headers.get(GUEST_CANVAS_HEADER);
       if (guestCanvas && chatHub.canvasOf(chatId) !== guestCanvas) return json({ error: 'not found' }, 404);
       const meta = chatMeta.get(chatId);
       const events = meta.sessionId ? await loadSessionTranscript(SESSIONS_DIR, meta.sessionId) : [];
@@ -1138,7 +1142,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (interruptRoute && req.method === 'POST') {
       const chatId = decodeURIComponent(interruptRoute[1] as string);
       // #220: a guest may stop only turns of chats THEY started — never a member's.
-      if (req.headers.get('x-guest-canvas') && !chatHub.isGuestChat(chatId)) return json({ error: 'not found' }, 404);
+      if (req.headers.get(GUEST_CANVAS_HEADER) && !chatHub.isGuestChat(chatId)) return json({ error: 'not found' }, 404);
       chatHub.abort(chatId);
       return json({ ok: true });
     }

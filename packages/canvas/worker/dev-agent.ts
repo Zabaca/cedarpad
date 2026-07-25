@@ -2,6 +2,7 @@ import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolver.ts';
 import type { mintDevAgentGitToken } from './github-app.ts';
 import type { WorkspaceRepoView } from './github-connection.ts';
+import { DEV_AGENT_GIT_TOKEN_HEADER, DEV_AGENT_REPO_HEADER } from '../shared/bridge-wire.ts';
 
 // The dev-agent, edge side (ADR-0010 → ADR-0011) — PURE core. The dev-agent is a ROLE the
 // warm default container plays, and a dev-agent RUN is a chat turn that container's bridge
@@ -56,9 +57,9 @@ export async function kickDevAgentRun(
   const headers = new Headers();
   if (assignUser) headers.set('x-inbox-assign', assignUser);
   if (repo) {
-    headers.set('x-dev-agent-repo', repo.repoFullName);
+    headers.set(DEV_AGENT_REPO_HEADER, repo.repoFullName);
     const token = await deps.mint(env, { nowSec: Math.floor(Date.now() / 1000), ...repo });
-    if (token) headers.set('x-dev-agent-git-token', token);
+    if (token) headers.set(DEV_AGENT_GIT_TOKEN_HEADER, token);
   }
   headers.set('content-type', 'application/json');
   const init: RequestInit = { method: 'POST', headers, body: JSON.stringify({ job }) };

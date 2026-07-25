@@ -14,6 +14,7 @@ import { Room, RoomEvent } from '@livekit/rtc-node';
 import { z } from 'zod';
 import { createLiveness } from './liveness.ts';
 import { appendUtterance, transcriptPath } from './transcript.ts';
+import { CANVAS_ID_HEADER } from '../../shared/bridge-wire.ts';
 
 const CANVAS = process.env.HUDDLE_CANVAS ?? 'default';
 const LIVEKIT_URL = process.env.LIVEKIT_URL ?? '';
@@ -42,7 +43,7 @@ if (!LIVEKIT_URL || !TOKEN) {
 const bridge = async (path: string, init?: RequestInit): Promise<unknown> => {
   const res = await fetch(`${BRIDGE}${path}`, {
     ...init,
-    headers: { 'x-canvas-id': CANVAS, 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    headers: { [CANVAS_ID_HEADER]: CANVAS, 'content-type': 'application/json', ...(init?.headers ?? {}) },
   });
   if (!res.ok) throw new Error(`bridge ${path}: ${res.status} ${await res.text().catch(() => '')}`);
   return res.json();

@@ -35,6 +35,7 @@ import {
 } from './mcp-tools.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import type { Env } from './index.ts';
+import { CANVAS_ID_HEADER, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
 
 // The inbound MCP server (ADR-0013 train 3, #177): cedarpad's ONLY programmatic surface.
 // Edge-hosted, stateless per request (workers isolate), OAuth on Better Auth — the bearer
@@ -73,11 +74,11 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
           // poll read_conversation) — the bridge skips its subscribe-before-send 425.
           headers: {
             'content-type': 'application/json',
-            'x-headless-send': '1',
+            [HEADLESS_SEND_HEADER]: '1',
             // Shared-inbox assignment: an MCP send is the token user's act — the bridge
             // assigns the Conversation to them at birth / claims-if-unassigned on a reply.
             'x-inbox-assign': session.userId,
-            ...(canvasId ? { 'x-canvas-id': canvasId } : {}),
+            ...(canvasId ? { [CANVAS_ID_HEADER]: canvasId } : {}),
           },
           body: JSON.stringify({ message }),
         });

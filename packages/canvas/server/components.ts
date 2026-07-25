@@ -13,6 +13,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { COMPONENT_NAME_RE, DATA_FILE_NAME_RE } from '../shared/bridge-wire.ts';
 
 const DEFAULT_CANVAS_ID = 'default';
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
@@ -20,7 +21,7 @@ const SHARED_DIR = fileURLToPath(new URL('../shared/components/', import.meta.ur
 // The PLATFORM tier (ADR-0014): the image-baked seed library. Read-only at runtime —
 // no tool ever writes here; editing a base module shadows it into the canvas own dir.
 const BASE_DIR = `${SRC}canvas-components/`;
-const NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
+const NAME = COMPONENT_NAME_RE;
 const CANVAS_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 /** The own component dir for a canvas — uniform for every canvas, default included
@@ -113,7 +114,7 @@ export function writeComponent(module: string, source: string, canvasId: string 
 // Data files live NEXT TO components so vite resolves `import data from "./sales.json"`.
 // Non-executable extensions only — code must go through writeComponent (the registered,
 // hot-reloading path); a data door that accepts .tsx would just be the bypass again.
-const DATA_NAME = /^[A-Za-z][A-Za-z0-9_-]*\.(json|csv|txt|md)$/;
+const DATA_NAME = DATA_FILE_NAME_RE;
 const DATA_MAX_BYTES = 1_048_576; // the components sink tars the whole dir on every flush
 
 /** Create or overwrite a data file a component can import as a sibling — shared lib if it
