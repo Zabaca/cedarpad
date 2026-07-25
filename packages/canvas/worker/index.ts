@@ -5,7 +5,7 @@ import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
-import { canvasHiddenFrom } from './visibility.ts';
+import { resolveCanvas } from './access.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
 import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo, workspaceRepoSet } from './github-connection.ts';
 import { handleAdminApi } from './admin.ts';
@@ -343,8 +343,9 @@ export default {
                 lk,
               );
               if (res.ok) {
-                const gw = guest.workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: guest.workspaceId };
-                await ensureHuddleWorker(lk, guest.canvasId, (req) => serveWorkspace(req, env, resolve(gw)));
+                await ensureHuddleWorker(lk, guest.canvasId, (req) =>
+                  serveWorkspace(req, env, coordsForWorkspace(guest.workspaceId)),
+                );
               }
               return res;
             }
@@ -357,9 +358,7 @@ export default {
             // anything the client sent, so it can never be spoofed upward.
             const guestProxied = new Request(request);
             guestProxied.headers.set('x-guest-canvas', guest.canvasId);
-            const guestWorkspace =
-              guest.workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: guest.workspaceId };
-            return serveWorkspace(guestProxied, env, resolve(guestWorkspace));
+            return serveWorkspace(guestProxied, env, coordsForWorkspace(guest.workspaceId));
           }
         }
       }
@@ -485,8 +484,8 @@ export default {
       if (res.ok) {
         const cvRow = huddleCanvasId === DEFAULT_CANVAS_ID ? null : await getCanvas(workerDb, huddleCanvasId);
         const wsId = huddleCanvasId === DEFAULT_CANVAS_ID ? DEFAULT_WORKSPACE_ID : cvRow?.workspaceId;
-        const workspace = wsId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: wsId as string };
-        await ensureHuddleWorker(lk, huddleCanvasId, (req) => serveWorkspace(req, env, resolve(workspace)));
+        const coords = coordsForWorkspace(wsId as string);
+        await ensureHuddleWorker(lk, huddleCanvasId, (req) => serveWorkspace(req, env, coords));
       }
       return res;
     }
@@ -603,12 +602,13 @@ export default {
     const ownedCanvas = async (workspaceId: string, canvasId: string) => {
       const workerDb = createDbForWorker(env as unknown as Bindings);
       // #179: EVERY workspace — `default` included (it has a seeded row) — is looked up
-      // owner-OR-member; a missing row fails closed. No bypass.
+      // owner-OR-member; a missing row fails closed. No bypass. The canvas leg (registered
+      // to this workspace + ADR-0016 visible) is the access seam: a private canvas is 404
+      // to everyone but its creator — the workspace owner included (manage-not-read). The
+      // legacy `default` canvas has no registry row and decideCanvasRoute always selects it.
       const wsRecord = await getWorkspace(workerDb, workspaceId, user.id);
-      const cvRecord = canvasId === DEFAULT_CANVAS_ID ? null : await getCanvas(workerDb, canvasId);
-      // ADR-0016: a private canvas is 404 to everyone but its creator — the workspace
-      // owner included (manage-not-read). Same response as a nonexistent canvas.
-      const visible = cvRecord && canvasHiddenFrom(cvRecord, user.id) ? null : cvRecord;
+      const visible =
+        canvasId === DEFAULT_CANVAS_ID ? null : await resolveCanvas(workerDb, workspaceId, canvasId, user.id);
       return decideCanvasRoute(workspaceId, canvasId, wsRecord, visible);
     };
 
@@ -626,9 +626,7 @@ export default {
       if (decision.decision === 'not-found') {
         return new Response('canvas not found', { status: 404 });
       }
-      const workspace =
-        decision.workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: decision.workspaceId };
-      const proxied = await serveWorkspace(request, env, resolve(workspace));
+      const proxied = await serveWorkspace(request, env, coordsForWorkspace(decision.workspaceId));
       const response = new Response(proxied.body, proxied);
       response.headers.append('set-cookie', workspaceCookie(decision.workspaceId));
       return response;
@@ -679,9 +677,8 @@ export default {
     // asset/API hits with no selection behave exactly as today.
     const selected = readWorkspaceCookie(request.headers.get('cookie'));
 
-    const workspace =
-      !selected || selected === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: selected };
-    const coords = resolve(workspace);
+    const workspaceId = selected ?? DEFAULT_WORKSPACE_ID;
+    const coords = coordsForWorkspace(workspaceId);
 
     // Force the container to recycle so a freshly deployed image takes effect (CF
     // keeps the in-use instance on the old image until it idle-sleeps). The next
@@ -715,7 +712,7 @@ export default {
       // Shared-inbox assignment: a pad send is a human act — stamp its initiator so the
       // bridge assigns the born Conversation to them (overwrites any client-sent value).
       proxied.headers.set(INBOX_ASSIGN_HEADER, user.id);
-      proxied = await withMcpTokensHeader(proxied, env, workspace.id);
+      proxied = await withMcpTokensHeader(proxied, env, workspaceId);
     }
 
     return serveWorkspace(proxied, env, coords);

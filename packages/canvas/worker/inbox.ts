@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { getWorkspace, setInboxReadAt } from '../web-poc/lib/db/queries/workspaces.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
@@ -8,7 +7,7 @@ import { coordsForWorkspace } from './inbox-bridge.ts';
 import { orderInbox, unseenCount, viewToListOpts, type InboxItem } from './inbox-view.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import { activeWorkspaceId } from './shell.ts';
-import { conversationHiddenFrom } from './visibility.ts';
+import { listVisibleConversations, resolveConversationById } from './access.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
 
@@ -42,12 +41,7 @@ async function visibleInbox(
   listOpts: ReturnType<typeof viewToListOpts>,
   assigned?: string,
 ): Promise<InboxItem[]> {
-  const rows = await conversations.list(database, { ...listOpts, workspaceId, assigned });
-  const canvasById = new Map((await canvasRegistry.list(database, workspaceId)).map((c) => [c.id, c]));
-  const visible = rows.filter(
-    (r) => !conversationHiddenFrom(r, (r.canvasId && canvasById.get(r.canvasId)) || null, userId),
-  );
-  return orderInbox(visible);
+  return orderInbox(await listVisibleConversations(database, workspaceId, userId, { ...listOpts, assigned }));
 }
 
 /** The workspace's shared read mark as epoch ms (0 = never read). */
@@ -156,15 +150,11 @@ export async function handleInboxApi(
     return Response.json({ readAt: at.getTime() });
   }
 
-  const conv = await conversations.get(database, id);
   // Membership gate (shared inbox): any member of the Conversation's workspace may see and
-  // act on it; a stranger gets the same 404 as a missing row (no existence leak).
-  if (!conv || !(await getWorkspace(database, conv.workspaceId, user.id))) {
-    return Response.json({ error: 'conversation not found' }, { status: 404 });
-  }
-  // ADR-0016: hidden rows 404 like missing ones on every per-id action.
-  const linkedCanvas = conv.canvasId ? await canvasRegistry.get(database, conv.canvasId) : null;
-  if (conversationHiddenFrom(conv, linkedCanvas, user.id)) {
+  // act on it; a stranger gets the same 404 as a missing row (no existence leak). ADR-0016:
+  // hidden rows 404 like missing ones too, on every per-id action. Composed in access.ts.
+  const conv = await resolveConversationById(database, id, user.id);
+  if (!conv) {
     return Response.json({ error: 'conversation not found' }, { status: 404 });
   }
 
