@@ -7,7 +7,7 @@
 // delivers a guest only the frames of chats known to live on that canvas.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { broadcastChatEvent, chatClients, handleRequest, indexSessionStart, setChatTurnDispatcher } from './bridge.ts';
+import { broadcastChatEvent, chatHub, handleRequest, indexSessionStart, setChatTurnDispatcher } from './bridge.ts';
 
 const guestSend = (chatId: string, canvas: string | null, guestCanvas = 'cv_g', body: unknown = { message: 'hi' }) =>
   new Request(`http://localhost/api/chat/${encodeURIComponent(chatId)}/send`, {
@@ -29,14 +29,14 @@ describe('guest sends (#220 slice 6)', () => {
 
   beforeEach(() => {
     dispatched = [];
-    chatClients.add(fakeSubscriber()); // sends need a subscriber (425 guard)
+    chatHub.subscribe(fakeSubscriber()); // sends need a subscriber (425 guard)
     restore = setChatTurnDispatcher((chatId) => {
       dispatched.push(chatId);
     });
   });
   afterEach(() => {
     restore();
-    for (const c of [...chatClients]) chatClients.delete(c);
+    chatHub.resetForTests();
   });
 
   test("a guest starts their OWN chat on the link's canvas: 202, dispatched", async () => {
@@ -73,7 +73,7 @@ describe('guest sends (#220 slice 6)', () => {
 
 describe('guest chat stream filtering (#220 slice 6)', () => {
   afterEach(() => {
-    for (const c of [...chatClients]) chatClients.delete(c);
+    chatHub.resetForTests();
   });
 
   test("a guest stream receives frames ONLY for chats known to live on the link's canvas", async () => {

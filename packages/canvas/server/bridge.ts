@@ -18,6 +18,8 @@ import { bumpAllComponents, bumpSharedModule, createShapesOp, nextComponentRev, 
 import type { OpResult } from '../src/canvas-ops.ts';
 import { BlobStore, selectBackend } from './blob-store.ts';
 import { type CanvasSession, createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
+import { createChatHub } from './chat-hub.ts';
+import { sseComment, sseData } from './sse.ts';
 import { parseHeartbeat } from './presence.ts';
 import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
@@ -134,9 +136,6 @@ void dedupeLegacyConversations(webPocDb, INBOX_USER)
   .then((n) => n && console.log(`[inbox] deduped ${n} legacy conversation row(s)`))
   .catch((err) => console.error('[inbox] legacy dedupe failed:', err));
 
-// SSE encoder shared by the chat multiplexer (canvas SSE lives per-session now).
-const enc = new TextEncoder();
-const sse = (data: unknown) => enc.encode(`data: ${JSON.stringify(data)}\n\n`);
 
 // Canvas persistence: local disk in dev, R2 in the container (selected by env).
 // A workspace hosts N canvases (ADR-0007); each canvas is a CanvasSession keyed by
@@ -274,11 +273,11 @@ function canvasStream(session: CanvasSession): Response {
       clients.add(controller);
       markAlive();
       ensureReaper();
-      controller.enqueue(sse(session.store.getState())); // prime with current state
+      controller.enqueue(sseData(session.store.getState())); // prime with current state
     },
     cancel() {
       clients.delete(self);
-      console.log(`[clients] canvas ${session.canvasId} stream cancel -> canvas=${clients.size} chat=${chatClients.size}`);
+      console.log(`[clients] canvas ${session.canvasId} stream cancel -> canvas=${clients.size} chat=${chatHub.subscriberCount()}`);
     },
   });
   return new Response(stream, {
@@ -291,29 +290,11 @@ function canvasStream(session: CanvasSession): Response {
   });
 }
 
-// All chat sessions multiplex over ONE SSE stream per client. A turn's events are
-// broadcast to every subscriber, each frame TAGGED with its chatId so the client
-// routes it to the right session. This is deliberately one stream for ALL chats
-// (not one per chat): a browser caps ~6 concurrent connections per host over
-// HTTP/1.1, and each EventSource holds one open forever, so one-per-chat-card means
-// a single tab with ~5 chats + the canvas stream saturates the cap and starves
-// every POST (send/shapes) into "pending". One shared stream keeps it flat at 2.
-export const chatClients = new Set<ReadableStreamDefaultController>();
-
-// --- guest chat confinement (#220 slice 6, canvas ADR-0015) ---
-// The edge stamps `x-guest-canvas` on every proxied guest request. Bridge-side that means:
-// member conversations are VIEW-ONLY (a guest send into an established non-guest chat is
-// 403), a guest may start/continue their OWN chats addressed to exactly that canvas, and
-// the shared chat SSE delivers a guest only frames of chats KNOWN to live on that canvas.
-//
-// `chatCanvas` is the chat→canvas binding the filter consults, fed by the same places that
-// learn it anyway (send dispatch, session index). In-memory only — after a recycle a guest
-// can't continue their pre-recycle chat and can't stream frames of chats whose binding is
-// gone (fails CLOSED, never open). Known v1 gap, recorded on #220.
-const chatCanvas = new Map<string, string>();
-const guestChats = new Set<string>();
-/** Guest stream controllers → the one canvas whose chats they may see. */
-const guestStreamCanvas = new WeakMap<ReadableStreamDefaultController, string>();
+/** The chat plane (server/chat-hub.ts): the one multiplexed SSE subscriber set, the
+ * chat→canvas binding + guest-chat ownership the #220 confinement guards consult, and the
+ * turn abort plane. Exported so tests drive the seam through the hub instead of scrubbing
+ * module singletons — the canvas plane's `canvasSessions`, for the chat side. */
+export const chatHub = createChatHub();
 
 // --- idle liveness: why the CF container can sleep ---
 // A browser holds SSE streams open; the sandbox's per-forward inflight hold keeps the
@@ -370,18 +351,8 @@ function ensureReaper(): void {
 function broadcastChat(chatId: string, ev: ChatEvent): void {
   // Build the on-wire frame through the shared type, so a new ChatEvent kind added
   // in only one place fails the build here until the frame shape accounts for it.
-  const frame = sse({ chatId, ...ev } satisfies ChatFrame);
-  for (const c of chatClients) {
-    // #220: a guest stream sees only chats bound to ITS canvas; an unknown binding is
-    // filtered too (fail closed — never leak a frame we can't place).
-    const guestCanvas = guestStreamCanvas.get(c);
-    if (guestCanvas !== undefined && chatCanvas.get(chatId) !== guestCanvas) continue;
-    try {
-      c.enqueue(frame);
-    } catch {
-      chatClients.delete(c);
-    }
-  }
+  // The hub owns the fan-out (subscribers, the guest filter, dead-controller cleanup).
+  chatHub.broadcast({ chatId, ...ev } satisfies ChatFrame);
 }
 
 /** Test seam (#220): drive the shared chat broadcast directly to pin the guest filter. */
@@ -395,27 +366,26 @@ function chatStream(guestCanvas?: string): Response {
   const stream = new ReadableStream({
     start(controller) {
       self = controller;
-      chatClients.add(controller);
-      if (guestCanvas) guestStreamCanvas.set(controller, guestCanvas);
+      chatHub.subscribe(controller, guestCanvas);
       markAlive();
       ensureReaper();
-      controller.enqueue(enc.encode(': subscribed\n\n')); // comment frame: opens + flushes the stream
+      controller.enqueue(sseComment('subscribed')); // comment frame: opens + flushes the stream
       // Heartbeat: keeps the connection from going idle-dead during a long silent think, and
       // a closed socket (bridge died) trips EventSource.onerror on the client -> "reconnecting".
       ping = setInterval(() => {
         try {
-          controller.enqueue(enc.encode(': ping\n\n'));
+          controller.enqueue(sseComment('ping'));
         } catch {
           clearInterval(ping);
-          chatClients.delete(controller);
-          console.log(`[clients] chat ping dead-controller -> chat=${chatClients.size} canvas(default)=${defaultSession.clients.size}`);
+          chatHub.unsubscribe(controller);
+          console.log(`[clients] chat ping dead-controller -> chat=${chatHub.subscriberCount()} canvas(default)=${defaultSession.clients.size}`);
         }
       }, 15000);
     },
     cancel() {
       clearInterval(ping);
-      chatClients.delete(self);
-      console.log(`[clients] chat stream cancel -> chat=${chatClients.size} canvas(default)=${defaultSession.clients.size}`);
+      chatHub.unsubscribe(self);
+      console.log(`[clients] chat stream cancel -> chat=${chatHub.subscriberCount()} canvas(default)=${defaultSession.clients.size}`);
     },
   });
   return new Response(stream, {
@@ -428,12 +398,6 @@ function chatStream(guestCanvas?: string): Response {
   });
 }
 
-// Live turns, keyed by chatId, so POST /interrupt can abort the in-flight query
-// (Esc / Stop in the UI). One turn per chat at a time — ENFORCED at /send (409
-// turn_in_flight, ADR-0011): the client-side queue only protects the tab that started
-// the turn; a headless dev-agent run or a second tab needs the wire to say no. Exported
-// as a test seam (like chatClients) so the guard is testable without a live SDK turn.
-export const aborters = new Map<string, AbortController>();
 
 /** ADR-0011 / ADR-0010 6a: the edge-minted token header is the COMPLETE definition of a
  * dev-agent turn. Beyond the worktree + open_pr (prepareDevAgentTurn), it decides:
@@ -459,7 +423,7 @@ export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId:
  * best-effort — an index failure never fails the turn. */
 export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string, assignTo?: string): Promise<void> {
   if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
-  if (canvasId) chatCanvas.set(chatId, canvasId); // #220: the guest stream filter's binding
+  if (canvasId) chatHub.bindCanvas(chatId, canvasId); // #220: the guest stream filter's binding
   await findOrCreateConversation(webPocDb, {
     sessionId,
     userId: INBOX_USER,
@@ -541,7 +505,7 @@ async function settleConversation(input: { chatId: string; sessionId: string; me
 /** The turn's collaborators, each bound to its singleton. `runChatTurn` (below) turns a request
  * into a `TurnInput` and hands it here; `server/turn.ts` owns the phase order. */
 const turnDeps: TurnDeps = {
-  aborters,
+  aborters: chatHub.aborters,
   flavor: turnFlavor,
   getSession: (canvasId) => canvasSessions.get(canvasId),
   defaultCanvasId: DEFAULT_CANVAS_ID,
@@ -569,12 +533,12 @@ const turnDeps: TurnDeps = {
  * construction). One turn per chat still holds: an in-flight target refuses delivery.
  * Exported for tests (paired with setChatTurnDispatcher). */
 export function sendToChat(targetChatId: string, message: string, canvasId?: string): { ok: true } | { ok: false; error: string } {
-  if (aborters.has(targetChatId)) return { ok: false, error: 'that chat has a turn in flight — try again after it settles' };
+  if (chatHub.busy(targetChatId)) return { ok: false, error: 'that chat has a turn in flight — try again after it settles' };
   const meta = chatMeta.get(targetChatId);
   const effort = meta.effort && meta.effort !== 'default' ? meta.effort : undefined;
   // The SENDER's canvas routes the turn (the target card was validated against that store);
-  // the recycled-away chatCanvas binding is the fallback, not the source of truth.
-  dispatchChatTurn(targetChatId, message, meta.sessionId, [], meta.model, false, effort, canvasId ?? chatCanvas.get(targetChatId));
+  // the recycled-away hub canvas binding is the fallback, not the source of truth.
+  dispatchChatTurn(targetChatId, message, meta.sessionId, [], meta.model, false, effort, canvasId ?? chatHub.canvasOf(targetChatId));
   return { ok: true };
 }
 
@@ -637,7 +601,7 @@ const DEV_AGENT_RUN_MODEL = 'opus';
 
 // The in-flight dev-agent run's chatId (ADR-0011): one run at a time, with JOIN semantics —
 // a kick while one runs returns the RUNNING run instead of piling up a second explore.
-// Liveness is derived from `aborters` (the turn registry), so settling clears it naturally.
+// Liveness is derived from the hub's aborters (the turn registry), so settling clears it naturally.
 let devAgentRunChatId: string | null = null;
 
 // Test seam: the turn dispatcher is indirected so a test can substitute a spy and
@@ -795,12 +759,12 @@ export async function handleRequest(req: Request): Promise<Response> {
         // report health too, so a silent save failure is visible for all four.
         artifacts: sink.healthSnapshot(),
         unsavedVersions: Math.max(0, saveHealth.liveVersion - savedV),
-        // Split client counts: chatClients is the warmth driver (its 15s ping pins the
-        // container), canvasClients is pingless. Both must reach 0 for the container to
-        // idle-sleep. chatClients self-cleans (ping enqueue throws on a dead controller);
-        // canvasClients only shrinks on cancel() or the next broadcast, so it can lag.
+        // Split client counts: the chat hub's subscribers are the warmth driver (their 15s
+        // ping pins the container), canvasClients is pingless. Both must reach 0 for the
+        // container to idle-sleep. Chat subscribers self-clean (ping enqueue throws on a dead
+        // controller); canvasClients only shrinks on cancel() or the next broadcast, so it can lag.
         clients: canvasClients.size,
-        chatClients: chatClients.size,
+        chatClients: chatHub.subscriberCount(),
         canvasClients: canvasClients.size,
         uptimeMs: Date.now() - saveHealth.bootAt,
         at: Date.now(),
@@ -978,7 +942,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       if (!jobPrompt) {
         return json({ error: 'a dev-agent run requires a job: pick one defined in .claude/jobs/ on a selected repo’s default branch' }, 400);
       }
-      if (devAgentRunChatId && aborters.has(devAgentRunChatId)) {
+      if (devAgentRunChatId && chatHub.busy(devAgentRunChatId)) {
         return json({ chatId: devAgentRunChatId, joined: true }, 202);
       }
       const chatId = `dev-agent-run-${crypto.randomUUID()}`;
@@ -1054,12 +1018,12 @@ export async function handleRequest(req: Request): Promise<Response> {
       // read_conversation instead of watching the stream, the turn persists to the
       // session JSONL regardless, and the Inbox attaches live if opened mid-turn.
       const headless = req.headers.get('x-headless-send') === '1';
-      if (!headless && chatClients.size === 0) return json({ error: 'no_subscribers', chatId }, 425);
+      if (!headless && chatHub.subscriberCount() === 0) return json({ error: 'no_subscribers', chatId }, 425);
       // One turn per chat, enforced at the wire (ADR-0011): a send while this chat's turn
       // runs would resume the SAME session concurrently (two SDK queries, one JSONL). The
       // client re-queues on 409 and drains on the turn's done frame; Stop-then-send is the
       // explicit way to talk over a running turn.
-      if (aborters.has(chatId)) return json({ error: 'turn_in_flight', chatId }, 409);
+      if (chatHub.busy(chatId)) return json({ error: 'turn_in_flight', chatId }, 409);
       const body = await readBody(req);
       const message = typeof body.message === 'string' ? body.message.trim() : '';
       // Pasted screenshots: [{ media_type, data(base64) }]. Allow an image-only turn.
@@ -1084,12 +1048,12 @@ export async function handleRequest(req: Request): Promise<Response> {
       const guestCanvas = req.headers.get('x-guest-canvas') ?? undefined;
       if (guestCanvas) {
         if (requestCanvasId !== guestCanvas) return json({ error: 'guest_canvas_mismatch', chatId }, 403);
-        if (chatMeta.get(chatId).sessionId && !guestChats.has(chatId)) {
+        if (chatMeta.get(chatId).sessionId && !chatHub.isGuestChat(chatId)) {
           return json({ error: 'member_conversation_view_only', chatId }, 403);
         }
-        guestChats.add(chatId);
+        chatHub.markGuestChat(chatId);
       }
-      if (requestCanvasId) chatCanvas.set(chatId, requestCanvasId);
+      if (requestCanvasId) chatHub.bindCanvas(chatId, requestCanvasId);
       // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, set by the edge
       // proxy (worker/inbox-bridge.ts, worker/index.ts) on this send only. `server/turn.ts` drops
       // this for a dev-agent turn regardless — chat flavor only. The chat's own MCP selection
@@ -1162,20 +1126,20 @@ export async function handleRequest(req: Request): Promise<Response> {
       // #220: a guest may read only transcripts of chats bound to the link's canvas.
       // Unknown binding fails CLOSED (404 — don't confirm the chat exists).
       const guestCanvas = req.headers.get('x-guest-canvas');
-      if (guestCanvas && chatCanvas.get(chatId) !== guestCanvas) return json({ error: 'not found' }, 404);
+      if (guestCanvas && chatHub.canvasOf(chatId) !== guestCanvas) return json({ error: 'not found' }, 404);
       const meta = chatMeta.get(chatId);
       const events = meta.sessionId ? await loadSessionTranscript(SESSIONS_DIR, meta.sessionId) : [];
       // `busy`: is a turn in flight for this chat RIGHT NOW (ADR-0011)? A mid-run opener
       // missed the init frame, so rehydrate is how it learns to queue sends instead of 409ing.
-      return json({ config: { model: meta.model, effort: meta.effort, forkNext: meta.forkNext, ...(meta.mcp ? { mcp: meta.mcp } : {}) }, events, busy: aborters.has(chatId) });
+      return json({ config: { model: meta.model, effort: meta.effort, forkNext: meta.forkNext, ...(meta.mcp ? { mcp: meta.mcp } : {}) }, events, busy: chatHub.busy(chatId) });
     }
     // POST /api/chat/:id/interrupt — abort the in-flight turn (Esc / Stop).
     const interruptRoute = /^\/api\/chat\/([^/]+)\/interrupt$/.exec(path);
     if (interruptRoute && req.method === 'POST') {
       const chatId = decodeURIComponent(interruptRoute[1] as string);
       // #220: a guest may stop only turns of chats THEY started — never a member's.
-      if (req.headers.get('x-guest-canvas') && !guestChats.has(chatId)) return json({ error: 'not found' }, 404);
-      aborters.get(chatId)?.abort();
+      if (req.headers.get('x-guest-canvas') && !chatHub.isGuestChat(chatId)) return json({ error: 'not found' }, 404);
+      chatHub.abort(chatId);
       return json({ ok: true });
     }
 
@@ -1359,7 +1323,7 @@ export async function handleRequest(req: Request): Promise<Response> {
 
 // Bind the port only when run as the entrypoint (production / dev, always launched
 // as `bun run server/bridge.ts`). Importing the module (tests) gets handleRequest +
-// the chatClients set without starting a listener.
+// the chat hub without starting a listener.
 if (import.meta.main) {
   const server = Bun.serve({
     port: PORT,

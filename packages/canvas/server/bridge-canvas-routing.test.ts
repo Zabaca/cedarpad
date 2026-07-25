@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import type { CanvasShape } from '../src/shapes.ts';
 import type { runChat } from './agent.ts';
-import { chatClients, handleRequest, setTurnRunChat } from './bridge.ts';
+import { chatHub, handleRequest, setTurnRunChat } from './bridge.ts';
 
 // The fake runChat: write a marker shape into the store the bridge passed as arg 0, then
 // finish. A null sessionId keeps runChatTurn off the transcript-backup branch.
@@ -65,12 +65,12 @@ describe('agent chat routes to the active canvas session (#79)', () => {
   let restoreRunChat: () => void;
   beforeEach(() => {
     sub = fakeSubscriber(); // one subscriber = the /send guard passes
-    chatClients.add(sub);
+    chatHub.subscribe(sub);
     restoreRunChat = setTurnRunChat(fakeRunChat);
   });
   afterEach(() => {
     restoreRunChat();
-    for (const c of [...chatClients]) chatClients.delete(c);
+    chatHub.resetForTests();
   });
 
   test('a turn sent with x-canvas-id=B creates the shape in canvas B, not the default', async () => {
