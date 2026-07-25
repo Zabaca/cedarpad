@@ -3,6 +3,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'b
 import * as realAuthGate from './auth-gate.ts';
 import * as realCanvases from '../web-poc/lib/db/queries/canvases.ts';
 import * as realWorkspaces from '../web-poc/lib/db/queries/workspaces.ts';
+import * as realRepoJobs from './repo-jobs.ts';
+import * as realGithubConnection from './github-connection.ts';
 import * as realShareLinks from '../web-poc/lib/db/queries/share-links.ts';
 import { mintGuestCookie } from './guest-session.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
@@ -40,6 +42,29 @@ mock.module('./sandbox-runtime.ts', () => ({
   },
   sandboxFor: () => ({}),
 }));
+// Job discovery is the ONLY source of scheduled work now (#100), so the cron tests need to
+// steer it. Delegate-and-restore, same reason as getWorkspace below: repo-jobs.test.ts runs
+// the real discovery later in the same process.
+const realDiscoverJobs = realRepoJobs.discoverJobs;
+let discoverJobsImpl: typeof realDiscoverJobs = () => Promise.resolve([]);
+mock.module('./repo-jobs.ts', () => ({
+  ...realRepoJobs,
+  discoverJobs: (...args: Parameters<typeof realDiscoverJobs>) => discoverJobsImpl(...args),
+}));
+afterAll(() => {
+  discoverJobsImpl = realDiscoverJobs;
+});
+// A kick always names a repo now (a job's home repo, #100), and an unresolvable repo is a
+// 400 — so the cron/route tests need the workspace's repo set to resolve. Delegate-and-restore.
+const realResolveDevAgentRepo = realGithubConnection.resolveDevAgentRepo;
+let resolveDevAgentRepoImpl: typeof realResolveDevAgentRepo = (...args) => realResolveDevAgentRepo(...args);
+mock.module('./github-connection.ts', () => ({
+  ...realGithubConnection,
+  resolveDevAgentRepo: (...args: Parameters<typeof realResolveDevAgentRepo>) => resolveDevAgentRepoImpl(...args),
+}));
+afterAll(() => {
+  resolveDevAgentRepoImpl = realResolveDevAgentRepo;
+});
 mock.module('./auth-gate.ts', () => ({
   ...realAuthGate,
   authenticate: () => Promise.resolve(session),
@@ -326,10 +351,28 @@ describe('guest session gate (#220)', () => {
 });
 
 describe('POST /api/jobs/dev-agent/run — manual Jobs trigger (ADR-0011: a proxied kick)', () => {
-  test('proxies the kick to the warm default container’s bridge and returns its answer through', async () => {
+  // #100: one mechanism. A kick names a repo-defined job or it is an error — the built-in
+  // jobless run (a default prompt against an arbitrary repo) is retired.
+  test('a jobless POST is a 400 naming .claude/jobs/ — nothing proxied', async () => {
     const res = await worker.fetch(
       new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', { method: 'POST' }),
-      env, // no DEV_AGENT_ENABLED set — a manual trigger runs anyway
+      env, // no DEV_AGENT_ENABLED set — a manual trigger runs anyway, but it still needs a job
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('.claude/jobs/');
+    expect(served).toEqual([]);
+  });
+
+  test('a named job kicks the warm default container’s bridge and returns its answer through', async () => {
+    discoverJobsImpl = async () => [{ repo: 'Zabaca/cedarpad', name: 'deps-audit', description: '', schedule: 'daily', prompt: 'Audit deps.' }];
+    resolveDevAgentRepoImpl = async () => ({ installationId: '1', repoFullName: 'Zabaca/cedarpad', auth: { kind: 'installation', installationId: '1' } }) as never;
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ job: 'deps-audit' }),
+      }),
+      env,
     );
     // The bridge's response ({chatId, joined}) is returned verbatim — here the stub's body.
     expect(res.status).toBe(200);
@@ -339,6 +382,19 @@ describe('POST /api/jobs/dev-agent/run — manual Jobs trigger (ADR-0011: a prox
     expect(servedReqs).toEqual([{ path: '/api/dev-agent/run', method: 'POST' }]);
   });
 
+  test('an unknown job is a 404 — nothing proxied', async () => {
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ job: 'nope' }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(404);
+    expect(served).toEqual([]);
+  });
+
   test('rejects a non-POST (405)', async () => {
     const res = await GET('/api/jobs/dev-agent/run');
     expect(res.status).toBe(405);
@@ -346,33 +402,48 @@ describe('POST /api/jobs/dev-agent/run — manual Jobs trigger (ADR-0011: a prox
   });
 });
 
-describe('scheduled — the cron kicks the same bridge run (ADR-0011)', () => {
-  test('an enabled scheduled run proxies the kick to the warm default container', async () => {
-    // Await the waitUntil'd work: the kick is multi-hop async now (repo resolution before
-    // mint, ADR-0015), so asserting without draining it is a race.
+// #100: the scheduled tick is an EVALUATOR of repo-defined jobs and nothing else — there is
+// no built-in jobless run. DEV_AGENT_ENABLED stays the master breaker.
+describe('scheduled — the cron dispatches only repo-defined jobs (#100, ADR-0015)', () => {
+  const tick = async (envOverride: object = {}) => {
+    // Await the waitUntil'd work: the kick is multi-hop async (discovery → repo resolution →
+    // mint), so asserting without draining it is a race.
     const pending: Promise<unknown>[] = [];
     const ctx = {
       waitUntil: (p: Promise<unknown>) => void pending.push((p as Promise<unknown>).catch(() => {})),
     } as unknown as ExecutionContext;
     await worker.scheduled(
       { cron: '0 9 * * *', scheduledTime: 0 } as ScheduledController,
-      { ...(env as object), DEV_AGENT_ENABLED: 'true' } as Parameters<typeof worker.fetch>[1],
+      { ...(env as object), ...envOverride } as Parameters<typeof worker.fetch>[1],
       ctx,
     );
     await Promise.all(pending);
+  };
+
+  test('an enabled tick kicks a DUE repo-defined job against its home repo', async () => {
+    discoverJobsImpl = async () => [{ repo: 'Zabaca/cedarpad', name: 'nightly', description: '', schedule: 'daily', prompt: 'Do the nightly thing.' }];
+    resolveDevAgentRepoImpl = async () => ({ installationId: '1', repoFullName: 'Zabaca/cedarpad', auth: { kind: 'installation', installationId: '1' } }) as never;
+    await tick({ DEV_AGENT_ENABLED: 'true' });
     expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
     expect(servedReqs).toEqual([{ path: '/api/dev-agent/run', method: 'POST' }]);
   });
 
-  test('a disabled cron (flag unset) kicks nothing', async () => {
-    const ctx = { waitUntil: (p: Promise<unknown>) => void (p as Promise<unknown>).catch(() => {}) } as unknown as ExecutionContext;
-    await worker.scheduled({ cron: '0 9 * * *', scheduledTime: 0 } as ScheduledController, env, ctx);
+  test('an enabled tick with NO repo-defined jobs kicks nothing (no jobless default run)', async () => {
+    await tick({ DEV_AGENT_ENABLED: 'true' });
+    expect(served).toEqual([]);
+  });
+
+  test('a disabled cron (flag unset) kicks nothing even with a due job', async () => {
+    discoverJobsImpl = async () => [{ repo: 'Zabaca/cedarpad', name: 'nightly', description: '', schedule: 'daily', prompt: 'Do the nightly thing.' }];
+    await tick();
     expect(served).toEqual([]);
   });
 });
 
 beforeEach(() => {
   session = { user: { id: 'u_1' } };
+  discoverJobsImpl = () => Promise.resolve([]);
+  resolveDevAgentRepoImpl = (...args) => realResolveDevAgentRepo(...args);
   workspaceRecord = null;
   canvasRecord = null;
   served = [];

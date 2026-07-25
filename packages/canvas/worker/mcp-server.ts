@@ -293,7 +293,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'run_dev_agent',
       {
         description:
-          'Trigger a dev-agent run now (same as the Jobs "Run now" button). Optional: repo (must be in the workspace\'s selected set) and job (a repo-defined job name — its prompt is read off the repo\'s default branch). Runs single-flight: a trigger while one is running joins it. Returns the run\'s chatId; follow it via read_conversation/read_transcript.',
+          'Trigger a dev-agent run now (same as the Jobs "Run now" button). Requires `job`: the name of a job defined in .claude/jobs/ on a selected repo\'s default branch (its prompt is read off that branch — you cannot supply a prompt). Optional `repo` disambiguates the job name across selected repos. Runs single-flight: a trigger while one is running joins it. Returns the run\'s chatId; follow it via read_conversation/read_transcript.',
         inputSchema: RunDevAgentInput.shape,
       },
       async (input) => text(await tools.runDevAgent(input)),

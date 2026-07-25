@@ -40,10 +40,11 @@ export interface DevAgentKickDeps {
 export async function kickDevAgentRun(
   env: Env,
   deps: DevAgentKickDeps,
-  requestedRepo?: string,
-  // A repo-defined job's (name, body) — discovered off the repo's DEFAULT branch by the
+  requestedRepo: string | undefined,
+  // The repo-defined job's (name, body) — discovered off the repo's DEFAULT branch by the
   // caller (#195); forwarded to the bridge, which wraps the body in the platform law.
-  job?: { name: string; prompt: string },
+  // REQUIRED (#100): a run has no task other than a job's.
+  job: { name: string; prompt: string },
   // The MANUAL trigger's human initiator (shared inbox): rides as x-inbox-assign so the
   // run's Conversation is assigned to who kicked it. Absent on cron ⇒ unassigned queue work.
   assignUser?: string,
@@ -59,11 +60,8 @@ export async function kickDevAgentRun(
     const token = await deps.mint(env, { nowSec: Math.floor(Date.now() / 1000), ...repo });
     if (token) headers.set('x-dev-agent-git-token', token);
   }
-  const init: RequestInit = { method: 'POST', headers };
-  if (job) {
-    headers.set('content-type', 'application/json');
-    init.body = JSON.stringify({ job });
-  }
+  headers.set('content-type', 'application/json');
+  const init: RequestInit = { method: 'POST', headers, body: JSON.stringify({ job }) };
   const request = new Request(`https://bridge.internal${DEV_AGENT_RUN_PATH}`, init);
   return deps.serve(request, env, resolve(DEFAULT_WORKSPACE));
 }
@@ -76,10 +74,14 @@ export interface DevAgentTriggerDeps extends DevAgentKickDeps {
 
 /**
  * The one manual-trigger core (shared by the /api/jobs/dev-agent/run route and the MCP
- * run_dev_agent tool): validate the optional { repo, job } request, then kick. A named
- * job's prompt is (re-)read off the repo's DEFAULT branch here — the merge armed it; a
- * caller can never inject a prompt (#195). `repo` must be within the selected set
- * (kickDevAgentRun 400s otherwise); an unknown job is a 404.
+ * run_dev_agent tool): validate the { repo?, job } request, then kick. The named job's
+ * prompt is (re-)read off the repo's DEFAULT branch here — the merge armed it; a caller can
+ * never inject a prompt (#195). `repo` must be within the selected set (kickDevAgentRun 400s
+ * otherwise); an unknown job is a 404.
+ *
+ * `job` is REQUIRED (#100): there is exactly one way to get work — a job. A jobless kick used
+ * to fall back to a built-in prompt against an arbitrary repo; that layer is retired, so a
+ * jobless kick is a 400 naming where jobs come from.
  */
 export async function triggerDevAgentRun(
   env: Env,
@@ -90,32 +92,18 @@ export async function triggerDevAgentRun(
   assignUser?: string,
 ): Promise<Response> {
   let repoArg = typeof body?.repo === 'string' ? body.repo : undefined;
-  let job: { name: string; prompt: string } | undefined;
-  if (typeof body?.job === 'string') {
-    const jobs = await deps.discover(env);
-    const found = jobs.find((j) => j.name === body.job && (!repoArg || j.repo === repoArg));
-    if (!found) return Response.json({ error: `job not found on a selected repo's default branch: ${body.job}` }, { status: 404 });
-    repoArg = found.repo; // a repo job always runs against its home repo
-    job = { name: found.name, prompt: found.prompt };
+  if (typeof body?.job !== 'string' || !body.job.trim()) {
+    return Response.json(
+      {
+        error:
+          "a dev-agent run requires a job: pass { job: \"<name>\" } naming a job defined in .claude/jobs/ on a selected repo's default branch (list them at /api/workspaces/<id>/jobs, or in the Jobs stage). Add a job by merging a `.claude/jobs/<name>.md` file to that repo.",
+      },
+      { status: 400 },
+    );
   }
-  return kickDevAgentRun(env, deps, repoArg, job, assignUser);
-}
-
-// The cron handler's core, extracted so it's unit-testable without a live cron or container.
-// Kill-switch: the cron fires daily, but stays a no-op until DEV_AGENT_ENABLED="true" — the
-// flag gates ONLY this scheduled auto-fire; a manual Jobs kick is an explicit user action and
-// runs regardless. A failed kick is surfaced (thrown), never silently swallowed.
-export async function dispatchDevAgentRun(
-  event: { cron: string; scheduledTime: number },
-  env: Env,
-  kick: (env: Env) => Promise<Response>,
-): Promise<void> {
-  if (env.DEV_AGENT_ENABLED !== 'true') {
-    console.log('[dev-agent] scheduled run skipped — DEV_AGENT_ENABLED is not "true"');
-    return;
-  }
-  console.log(`[dev-agent] scheduled run — cron=${event.cron} at=${new Date(event.scheduledTime).toISOString()}`);
-  const res = await kick(env);
-  if (!res.ok) throw new Error(`dev-agent kick failed: ${res.status} ${await res.text().catch(() => '')}`);
-  console.log(`[dev-agent] scheduled run kicked: ${await res.text().catch(() => '')}`);
+  const jobs = await deps.discover(env);
+  const found = jobs.find((j) => j.name === body.job && (!repoArg || j.repo === repoArg));
+  if (!found) return Response.json({ error: `job not found on a selected repo's default branch: ${body.job}` }, { status: 404 });
+  repoArg = found.repo; // a repo job always runs against its home repo
+  return kickDevAgentRun(env, deps, repoArg, { name: found.name, prompt: found.prompt }, assignUser);
 }

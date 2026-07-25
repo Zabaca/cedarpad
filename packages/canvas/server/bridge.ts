@@ -610,13 +610,10 @@ function runChatTurn(chatId: string, message: string, sessionId: string | null, 
 // declare its ending via end_turn — needs_human or done).
 // The run's policy IS this prompt (issue #184: prompt-law, no harness). The bridge.test.ts
 // prompt-pin test names the load-bearing sentences — edit them consciously.
-// The platform's built-in job: the architecture explore. Repo-defined jobs (#195) replace
-// only THIS task text; the wrapper below stays around every run.
-const DEV_AGENT_DEFAULT_TASK = [
-  'Architecture explore: survey this repo for deepening opportunities.',
-  'Explore: run the Explore phase of the /improve-codebase-architecture skill. If this repo defines an `explorer` agent (.claude/agents/), fan the reading out to `explorer` subagents (the Agent tool) so the survey is parallel and cheap — they read, you judge. If it defines none, do the reading yourself without fan-out. No edits during explore.',
-].join('\n\n');
-
+// There is no built-in task any more (#100): every run's TASK is a repo-defined job's body
+// (`.claude/jobs/<name>.md`, armed by merge — ADR-0015). The architecture explore now lives
+// in this repo's own `.claude/jobs/improve-codebase-architecture.md`. The wrapper below is
+// still bridge code and wraps every run.
 const DEV_AGENT_RUN_WRAPPER = [
   'Then read docs/adr/declined/ and DROP every candidate that matches a declined marker (human declines are final until the marker is removed).',
   [
@@ -629,12 +626,10 @@ const DEV_AGENT_RUN_WRAPPER = [
   'Close the run with end_turn ONCE. Outcome "needs_human" only if GRILL verdicts exist (the question lists each grilled candidate: title, rationale, severity); otherwise outcome "done" — a run with nothing to grill must not ping the human, even if it executed PRs. Either way the summary carries the decision record: every candidate with verdict, one-line why, and risk class.',
 ].join('\n\n');
 
-/** The run prompt: the TASK (a repo-defined job's body, else the built-in explore) inside the
- * platform wrapper (triage law, decline markers, decision record, end_turn — ADR-0015: a job
- * steers WHAT, never under which rules). The task leads so its first sentence titles the row. */
-const composeRunPrompt = (task: string = DEV_AGENT_DEFAULT_TASK): string => `${task}\n\n${DEV_AGENT_RUN_WRAPPER}`;
-
-const DEV_AGENT_RUN_PROMPT = composeRunPrompt();
+/** The run prompt: the TASK (always a repo-defined job's body) inside the platform wrapper
+ * (triage law, decline markers, decision record, end_turn — ADR-0015: a job steers WHAT,
+ * never under which rules). The task leads so its first sentence titles the row. */
+const composeRunPrompt = (task: string): string => `${task}\n\n${DEV_AGENT_RUN_WRAPPER}`;
 
 // #184 §4: the run turn judges (triage + implementation), so it runs on Opus; the cheap
 // parallel reading is what fans out to Sonnet `explorer` subagents.
@@ -975,6 +970,14 @@ export async function handleRequest(req: Request): Promise<Response> {
     // init (row-at-start) and the Inbox attaches to the live stream when opened. One run at
     // a time with JOIN semantics: a kick during a run answers with the running run's chatId.
     if (path === '/api/dev-agent/run' && req.method === 'POST') {
+      // A repo-defined job (#195) is the ONLY source of a run's task (#100 / ADR-0015): the
+      // edge read its body off the repo's DEFAULT branch (the merge armed it) and forwards it
+      // here — wrapped, never replacing the law. A jobless kick is an error, not a default run.
+      const kickBody = (await req.json().catch(() => null)) as { job?: { name?: string; prompt?: string } } | null;
+      const jobPrompt = typeof kickBody?.job?.prompt === 'string' && kickBody.job.prompt.trim() ? kickBody.job.prompt.trim() : undefined;
+      if (!jobPrompt) {
+        return json({ error: 'a dev-agent run requires a job: pick one defined in .claude/jobs/ on a selected repo’s default branch' }, 400);
+      }
       if (devAgentRunChatId && aborters.has(devAgentRunChatId)) {
         return json({ chatId: devAgentRunChatId, joined: true }, 202);
       }
@@ -990,10 +993,6 @@ export async function handleRequest(req: Request): Promise<Response> {
       // A MANUAL trigger's human initiator (shared inbox): the edge stamps who clicked
       // "Run now" / called run_dev_agent; a cron kick carries none ⇒ unassigned queue work.
       const runAssignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
-      // A repo-defined job (#195): the edge read its body off the repo's DEFAULT branch (the
-      // merge armed it) and forwards it as the run's task — wrapped, never replacing the law.
-      const kickBody = (await req.json().catch(() => null)) as { job?: { name?: string; prompt?: string } } | null;
-      const jobPrompt = typeof kickBody?.job?.prompt === 'string' && kickBody.job.prompt.trim() ? kickBody.job.prompt.trim() : undefined;
       // A fresh session every run (sessionId null); the run's later grill turns resume it
       // through the normal conversation path.
       dispatchChatTurn(chatId, composeRunPrompt(jobPrompt), null, [], DEV_AGENT_RUN_MODEL, undefined, undefined, undefined, token, undefined, repo, runAssignTo);

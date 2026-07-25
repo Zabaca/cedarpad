@@ -18,7 +18,9 @@ import { getWorkspace, listWorkspaces } from '../web-poc/lib/db/queries/workspac
 export const ListCanvasesInput = z.object({ workspace_id: z.string().min(1) });
 // Same name constraint as the shell's create route (worker/shell.ts CreateCanvasInput).
 export const CreateCanvasInput = z.object({ workspace_id: z.string().min(1), name: z.string().trim().min(1).max(100) });
-export const RunDevAgentInput = z.object({ repo: z.string().min(1).optional(), job: z.string().min(1).optional() });
+// `job` is required (#100): a run's task is always a repo-defined job's body — there is no
+// built-in default prompt to fall back to.
+export const RunDevAgentInput = z.object({ job: z.string().min(1), repo: z.string().min(1).optional() });
 export const ListInboxInput = z.object({
   workspace_id: z.string().min(1),
   view: z.enum(['open', 'all', 'closed']).optional(),
@@ -98,7 +100,7 @@ export interface McpToolDeps {
   ) => Promise<Response>;
   /** Kick a dev-agent run (the same manual trigger as the Jobs "Run now" route). Wired to
    * triggerDevAgentRun in worker/mcp-server.ts; stubbed in tests. */
-  kickDevAgent: (body: { repo?: string; job?: string }) => Promise<Response>;
+  kickDevAgent: (body: { job: string; repo?: string }) => Promise<Response>;
 }
 
 const conversationView = (row: {

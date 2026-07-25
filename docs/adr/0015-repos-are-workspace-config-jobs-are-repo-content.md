@@ -73,6 +73,24 @@ reads (issues, canvas docs, MCP results, uploaded skills) is transitively an aut
 layers cut the injection→persistence→token-escalation ladder at near-zero feature cost; branch
 protection is the last rung and is the repo owner's lever, not the platform's.
 
+## Amendment 2026-07-25 — one mechanism: `.claude/jobs/` is the whole registry (#100)
+
+The "built-in, code" Jobs cell in the table above is retired. It had become a second
+scheduling mechanism: the cron tick also fired a jobless run that fell back to a code-defined
+prompt against an arbitrary selected repo, and a manual kick with no job did the same.
+
+- **`.claude/jobs/` is the sole job registry.** The built-in architecture explore moved out of
+  bridge code into this repo's own `.claude/jobs/improve-codebase-architecture.md` — armed by
+  merge like any other job, and now visible and editable where jobs live.
+- **The scheduled tick dispatches only through the evaluator.** `DEV_AGENT_ENABLED` remains the
+  master breaker for scheduled work; the ungated checkout refresh is unchanged.
+- **A jobless kick is an error (400), not a default run** — on the Jobs route, the MCP
+  `run_dev_agent` tool, and the bridge run endpoint. Work has exactly one source: a job.
+
+Unchanged: the platform wrapper is still bridge code and still not opt-out-able. A job steers
+*what*, never *under which rules* — moving the task text into a repo file changes who may edit
+the task (a PR), not what surrounds it.
+
 ## Considered and rejected
 
 - **Platform-level installation, workspace repo selection only** — a second workspace could never
