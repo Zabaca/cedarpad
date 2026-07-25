@@ -884,6 +884,36 @@ export const jobRunStamps = sqliteTable(
 
 export type JobRunStampRow = typeof jobRunStamps.$inferSelect;
 
+/* ------------------------------------------------------------------ *
+ * Web push subscriptions (#87) — the `notify` seam's delivery addresses.
+ *
+ * A subscription is PER DEVICE, not per user: the same human on a laptop and a
+ * phone has two rows, and both get the ping when a Conversation flips to
+ * waiting_on:human. The endpoint URL is the browser-vendor push service's
+ * per-device address and is globally unique, so it is the primary key —
+ * re-subscribing the same device upserts rather than duplicating.
+ *
+ * `p256dh`/`auth` are the RFC 8291 encryption keys the sender needs; they are
+ * public-by-construction (the browser hands them out to any origin it subscribed
+ * to) and useless without the endpoint. Plain text ids, no FKs (ADR-0007).
+ * ------------------------------------------------------------------ */
+export const pushSubscriptions = sqliteTable(
+  "push_subscriptions",
+  {
+    /** The push service's per-device URL. Globally unique → the natural key. */
+    endpoint: text("endpoint").primaryKey(),
+    /** Better Auth user id (the same id `conversations.user_id` carries). */
+    userId: text("user_id").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    ...timestamps,
+  },
+  (t) => [index("push_subscriptions_user_idx").on(t.userId)],
+);
+
+export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
+export type NewPushSubscriptionRow = typeof pushSubscriptions.$inferInsert;
+
 export type Workspace = typeof workspace.$inferSelect;
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;

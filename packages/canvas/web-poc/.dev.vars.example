@@ -28,3 +28,13 @@ BETTER_AUTH_URL="http://localhost:4510"
 # Production web origin trusted for Better Auth CSRF/Origin checks. Same-origin
 # in this model, so usually left blank.
 WEB_ORIGIN=""
+
+# Web push (#87) — the `notify` ping when a Conversation goes waiting_on:human.
+# Leave BLANK to keep push off: /api/push/key answers '' and the Settings toggle
+# hides itself. To try it locally, generate a pair with
+#   bunx web-push generate-vapid-keys
+# and paste both halves. VAPID_SUBJECT is a mailto:/https: the push service can
+# contact you at (defaults to mailto:support@cedarpad.com).
+VAPID_PUBLIC_KEY=""
+VAPID_PRIVATE_KEY=""
+VAPID_SUBJECT=""

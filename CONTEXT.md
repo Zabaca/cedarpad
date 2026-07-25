@@ -267,6 +267,14 @@ in `waiting-on: none` — so a running session is visible live in the "All" view
 cluttering "Needs me". Closing (archiving) is a **human verb** in the Inbox UI; the agent
 has no close.
 
+**Notify** (the "notifies" above, #87) is **web push**: the human opts a *device* in from
+Settings → Notifications, which registers `/sw.js` and stores that device's push endpoint
+(`push_subscriptions`, edge-only). On `needs_human` the bridge signs a VAPID push to every
+one of the owner's devices, deep-linking to the Inbox item. It is a **doorbell, not the
+signal** — the Inbox row is the durable record, so every delivery failure is swallowed, and
+an endpoint the push service reports as gone is pruned. Unconfigured VAPID ⇒ push is simply
+off. One channel only; email is deliberately not wired.
+
 **Runners** (where sessions execute — the Inbox is agnostic, it only coordinates). **Every
 runner runs the interactive bridge** (the SDK chat multiplexer), so every Session is a
 *chat* regardless of runner — a reply always **resumes the Session as a chat turn on its
