@@ -2,7 +2,8 @@ import webpush from 'web-push';
 
 import type { Database } from '../web-poc/lib/db/client.ts';
 import * as pushStore from '../web-poc/lib/db/queries/push-subscriptions.ts';
-import type { PushSubscriptionRow } from '../web-poc/lib/db/schema.ts';
+import { listWorkspaceMembers } from '../web-poc/lib/db/queries/workspaces.ts';
+import type { ConversationRow, PushSubscriptionRow } from '../web-poc/lib/db/schema.ts';
 import { PushPayload, type PushSubscriptionInput } from '../shared/push-contract.ts';
 import type { Notify } from './inbox.ts';
 
@@ -25,7 +26,7 @@ export type PushSend = (sub: PushSubscriptionInput, payload: string) => Promise<
 
 export interface PushNotifyDeps {
   db: Database;
-  /** The inbox owner whose devices get the ping (the bridge's `INBOX_USER`). */
+  /** The one recipient whose devices get the ping (resolved by `makeAssignmentPushNotify`). */
   userId: string;
   /** Shell origin the notification click should open (e.g. `https://app.cedarpad.com`). */
   origin: string;
@@ -65,6 +66,32 @@ export function makePushNotify(deps: PushNotifyDeps): Notify {
           console.error(`[push] send failed for ${row.endpoint}:`, err);
         }
       }),
+    );
+  };
+}
+
+/**
+ * Who should be woken for this Conversation (#231). Routing follows the existing advisory
+ * assignment (#217) rather than a second notion of who cares: an assigned session has an
+ * owner, so waking the team is noise; an unassigned one is unclaimed queue work (a cron /
+ * unattended run), so the whole workspace roster gets it. Deduped — the owner may also hold
+ * a member row, and endpoints are per-user, so unique userIds means unique endpoints.
+ */
+export async function resolvePushRecipients(
+  db: Database,
+  conversation: Pick<ConversationRow, 'workspaceId' | 'assignedTo'>,
+): Promise<string[]> {
+  if (conversation.assignedTo) return [conversation.assignedTo];
+  const members = await listWorkspaceMembers(db, conversation.workspaceId);
+  return [...new Set(members.map((m) => m.userId))];
+}
+
+/** The `Notify` the bridge actually installs: resolve recipients, then per-user fan-out. */
+export function makeAssignmentPushNotify(deps: Omit<PushNotifyDeps, 'userId'>): Notify {
+  return async (conversation, question) => {
+    const userIds = await resolvePushRecipients(deps.db, conversation);
+    await Promise.all(
+      userIds.map((userId) => makePushNotify({ ...deps, userId })(conversation, question)),
     );
   };
 }

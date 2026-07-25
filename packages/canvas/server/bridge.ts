@@ -23,7 +23,7 @@ import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import { makePushNotify, webPushSender } from './push-notify.ts';
+import { makeAssignmentPushNotify, webPushSender } from './push-notify.ts';
 import { type Notify, attachConversationToCanvas, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
@@ -112,14 +112,14 @@ const webPocApp = buildApp({ db: webPocDb });
 // single-user localhost surface, so the inbox owner + platform workspace come from env (the
 // authenticated-user wiring is a platform/#62 concern). notify is a best-effort stub this slice.
 const INBOX_USER = process.env.CANVAS_USER ?? 'default';
-// #87: the real attention signal. Web push to every device the inbox owner opted in
-// (shell/src/push.ts → worker/push.ts → push_subscriptions), logged either way. Unconfigured
-// VAPID ⇒ `webPushSender` is null and this stays exactly the log stub it was.
+// #87: the real attention signal. Web push (shell/src/push.ts → worker/push.ts →
+// push_subscriptions), logged either way. Unconfigured VAPID ⇒ `webPushSender` is null and this
+// stays exactly the log stub it was. #231: recipients follow the Conversation's assignment —
+// the assignee alone, or the whole workspace roster when nobody has claimed it.
 const pushSend = webPushSender(webPocEnv);
 const pushNotify = pushSend
-  ? makePushNotify({
+  ? makeAssignmentPushNotify({
       db: webPocDb,
-      userId: INBOX_USER,
       // `loadWebPocEnv` always fills WEB_ORIGIN (WEBPOC_ORIGIN in dev, the real origin in prod).
       origin: (webPocEnv.WEB_ORIGIN ?? WEBPOC_ORIGIN).replace(/\/$/, ''),
       send: pushSend,

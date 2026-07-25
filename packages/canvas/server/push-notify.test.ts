@@ -7,7 +7,8 @@ import { makeDb } from '../web-poc/lib/db/index.ts';
 import * as pushStore from '../web-poc/lib/db/queries/push-subscriptions.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import { PushPayload } from '../shared/push-contract.ts';
-import { makePushNotify, type PushSendResult } from './push-notify.ts';
+import { makeAssignmentPushNotify, makePushNotify, type PushSendResult } from './push-notify.ts';
+import { user, workspaceMembers, workspaces } from '../web-poc/lib/db/schema.ts';
 
 // In-memory DB built from the real Drizzle migrations (mirrors inbox.test.ts).
 const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
@@ -150,5 +151,126 @@ describe('web push notify (#87)', () => {
 
     const payload = PushPayload.parse(JSON.parse(rec.sent[0]?.payload ?? '{}'));
     expect(payload.title.length).toBeGreaterThan(0);
+  });
+});
+
+/** Seed a workspace with an owner plus N extra members (all real `user` rows). */
+async function seedWorkspace(
+  db: Awaited<ReturnType<typeof freshDb>>,
+  input: { workspaceId: string; ownerUserId: string; memberUserIds?: string[] },
+) {
+  for (const id of [input.ownerUserId, ...(input.memberUserIds ?? [])]) {
+    await db.insert(user).values({ id, name: id, email: `${id}@example.com` }).onConflictDoNothing();
+  }
+  await db
+    .insert(workspaces)
+    .values({ id: input.workspaceId, name: input.workspaceId, ownerUserId: input.ownerUserId });
+  for (const id of input.memberUserIds ?? []) {
+    await db
+      .insert(workspaceMembers)
+      .values({ id: `wm_${input.workspaceId}_${id}`, workspaceId: input.workspaceId, userId: id });
+  }
+}
+
+describe('push recipients follow assignment (#231)', () => {
+  test('an ASSIGNED conversation pings the assignee only', async () => {
+    const db = await freshDb();
+    await seedWorkspace(db, { workspaceId: 'ws_1', ownerUserId: 'user_owner', memberUserIds: ['user_b'] });
+    await pushStore.save(db, 'user_owner', device('owner-laptop'));
+    await pushStore.save(db, 'user_b', device('b-phone'));
+    const rec = recorder();
+
+    await makeAssignmentPushNotify({ db, origin: 'https://x.test', send: rec.send })(
+      conv({ workspaceId: 'ws_1', assignedTo: 'user_b' }),
+      'q',
+    );
+
+    expect(rec.sent.map((s) => s.endpoint)).toEqual(['https://push.example.com/b-phone']);
+  });
+
+  test('an UNASSIGNED conversation pings every workspace member', async () => {
+    const db = await freshDb();
+    await seedWorkspace(db, {
+      workspaceId: 'ws_1',
+      ownerUserId: 'user_owner',
+      memberUserIds: ['user_b', 'user_c'],
+    });
+    await pushStore.save(db, 'user_owner', device('owner-laptop'));
+    await pushStore.save(db, 'user_b', device('b-phone'));
+    await pushStore.save(db, 'user_c', device('c-tablet'));
+    const rec = recorder();
+
+    await makeAssignmentPushNotify({ db, origin: 'https://x.test', send: rec.send })(
+      conv({ workspaceId: 'ws_1', assignedTo: null }),
+      'q',
+    );
+
+    expect(rec.sent.map((s) => s.endpoint).sort()).toEqual([
+      'https://push.example.com/b-phone',
+      'https://push.example.com/c-tablet',
+      'https://push.example.com/owner-laptop',
+    ]);
+  });
+
+  test('the owner also holding a member row is pushed once per endpoint', async () => {
+    const db = await freshDb();
+    await seedWorkspace(db, { workspaceId: 'ws_1', ownerUserId: 'user_owner', memberUserIds: ['user_owner'] });
+    await pushStore.save(db, 'user_owner', device('owner-laptop'));
+    const rec = recorder();
+
+    await makeAssignmentPushNotify({ db, origin: 'https://x.test', send: rec.send })(
+      conv({ workspaceId: 'ws_1', assignedTo: null }),
+      'q',
+    );
+
+    expect(rec.sent.map((s) => s.endpoint)).toEqual(['https://push.example.com/owner-laptop']);
+  });
+
+  test('a member with no subscriptions is skipped silently', async () => {
+    const db = await freshDb();
+    await seedWorkspace(db, { workspaceId: 'ws_1', ownerUserId: 'user_owner', memberUserIds: ['user_quiet'] });
+    await pushStore.save(db, 'user_owner', device('owner-laptop'));
+    const rec = recorder();
+
+    await expect(
+      makeAssignmentPushNotify({ db, origin: 'https://x.test', send: rec.send })(
+        conv({ workspaceId: 'ws_1', assignedTo: null }),
+        'q',
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(rec.sent.map((s) => s.endpoint)).toEqual(['https://push.example.com/owner-laptop']);
+  });
+
+  test('a single-member workspace behaves exactly as before — every device of the one member', async () => {
+    const db = await freshDb();
+    await seedWorkspace(db, { workspaceId: 'ws_1', ownerUserId: 'user_a' });
+    await pushStore.save(db, 'user_a', device('laptop'));
+    await pushStore.save(db, 'user_a', device('phone'));
+    const rec = recorder();
+
+    await makeAssignmentPushNotify({ db, origin: 'https://x.test', send: rec.send })(
+      conv({ workspaceId: 'ws_1', assignedTo: null }),
+      'q',
+    );
+
+    expect(rec.sent.map((s) => s.endpoint).sort()).toEqual([
+      'https://push.example.com/laptop',
+      'https://push.example.com/phone',
+    ]);
+  });
+
+  test('a gone endpoint is still pruned when reached through the assignment layer', async () => {
+    const db = await freshDb();
+    await seedWorkspace(db, { workspaceId: 'ws_1', ownerUserId: 'user_owner', memberUserIds: ['user_b'] });
+    await pushStore.save(db, 'user_b', device('dead'));
+    const rec = recorder({ 'https://push.example.com/dead': 'gone' });
+
+    await makeAssignmentPushNotify({ db, origin: 'https://x.test', send: rec.send })(
+      conv({ workspaceId: 'ws_1', assignedTo: 'user_b' }),
+      'q',
+    );
+
+    expect(await pushStore.listForUser(db, 'user_b')).toHaveLength(0);
   });
 });
