@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { SkillName, UploadSkillInput as UploadSkillFiles } from '../shared/skills-wire.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
-import { canvasHiddenFrom, conversationHiddenFrom } from './visibility.ts';
+import { listVisibleCanvases, listVisibleConversations, resolveCanvas, resolveConversationByOwnerRef } from './access.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { getWorkspace, listWorkspaces } from '../web-poc/lib/db/queries/workspaces.ts';
 
@@ -138,17 +138,10 @@ export function buildMcpTools(deps: McpToolDeps) {
    * missing one — this is the choke point every canvas tool funnels through. */
   const canvasHeader = async (workspaceId: string, canvasId?: string): Promise<Record<string, string>> => {
     if (!canvasId) return {};
-    const rows = await canvasRegistry.list(deps.db, workspaceId);
-    const row = rows.find((c) => c.id === canvasId);
-    if (!row || canvasHiddenFrom(row, deps.userId)) throw new Error(`canvas not found in workspace: ${canvasId}`);
+    if (!(await resolveCanvas(deps.db, workspaceId, canvasId, deps.userId))) {
+      throw new Error(`canvas not found in workspace: ${canvasId}`);
+    }
     return { 'x-canvas-id': canvasId };
-  };
-
-  /** ADR-0016: is this conversation hidden from the token user? (Own flag, or its
-   * linked canvas's privacy — canvas dominates.) One registry read per check. */
-  const convHidden = async (row: { visibility: 'shared' | 'private'; createdBy: string | null; canvasId: string | null }): Promise<boolean> => {
-    const canvas = row.canvasId ? await canvasRegistry.get(deps.db, row.canvasId) : null;
-    return conversationHiddenFrom(row, canvas, deps.userId);
   };
 
   /** Proxy + parse: a non-2xx bridge answer becomes a thrown error the MCP layer surfaces. */
@@ -176,13 +169,9 @@ export function buildMcpTools(deps: McpToolDeps) {
 
     async listCanvases(input: z.infer<typeof ListCanvasesInput>) {
       const ws = await requireWorkspace(input.workspace_id);
-      const rows = await canvasRegistry.list(deps.db, ws.id);
       // ADR-0016: the token user sees workspace-visible canvases plus their own private ones.
-      return {
-        canvases: rows
-          .filter((c) => !canvasHiddenFrom(c, deps.userId))
-          .map((c) => ({ id: c.id, name: c.name, visibility: c.visibility })),
-      };
+      const rows = await listVisibleCanvases(deps.db, ws.id, deps.userId);
+      return { canvases: rows.map((c) => ({ id: c.id, name: c.name, visibility: c.visibility })) };
     },
 
     async createCanvas(input: z.infer<typeof CreateCanvasInput>) {
@@ -203,24 +192,19 @@ export function buildMcpTools(deps: McpToolDeps) {
       const ws = await requireWorkspace(input.workspace_id);
       const view = input.view ?? 'open';
       // Workspace-SHARED (CONTEXT.md): every member's sessions, never scoped to the token user.
-      const rows = await conversations.list(deps.db, {
-        workspaceId: ws.id,
+      // ADR-0016 visibility (own flag, or a private canvas) is applied inside the seam.
+      const visible = await listVisibleConversations(deps.db, ws.id, deps.userId, {
         assigned: input.assigned,
         ...(view === 'open' ? { status: 'open' as const } : view === 'closed' ? { status: 'closed' as const } : {}),
       });
-      // ADR-0016: drop rows hidden from the token user (own flag, or a private canvas).
-      const canvasById = new Map((await canvasRegistry.list(deps.db, ws.id)).map((c) => [c.id, c]));
-      const visible = rows.filter(
-        (r) => !conversationHiddenFrom(r, (r.canvasId && canvasById.get(r.canvasId)) || null, deps.userId),
-      );
       return { items: visible.map(conversationView) };
     },
 
     /** Advisory assignment (shared inbox): any member assigns any member, or clears with
      * null — never a lock. The target must be a member of the conversation's workspace. */
     async assignConversation(input: z.infer<typeof AssignConversationInput>) {
-      const row = await conversations.getByOwnerRef(deps.db, input.chat_id);
-      if (!row || !(await getWorkspace(deps.db, row.workspaceId, deps.userId)) || (await convHidden(row))) {
+      const row = await resolveConversationByOwnerRef(deps.db, input.chat_id, deps.userId);
+      if (!row) {
         throw new Error(`conversation not found: ${input.chat_id}`);
       }
       if (input.user_id !== null && !(await getWorkspace(deps.db, row.workspaceId, input.user_id))) {
@@ -234,10 +218,10 @@ export function buildMcpTools(deps: McpToolDeps) {
      * indexes the conversation seconds after a send), then the row's live metadata —
      * `waiting_on`/`last_message_preview` flip when the agent finishes its turn. */
     async readConversation(input: z.infer<typeof ReadConversationInput>) {
-      const row = await conversations.getByOwnerRef(deps.db, input.chat_id);
       // Membership-gated (shared inbox): any member of the row's workspace reads it; an
       // inaccessible row reports the same 'starting' as a missing one (no existence leak).
-      if (!row || !(await getWorkspace(deps.db, row.workspaceId, deps.userId)) || (await convHidden(row))) {
+      const row = await resolveConversationByOwnerRef(deps.db, input.chat_id, deps.userId);
+      if (!row) {
         return { chat_id: input.chat_id, status: 'starting' as const };
       }
       return conversationView(row);
@@ -253,8 +237,10 @@ export function buildMcpTools(deps: McpToolDeps) {
       if (chatId) {
         // Membership suffices (shared inbox): requireWorkspace gated ws already; any member
         // may reply to any chat conversation in it — never creator-gated.
-        const existing = await conversations.getByOwnerRef(deps.db, chatId);
-        if (!existing || existing.workspaceId !== ws.id || existing.kind !== 'chat' || (await convHidden(existing))) {
+        // The workspace-match and kind legs stay here: they are this tool's own contract
+        // (a chat in THIS workspace), not access — the seam covers membership + visibility.
+        const existing = await resolveConversationByOwnerRef(deps.db, chatId, deps.userId);
+        if (!existing || existing.workspaceId !== ws.id || existing.kind !== 'chat') {
           throw new Error(`no chat conversation ${chatId} in workspace ${ws.id}`);
         }
         // A canvas-paired conversation stays addressed to its canvas (the row's canvasId —
@@ -273,9 +259,9 @@ export function buildMcpTools(deps: McpToolDeps) {
      * purpose: GET /api/inbox/:id/chat first (restores the session JSONL from R2 after a
      * cold boot and resolves the live chatId), then that chat's transcript. */
     async readTranscript(input: z.infer<typeof ReadTranscriptInput>) {
-      const row = await conversations.getByOwnerRef(deps.db, input.chat_id);
       // Membership-gated (shared inbox), same line as readConversation.
-      if (!row || !(await getWorkspace(deps.db, row.workspaceId, deps.userId)) || (await convHidden(row))) {
+      const row = await resolveConversationByOwnerRef(deps.db, input.chat_id, deps.userId);
+      if (!row) {
         throw new Error(`conversation not found: ${input.chat_id}`);
       }
       const opened = (await bridgeJson(row.workspaceId, `/api/inbox/${encodeURIComponent(row.id)}/chat`)) as { chatId: string };

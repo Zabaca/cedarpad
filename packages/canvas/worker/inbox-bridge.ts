@@ -1,8 +1,6 @@
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
-import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
-import { conversationHiddenFrom } from './visibility.ts';
+import { resolveConversationById } from './access.ts';
 import { listTokens } from '../web-poc/lib/db/queries/mcp-tokens.ts';
-import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
@@ -63,16 +61,12 @@ export async function handleInboxBridge(
   resolveRepo: typeof resolveDevAgentRepo = resolveDevAgentRepo,
 ): Promise<Response> {
   const database = db(env);
-  const conv = await conversations.get(database, convId);
   // Membership gate (shared inbox, CONTEXT.md): any member of the Conversation's workspace
-  // may read and reply — never creator-gated. A stranger gets the missing-row 404.
-  if (!conv || !(await getWorkspace(database, conv.workspaceId, user.id))) {
-    return Response.json({ error: 'conversation not found' }, { status: 404 });
-  }
-  // ADR-0016: a hidden conversation (its own private flag, or a private linked canvas —
-  // canvas dominates) is the same 404 as a missing row, on every proxied sub-path.
-  const linkedCanvas = conv.canvasId ? await getCanvas(database, conv.canvasId) : null;
-  if (conversationHiddenFrom(conv, linkedCanvas, user.id)) {
+  // may read and reply — never creator-gated. ADR-0016: a hidden conversation (its own
+  // private flag, or a private linked canvas — canvas dominates) is the same 404 as a
+  // missing row, on every proxied sub-path. Both legs composed in access.ts.
+  const conv = await resolveConversationById(database, convId, user.id);
+  if (!conv) {
     return Response.json({ error: 'conversation not found' }, { status: 404 });
   }
 
