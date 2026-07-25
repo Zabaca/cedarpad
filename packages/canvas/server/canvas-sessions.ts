@@ -12,9 +12,7 @@ import { primeIdCounter } from '../src/normalize.ts';
 import type { BlobStore } from './blob-store.ts';
 import { CanvasPersistence } from './canvas-persistence.ts';
 import { type PresenceRoom, createPresenceRoom } from './presence.ts';
-
-const enc = new TextEncoder();
-const sse = (data: unknown) => enc.encode(`data: ${JSON.stringify(data)}\n\n`);
+import { sseData, sseEvent } from './sse.ts';
 
 /** Persistence health for one canvas, surfaced at /api/status and logged on every flush. */
 export interface SaveHealth {
@@ -138,7 +136,7 @@ export async function createCanvasSession(
       }, 1000);
       for (const c of clients) {
         try {
-          c.enqueue(sse(state));
+          c.enqueue(sseData(state));
         } catch {
           clients.delete(c);
         }
@@ -154,7 +152,7 @@ export async function createCanvasSession(
   function requestScreenshot(timeoutMs = 7000): Promise<string | null> {
     if (clients.size === 0) return Promise.resolve(null);
     const id = `shot${(shotSeq += 1)}`;
-    const frame = enc.encode(`event: screenshot\ndata: ${JSON.stringify({ id })}\n\n`);
+    const frame = sseEvent('screenshot', { id });
     for (const c of clients) {
       try {
         c.enqueue(frame);
@@ -186,7 +184,7 @@ export async function createCanvasSession(
     if (presenceTimer) return; // a flush is already scheduled for this window
     presenceTimer = setTimeout(() => {
       presenceTimer = null;
-      const frame = enc.encode(`event: presence\ndata: ${JSON.stringify({ entries: presence.snapshot() })}\n\n`);
+      const frame = sseEvent('presence', { entries: presence.snapshot() });
       for (const c of clients) {
         try {
           c.enqueue(frame);

@@ -4,7 +4,7 @@
 // `import.meta.main`), so we drive the exported `handleRequest` directly with a
 // Request and assert the response. `setChatTurnDispatcher` swaps in a spy so the
 // 2xx path never invokes the real agent SDK and we can assert dispatch happened (or,
-// on the 425 path, did NOT). `chatClients` is the shared subscriber set the guard
+// on the 425 path, did NOT). `chatHub` owns the shared subscriber set the guard
 // consults — one connected stream carries every chat, so a single fake controller
 // represents "a subscriber exists".
 
@@ -12,7 +12,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { readFileSync, rmSync } from 'node:fs';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { aborters, chatClients, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, turnFlavor, webPocDb } from './bridge.ts';
+import { chatHub, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, turnFlavor, webPocDb } from './bridge.ts';
 import { resumeConversation } from './inbox.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { DEV_AGENT_KIND } from './dev-agent-workflow.ts';
@@ -33,7 +33,7 @@ describe('/api/chat/:id/send: subscribe-before-send (425)', () => {
   let dispatched: Array<{ chatId: string; message: string; images: CanvasImage[] }> = [];
 
   beforeEach(() => {
-    for (const c of [...chatClients]) chatClients.delete(c); // no subscribers by default
+    chatHub.resetForTests(); // no subscribers by default
     dispatched = [];
     restore = setChatTurnDispatcher((chatId, message, _sessionId, images) => {
       dispatched.push({ chatId, message, images });
@@ -42,7 +42,7 @@ describe('/api/chat/:id/send: subscribe-before-send (425)', () => {
 
   afterEach(() => {
     restore();
-    for (const c of [...chatClients]) chatClients.delete(c);
+    chatHub.resetForTests();
   });
 
   test('no subscriber → 425 Too Early with {error,chatId}, and no turn is dispatched', async () => {
@@ -75,7 +75,7 @@ describe('/api/chat/:id/send: subscribe-before-send (425)', () => {
 
   test('with an active subscription → 202 Accepted and the turn IS dispatched', async () => {
     const sub = fakeSubscriber();
-    chatClients.add(sub);
+    chatHub.subscribe(sub);
 
     const res = await handleRequest(sendReq('chat_subbed', { message: 'go' }));
 
@@ -85,7 +85,7 @@ describe('/api/chat/:id/send: subscribe-before-send (425)', () => {
   });
 
   test('pasted images ride the send through to the dispatch (same contract a reply reuses)', async () => {
-    chatClients.add(fakeSubscriber());
+    chatHub.subscribe(fakeSubscriber());
     const images = [{ media_type: 'image/png', data: 'AAAA' }];
 
     const res = await handleRequest(sendReq('chat_img', { message: 'see this', images }));
@@ -106,7 +106,7 @@ describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispa
 
   beforeEach(() => {
     dispatched = [];
-    chatClients.add(fakeSubscriber());
+    chatHub.subscribe(fakeSubscriber());
     restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, devAgentGitToken, _mcpTokens, devAgentRepo) => {
       dispatched.push({ chatId, devAgentGitToken, devAgentRepo });
     });
@@ -114,7 +114,7 @@ describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispa
 
   afterEach(() => {
     restore();
-    for (const c of [...chatClients]) chatClients.delete(c);
+    chatHub.resetForTests();
   });
 
   test('a send WITH the header dispatches the turn carrying the token', async () => {
@@ -148,7 +148,7 @@ describe('/api/chat/:id/send: the x-inbox-assign header reaches the dispatched t
 
   beforeEach(() => {
     dispatched = [];
-    chatClients.add(fakeSubscriber());
+    chatHub.subscribe(fakeSubscriber());
     restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, _tok, _mcp, _repo, assignTo) => {
       dispatched.push({ chatId, assignTo });
     });
@@ -156,7 +156,7 @@ describe('/api/chat/:id/send: the x-inbox-assign header reaches the dispatched t
 
   afterEach(() => {
     restore();
-    for (const c of [...chatClients]) chatClients.delete(c);
+    chatHub.resetForTests();
   });
 
   test('a send WITH the header dispatches the turn carrying its initiator', async () => {
@@ -199,7 +199,7 @@ describe('/api/chat/:id/send: the x-mcp-tokens header reaches the dispatched tur
 
   beforeEach(() => {
     dispatched = [];
-    chatClients.add(fakeSubscriber());
+    chatHub.subscribe(fakeSubscriber());
     restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, _devAgentGitToken, mcpTokens, _repo, _assign, mcpDisallowed) => {
       dispatched.push({ chatId, mcpTokens, ...(mcpDisallowed && mcpDisallowed.length > 0 ? { mcpDisallowed } : {}) });
     });
@@ -207,7 +207,7 @@ describe('/api/chat/:id/send: the x-mcp-tokens header reaches the dispatched tur
 
   afterEach(() => {
     restore();
-    for (const c of [...chatClients]) chatClients.delete(c);
+    chatHub.resetForTests();
   });
 
   test('a send WITH the header dispatches the turn carrying the decoded tokens', async () => {
@@ -368,7 +368,7 @@ describe('/api/chat/:id/send: 409 turn_in_flight while the chat’s turn runs', 
 
   beforeEach(() => {
     dispatched = [];
-    chatClients.add(fakeSubscriber());
+    chatHub.subscribe(fakeSubscriber());
     restore = setChatTurnDispatcher((chatId) => {
       dispatched.push(chatId);
     });
@@ -376,13 +376,13 @@ describe('/api/chat/:id/send: 409 turn_in_flight while the chat’s turn runs', 
 
   afterEach(() => {
     restore();
-    for (const c of [...chatClients]) chatClients.delete(c);
-    aborters.delete('chat_busy');
-    aborters.delete('chat_running');
+    chatHub.resetForTests();
+    chatHub.aborters.delete('chat_busy');
+    chatHub.aborters.delete('chat_running');
   });
 
   test('a send while a turn is in flight → 409 {turn_in_flight}, nothing dispatched', async () => {
-    aborters.set('chat_busy', new AbortController()); // a live turn holds the chat
+    chatHub.aborters.set('chat_busy', new AbortController()); // a live turn holds the chat
 
     const res = await handleRequest(sendReq('chat_busy'));
 
@@ -392,7 +392,7 @@ describe('/api/chat/:id/send: 409 turn_in_flight while the chat’s turn runs', 
   });
 
   test('the transcript GET reports in-flight state, so a mid-run opener rehydrates busy', async () => {
-    aborters.set('chat_running', new AbortController());
+    chatHub.aborters.set('chat_running', new AbortController());
 
     const running = await handleRequest(new Request('http://localhost/api/chat/chat_running/transcript'));
     const idle = await handleRequest(new Request('http://localhost/api/chat/chat_idle/transcript'));
@@ -428,8 +428,8 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
 
   beforeEach(() => {
     dispatched = [];
-    // NO chatClients subscriber — the kick is headless by design.
-    for (const c of [...chatClients]) chatClients.delete(c);
+    // NO chat subscriber — the kick is headless by design.
+    chatHub.resetForTests();
     restore = setChatTurnDispatcher((chatId, message, sessionId, _images, model, _fork, _effort, _canvasId, devAgentGitToken, _mcpTokens, devAgentRepo) => {
       dispatched.push({ chatId, message, sessionId, model, devAgentGitToken, devAgentRepo });
     });
@@ -437,7 +437,7 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
 
   afterEach(() => {
     restore();
-    for (const id of kicked) aborters.delete(id);
+    for (const id of kicked) chatHub.aborters.delete(id);
     kicked.length = 0;
   });
 
@@ -532,7 +532,7 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
 
   test('join semantics: a kick during a running run returns THAT run, dispatching nothing new', async () => {
     const first = await kick();
-    aborters.set(first.body.chatId, new AbortController()); // the spy doesn't run a real turn — simulate in-flight
+    chatHub.aborters.set(first.body.chatId, new AbortController()); // the spy doesn't run a real turn — simulate in-flight
 
     const second = await kick();
 
@@ -698,7 +698,7 @@ describe('/api/chat/:id/send: the explicit canvas reaches the dispatch; absence 
 
   beforeEach(() => {
     dispatched = [];
-    chatClients.add(fakeSubscriber());
+    chatHub.subscribe(fakeSubscriber());
     restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, canvasId) => {
       dispatched.push({ chatId, canvasId });
     });
@@ -706,7 +706,7 @@ describe('/api/chat/:id/send: the explicit canvas reaches the dispatch; absence 
 
   afterEach(() => {
     restore();
-    for (const c of [...chatClients]) chatClients.delete(c);
+    chatHub.resetForTests();
   });
 
   test('a pad send (x-canvas-id) dispatches that canvas', async () => {
@@ -1052,12 +1052,12 @@ describe('sendToChat (agent cross-chat messaging)', () => {
     const restore = setChatTurnDispatcher(() => {
       throw new Error('must not dispatch');
     });
-    aborters.set('shape:busy', new AbortController());
+    chatHub.aborters.set('shape:busy', new AbortController());
     try {
       const res = sendToChat('shape:busy', 'hi');
       expect(res.ok).toBe(false);
     } finally {
-      aborters.delete('shape:busy');
+      chatHub.aborters.delete('shape:busy');
       restore();
     }
   });
