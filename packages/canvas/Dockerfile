@@ -35,7 +35,7 @@ RUN ARCH=$(dpkg --print-architecture) \
        arm64) DUCKDB_ARCH=linux-arm64 ;; \
        *) echo "unsupported arch: $ARCH" >&2 && exit 1 ;; \
      esac \
-  && wget -nv -O /tmp/duckdb.zip "https://github.com/duckdb/duckdb/releases/download/v1.1.3/duckdb_cli-${DUCKDB_ARCH}.zip" \
+  && wget -nv -O /tmp/duckdb.zip "https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-${DUCKDB_ARCH}.zip" \
   && apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/* \
   && unzip -o /tmp/duckdb.zip -d /usr/local/bin \
   && rm /tmp/duckdb.zip \

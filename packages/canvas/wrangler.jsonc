@@ -70,11 +70,16 @@
       // 20 GB disk) is deliberately oversized for chat/canvas but cheap here: container
       // billing is per-second-while-running, and this class only runs a few minutes a
       // day for the materialize Job (ADR-0015), never on the chat cold-boot path.
+      // max_instances matches Sandbox's 3, NOT capped lower: a workspace is a deployment
+      // (ADR-0008) and each one gets its own materialize pipeline, so a cap of 1 would
+      // let only one workspace across the whole account materialize at a time — a second
+      // workspace's job would queue or fail, and that failure would look like a
+      // mysterious hang long after anyone remembered this line.
       "class_name": "Warehouse",
       "image": "./Dockerfile.warehouse",
       "image_build_context": "../..",
       "instance_type": "standard-4",
-      "max_instances": 1
+      "max_instances": 3
     }
   ],
   "durable_objects": {
@@ -143,7 +148,7 @@
           "image": "./Dockerfile.warehouse",
           "image_build_context": "../..",
           "instance_type": "standard-4",
-          "max_instances": 1
+          "max_instances": 3
         }
       ],
       "durable_objects": {

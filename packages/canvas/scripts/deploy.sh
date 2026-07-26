@@ -133,10 +133,12 @@ echo "→ migrating remote Turso (drizzle, idempotent)"
 
 echo "→ zbc apply production canvas (build + deploy + push secrets — both container images)"
 ( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }
-# zbc apply's own success is the warehouse container's liveness signal (see the build
-# check above for why it can't be polled): the call above builds AND pushes both images,
-# so reaching this line means the warehouse image was pushed too, not just built locally.
-echo "✅ LIVE (push-confirmed, no HTTP surface to poll): warehouse image pushed by zbc apply"
+# zbc apply's own success confirms the warehouse image was PUSHED (the call above builds
+# AND pushes both images, so reaching this line means it got further than the local build
+# check). That is NOT the same claim as LIVE — nothing starts or polls the warehouse
+# container (no dispatch path yet, see #240), so there is no served response to confirm
+# against. Say exactly what was verified, not more: pushed, not live.
+echo "✅ warehouse image built + pushed (not started — no dispatch path yet, see #240)"
 
 # Verify against the public /api/buildrev (#74). Post-#47 the edge Better Auth gate is
 # the sole gate, so /api/status and /__recycle serve the login page to an unauthenticated

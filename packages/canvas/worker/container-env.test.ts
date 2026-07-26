@@ -28,18 +28,37 @@ describe('containerEnv — CANVAS_USER forwarding', () => {
 // token — the whole point of the second container class is that those simply aren't
 // reachable from it, structurally, not by policy.
 describe('warehouseContainerEnv — R2 creds only', () => {
+  // The fake env below carries the R2 creds ALONGSIDE realistic dangerous values
+  // (Claude OAuth token, Turso/auth secrets, the GitHub App private key, VAPID private
+  // key) — every one of them present with a real-looking string, not undefined. A
+  // `toEqual` against an object that merely omits the dangerous keys would still pass
+  // if a regression forwarded them as `undefined` (`toEqual` ignores undefined-valued
+  // properties), which is exactly the leak this test exists to catch. Asserting on
+  // `Object.keys` makes an extra key fail regardless of its value.
+  const leakyEnv = {
+    R2_BUCKET: 'agent-canvas',
+    R2_ACCESS_KEY_ID: 'ak_123',
+    R2_SECRET_ACCESS_KEY: 'sk_456',
+    R2_ENDPOINT: 'https://example.r2.cloudflarestorage.com',
+    CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-fake',
+    TURSO_URL: 'libsql://prod.turso.io',
+    TURSO_KEY: 'turso_fake_key',
+    BETTER_AUTH_SECRET: 'better_auth_fake_secret',
+    GITHUB_APP_PRIVATE_KEY: '-----BEGIN RSA PRIVATE KEY-----fake-----END RSA PRIVATE KEY-----',
+    VAPID_PRIVATE_KEY: 'vapid_fake_private_key',
+  } as never;
+
   test('forwards the four R2 S3 creds', () => {
-    const env = {
-      R2_BUCKET: 'agent-canvas',
-      R2_ACCESS_KEY_ID: 'ak_123',
-      R2_SECRET_ACCESS_KEY: 'sk_456',
-      R2_ENDPOINT: 'https://example.r2.cloudflarestorage.com',
-    } as never;
-    expect(warehouseContainerEnv(env)).toEqual({
-      R2_BUCKET: 'agent-canvas',
-      R2_ACCESS_KEY_ID: 'ak_123',
-      R2_SECRET_ACCESS_KEY: 'sk_456',
-      R2_ENDPOINT: 'https://example.r2.cloudflarestorage.com',
-    });
+    const result = warehouseContainerEnv(leakyEnv);
+    expect(result.R2_BUCKET).toBe('agent-canvas');
+    expect(result.R2_ACCESS_KEY_ID).toBe('ak_123');
+    expect(result.R2_SECRET_ACCESS_KEY).toBe('sk_456');
+    expect(result.R2_ENDPOINT).toBe('https://example.r2.cloudflarestorage.com');
+  });
+
+  test('never forwards the Claude OAuth token, Turso/auth secrets, or private keys', () => {
+    expect(Object.keys(warehouseContainerEnv(leakyEnv)).sort()).toEqual(
+      ['R2_ACCESS_KEY_ID', 'R2_BUCKET', 'R2_ENDPOINT', 'R2_SECRET_ACCESS_KEY'].sort()
+    );
   });
 });

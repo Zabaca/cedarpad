@@ -27,11 +27,16 @@ RUN wget -nv -O /tmp/uv-installer.sh https://astral.sh/uv/0.5.11/install.sh \
   && mv /root/.local/bin/uv /root/.local/bin/uvx /usr/local/bin/
 ENV PATH="/usr/local/bin:${PATH}"
 
-# duckdb (python bindings, version-pinned) + dbt-duckdb + dlt: the materialize toolchain
-# (ADR-0017). `--system` installs onto the image's python3 directly (no venv) — this
-# container runs exactly one job at a time (the materialize Job), so there's no
-# dependency-isolation need a venv would buy, and `--system` keeps `dbt`/`dlt` on PATH.
-RUN uv pip install --system --no-cache duckdb==1.1.3 dbt-duckdb dlt
+# duckdb + dbt-duckdb + dlt: the materialize toolchain (ADR-0017), ALL THREE pinned
+# together — an unpinned dbt-duckdb/dlt next to a pinned duckdb is the fragile
+# combination: a rebuild months from now would resolve the unpinned two to whatever's
+# current, which may demand a duckdb version the pin forbids, breaking the build for
+# reasons unrelated to any code change here. Versions current as of this Dockerfile's
+# authoring; bump all three together, deliberately, not just the one that changed.
+# `--system` installs onto the image's python3 directly (no venv) — this container runs
+# exactly one job at a time (the materialize Job), so there's no dependency-isolation
+# need a venv would buy, and `--system` keeps `dbt`/`dlt` on PATH.
+RUN uv pip install --system --no-cache duckdb==1.5.5 dbt-duckdb==1.10.1 dlt==1.29.1
 
 # duckdb CLI, pinned to the SAME version as the python `duckdb` package above so the CLI
 # and the Python bindings read/write the identical on-disk/parquet format.
@@ -41,7 +46,7 @@ RUN ARCH=$(dpkg --print-architecture) \
        arm64) DUCKDB_ARCH=linux-arm64 ;; \
        *) echo "unsupported arch: $ARCH" >&2 && exit 1 ;; \
      esac \
-  && wget -nv -O /tmp/duckdb.zip "https://github.com/duckdb/duckdb/releases/download/v1.1.3/duckdb_cli-${DUCKDB_ARCH}.zip" \
+  && wget -nv -O /tmp/duckdb.zip "https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-${DUCKDB_ARCH}.zip" \
   && unzip -o /tmp/duckdb.zip -d /usr/local/bin \
   && rm /tmp/duckdb.zip \
   && chmod +x /usr/local/bin/duckdb
