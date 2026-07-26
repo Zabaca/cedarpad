@@ -1,6 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 
-import { coerceMartRow, MartSidecarSchema } from './mart-contract.ts';
+import { coerceMartRow, MartName, MartSidecarSchema } from './mart-contract.ts';
+
+describe('MartName — the boundary check before a name reaches a storage key (#238 review)', () => {
+  test('accepts real mart names', () => {
+    expect(MartName.safeParse('mart_session_events').success).toBe(true);
+    expect(MartName.safeParse('mart_x').success).toBe(true);
+  });
+
+  test('rejects path-shaped or otherwise malformed names', () => {
+    for (const bad of ['../etc/passwd', 'mart/x', 'mart.x', 'Mart_X', '', 'mart x', '..', '.']) {
+      expect(MartName.safeParse(bad).success).toBe(false);
+    }
+  });
+});
 
 describe('coerceMartRow — the BigInt/JSON.stringify bug (ADR-0017 consequences)', () => {
   test('a raw bigint value does not survive JSON.stringify', () => {

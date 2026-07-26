@@ -5,6 +5,15 @@
 
 import { z } from 'zod';
 
+/** A mart's name, as it appears in a storage key (`martKey`/`martSidecarKey`, both
+ * `workspaces/<ws>/warehouse/<name>.*`) and in the edge route (#238). Mirrors
+ * `COMPONENT_NAME_RE`'s style (`shared/bridge-wire.ts`, #234) — reject at the boundary,
+ * before an unvalidated name ever reaches a storage key. Lowercase/digits/underscore only,
+ * matching this pipeline's own `mart_*` naming (session-events-mart.ts's `MART_NAME`); no
+ * `.`/`/` means no path-segment tricks reach a filesystem-backed `BlobBackend`. */
+export const MART_NAME_RE = /^[a-z][a-z0-9_]*$/;
+export const MartName = z.string().regex(MART_NAME_RE, 'mart name: lowercase letters/digits/_, starting with a letter');
+
 /** DuckDB/Parquet physical types this pipeline emits. Narrower than DuckDB's full type
  * vocabulary on purpose — only what a mart column actually needs (CLAUDE.md §2). */
 export const MartColumnTypeSchema = z.enum(['VARCHAR', 'TIMESTAMP', 'BIGINT', 'DOUBLE', 'BOOLEAN']);
@@ -28,6 +37,17 @@ export const MartSidecarSchema = z.object({
   rowCount: z.number().int().nonnegative(),
 });
 export type MartSidecar = z.infer<typeof MartSidecarSchema>;
+
+/** How a component instance names the mart it renders (ADR-0017: "a component names a
+ * mart, not a URL" — closes #219's arbitrary-fetch question, since the mart namespace IS
+ * the boundary). Minimal on purpose: THIS slice (#238) only declares the field + shape so
+ * the guest-scoping resolver (`martsReferencedBy`) has something to read; placement and
+ * rendering are #239's job, not this one's. */
+export const DataSourceSchema = z.object({
+  kind: z.literal('mart'),
+  name: z.string(),
+});
+export type DataSource = z.infer<typeof DataSourceSchema>;
 
 /** A mart row as it crosses the boundary out of DuckDB. Values are the JS shapes a component
  * prop can hold — never `bigint` (ADR-0017 consequences: INT64 arrives as BigInt and does not
