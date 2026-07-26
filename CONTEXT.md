@@ -302,3 +302,49 @@ action the agent takes mid-conversation**, not a hardcoded consequence of the re
   the agent itself drops declined candidates (`docs/adr/declined/`) and ends its turn with
   `end_turn needs_human` listing survivors (`waiting-on: human`) — or `done` with none; I
   **grill it through that thread** (a real chat), and it opens the PR when we align.
+
+## Data — the workspace warehouse (ADR-0017)
+
+> **Status: being designed** (grill session 2026-07-26, from the `ceo`-side
+> [DATA-PIPELINE.md](./DATA-PIPELINE.md) brief). A workspace can own a pipeline; this is a
+> **greenfield capability**, deliberately *not* a 1:1 port of `ceo`'s 93 dbt models.
+
+**Warehouse**: a workspace's analytical store — parquet files under its own R2 prefix
+(`workspaces/<ws>/warehouse/…`). It is **storage, not a server**: DuckDB is a *stateless
+engine* that queries those files from the container, never a durable file the container
+holds (container disk caps at 20 GB; `ceo`'s warehouse is 22.3 GiB). _Avoid_: "the DuckDB",
+"the database" — Turso is the metadata store and is not part of the warehouse.
+
+**Connector**: a declared source that lands raw data in the warehouse. Slice 1 needs none:
+the workspace's own **Claude session JSONL is already in the same bucket**
+(`workspaces/<ws>/sessions.tar`, persisted so `resume` survives a recycle), so the first
+source is a *read*, not an extraction — and third-party secrets (the brief's D3) stay
+deferred. _Avoid_: "source" alone (ambiguous with a dbt `source`), "integration".
+
+**Mart**: the published unit of meaning — **exactly one parquet artifact**, with a
+**declared column schema and freshness** (never inferred; a mart without its schema is not
+a mart). Two readers, no copies: DuckDB in the container, and a pure-JS parquet reader in
+the edge Worker for cold renders. _Avoid_: "report", "dataset", "table".
+
+**Materialize Job**: a `.claude/jobs/<name>.md` (ADR-0015) that runs the pipeline one-shot
+in the container and rewrites mart artifacts. Merge arms it; delete disarms it. There is no
+scheduler daemon — the edge cron is the evaluator. _Avoid_: "the pipeline run", "the DAG".
+
+### Relationships
+
+- A **Workspace** owns exactly one **Warehouse** (its R2 prefix); a **Warehouse** holds 0..N **Marts**
+- A **Materialize Job** rewrites 1..N **Marts**; a **Mart** is rewritten by exactly one Job
+- A **Component** references a **Mart** *by name* — `dataSource: { kind: 'mart', name }`, never a URL (#219)
+- A **Guest** (canvas ADR-0015 share link) reads only the **Marts the shared canvas references**, resolved from its component instances — not the workspace's mart list
+
+### Flagged ambiguities
+
+- **"mart" vs "data file"** — both feed components, and conflating them forks definitions.
+  A **Mart** is warehouse-owned, singular, schema-declared, and read in place. A **data
+  file** (`write_data`) is canvas-local ad-hoc data *copied* into a canvas dir. Marts are
+  never served via `write_data`: copying a mart per-canvas yields N artifacts with N
+  freshness stamps and no way to tell they diverged.
+- **"session"** — the pipeline's first source is the Inbox's **Session** (a Claude
+  conversation), already glossed above. A session-derived mart covers only turns that ran
+  **in the container** (canvas chats + dev-agent runs); local terminal sessions are not in
+  `sessions.tar`, so "cost per shipped PR" is a container-side figure.
