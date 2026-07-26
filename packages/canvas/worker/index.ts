@@ -59,8 +59,16 @@ export class Sandbox extends BaseSandbox {
   sleepAfter = '5m';
 }
 
+// The warehouse container class (ADR-0017, #236): python + uv + dbt-duckdb + dlt +
+// duckdb, built from a SEPARATE Dockerfile with no agent SDK — so extraction secrets
+// (Slack/Stripe/Mercury, a future addition) are never reachable from a chat turn even
+// by mistake. Dispatching a materialize run into it is a separate issue (out of scope
+// here); this class + binding is the structural placement only.
+export class Warehouse extends BaseSandbox {}
+
 export interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  Warehouse: DurableObjectNamespace<Warehouse>;
   // Workers static-assets binding for the Notebook SPA build (web-poc/dist, PRD #49
   // slice #58). Served under /notebook AFTER the edge session gate — it's app content,
   // so an unauthenticated hit gets the login, never the SPA.

@@ -59,3 +59,14 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
   VAPID_PRIVATE_KEY: env.VAPID_PRIVATE_KEY ?? '',
   VAPID_SUBJECT: env.VAPID_SUBJECT ?? '',
 });
+
+// Env for the warehouse container (ADR-0017, #236) — deliberately just the R2 S3 creds
+// it needs to write parquet under workspaces/<ws>/warehouse/. No CLAUDE_CODE_OAUTH_TOKEN,
+// no Turso/auth secrets, no future extraction secret: the second container class exists
+// so those are structurally unreachable from it, not merely undialed by convention.
+export const warehouseContainerEnv = (env: Env): Record<string, string> => ({
+  R2_BUCKET: env.R2_BUCKET,
+  R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
+  R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
+  R2_ENDPOINT: env.R2_ENDPOINT,
+});

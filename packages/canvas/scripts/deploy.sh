@@ -108,6 +108,20 @@ for f in cli-plugins contexts buildx; do [ -e "$HOME/.docker/$f" ] && ln -s "$HO
 echo "→ building Shell SPA + Notebook (shell/dist)"
 bun run build || { echo "❌ shell build failed"; exit 1; }
 
+# Warehouse image (ADR-0017, #236) build check. It has no HTTP surface — no agent SDK,
+# and no code path starts it yet (dispatching the materialize Job is a separate issue) —
+# so the buildRev poll below, which needs a served response, can't answer "is it live"
+# for this container the way it can for Sandbox. What CAN be verified without shipping
+# dispatch: the image actually builds from this snapshot. `zbc apply` below builds +
+# pushes BOTH images (wrangler.jsonc now declares two `containers` entries) and its exit
+# code is the authoritative rollout signal — but a build failure inside that call would
+# be buried in a lot of wrangler/zbc output, so build it here first, standalone, for a
+# clear, fast failure before the slow zbc call even starts.
+echo "→ building warehouse image standalone (no HTTP surface to poll — see comment above)"
+DOCKER_CONFIG="$DC" docker build -f Dockerfile.warehouse -t agent-canvas-warehouse:deploy-check "$BUILD_ROOT" >/dev/null \
+  || { echo "❌ warehouse image failed to build — aborting before rollout"; exit 1; }
+echo "✅ warehouse image builds clean"
+
 # Migrate remote Turso BEFORE the rollout. server/bridge.ts deliberately skips remote
 # migrations ("remote Turso is migrated by the deploy") and edge worker routes read
 # Turso directly — shipping edge code that reads a new column before the ALTER lands
@@ -117,8 +131,14 @@ echo "→ migrating remote Turso (drizzle, idempotent)"
 ( cd "$CANVAS_DIR" && sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" 'bun run webpoc:db:migrate' ) \
   || { echo "❌ remote Turso migration failed — aborting before rollout"; exit 1; }
 
-echo "→ zbc apply production canvas (build + deploy + push secrets)"
+echo "→ zbc apply production canvas (build + deploy + push secrets — both container images)"
 ( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }
+# zbc apply's own success confirms the warehouse image was PUSHED (the call above builds
+# AND pushes both images, so reaching this line means it got further than the local build
+# check). That is NOT the same claim as LIVE — nothing starts or polls the warehouse
+# container (no dispatch path yet, see #240), so there is no served response to confirm
+# against. Say exactly what was verified, not more: pushed, not live.
+echo "✅ warehouse image built + pushed (not started — no dispatch path yet, see #240)"
 
 # Verify against the public /api/buildrev (#74). Post-#47 the edge Better Auth gate is
 # the sole gate, so /api/status and /__recycle serve the login page to an unauthenticated

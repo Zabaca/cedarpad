@@ -63,10 +63,30 @@
       // vite + bridge + agent stack OOMs on cold boot.
       "instance_type": "standard-1",
       "max_instances": 3
+    },
+    {
+      // Warehouse (ADR-0017, #236): the second container class, its own Dockerfile,
+      // NO agent SDK — see ADR-0017 "Why two containers". standard-4 (4 vCPU, 12 GiB,
+      // 20 GB disk) is deliberately oversized for chat/canvas but cheap here: container
+      // billing is per-second-while-running, and this class only runs a few minutes a
+      // day for the materialize Job (ADR-0015), never on the chat cold-boot path.
+      // max_instances matches Sandbox's 3, NOT capped lower: a workspace is a deployment
+      // (ADR-0008) and each one gets its own materialize pipeline, so a cap of 1 would
+      // let only one workspace across the whole account materialize at a time — a second
+      // workspace's job would queue or fail, and that failure would look like a
+      // mysterious hang long after anyone remembered this line.
+      "class_name": "Warehouse",
+      "image": "./Dockerfile.warehouse",
+      "image_build_context": "../..",
+      "instance_type": "standard-4",
+      "max_instances": 3
     }
   ],
   "durable_objects": {
-    "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }]
+    "bindings": [
+      { "class_name": "Sandbox", "name": "Sandbox" },
+      { "class_name": "Warehouse", "name": "Warehouse" }
+    ]
   },
   // The www worker's waitlist D1, ALSO bound here so /admin gets a waitlist view
   // (ADR-0014). Read-only from this worker; www owns the schema + migrations.
@@ -77,7 +97,13 @@
       "database_id": "eb4a65d7-6e26-4d98-b893-3b52f901726c"
     }
   ],
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Sandbox"] },
+    // Warehouse (#236) is a new DO class, not a change to Sandbox's storage — a
+    // separate migration tag, per wrangler's "one new_sqlite_classes entry per class
+    // introduced" convention (mirrors how Sandbox itself was introduced under v1).
+    { "tag": "v2", "new_sqlite_classes": ["Warehouse"] }
+  ],
   // Preview environment (zbc: `apply preview canvas` -> `wrangler deploy --env
   // preview`). A SEPARATE worker `agent-canvas-preview` in the same account, on a
   // free *.workers.dev URL (no custom domain), so it never touches production's
@@ -113,10 +139,23 @@
           "image_build_context": "../..",
           "instance_type": "standard-1",
           "max_instances": 3
+        },
+        {
+          // Mirrors the production block above (#236) — wrangler named environments
+          // don't inherit `containers`/`durable_objects`/`migrations`, so this is
+          // redeclared verbatim here, same as Sandbox already is.
+          "class_name": "Warehouse",
+          "image": "./Dockerfile.warehouse",
+          "image_build_context": "../..",
+          "instance_type": "standard-4",
+          "max_instances": 3
         }
       ],
       "durable_objects": {
-        "bindings": [{ "class_name": "Sandbox", "name": "Sandbox" }]
+        "bindings": [
+          { "class_name": "Sandbox", "name": "Sandbox" },
+          { "class_name": "Warehouse", "name": "Warehouse" }
+        ]
       },
       // Preview shares production's waitlist D1, matching Turso/R2 sharing.
       "d1_databases": [
@@ -126,7 +165,10 @@
           "database_id": "eb4a65d7-6e26-4d98-b893-3b52f901726c"
         }
       ],
-      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Sandbox"] }]
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["Sandbox"] },
+        { "tag": "v2", "new_sqlite_classes": ["Warehouse"] }
+      ]
     }
   }
 }

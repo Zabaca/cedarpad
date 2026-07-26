@@ -24,6 +24,23 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
   && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
 
+# DuckDB CLI (~50 MB) — ADR-0017: chat turns can query the workspace warehouse's marts
+# (R2 parquet) directly via `duckdb`. Deliberately CLI-only, no python — the Python
+# transform toolchain (dbt-duckdb, dlt) lives ONLY in the separate warehouse container
+# (Dockerfile.warehouse) so this image's cold-boot path (every chat turn) doesn't carry
+# it. Pinned so its on-disk format matches the warehouse container's duckdb.
+RUN ARCH=$(dpkg --print-architecture) \
+  && case "$ARCH" in \
+       amd64) DUCKDB_ARCH=linux-amd64 ;; \
+       arm64) DUCKDB_ARCH=linux-arm64 ;; \
+       *) echo "unsupported arch: $ARCH" >&2 && exit 1 ;; \
+     esac \
+  && wget -nv -O /tmp/duckdb.zip "https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-${DUCKDB_ARCH}.zip" \
+  && apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/* \
+  && unzip -o /tmp/duckdb.zip -d /usr/local/bin \
+  && rm /tmp/duckdb.zip \
+  && chmod +x /usr/local/bin/duckdb
+
 # Default git identity for dev-agent commits: repo-worktree.ts's `commit()` runs plain
 # `git commit` with no `-c user.name`/`user.email` or author env, so it needs identity
 # configured somewhere — system-level here so it's present regardless of which user the
