@@ -52,18 +52,29 @@ describe('parseJobFile — .claude/jobs/<name>.md frontmatter + body (ADR-0015)'
       name: 'deps-audit',
       description: 'Audit dependency freshness',
       schedule: 'daily',
+      target: 'agent',
       prompt: 'Audit the dependencies. Report stale ones.',
     });
   });
 
-  test('a file with no frontmatter falls back to its filename, manual schedule, whole-body prompt', () => {
+  test('a file with no frontmatter falls back to its filename, manual schedule, agent target, whole-body prompt', () => {
     const job = parseJobFile('.claude/jobs/quick-check.md', 'Just do the thing.');
-    expect(job).toEqual({ name: 'quick-check', description: '', schedule: 'manual', prompt: 'Just do the thing.' });
+    expect(job).toEqual({ name: 'quick-check', description: '', schedule: 'manual', target: 'agent', prompt: 'Just do the thing.' });
   });
 
   test('an unknown schedule value degrades to manual (never a surprise auto-run)', () => {
     const job = parseJobFile('.claude/jobs/x.md', '---\nschedule: hourly\n---\nbody');
     expect(job?.schedule).toBe('manual');
+  });
+
+  test('target: warehouse opts a job into materialize dispatch (#240)', () => {
+    const job = parseJobFile('.claude/jobs/materialize-mart.md', '---\nschedule: daily\ntarget: warehouse\n---\nMaterialize the mart.');
+    expect(job?.target).toBe('warehouse');
+  });
+
+  test('an unknown/absent target degrades to agent — a merge can never silently start dispatching to the warehouse', () => {
+    expect(parseJobFile('.claude/jobs/a.md', 'body')?.target).toBe('agent');
+    expect(parseJobFile('.claude/jobs/b.md', '---\ntarget: dbt-cloud\n---\nbody')?.target).toBe('agent');
   });
 });
 
@@ -120,7 +131,7 @@ describe('discoverJobs — the default branch IS the registry (ADR-0015)', () =>
     const { fetchImpl } = githubStub();
     const jobs = await discoverJobs(APP_ENV, database, 'ws_jobs', { nowSec: 1, fetchImpl });
     expect(jobs).toEqual([
-      { repo: 'Zabaca/cedarpad', name: 'deps-audit', description: 'Audit deps', schedule: 'daily', prompt: 'Audit the dependencies.' },
+      { repo: 'Zabaca/cedarpad', name: 'deps-audit', description: 'Audit deps', schedule: 'daily', target: 'agent', prompt: 'Audit the dependencies.' },
     ]);
   });
 
@@ -161,7 +172,7 @@ describe('discoverJobs — the default branch IS the registry (ADR-0015)', () =>
 
     const jobs = await discoverJobs({ REPO_TOKEN_KEY: 'k' } as Env, database, 'ws_pat', { nowSec: 1, fetchImpl });
     expect(jobs).toEqual([
-      { repo: 'hudsonts/app', name: 'triage', description: '', schedule: 'manual', prompt: 'Triage the queue.' },
+      { repo: 'hudsonts/app', name: 'triage', description: '', schedule: 'manual', target: 'agent', prompt: 'Triage the queue.' },
     ]);
     // Every call authed by the opened PAT — no App mint anywhere.
     expect(seen.every((s) => s.startsWith('token github_pat_x '))).toBe(true);
@@ -172,6 +183,32 @@ describe('discoverJobs — the default branch IS the registry (ADR-0015)', () =>
     const { fetchImpl } = githubStub();
     expect(await discoverJobs(APP_ENV, database, 'ws_nogit', { nowSec: 1, fetchImpl })).toEqual([]);
   });
+
+  // Selectivity (#240 req 3): a job must never auto-run against every attached repo — only
+  // the workspace's SELECTED repos. `Zabaca/unselected` here has a real `.claude/jobs/`
+  // file, reachable by the same GitHub API a selected repo would use, but is not in
+  // `ws_jobs`'s selectedRepos — proving discoverJobs (and therefore evaluateScheduledJobs,
+  // which only ever dispatches what discoverJobs returns) never surfaces its job.
+  test('a job file on an UNSELECTED repo is never discovered, even if reachable via the same App installation', async () => {
+    clearJobsCache();
+    const { fetchImpl: base } = githubStub();
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (/\/repos\/Zabaca\/unselected$/.test(url)) return Response.json({ default_branch: 'main' });
+      if (url.includes('/repos/Zabaca/unselected/contents/.claude/jobs?ref=main')) {
+        return Response.json([{ name: 'sneaky.md', path: '.claude/jobs/sneaky.md', sha: 'sha_sneaky', type: 'file' }]);
+      }
+      if (url.includes('/repos/Zabaca/unselected/contents/.claude/jobs/sneaky.md')) {
+        return Response.json({ content: Buffer.from('---\nschedule: daily\n---\nDo the sneaky thing.').toString('base64'), encoding: 'base64' });
+      }
+      return base(input, init);
+    }) as typeof fetch;
+    const jobs = await discoverJobs(APP_ENV, database, 'ws_jobs', { nowSec: 1, fetchImpl });
+    expect(jobs.some((j) => j.repo === 'Zabaca/unselected')).toBe(false);
+    expect(jobs).toEqual([
+      { repo: 'Zabaca/cedarpad', name: 'deps-audit', description: 'Audit deps', schedule: 'daily', target: 'agent', prompt: 'Audit the dependencies.' },
+    ]);
+  });
 });
 
 // ---- The cron evaluator (#196): tick → discover → due-check → kick → stamp ----
@@ -180,14 +217,14 @@ import { evaluateScheduledJobs } from './repo-jobs.ts';
 
 describe('evaluateScheduledJobs — the tick is an evaluator, not a registry', () => {
   const DAY = 24 * 3600_000;
-  const jobs = (over: Partial<{ schedule: 'daily' | 'manual' }> = {}) => [
-    { repo: 'Zabaca/cedarpad', name: 'deps-audit', description: '', schedule: 'daily' as const, prompt: 'Audit.', ...over },
+  const jobs = (over: Partial<{ schedule: 'daily' | 'manual'; target: 'agent' | 'warehouse' }> = {}) => [
+    { repo: 'Zabaca/cedarpad', name: 'deps-audit', description: '', schedule: 'daily' as const, target: 'agent' as const, prompt: 'Audit.', ...over },
   ];
 
   const kickRecorder = (joined = false) => {
-    const kicks: Array<{ repo: string; job: string }> = [];
-    const kick = async (repo: string, job: { name: string; prompt: string }) => {
-      kicks.push({ repo, job: job.name });
+    const kicks: Array<{ repo: string; job: string; target: 'agent' | 'warehouse' }> = [];
+    const kick = async (repo: string, job: { name: string; prompt: string; target: 'agent' | 'warehouse' }) => {
+      kicks.push({ repo, job: job.name, target: job.target });
       return Response.json({ chatId: 'run-x', joined }, { status: 202 });
     };
     return { kicks, kick };
@@ -210,6 +247,19 @@ describe('evaluateScheduledJobs — the tick is an evaluator, not a registry', (
     const { kicks, kick } = kickRecorder();
     await evaluateScheduledJobs(database, 'ws_jobs', { nowMs: DAY * 200, discover: async () => jobs({ schedule: 'manual' }), kick });
     expect(kicks).toEqual([]);
+  });
+
+  // #240: the evaluator forwards `target` untouched to `kick` — the branch between the
+  // canvas container and the Warehouse container is the CALLER's (worker/index.ts), not
+  // this evaluator's, but it can only branch correctly if the target rides along.
+  test('a due warehouse-target job is kicked with target: warehouse, not silently treated as agent', async () => {
+    const { kicks, kick } = kickRecorder();
+    await evaluateScheduledJobs(database, 'ws_jobs', {
+      nowMs: DAY * 400,
+      discover: async () => jobs({ target: 'warehouse' }),
+      kick,
+    });
+    expect(kicks).toEqual([{ repo: 'Zabaca/cedarpad', job: 'deps-audit', target: 'warehouse' }]);
   });
 
   test('a JOINED kick (another run in flight) does NOT stamp — the job retries next tick', async () => {

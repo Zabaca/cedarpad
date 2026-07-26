@@ -187,4 +187,17 @@ describe('triggerDevAgentRun — validate the repo/job request, then kick', () =
     expect((await triggerDevAgentRun(env, deps, { job: 'deps-audit', repo: 'Other/repo' })).status).toBe(404);
     expect(kicks).toEqual([]);
   });
+
+  // #240: a `target: warehouse` job is a materialize run, dispatched by the scheduler's
+  // own kick branch (worker/index.ts) — not this dev-agent manual trigger. Reject rather
+  // than silently running it as a chat turn against a repo.
+  test('a target: warehouse job cannot be manually triggered as a dev-agent run', async () => {
+    const { kicks, serve } = record();
+    const WAREHOUSE_JOB = { ...JOB, name: 'materialize-mart', target: 'warehouse' as const };
+    const deps = { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [WAREHOUSE_JOB] };
+    const res = await triggerDevAgentRun(env, deps, { job: 'materialize-mart' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('warehouse');
+    expect(kicks).toEqual([]);
+  });
 });

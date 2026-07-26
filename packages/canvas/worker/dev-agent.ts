@@ -70,7 +70,7 @@ export async function kickDevAgentRun(
 export interface DevAgentTriggerDeps extends DevAgentKickDeps {
   /** Repo-defined jobs off the selected repos' default branches (worker/repo-jobs.ts
    *  discoverJobs, curried with the db + workspace by the caller). */
-  discover: (env: Env) => Promise<Array<{ name: string; repo: string; prompt: string }>>;
+  discover: (env: Env) => Promise<Array<{ name: string; repo: string; prompt: string; target?: 'agent' | 'warehouse' }>>;
 }
 
 /**
@@ -105,6 +105,16 @@ export async function triggerDevAgentRun(
   const jobs = await deps.discover(env);
   const found = jobs.find((j) => j.name === body.job && (!repoArg || j.repo === repoArg));
   if (!found) return Response.json({ error: `job not found on a selected repo's default branch: ${body.job}` }, { status: 404 });
+  // A `target: warehouse` job is a materialize run, not a dev-agent turn (#240) — this
+  // manual trigger is the dev-agent's; the scheduler's kick branch dispatches warehouse
+  // jobs on their `daily` schedule instead. Reject rather than silently running it as a
+  // chat turn against a repo, which it was never meant to be.
+  if (found.target === 'warehouse') {
+    return Response.json(
+      { error: `job "${found.name}" targets the warehouse and runs on its schedule — it can't be triggered as a dev-agent run` },
+      { status: 400 },
+    );
+  }
   repoArg = found.repo; // a repo job always runs against its home repo
   return kickDevAgentRun(env, deps, repoArg, { name: found.name, prompt: found.prompt }, assignUser);
 }

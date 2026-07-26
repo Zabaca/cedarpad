@@ -1,4 +1,4 @@
-import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
+import { Sandbox as BaseSandbox, getSandbox } from '@cloudflare/sandbox';
 import { getWorkspace, getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
@@ -13,9 +13,11 @@ import { handleMembersApi } from './members.ts';
 import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { kickDevAgentRun, triggerDevAgentRun } from './dev-agent.ts';
+import { kickWarehouseMaterialize } from './warehouse-dispatch.ts';
 import { mintDevAgentGitToken, mintRepoReadToken } from './github-app.ts';
-import { DEFAULT_WORKSPACE, resolve } from './sandbox-resolver.ts';
+import { DEFAULT_WORKSPACE, resolve, type SandboxCoords } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
+import { CANVAS_CONTAINER_CWD, warehouseContainerEnv } from './container-env.ts';
 import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 import { coordsForWorkspace, handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
@@ -160,6 +162,36 @@ const defaultWorkspaceRepo = async (env: Env, requested?: string) => {
   }
 };
 
+// The Warehouse container's runtime wiring (#240, ADR-0017) — kept here, not in
+// sandbox-runtime.ts, deliberately: it needs no cycle back through this file, since it's
+// the ONE thing that only ever runs from the scheduler already defined here. Unlike the
+// canvas container, the Warehouse container runs no bridge/vite server to proxy into (it
+// carries no agent SDK, #236) — dispatch is a single `exec` of the pipeline's CLI
+// entrypoint (warehouse/materialize.ts, baked into the image at the same WORKDIR as the
+// canvas package — Dockerfile.warehouse). `materializeWorkspace`'s CLI entry
+// (`import.meta.main`) reads the target workspace off `CANVAS_WORKSPACE`, same env var
+// the canvas container's bridge uses to scope R2 state.
+const MATERIALIZE_COMMAND = 'bun run warehouse/materialize.ts';
+
+/** One-shot exec against the workspace's Warehouse container — `getSandbox` wakes it on
+ *  demand (cold boot pulls the image if needed), same as the canvas container's proxy
+ *  path, no separate "ensure started" step needed for a one-shot command. NOTE: this
+ *  module is wholesale `mock.module`-replaced in worker/index.test.ts and
+ *  worker/inbox-bridge.test.ts (`mock.module('@cloudflare/sandbox', () => ({ ... }))`) —
+ *  any new named import from `@cloudflare/sandbox` anywhere in this file's module graph
+ *  must be added to BOTH factories, or unrelated test files that transitively load this
+ *  module will fail with "export not found" against the mock, not the real package. */
+const warehouseExec = async (env: Env, coords: SandboxCoords) => {
+  const sandbox = getSandbox(env.Warehouse, coords.sandboxId, { normalizeId: true });
+  const result = await sandbox.exec(MATERIALIZE_COMMAND, {
+    cwd: CANVAS_CONTAINER_CWD,
+    // CANVAS_WORKSPACE scopes the pipeline's R2 read/write, same key the canvas
+    // container's bridge uses — materialize.ts's CLI entry reads it directly.
+    env: { ...warehouseContainerEnv(env), CANVAS_WORKSPACE: coords.canvasWorkspace },
+  });
+  return { success: result.success, stdout: result.stdout, stderr: result.stderr };
+};
+
 /** Push one repo's read-only checkout refresh into a workspace's container (ADR-0016):
  *  the read token rides a header, transient — the bridge fetches then scrubs it. Public
  *  repos push no token at all; the bridge clones the public HTTPS remote. */
@@ -222,8 +254,14 @@ export default {
         evaluateScheduledJobs(database, DEFAULT_WORKSPACE_ID, {
           nowMs: Date.now(),
           discover: () => discoverJobs(env, database, DEFAULT_WORKSPACE_ID, { nowSec: Math.floor(Date.now() / 1000) }),
+          // The dispatch branch (#240): a `target: warehouse` job wakes the Warehouse
+          // container instead of the bridge — batch, not an agent turn (ADR-0017). Every
+          // other job (the default, `target: agent`) is unchanged from before this field
+          // existed: a headless chat turn kicked at the warm canvas container.
           kick: (repo, job) =>
-            kickDevAgentRun(env, { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo }, repo, job),
+            job.target === 'warehouse'
+              ? kickWarehouseMaterialize(env, { exec: warehouseExec })
+              : kickDevAgentRun(env, { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo }, repo, job),
         }).catch((e: unknown) => console.error(`[jobs] scheduled evaluation failed: ${String(e)}`)),
       );
     }

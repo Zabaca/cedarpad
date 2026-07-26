@@ -28,7 +28,13 @@ let mintCalls = 0;
 let mintResult: string | null = 'ghs_minted';
 let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
 
-mock.module('@cloudflare/sandbox', () => ({ Sandbox: class {} }));
+// #240: index.ts's `warehouseExec` statically imports `getSandbox` too — this factory
+// replaces the WHOLE module, so any named import missing here fails "export not found"
+// for every test file that transitively loads index.ts, this one included.
+mock.module('@cloudflare/sandbox', () => ({
+  Sandbox: class {},
+  getSandbox: () => ({ exec: async () => ({ success: true, stdout: '', stderr: '' }) }),
+}));
 mock.module('../web-poc/worker/runtime.ts', () => ({ createDbForWorker: () => ({}) }));
 mock.module('./sandbox-runtime.ts', () => ({
   serveWorkspace: (req: Request, _env: unknown, coords: SandboxCoords) => {
