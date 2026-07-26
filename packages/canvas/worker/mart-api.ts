@@ -10,7 +10,7 @@
 import { parquetReadObjects } from 'hyparquet/src/index.js';
 
 import { BlobStore, type BlobBackend } from '../server/blob-store.ts';
-import { coerceMartRow, MartSidecarSchema, type MartSidecar } from '../shared/mart-contract.ts';
+import { coerceMartRow, MartName, MartSidecarSchema, type MartSidecar } from '../shared/mart-contract.ts';
 import { martsReferencedBy } from '../shared/mart-scope.ts';
 import type { CanvasState } from '../src/shapes.ts';
 
@@ -96,15 +96,22 @@ export async function loadCanvasStateFromBucket(bucket: MartBucket, ws: string, 
 
 const NOT_FOUND = () => Response.json({ error: 'not found' }, { status: 404 });
 
-/** The full route: default-deny via `decideMartAccess`, then a read that 404s identically
- * whether the mart is genuinely absent or the requester was denied — a guest learns
- * nothing about whether an unreferenced name is real (ADR-0017: no enumeration). */
+/** The full route: reject a malformed name (`MartName`, mart-contract.ts) with the SAME
+ * 404 as denied/absent — a bad name must not be distinguishable from a real-but-missing or
+ * real-but-denied one, or the shape itself becomes an oracle. Then default-deny via
+ * `decideMartAccess`, then a read that 404s identically whether the mart is genuinely
+ * absent or the requester was denied — a guest learns nothing about whether an
+ * unreferenced name is real (ADR-0017: no enumeration). Validating BEFORE it ever reaches
+ * `martKey`/`martSidecarKey` (blob-store.ts) matters beyond this route: a filesystem-backed
+ * `BlobBackend` builds paths with `join()`, and an unvalidated name is exactly the shape
+ * that becomes a traversal bug the moment such a reader exists. */
 export async function handleMartApi(
   bucket: MartBucket,
   ws: string,
   name: string,
   requester: { kind: 'member' } | { kind: 'guest'; canvasState: CanvasState },
 ): Promise<Response> {
+  if (!MartName.safeParse(name).success) return NOT_FOUND();
   if (!decideMartAccess(name, requester)) return NOT_FOUND();
   const mart = await readMart(bucket, ws, name);
   if (mart === null) return NOT_FOUND();

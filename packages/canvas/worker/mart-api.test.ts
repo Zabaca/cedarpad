@@ -59,7 +59,9 @@ function withMartBucket<T>(ws: string, fn: (bucket: MartBucket) => Promise<T>): 
       const bucket: MartBucket = {
         get: async (key) => {
           const bytes = objects.get(key);
-          return bytes === undefined ? null : { arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
+          return bytes === undefined
+            ? null
+            : { arrayBuffer: async (): Promise<ArrayBuffer> => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer };
         },
       };
       return await fn(bucket);
@@ -157,6 +159,15 @@ maybeDescribe('handleMartApi — the full route, member vs guest', () => {
       expect(denied.status).toBe(404);
       expect(unknown.status).toBe(404);
       expect(await denied.json()).toEqual(await unknown.json());
+    });
+  });
+
+  test('a malformed mart name 404s identically to denied/absent — no oracle for a bad shape', async () => {
+    await withMartBucket('ws1', async (bucket) => {
+      const malformed = await handleMartApi(bucket, 'ws1', '../etc/passwd', { kind: 'member' });
+      const unknown = await handleMartApi(bucket, 'ws1', 'mart_does_not_exist', { kind: 'member' });
+      expect(malformed.status).toBe(404);
+      expect(await malformed.json()).toEqual(await unknown.json());
     });
   });
 });

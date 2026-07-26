@@ -5,6 +5,15 @@
 
 import { z } from 'zod';
 
+/** A mart's name, as it appears in a storage key (`martKey`/`martSidecarKey`, both
+ * `workspaces/<ws>/warehouse/<name>.*`) and in the edge route (#238). Mirrors
+ * `COMPONENT_NAME_RE`'s style (`shared/bridge-wire.ts`, #234) — reject at the boundary,
+ * before an unvalidated name ever reaches a storage key. Lowercase/digits/underscore only,
+ * matching this pipeline's own `mart_*` naming (session-events-mart.ts's `MART_NAME`); no
+ * `.`/`/` means no path-segment tricks reach a filesystem-backed `BlobBackend`. */
+export const MART_NAME_RE = /^[a-z][a-z0-9_]*$/;
+export const MartName = z.string().regex(MART_NAME_RE, 'mart name: lowercase letters/digits/_, starting with a letter');
+
 /** DuckDB/Parquet physical types this pipeline emits. Narrower than DuckDB's full type
  * vocabulary on purpose — only what a mart column actually needs (CLAUDE.md §2). */
 export const MartColumnTypeSchema = z.enum(['VARCHAR', 'TIMESTAMP', 'BIGINT', 'DOUBLE', 'BOOLEAN']);
