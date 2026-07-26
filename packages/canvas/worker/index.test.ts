@@ -30,7 +30,19 @@ let inboxCalls: Array<{ id?: string; action?: string }> = [];
 let conv: ConversationRow | null = null;
 let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
 
-mock.module('@cloudflare/sandbox', () => ({ Sandbox: class {} }));
+// #240: `getSandbox` backs `warehouseExec` (worker/index.ts) — a materialize job execs
+// against the Warehouse container's stub directly (no bridge, no proxy). Recorded so the
+// scheduled() tests below can assert the warehouse dispatch actually fires, with what.
+let warehouseExecCalls: Array<{ namespace: unknown; sandboxId: string; command: string; env: Record<string, string> }> = [];
+mock.module('@cloudflare/sandbox', () => ({
+  Sandbox: class {},
+  getSandbox: (namespace: unknown, sandboxId: string) => ({
+    exec: async (command: string, opts: { env: Record<string, string> }) => {
+      warehouseExecCalls.push({ namespace, sandboxId, command, env: opts.env });
+      return { success: true, stdout: 'materialize: wrote mart_session_events (1 rows).', stderr: '' };
+    },
+  }),
+}));
 mock.module('./sandbox-runtime.ts', () => ({
   serveWorkspace: (req: Request, _env: unknown, coords: SandboxCoords) => {
     served.push(coords);
@@ -438,6 +450,30 @@ describe('scheduled — the cron dispatches only repo-defined jobs (#100, ADR-00
     await tick();
     expect(served).toEqual([]);
   });
+
+  // #240: a `target: warehouse` job execs against the WAREHOUSE container's stub directly
+  // — never the bridge/canvas container proxy (`served` stays empty).
+  test('a due target: warehouse job execs the materialize command against the Warehouse container, not the bridge', async () => {
+    discoverJobsImpl = async () => [
+      { repo: 'Zabaca/cedarpad', name: 'materialize-mart', description: '', schedule: 'daily', target: 'warehouse', prompt: 'Materialize.' },
+    ];
+    await tick({ DEV_AGENT_ENABLED: 'true' });
+    expect(served).toEqual([]); // never the canvas container's bridge
+    expect(warehouseExecCalls).toEqual([
+      {
+        namespace: env.Warehouse,
+        sandboxId: resolve(DEFAULT_WORKSPACE).sandboxId,
+        command: 'bun run warehouse/materialize.ts',
+        env: {
+          R2_BUCKET: undefined,
+          R2_ACCESS_KEY_ID: undefined,
+          R2_SECRET_ACCESS_KEY: undefined,
+          R2_ENDPOINT: undefined,
+          CANVAS_WORKSPACE: resolve(DEFAULT_WORKSPACE).canvasWorkspace,
+        },
+      },
+    ]);
+  });
 });
 
 beforeEach(() => {
@@ -448,6 +484,7 @@ beforeEach(() => {
   canvasRecord = null;
   served = [];
   servedReqs = [];
+  warehouseExecCalls = [];
   servedMcpTokenHeaders = [];
   assets = [];
   inboxCalls = [];

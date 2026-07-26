@@ -1,4 +1,4 @@
-import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
+import { Sandbox as BaseSandbox, getSandbox } from '@cloudflare/sandbox';
 import { getWorkspace, getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
@@ -175,16 +175,13 @@ const MATERIALIZE_COMMAND = 'bun run warehouse/materialize.ts';
 
 /** One-shot exec against the workspace's Warehouse container — `getSandbox` wakes it on
  *  demand (cold boot pulls the image if needed), same as the canvas container's proxy
- *  path, no separate "ensure started" step needed for a one-shot command. A dynamic
- *  `import()` here (not a static top-level one, like `sandbox-runtime.ts`'s) is
- *  deliberate: a second STATIC import site of `@cloudflare/sandbox`'s `getSandbox`
- *  measurably corrupted this test suite under `bun test`'s concurrent module loading —
- *  unrelated files (mcp-tools.test.ts, github-connection.test.ts, …) started failing
- *  with "export not found" errors sourced from `@cloudflare/sandbox`'s own dist bundle,
- *  reproduced down to a single extra static import line with no logic behind it at all.
- *  A dynamic import resolves outside that static graph and the corruption doesn't occur. */
+ *  path, no separate "ensure started" step needed for a one-shot command. NOTE: this
+ *  module is wholesale `mock.module`-replaced in worker/index.test.ts and
+ *  worker/inbox-bridge.test.ts (`mock.module('@cloudflare/sandbox', () => ({ ... }))`) —
+ *  any new named import from `@cloudflare/sandbox` anywhere in this file's module graph
+ *  must be added to BOTH factories, or unrelated test files that transitively load this
+ *  module will fail with "export not found" against the mock, not the real package. */
 const warehouseExec = async (env: Env, coords: SandboxCoords) => {
-  const { getSandbox } = await import('@cloudflare/sandbox');
   const sandbox = getSandbox(env.Warehouse, coords.sandboxId, { normalizeId: true });
   const result = await sandbox.exec(MATERIALIZE_COMMAND, {
     cwd: CANVAS_CONTAINER_CWD,
