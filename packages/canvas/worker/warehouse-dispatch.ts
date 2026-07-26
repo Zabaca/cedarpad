@@ -17,8 +17,7 @@ export interface WarehouseExecResult {
 
 export interface WarehouseKickDeps {
   /** One-shot `bun run warehouse/materialize.ts` against the workspace's Warehouse
-   *  container (worker/index.ts `warehouseExec` — a dynamic `import('@cloudflare/sandbox')`,
-   *  see its comment for why). Injected so this module stays pure. */
+   *  container (sandbox-runtime.ts `warehouseExec`). Injected so this module stays pure. */
   exec: (env: Env, coords: SandboxCoords) => Promise<WarehouseExecResult>;
 }
 

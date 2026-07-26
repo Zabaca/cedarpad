@@ -53,6 +53,25 @@ mock.module('./sandbox-runtime.ts', () => ({
     return new Response('pad-html');
   },
   sandboxFor: () => ({}),
+  // #240/#248: mirrors the real warehouseExec (sandbox-runtime.ts), which this file's
+  // full-module mock otherwise shadows — recorded into the SAME warehouseExecCalls the
+  // '@cloudflare/sandbox' mock above used to populate, so both the cron and the manual
+  // "Run now" trigger tests can assert against it identically.
+  warehouseExec: async (env: { Warehouse: unknown; R2_BUCKET?: string; R2_ACCESS_KEY_ID?: string; R2_SECRET_ACCESS_KEY?: string; R2_ENDPOINT?: string }, coords: SandboxCoords) => {
+    warehouseExecCalls.push({
+      namespace: env.Warehouse,
+      sandboxId: coords.sandboxId,
+      command: 'bun run warehouse/materialize.ts',
+      env: {
+        R2_BUCKET: env.R2_BUCKET,
+        R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
+        R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
+        R2_ENDPOINT: env.R2_ENDPOINT,
+        CANVAS_WORKSPACE: coords.canvasWorkspace,
+      },
+    });
+    return { success: true, stdout: 'materialize: wrote mart_session_events (1 rows).', stderr: '' };
+  },
 }));
 // Job discovery is the ONLY source of scheduled work now (#100), so the cron tests need to
 // steer it. Delegate-and-restore, same reason as getWorkspace below: repo-jobs.test.ts runs
@@ -411,6 +430,63 @@ describe('POST /api/jobs/dev-agent/run — manual Jobs trigger (ADR-0011: a prox
     const res = await GET('/api/jobs/dev-agent/run');
     expect(res.status).toBe(405);
     expect(served).toEqual([]);
+  });
+
+  // #248: "Run now" parity — a target: warehouse job execs against the Warehouse container
+  // via the SAME route a dev-agent job uses, never the bridge, and creates no Conversation
+  // (nothing proxied to serveWorkspace — `served` stays empty).
+  test('a target: warehouse job triggers on demand and execs the materialize command against the Warehouse container', async () => {
+    discoverJobsImpl = async () => [
+      { repo: 'Zabaca/cedarpad', name: 'materialize-mart', description: '', schedule: 'daily', target: 'warehouse', prompt: 'Materialize.' },
+    ];
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ job: 'materialize-mart' }),
+      }),
+      env,
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ joined: false }); // reports a run kicked, not a chat turn
+    expect(served).toEqual([]); // never the bridge — no Conversation, no chat-turn proxy
+    expect(warehouseExecCalls).toEqual([
+      {
+        namespace: env.Warehouse,
+        sandboxId: resolve(DEFAULT_WORKSPACE).sandboxId,
+        command: 'bun run warehouse/materialize.ts',
+        env: {
+          R2_BUCKET: undefined,
+          R2_ACCESS_KEY_ID: undefined,
+          R2_SECRET_ACCESS_KEY: undefined,
+          R2_ENDPOINT: undefined,
+          CANVAS_WORKSPACE: resolve(DEFAULT_WORKSPACE).canvasWorkspace,
+        },
+      },
+    ]);
+  });
+
+  // Owner-gated exactly like an agent job's trigger: this route reuses the SAME edge
+  // session gate (worker/auth-gate.ts decideGate) for every job regardless of target —
+  // no second authorization model was invented for warehouse jobs. An unauthenticated
+  // caller never reaches triggerDevAgentRun, so it can't reach kickWarehouse either.
+  test('an unauthenticated (non-owner) request cannot trigger a target: warehouse job — same gate as an agent job, nothing execs', async () => {
+    discoverJobsImpl = async () => [
+      { repo: 'Zabaca/cedarpad', name: 'materialize-mart', description: '', schedule: 'daily', target: 'warehouse', prompt: 'Materialize.' },
+    ];
+    session = null;
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ job: 'materialize-mart' }),
+      }),
+      env,
+    );
+    expect(res.status).not.toBe(202);
+    expect(served).toEqual([]);
+    expect(warehouseExecCalls).toEqual([]);
+    session = { user: { id: 'u_1' } };
   });
 });
 

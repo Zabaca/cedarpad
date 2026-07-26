@@ -1,6 +1,6 @@
 import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from './index.ts';
-import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
+import { CANVAS_CONTAINER_CWD, containerEnv, warehouseContainerEnv } from './container-env.ts';
 import { singleFlight } from './single-flight.ts';
 import { type SandboxCoords, decideWarm, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 
@@ -28,6 +28,36 @@ const SLEEP_AFTER = '5m';
 /** The DO stub for a resolved workspace's container. */
 export const sandboxFor = (env: Env, sandboxId: string) =>
   getSandbox(env.Sandbox, sandboxId, { normalizeId: true, keepAlive: false, sleepAfter: SLEEP_AFTER });
+
+// The Warehouse container's runtime wiring (#240, ADR-0017; moved here from index.ts for
+// #248 so both the cron dispatch AND the "Run now" manual trigger — HTTP route + MCP tool —
+// can reach it without an import cycle through index.ts). Unlike the canvas container, the
+// Warehouse container runs no bridge/vite server to proxy into (it carries no agent SDK,
+// #236) — dispatch is a single `exec` of the pipeline's CLI entrypoint
+// (warehouse/materialize.ts, baked into the image at the same WORKDIR as the canvas
+// package — Dockerfile.warehouse). `materializeWorkspace`'s CLI entry (`import.meta.main`)
+// reads the target workspace off `CANVAS_WORKSPACE`, same env var the canvas container's
+// bridge uses to scope R2 state.
+const MATERIALIZE_COMMAND = 'bun run warehouse/materialize.ts';
+
+/** One-shot exec against the workspace's Warehouse container — `getSandbox` wakes it on
+ *  demand (cold boot pulls the image if needed), same as the canvas container's proxy
+ *  path, no separate "ensure started" step needed for a one-shot command. NOTE: this
+ *  module is wholesale `mock.module`-replaced in worker/index.test.ts and
+ *  worker/inbox-bridge.test.ts (`mock.module('@cloudflare/sandbox', () => ({ ... }))`) —
+ *  any new named import from `@cloudflare/sandbox` anywhere in this file's module graph
+ *  must be added to BOTH factories, or unrelated test files that transitively load this
+ *  module will fail with "export not found" against the mock, not the real package. */
+export const warehouseExec = async (env: Env, coords: SandboxCoords) => {
+  const sandbox = getSandbox(env.Warehouse, coords.sandboxId, { normalizeId: true });
+  const result = await sandbox.exec(MATERIALIZE_COMMAND, {
+    cwd: CANVAS_CONTAINER_CWD,
+    // CANVAS_WORKSPACE scopes the pipeline's R2 read/write, same key the canvas
+    // container's bridge uses — materialize.ts's CLI entry reads it directly.
+    env: { ...warehouseContainerEnv(env), CANVAS_WORKSPACE: coords.canvasWorkspace },
+  });
+  return { success: result.success, stdout: result.stdout, stderr: result.stderr };
+};
 
 type SandboxStub = ReturnType<typeof getSandbox>;
 
