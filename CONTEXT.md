@@ -318,7 +318,7 @@ holds (container disk caps at 20 GB; `ceo`'s warehouse is 22.3 GiB). _Avoid_: "t
 **Connector**: a declared source that lands raw data in the warehouse. Slice 1 needs none:
 the workspace's own **Claude session JSONL is already in the same bucket**
 (`workspaces/<ws>/sessions.tar`, persisted so `resume` survives a recycle), so the first
-source is a *read*, not an extraction — and third-party secrets (the brief's D3) stay
+source is a *read*, not an extraction — and third-party extraction secrets stay
 deferred. _Avoid_: "source" alone (ambiguous with a dbt `source`), "integration".
 
 **Mart**: the published unit of meaning — **exactly one parquet artifact**, with a
