@@ -33,6 +33,11 @@ export const customKey = (ws: string): string => `workspaces/${ws}/custom.tar`;
  * recycle loses every session's JSONL and `resume` fails ("No conversation found"). */
 export const sessionsKey = (ws: string): string => `workspaces/${ws}/sessions.tar`;
 
+/** workspace-scoped mart parquet artifact (ADR-0017): `workspaces/<ws>/warehouse/<name>.parquet`.
+ * The declared-schema sidecar lives next to it at `<name>.schema.json` (mart-contract.ts). */
+export const martKey = (ws: string, name: string): string => `workspaces/${ws}/warehouse/${name}.parquet`;
+export const martSidecarKey = (ws: string, name: string): string => `workspaces/${ws}/warehouse/${name}.schema.json`;
+
 /** workspace-scoped skill library tarball: the package's `.claude/skills/` (user- or
  * agent-authored skill dirs + their supporting files). Extension content like
  * components/custom (ADR-0013); platform skills stay image-only at ~/.claude/skills. */
@@ -158,5 +163,22 @@ export class BlobStore {
 
   async saveChatMeta(ws: string, map: Record<string, ChatMeta>): Promise<void> {
     await this.backend.put(chatMetaKey(ws), enc.encode(JSON.stringify(map)));
+  }
+
+  loadMart(ws: string, name: string): Promise<Uint8Array | null> {
+    return this.backend.get(martKey(ws, name));
+  }
+
+  async saveMart(ws: string, name: string, bytes: Uint8Array): Promise<void> {
+    await this.backend.put(martKey(ws, name), bytes);
+  }
+
+  async loadMartSidecar(ws: string, name: string): Promise<unknown | null> {
+    const bytes = await this.backend.get(martSidecarKey(ws, name));
+    return bytes === null ? null : JSON.parse(dec.decode(bytes));
+  }
+
+  async saveMartSidecar(ws: string, name: string, sidecar: unknown): Promise<void> {
+    await this.backend.put(martSidecarKey(ws, name), enc.encode(JSON.stringify(sidecar)));
   }
 }
