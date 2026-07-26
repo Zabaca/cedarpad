@@ -960,6 +960,15 @@ describe('POST /api/canvas/shapes/{create,update} + /api/components/place — di
     expect(placed.status).toBe(400);
   });
 
+  // A mart name is validated at PLACEMENT (MartName, mart-contract.ts), not just at
+  // fetch time — otherwise an invalid name lands in persisted canvas state and only
+  // fails later at render, far from the mistake (CLAUDE.md §7: parse at the boundary).
+  test('place_component: a mart dataSource with a name that fails MartName is a 400, never stored', async () => {
+    const placed = await post('/api/components/place', { module: 'ZzTestMod4', x: 5, y: 6, dataSource: { kind: 'mart', name: 'Not-Valid!' } });
+    expect(placed.status).toBe(400);
+    expect((await readShapes()).some((s) => s.type === 'component' && s.module === 'ZzTestMod4')).toBe(false);
+  });
+
   test('place_component: a module name that fails the component-name rule is a 400', async () => {
     for (const module of ['../evil', 'Bad.Name', '9leading', 'has space', '']) {
       expect((await post('/api/components/place', { module, x: 1, y: 2 })).status).toBe(400);

@@ -64,4 +64,13 @@ describe('normalizeShape: component dataSource', () => {
       normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: {}, rev: 1, dataSource: { kind: 'url', name: 'x' } }),
     ).toThrow();
   });
+
+  // MartName (mart-contract.ts) is the same rule the mart route enforces — a name that
+  // could never resolve to a real mart is rejected HERE, at placement, not silently
+  // stored and left to fail later at render (CLAUDE.md §7: parse at the boundary).
+  test('a mart dataSource with a name that fails MartName is rejected', () => {
+    expect(() =>
+      normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: {}, rev: 1, dataSource: { kind: 'mart', name: 'Not-Valid!' } }),
+    ).toThrow();
+  });
 });

@@ -21,5 +21,10 @@ export async function fetchMart(name: string): Promise<MartData> {
   const res = await fetch(`/api/workspaces/${encodeURIComponent(ws)}/marts/${encodeURIComponent(name)}`, { credentials: 'same-origin' });
   if (!res.ok) throw new Error(`mart "${name}" not found`);
   const body = (await res.json()) as { rows: unknown; sidecar: unknown };
+  // Deliberate asymmetry: the sidecar IS the contract (schema, freshness) and is
+  // cheap (one object) to re-parse with MartSidecarSchema. `rows` is only `as`-cast —
+  // the edge route already ran every row through `coerceMartRow` (mart-api.ts) before
+  // it left the server, and per-row re-validation here would be real overhead at mart
+  // scale (ADR-0017) for no boundary-safety gain the sidecar parse doesn't already buy.
   return { rows: body.rows as MartRow[], sidecar: MartSidecarSchema.parse(body.sidecar) };
 }
