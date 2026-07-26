@@ -1,7 +1,6 @@
 # The warehouse is R2 parquet; a mart is one artifact with two readers
 
-**Status:** accepted (grill session 2026-07-26; supersedes the D1/D4 recommendations in
-the `DATA-PIPELINE.md` handoff brief)
+**Status:** accepted (grill session 2026-07-26)
 
 A cedarpad workspace can own a data pipeline: the `ceo` Python toolchain (dlt + dbt +
 DuckDB) runs **in the workspace container**, invoked one-shot by a Job (ADR-0015) rather
@@ -20,7 +19,7 @@ Not a cost trade-off — a hard ceiling. Cloudflare container disk is **8 GB on
 `standard-1`** (what canvas runs) and **capped at 20 GB on any instance type, including
 custom**. The `ceo` warehouse measured **22.3 GiB used** (91,691 blocks, only 3,920 free —
 real data, not reclaimable bloat). A warehouse of that size *cannot physically exist* in a
-cedarpad container at any tier, so R2-restore-on-wake (the brief's D1-B) is impossible
+cedarpad container at any tier, so restoring the DB from R2 on wake is impossible
 rather than merely slow. Parquet-in-R2 also dissolves DuckDB's single-writer problem:
 parquet files are immutable, so a write is a new file.
 
@@ -41,7 +40,7 @@ need its own, while R2 partitions by prefix for free.
 Considered, and rejected as a special case: publishing copies a mart's rows into a second
 engine with a second schema to keep in sync, forking the definition the dbt layer exists
 to keep single. Turso stays the **metadata** store and never becomes a data plane. (The
-brief's objection to Turso — row-oriented, slow wide scans — was aimed at the whole
+standing objection to Turso — row-oriented, slow wide scans — was aimed at the whole
 warehouse and doesn't apply to marts anyway: all 24 of `ceo`'s marts total **21,312
 rows**, already pre-aggregated. The scanning happened in DuckDB.)
 

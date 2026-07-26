@@ -305,9 +305,9 @@ action the agent takes mid-conversation**, not a hardcoded consequence of the re
 
 ## Data — the workspace warehouse (ADR-0017)
 
-> **Status: being designed** (grill session 2026-07-26, from the `ceo`-side
-> [DATA-PIPELINE.md](./DATA-PIPELINE.md) brief). A workspace can own a pipeline; this is a
-> **greenfield capability**, deliberately *not* a 1:1 port of `ceo`'s 93 dbt models.
+> **Status: being designed** (grill session 2026-07-26). A workspace can own a pipeline;
+> this is a **greenfield capability**, deliberately *not* a 1:1 port of `ceo`'s 93 dbt
+> models. Decisions and the measurements behind them: ADR-0017.
 
 **Warehouse**: a workspace's analytical store — parquet files under its own R2 prefix
 (`workspaces/<ws>/warehouse/…`). It is **storage, not a server**: DuckDB is a *stateless
