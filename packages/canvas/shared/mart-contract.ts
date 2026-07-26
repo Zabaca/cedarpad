@@ -31,19 +31,25 @@ export type MartSidecar = z.infer<typeof MartSidecarSchema>;
 
 /** A mart row as it crosses the boundary out of DuckDB. Values are the JS shapes a component
  * prop can hold — never `bigint` (ADR-0017 consequences: INT64 arrives as BigInt and does not
- * `JSON.stringify`; a mart row must already be past that by the time it reaches a caller). */
+ * `JSON.stringify`; a mart row must already be past that by the time it reaches a caller), and
+ * never a raw `Date` (a parquet reader — e.g. #238's `hyparquet` in the edge Worker — returns
+ * TIMESTAMP/DATE columns as JS `Date` objects; `coerceMartRow` flattens those to ISO strings). */
 export type MartRow = Record<string, string | number | boolean | null>;
 
-/** Coerce one raw row (as it might arrive from a BIGINT-producing reader) into a JSON-safe
- * MartRow: `bigint` → `number` when it's within Number.MAX_SAFE_INTEGER (every column this
- * pipeline emits — token counts, epoch millis — fits comfortably), else → its decimal string
- * so precision isn't silently lost. */
+/** Coerce one raw row (as it might arrive from a BIGINT- and Date-producing reader) into a
+ * JSON-safe MartRow: `bigint` → `number` when it's within Number.MAX_SAFE_INTEGER (every
+ * numeric column this pipeline emits — token counts, epoch millis — fits comfortably), else →
+ * its decimal string so precision isn't silently lost; `Date` (a TIMESTAMP/DATE column) →
+ * `toISOString()`, since the sidecar already declares the column's semantic type and a
+ * component wants a string, not a further conversion step. */
 export function coerceMartRow(raw: Record<string, unknown>): MartRow {
   const out: MartRow = {};
   for (const [key, value] of Object.entries(raw)) {
     if (typeof value === 'bigint') {
       out[key] =
         value >= Number.MIN_SAFE_INTEGER && value <= Number.MAX_SAFE_INTEGER ? Number(value) : value.toString();
+    } else if (value instanceof Date) {
+      out[key] = value.toISOString();
     } else if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
       out[key] = value;
     } else {

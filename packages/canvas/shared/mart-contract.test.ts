@@ -23,6 +23,14 @@ describe('coerceMartRow — the BigInt/JSON.stringify bug (ADR-0017 consequences
     expect(typeof row.big).toBe('string');
   });
 
+  test('coerces a TIMESTAMP column arriving as a Date (a parquet reader like hyparquet, #238) to its ISO string, not a throw', () => {
+    const row = coerceMartRow({ session_id: 'sess-aaa', ts: new Date('2026-07-20T10:00:05.000Z') });
+    expect(row.ts).toBe('2026-07-20T10:00:05.000Z');
+    expect(typeof row.ts).toBe('string');
+    expect(() => JSON.stringify(row)).not.toThrow();
+    expect(JSON.parse(JSON.stringify(row))).toEqual({ session_id: 'sess-aaa', ts: '2026-07-20T10:00:05.000Z' });
+  });
+
   test('passes through plain string/number/boolean/null unchanged', () => {
     const row = coerceMartRow({ a: 'x', b: 1, c: true, d: null });
     expect(row).toEqual({ a: 'x', b: 1, c: true, d: null });
