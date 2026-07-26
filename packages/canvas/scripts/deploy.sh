@@ -43,6 +43,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# HEAD must be published. A deploy stamps the local SHA into buildRev, so deploying an
+# unpushed commit produces a prod that serves code no one else can see — and, worse, invites
+# schema drift: on 2026-07-25 prod was serving 0154aa4, a commit that only existed on one
+# laptop, and its migration had reached remote Turso with no matching commit on origin. The
+# ledger repair that cost is exactly what this check buys. Ancestor-of (not equal-to) so a
+# deliberate rollback to an older PUSHED commit still works.
+echo "→ checking HEAD is published to origin/main (unpushed code in prod is how the migration ledger drifted)"
+git -C "$REPO_ROOT" fetch -q origin main 2>/dev/null || echo "  ⚠️  could not fetch origin/main — comparing against the last known ref"
+if ! git -C "$REPO_ROOT" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+  if [ "${DEPLOY_ALLOW_UNPUSHED:-}" = "1" ]; then
+    echo "  ⚠️  HEAD ($SHA) is not on origin/main — DEPLOY_ALLOW_UNPUSHED=1 set, shipping it anyway"
+  else
+    echo "❌ HEAD ($SHA) is not an ancestor of origin/main — refusing to deploy."
+    echo "   Push it first (git push origin main), or set DEPLOY_ALLOW_UNPUSHED=1 to ship an unpublished commit."
+    git -C "$REPO_ROOT" log --oneline origin/main..HEAD | sed 's/^/   unpushed: /'
+    exit 1
+  fi
+fi
+
 echo "→ checking working tree is clean (dirty tree can leak uncommitted/mid-edit code into the image)"
 DIRTY=$(git -C "$REPO_ROOT" status --porcelain)
 BUILD_ROOT="$REPO_ROOT"
