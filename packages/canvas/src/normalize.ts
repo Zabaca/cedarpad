@@ -3,6 +3,7 @@
 // Throws with an agent-legible message on bad input so the model can self-correct.
 
 import { type CanvasShape, type ShapeColor, SHAPE_SIZE_DEFAULTS, isColor } from './shapes';
+import { DataSourceSchema, type DataSource } from '../shared/mart-contract';
 
 let counter = 0;
 /** Mint a tldraw-compatible shape id. Not for seeds — runtime uniqueness only. */
@@ -52,6 +53,13 @@ function dataObject(v: unknown): Record<string, unknown> {
   if (v == null) return {};
   if (typeof v !== 'object' || Array.isArray(v)) throw new Error('"data" must be a JSON object of props');
   return v as Record<string, unknown>;
+}
+
+/** A component's mart reference (#239 / ADR-0017: names a mart, never a URL). Absent
+ * stays absent (backward compatible); present must parse against the shared contract. */
+function dataSourceOf(v: unknown): DataSource | undefined {
+  if (v == null) return undefined;
+  return DataSourceSchema.parse(v);
 }
 
 /** A shape parented to a frame carries the frame's `shape:` id; anything else is dropped. */
@@ -131,6 +139,7 @@ function buildShape(raw: Record<string, unknown>, id: string, c: ShapeColor): Ca
         module: moduleName(raw.module),
         data: dataObject(raw.data),
         rev: raw.rev == null ? 0 : num(raw.rev, 'rev'),
+        ...(raw.dataSource != null ? { dataSource: dataSourceOf(raw.dataSource) } : {}),
       };
     case 'chat':
       return {

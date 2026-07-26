@@ -946,6 +946,20 @@ describe('POST /api/canvas/shapes/{create,update} + /api/components/place — di
   // #223: `module` now goes through the shared COMPONENT_NAME_RE (shared/bridge-wire.ts),
   // the same rule the edge and server/components.ts already enforce — a module name that
   // could never resolve to a file is rejected here instead of landing an unloadable card.
+  // #239 / ADR-0017: a component names a mart, never a URL — the bridge's own
+  // PlaceComponentBody accepts and stores it (the field the guest-scope resolver reads).
+  test('place_component: a mart dataSource is accepted and stored on the shape', async () => {
+    const placed = await post('/api/components/place', { module: 'ZzTestMod2', x: 5, y: 6, dataSource: { kind: 'mart', name: 'mart_runway' } });
+    expect(placed.status).toBe(200);
+    const comp = (await readShapes()).find((s) => s.type === 'component' && s.module === 'ZzTestMod2')!;
+    expect(comp.dataSource).toEqual({ kind: 'mart', name: 'mart_runway' });
+  });
+
+  test('place_component: a malformed dataSource is a 400', async () => {
+    const placed = await post('/api/components/place', { module: 'ZzTestMod3', x: 5, y: 6, dataSource: { kind: 'url', url: 'https://evil.example' } });
+    expect(placed.status).toBe(400);
+  });
+
   test('place_component: a module name that fails the component-name rule is a 400', async () => {
     for (const module of ['../evil', 'Bad.Name', '9leading', 'has space', '']) {
       expect((await post('/api/components/place', { module, x: 1, y: 2 })).status).toBe(400);

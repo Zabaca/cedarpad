@@ -11,6 +11,7 @@ import {
   imageSrcOf,
   placeComponentOp,
   readOp,
+  setComponentDataOp,
   updateShapesOp,
   sessionsPlacingModule,
   bumpSharedModule,
@@ -288,6 +289,45 @@ describe('canvas ops (the agent tool logic)', () => {
       const s = createStore();
       placeComponentOp(s, { module: 'KpiCard', x: 10, y: 10, w: 360, h: 260, rev: 1 });
       expect(s.getState().shapes[0]!.parentId).toBeUndefined();
+    });
+  });
+
+  // #239: a component names a mart via dataSource ({kind:'mart', name}), never a URL
+  // (ADR-0017). placeComponentOp/setComponentDataOp just carry it through to
+  // normalizeShape/the shape record — no fetch, no allowlist, the mart namespace IS
+  // the boundary.
+  describe('placeComponentOp / setComponentDataOp: dataSource', () => {
+    test('no dataSource is fully backward compatible: the shape has none', () => {
+      const s = createStore();
+      placeComponentOp(s, { module: 'KpiCard', x: 0, y: 0, w: 360, h: 260, rev: 1 });
+      const comp = s.getState().shapes[0]!;
+      expect(comp.type === 'component' && comp.dataSource).toBeUndefined();
+    });
+
+    test('placeComponentOp accepts a mart dataSource and stores it on the shape', () => {
+      const s = createStore();
+      const r = placeComponentOp(s, { module: 'KpiCard', x: 0, y: 0, w: 360, h: 260, rev: 1, dataSource: { kind: 'mart', name: 'mart_runway' } });
+      expect(r.isError).toBeUndefined();
+      const comp = s.getState().shapes[0]!;
+      expect(comp.type === 'component' ? comp.dataSource : undefined).toEqual({ kind: 'mart', name: 'mart_runway' });
+    });
+
+    test('setComponentDataOp can attach a dataSource to an already-placed instance', () => {
+      const s = createStore();
+      placeComponentOp(s, { id: 'shape:comp1', module: 'KpiCard', x: 0, y: 0, w: 360, h: 260, rev: 1 });
+      const r = setComponentDataOp(s, 'shape:comp1', {}, { kind: 'mart', name: 'mart_runway' });
+      expect(r.isError).toBeUndefined();
+      const comp = s.getState().shapes.find((sh) => sh.id === 'shape:comp1')!;
+      expect(comp.type === 'component' ? comp.dataSource : undefined).toEqual({ kind: 'mart', name: 'mart_runway' });
+    });
+
+    test('setComponentDataOp with no dataSource arg leaves an existing dataSource untouched', () => {
+      const s = createStore();
+      placeComponentOp(s, { id: 'shape:comp1', module: 'KpiCard', x: 0, y: 0, w: 360, h: 260, rev: 1, dataSource: { kind: 'mart', name: 'mart_runway' } });
+      setComponentDataOp(s, 'shape:comp1', { foo: 'bar' });
+      const comp = s.getState().shapes.find((sh) => sh.id === 'shape:comp1')!;
+      expect(comp.type === 'component' ? comp.dataSource : undefined).toEqual({ kind: 'mart', name: 'mart_runway' });
+      expect(comp.type === 'component' ? comp.data : undefined).toEqual({ foo: 'bar' });
     });
   });
 

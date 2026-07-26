@@ -9,6 +9,7 @@ import * as React from 'react';
 import { activeCanvasId } from './active-canvas';
 import { ComponentHost } from './ComponentShape';
 import { useGuestScope } from '../shared/guest-scope';
+import type { DataSource } from '../shared/mart-contract';
 
 /** The minimal editor surface the overlay needs — narrowed for testability. */
 export interface OverlayEditor {
@@ -117,7 +118,7 @@ export function ComponentFullscreenOverlay({
   }, [shape, onClose]);
   if (!shape || shape.type !== 'component') return null;
 
-  const props = shape.props as { module: string; data: Record<string, unknown>; rev: number };
+  const props = shape.props as { module: string; data: Record<string, unknown>; rev: number; dataSource?: DataSource | null };
   return (
     <div className="component-fullscreen">
       <div className="component-fullscreen-head">
@@ -134,6 +135,7 @@ export function ComponentFullscreenOverlay({
           module={props.module}
           data={props.data}
           rev={props.rev}
+          dataSource={props.dataSource ?? undefined}
         />
       </div>
     </div>
