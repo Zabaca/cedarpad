@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 
-import { memBackend } from '../blob-store.ts';
+import { memBackend } from '../server/blob-store.ts';
 import { hasDuckdbCli } from './session-events-mart.ts';
 import { materializeWorkspace } from './materialize.ts';
 
@@ -14,7 +14,16 @@ async function tarFixture(): Promise<Uint8Array> {
   return bytes;
 }
 
-const maybeDescribe = hasDuckdbCli() ? describe : describe.skip;
+// A skip must be impossible to mistake for a pass (no CI runs `bun test` — a dev's local
+// machine is the sole enforcement here): warn loudly, naming exactly what didn't run.
+const duckdbAvailable = hasDuckdbCli();
+if (!duckdbAvailable) {
+  console.warn(
+    'DuckDB CLI not found — 2 warehouse tests in materialize.test.ts SKIPPED, not passed; ' +
+      'install duckdb (e.g. `brew install duckdb`) to run them.',
+  );
+}
+const maybeDescribe = duckdbAvailable ? describe : describe.skip;
 
 maybeDescribe('materializeWorkspace — orchestration: sessions.tar in, mart + sidecar out', () => {
   test('returns null when the workspace has no sessions.tar', async () => {

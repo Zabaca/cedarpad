@@ -13,7 +13,7 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { MartColumn, MartSidecar } from './mart-contract.ts';
+import type { MartColumn, MartSidecar } from '../shared/mart-contract.ts';
 
 export const MART_NAME = 'mart_session_events';
 

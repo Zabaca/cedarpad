@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { MartSidecarSchema } from './mart-contract.ts';
+import { MartSidecarSchema } from '../shared/mart-contract.ts';
 import { hasDuckdbCli, MART_NAME, materializeSessionEventsMart, readMartParquet } from './session-events-mart.ts';
 
 const FIXTURE_DIR = join(import.meta.dir, 'fixtures/sessions');
@@ -29,7 +29,16 @@ const withWorkDir = async (fn: (dir: string) => Promise<void>): Promise<void> =>
   }
 };
 
-const maybeDescribe = hasDuckdbCli() ? describe : describe.skip;
+// A skip must be impossible to mistake for a pass (no CI runs `bun test` — a dev's local
+// machine is the sole enforcement here): warn loudly, naming exactly what didn't run.
+const duckdbAvailable = hasDuckdbCli();
+if (!duckdbAvailable) {
+  console.warn(
+    'DuckDB CLI not found — 4 warehouse tests in session-events-mart.test.ts SKIPPED, not ' +
+      'passed; install duckdb (e.g. `brew install duckdb`) to run them.',
+  );
+}
+const maybeDescribe = duckdbAvailable ? describe : describe.skip;
 
 maybeDescribe('materializeSessionEventsMart — the first mart, end to end', () => {
   test('transforms the fixture sessions.tar into a declared, schema-conformant mart', async () => {

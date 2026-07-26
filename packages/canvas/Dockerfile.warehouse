@@ -63,7 +63,14 @@ COPY package.json bun.lock tsconfig.json ./
 COPY packages/canvas/package.json packages/canvas/
 COPY packages/infra/package.json packages/infra/
 RUN bun install --frozen-lockfile || bun install
-COPY packages/canvas/server/warehouse packages/canvas/server/warehouse
+# `warehouse/` is this package's THIRD runtime dir, a sibling of `server/` (the chat
+# container's bridge) and `worker/` (the edge Worker) — never under `server/`, which would
+# say "runs in the chat container" and get baked into the chat image too (#236's whole point
+# is that these two containers stay separate). `shared/mart-contract.ts` is the cross-runtime
+# zod contract (CLAUDE.md §7) this pipeline writes against; the edge Worker (#238) will import
+# the same file to read the sidecar it produces.
+COPY packages/canvas/warehouse packages/canvas/warehouse
+COPY packages/canvas/shared/mart-contract.ts packages/canvas/shared/mart-contract.ts
 COPY packages/canvas/server/blob-store.ts packages/canvas/server/blob-store.ts
 COPY packages/infra packages/infra
 WORKDIR /app/agent-canvas/packages/canvas

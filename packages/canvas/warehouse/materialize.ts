@@ -8,7 +8,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { type BlobBackend, BlobStore, s3Backend } from '../blob-store.ts';
+import { type BlobBackend, BlobStore, s3Backend } from '../server/blob-store.ts';
 import { MART_NAME, materializeSessionEventsMart } from './session-events-mart.ts';
 
 /** Read sessions.tar, materialize mart_session_events, and write the mart + sidecar back to
