@@ -26,6 +26,7 @@ import { MCP_REGISTRY } from '../server/mcp-registry.ts';
 import { handleShareLinksApi } from './share-links-api.ts';
 import { handleShareAccept, readGuestSession } from './guest-session.ts';
 import { decideGuestGate } from './guest-gate.ts';
+import { handleMartApi, loadCanvasStateFromBucket, MART_ROUTE } from './mart-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
 import { IS_CHAT_SEND, effectiveMcpTokens, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
@@ -77,6 +78,12 @@ export interface Env {
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
   R2_ENDPOINT: string;
+  // Native R2 binding (ADR-0017, #238) — separate from the R2_* S3-compat creds above,
+  // which only ever get forwarded into the container's Bun runtime. The edge Worker
+  // itself (workerd) reads mart parquet straight off this binding, so browsing a mart
+  // never wakes the container. Same bucket as R2_BUCKET; a native binding, not the S3
+  // client, because Bun.S3Client isn't available in workerd.
+  MART_BUCKET: import('./mart-api.ts').MartBucket;
   CLAUDE_CODE_OAUTH_TOKEN: string;
   // web-poc (mounted in the bridge, served in-process): remote Turso + auth +
   // embeddings. Secrets (TURSO_*, VOYAGE_API_KEY, BETTER_AUTH_SECRET) come from
@@ -330,8 +337,13 @@ export default {
         // capability is re-read off the LIVE link row (not the cookie) so revoking or
         // downgrading a link takes effect at the next join.
         const guestHuddleMatch = /^\/api\/canvases\/([^/]+)\/huddle\/join$/.exec(url.pathname);
+        // Marts (ADR-0017, #238): edge-answered like the probe/huddle above, never
+        // proxied — reading R2 directly must never wake the container. The route's own
+        // :ws segment is ignored for guests; only the LINK's workspace is ever read, so a
+        // guest can't slide a foreign workspace id into the path.
+        const guestMartMatch = MART_ROUTE.exec(url.pathname);
         const guestGate = decideGuestGate({ pathname: url.pathname, method: request.method, canvas }, guest);
-        if (isGuestProbe || guestHuddleMatch || guestGate.decision === 'allow') {
+        if (isGuestProbe || guestHuddleMatch || guestMartMatch || guestGate.decision === 'allow') {
           const live = await getActiveShareLink(createDbForWorker(env as unknown as Bindings), guest.linkId);
           if (live && live.canvasId === guest.canvasId) {
             if (isGuestProbe) {
@@ -342,6 +354,16 @@ export default {
                 guestHuddle: live.guestHuddle,
                 // Component-scoped link (PRD #221): the Shell/pad narrow to this shape.
                 ...(guest.shapeId ? { shapeId: guest.shapeId } : {}),
+              });
+            }
+            if (guestMartMatch) {
+              // ADR-0017 guest scoping: resolve THIS canvas's own referenced marts fresh,
+              // off R2, every request — never cached, never trusted from the client.
+              const name = guestMartMatch[2] as string;
+              const canvasState = await loadCanvasStateFromBucket(env.MART_BUCKET, guest.workspaceId, guest.canvasId);
+              return handleMartApi(env.MART_BUCKET, guest.workspaceId, name, {
+                kind: 'guest',
+                canvasState: canvasState ?? { version: 0, shapes: [] },
               });
             }
             if (guestHuddleMatch) {
@@ -452,6 +474,19 @@ export default {
         membersMatch[1],
         membersMatch[2],
       );
+    }
+
+    // Marts (ADR-0017, #238): a member may read any mart in a workspace they belong to —
+    // membership checked against the DB exactly like invitations/members above. Edge-read
+    // parquet straight off R2 (never proxied), so browsing never wakes the container.
+    const martMatch = MART_ROUTE.exec(url.pathname);
+    if (martMatch) {
+      const wsId = martMatch[1] as string;
+      const name = martMatch[2] as string;
+      if (!(await getWorkspace(createDbForWorker(env as unknown as Bindings), wsId, user.id))) {
+        return Response.json({ error: 'not found' }, { status: 404 });
+      }
+      return handleMartApi(env.MART_BUCKET, wsId, name, { kind: 'member' });
     }
 
     // Admin surface (ADR-0014): waitlist view, role=admin only. Edge-served.

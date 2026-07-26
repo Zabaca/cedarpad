@@ -4,6 +4,8 @@
 // writes, so it stays human/LLM-legible. Translation to/from real tldraw shapes
 // lives only in the browser (src/sync.ts).
 
+import type { DataSource } from '../shared/mart-contract.ts';
+
 export const SHAPE_COLORS = [
   'black',
   'grey',
@@ -121,6 +123,13 @@ export interface ComponentShape extends BaseShape {
    * never mounted, or a doc from before this field, reads back `undefined`.
    */
   status?: ComponentStatus;
+  /**
+   * The mart this instance renders (ADR-0017 / #219: a component names a mart, not a
+   * URL). Field + shape only in this slice (#238) — placement/rendering wiring is #239.
+   * Also the guest-scoping input: `martsReferencedBy` (shared/mart-scope.ts) reads this
+   * across a canvas's shapes to resolve which marts a shared canvas may read.
+   */
+  dataSource?: DataSource;
 }
 
 /**

@@ -88,6 +88,13 @@
       { "class_name": "Warehouse", "name": "Warehouse" }
     ]
   },
+  // Native R2 binding (ADR-0017, #238): the edge Worker (workerd) reads mart parquet and
+  // canvas-state.json straight off this — no container wake for browsing. Separate from
+  // the R2_* S3-compat vars above, which only ever get forwarded into the container's Bun
+  // runtime (Bun.S3Client isn't available in workerd). Same bucket as R2_BUCKET; the name
+  // here is a judgment call matching the container-env test fixture — confirm against the
+  // real deploy secret before relying on this in prod.
+  "r2_buckets": [{ "binding": "MART_BUCKET", "bucket_name": "agent-canvas" }],
   // The www worker's waitlist D1, ALSO bound here so /admin gets a waitlist view
   // (ADR-0014). Read-only from this worker; www owns the schema + migrations.
   "d1_databases": [
@@ -157,6 +164,8 @@
           { "class_name": "Warehouse", "name": "Warehouse" }
         ]
       },
+      // Preview shares production's mart bucket too, matching Turso/waitlist D1 sharing.
+      "r2_buckets": [{ "binding": "MART_BUCKET", "bucket_name": "agent-canvas" }],
       // Preview shares production's waitlist D1, matching Turso/R2 sharing.
       "d1_databases": [
         {
