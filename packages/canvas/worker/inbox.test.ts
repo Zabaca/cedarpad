@@ -125,7 +125,13 @@ beforeAll(async () => {
   await db.insert(schema.workspaceMembers).values({ id: 'wm_1', workspaceId: 'default', userId: MEMBER.id });
 });
 
-mock.module('./sandbox-runtime.ts', () => ({ serveWorkspace: () => new Response('pad-html'), sandboxFor: () => ({}) }));
+// #248: index.ts now imports warehouseExec from here (moved from an inline definition) —
+// this file's full-module mock must supply it too, unused by these tests.
+mock.module('./sandbox-runtime.ts', () => ({
+  serveWorkspace: () => new Response('pad-html'),
+  sandboxFor: () => ({}),
+  warehouseExec: async () => ({ success: true, stdout: '', stderr: '' }),
+}));
 mock.module('../web-poc/worker/runtime.ts', () => ({ createDbForWorker: () => database }));
 
 const { handleInboxApi } = await import('./inbox.ts');

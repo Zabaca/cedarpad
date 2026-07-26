@@ -46,6 +46,10 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedAssigns.push(req.headers.get('x-inbox-assign'));
     return new Response('proxied');
   },
+  sandboxFor: () => ({}),
+  // #248: index.ts now imports warehouseExec from here (moved from an inline definition)
+  // — this file's full-module mock must supply it too, unused by these tests.
+  warehouseExec: async () => ({ success: true, stdout: '', stderr: '' }),
 }));
 // Membership gate seam: the bridge proxy admits any workspace MEMBER (never creator-gated).
 // Delegate + RESTORE (the index.test.ts pattern): bun's mock.module rebinds the module for

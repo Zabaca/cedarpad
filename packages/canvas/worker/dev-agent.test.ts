@@ -146,7 +146,15 @@ describe('triggerDevAgentRun — validate the repo/job request, then kick', () =
   // arbitrary repo; it is now a 400 that names where jobs come from.
   test('a jobless trigger is a 400 naming .claude/jobs/ — nothing kicked', async () => {
     const { kicks, serve } = record();
-    const deps = { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [JOB] };
+    const deps = {
+      mint: async () => 'ghs_run',
+      serve,
+      resolveRepo: async () => CONN,
+      discover: async () => [JOB],
+      kickWarehouse: async () => {
+        throw new Error('kickWarehouse must not be called for an agent job');
+      },
+    };
 
     for (const body of [null, {}, { repo: 'Zabaca/cedarpad' }, { job: '  ' }] as Array<{ repo?: string; job?: string } | null>) {
       const res = await triggerDevAgentRun(env, deps, body);
@@ -160,7 +168,15 @@ describe('triggerDevAgentRun — validate the repo/job request, then kick', () =
     const { kicks, serve } = record();
     const res = await triggerDevAgentRun(
       env,
-      { mint: async () => 'ghs_run', serve, resolveRepo: async (_e, r) => (r === JOB.repo ? CONN : null), discover: async () => [JOB] },
+      {
+        mint: async () => 'ghs_run',
+        serve,
+        resolveRepo: async (_e, r) => (r === JOB.repo ? CONN : null),
+        discover: async () => [JOB],
+        kickWarehouse: async () => {
+          throw new Error('kickWarehouse must not be called for an agent job');
+        },
+      },
       { job: 'deps-audit' },
     );
     expect(res.status).toBe(202);
@@ -173,7 +189,15 @@ describe('triggerDevAgentRun — validate the repo/job request, then kick', () =
       assigns.push(req.headers.get('x-inbox-assign'));
       return Response.json({ chatId: 'dev-agent-run-x', joined: false }, { status: 202 });
     };
-    const deps = { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [JOB] };
+    const deps = {
+      mint: async () => 'ghs_run',
+      serve,
+      resolveRepo: async () => CONN,
+      discover: async () => [JOB],
+      kickWarehouse: async () => {
+        throw new Error('kickWarehouse must not be called for an agent job');
+      },
+    };
 
     await triggerDevAgentRun(env, deps, { job: 'deps-audit' }, 'user_james');
     await triggerDevAgentRun(env, deps, { job: 'deps-audit' });
@@ -182,22 +206,42 @@ describe('triggerDevAgentRun — validate the repo/job request, then kick', () =
 
   test('an unknown job (or a repo mismatch) is a 404 — nothing kicked', async () => {
     const { kicks, serve } = record();
-    const deps = { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [JOB] };
+    const deps = {
+      mint: async () => 'ghs_run',
+      serve,
+      resolveRepo: async () => CONN,
+      discover: async () => [JOB],
+      kickWarehouse: async () => {
+        throw new Error('kickWarehouse must not be called for an agent job');
+      },
+    };
     expect((await triggerDevAgentRun(env, deps, { job: 'nope' })).status).toBe(404);
     expect((await triggerDevAgentRun(env, deps, { job: 'deps-audit', repo: 'Other/repo' })).status).toBe(404);
     expect(kicks).toEqual([]);
   });
 
-  // #240: a `target: warehouse` job is a materialize run, dispatched by the scheduler's
-  // own kick branch (worker/index.ts) — not this dev-agent manual trigger. Reject rather
-  // than silently running it as a chat turn against a repo.
-  test('a target: warehouse job cannot be manually triggered as a dev-agent run', async () => {
+  // #248: "Run now" parity — a `target: warehouse` job routes to the materialize kick
+  // (same batch dispatch the scheduler uses), never the bridge/chat-turn path.
+  test('a target: warehouse job routes to kickWarehouse — never the bridge, no repo/prompt/assign carried', async () => {
     const { kicks, serve } = record();
     const WAREHOUSE_JOB = { ...JOB, name: 'materialize-mart', target: 'warehouse' as const };
-    const deps = { mint: async () => 'ghs_run', serve, resolveRepo: async () => CONN, discover: async () => [WAREHOUSE_JOB] };
-    const res = await triggerDevAgentRun(env, deps, { job: 'materialize-mart' });
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toContain('warehouse');
-    expect(kicks).toEqual([]);
+    let warehouseCalls = 0;
+    const deps = {
+      mint: async () => {
+        throw new Error('mint must not be called for a warehouse job');
+      },
+      serve,
+      resolveRepo: async () => CONN,
+      discover: async () => [WAREHOUSE_JOB],
+      kickWarehouse: async () => {
+        warehouseCalls++;
+        return Response.json({ joined: false }, { status: 202 });
+      },
+    };
+    const res = await triggerDevAgentRun(env, deps, { job: 'materialize-mart' }, 'user_james');
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ joined: false });
+    expect(warehouseCalls).toBe(1);
+    expect(kicks).toEqual([]); // never proxied to the bridge as a chat turn
   });
 });

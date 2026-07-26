@@ -8,6 +8,7 @@ import { edgeAuth } from './auth-gate.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
 import { withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import { triggerDevAgentRun } from './dev-agent.ts';
+import { kickWarehouseMaterialize } from './warehouse-dispatch.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
 import { resolveDevAgentRepo } from './github-connection.ts';
 import { discoverJobs } from './repo-jobs.ts';
@@ -33,7 +34,7 @@ import {
   WriteDataInput,
   buildMcpTools,
 } from './mcp-tools.ts';
-import { serveWorkspace } from './sandbox-runtime.ts';
+import { serveWorkspace, warehouseExec } from './sandbox-runtime.ts';
 import type { Env } from './index.ts';
 import { CANVAS_ID_HEADER, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
 
@@ -111,6 +112,13 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       // worker/index.ts — not imported from there, that would be an import cycle):
       // resolve the default workspace's repo connection, mint the per-turn git token,
       // proxy the kick to the warm bridge. Repo resolution is best-effort like the route's.
+      // A `target: warehouse` job routes to kickWarehouseMaterialize instead (#248) — the
+      // MCP surface gets the same "Run now" parity as the HTTP route: it's the SAME shared
+      // triggerDevAgentRun core with the SAME OAuth-token-acts-as-a-human authorization, so
+      // excluding it here would be a second, undocumented gate rather than a deliberate one.
+      // A materialize run is exactly the on-demand debugging need #248 exists for, and MCP
+      // is cedarpad's one programmatic surface — an agent using it to prove the pipeline
+      // works is the intended use, not an escalation.
       kickDevAgent: (body) =>
         triggerDevAgentRun(
           env,
@@ -129,6 +137,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
               discoverJobs(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
                 nowSec: Math.floor(Date.now() / 1000),
               }),
+            kickWarehouse: () => kickWarehouseMaterialize(env, { exec: warehouseExec }),
           },
           body,
           // A run_dev_agent call is the token user's explicit act — assign the run to them.
