@@ -50,3 +50,20 @@ RUN ARCH=$(dpkg --print-architecture) \
   && unzip -o /tmp/duckdb.zip -d /usr/local/bin \
   && rm /tmp/duckdb.zip \
   && chmod +x /usr/local/bin/duckdb
+
+# Bake the pipeline source (#237) — this image COPYs no application code otherwise.
+# `bun` ships in the base image (same as the sibling Dockerfile), so no runtime install is
+# needed; only the TS deps the warehouse pipeline imports (zod for the mart contract, the
+# blob-store R2 backend) matter, which live in the canvas package's own manifest. Same
+# layer-caching shape as the sibling Dockerfile: manifests + install BEFORE source, so a
+# code-only change doesn't bust the install layer. Build context is the repo root
+# (wrangler.jsonc `image_build_context: "../.."`), matching the sibling.
+WORKDIR /app/agent-canvas
+COPY package.json bun.lock tsconfig.json ./
+COPY packages/canvas/package.json packages/canvas/
+COPY packages/infra/package.json packages/infra/
+RUN bun install --frozen-lockfile || bun install
+COPY packages/canvas/server/warehouse packages/canvas/server/warehouse
+COPY packages/canvas/server/blob-store.ts packages/canvas/server/blob-store.ts
+COPY packages/infra packages/infra
+WORKDIR /app/agent-canvas/packages/canvas
