@@ -22,6 +22,20 @@ export function activeCanvasId(): string {
   return (path && canvasIdFromPath(path)) || DEFAULT_CANVAS_ID;
 }
 
+/** The workspace id out of a pad pathname (`/w/:ws/canvas/:id/pad`), or null when this
+ * isn't a pad URL (e.g. a guest surface — the mart route ignores this segment for guests
+ * and resolves the workspace from the share link instead, ADR-0017 / worker/mart-api.ts). */
+export function workspaceIdFromPath(pathname: string): string | null {
+  return /^\/w\/([^/]+)\/canvas\/[^/]+\/pad\/?$/.exec(pathname)?.[1] ?? null;
+}
+
+/** The active workspace id from the pad's own URL, or `default` when it isn't a pad URL
+ * (mirrors activeCanvasId's fallback convention). */
+export function activeWorkspaceId(): string {
+  const path = typeof window === 'undefined' ? null : window.location.pathname;
+  return (path && workspaceIdFromPath(path)) || DEFAULT_CANVAS_ID;
+}
+
 /** Merge the `x-canvas-id` selection header into a bridge fetch's headers. */
 export function withCanvasHeader(headers?: HeadersInit): Record<string, string> {
   return { ...(headers as Record<string, string> | undefined), [CANVAS_ID_HEADER]: activeCanvasId() };

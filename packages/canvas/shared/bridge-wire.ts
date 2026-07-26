@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { DataSourceSchema } from './mart-contract';
+
 // The edge↔bridge wire: the ONE module that owns the typed contract spoken across the
 // Cloudflare-worker ↔ container-bridge seam (CLAUDE.md §7), the same convention as
 // shared/chat-wire.ts and shared/skills-wire.ts. Both sides import from here, so a
@@ -70,6 +72,8 @@ export const PlaceComponentBody = z.object({
   w: z.number().optional(),
   h: z.number().optional(),
   data: z.record(z.unknown()).optional(),
+  /** #239 / ADR-0017: a component names a mart, never a URL — this IS the boundary. */
+  dataSource: DataSourceSchema.optional(),
 });
 export const WriteComponentBody = z.object({ source: z.string().min(1) });
 export const WriteDataBody = z.object({ source: z.string().min(1) });

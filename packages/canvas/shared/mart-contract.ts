@@ -45,7 +45,7 @@ export type MartSidecar = z.infer<typeof MartSidecarSchema>;
  * rendering are #239's job, not this one's. */
 export const DataSourceSchema = z.object({
   kind: z.literal('mart'),
-  name: z.string(),
+  name: MartName,
 });
 export type DataSource = z.infer<typeof DataSourceSchema>;
 

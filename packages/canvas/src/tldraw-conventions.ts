@@ -15,6 +15,7 @@ import type { TLShape, TLShapePartial, TLShapeId } from 'tldraw';
 
 import { SHAPE_COLORS, SHAPE_SIZE_DEFAULTS } from './shapes';
 import type { CanvasShape, ComponentStatus, ShapeColor } from './shapes';
+import type { DataSource } from '../shared/mart-contract';
 
 const KNOWN = new Set<string>(SHAPE_COLORS);
 const LIGHT_MAP: Record<string, ShapeColor> = {
@@ -104,7 +105,9 @@ function buildPartial<R>(s: CanvasShape, encodeText: (plain: string) => R): TLSh
         type: 'component',
         x: s.x,
         y: s.y,
-        props: { w: s.w, h: s.h, module: s.module, data: s.data, rev: s.rev },
+        // dataSource is optional on the model (#239 / ADR-0017); tldraw props are total,
+        // so absent encodes as null (mirrors chatId's '' convention above).
+        props: { w: s.w, h: s.h, module: s.module, data: s.data, rev: s.rev, dataSource: s.dataSource ?? null },
       } as unknown as TLShapePartial;
     case 'chat':
       // `chat` is our custom shape (a conversation card); the shape id is the chat id —
@@ -259,6 +262,9 @@ function decodeFromTldraw(
         // model so read_canvas exposes it — without this the agent never sees that
         // a component it placed failed to load. Absent on a never-mounted/legacy shape.
         ...(shape.meta?.status ? { status: shape.meta.status as ComponentStatus } : {}),
+        // #239 / ADR-0017: a mart reference, never a URL. null (the tldraw-total default)
+        // decodes back to absent, matching the model's optional field.
+        ...(p.dataSource ? { dataSource: p.dataSource as DataSource } : {}),
       };
     case 'chat':
       return {

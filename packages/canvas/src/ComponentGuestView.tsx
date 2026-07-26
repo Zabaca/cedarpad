@@ -40,7 +40,7 @@ export function createGuestShapeStore(initial: ComponentShape): GuestShapeStore 
       ? {
           id: model.id,
           type: 'component',
-          props: { w: model.w, h: model.h, module: model.module, data: model.data, rev: model.rev },
+          props: { w: model.w, h: model.h, module: model.module, data: model.data, rev: model.rev, dataSource: model.dataSource ?? null },
           meta,
         }
       : undefined;
@@ -148,7 +148,7 @@ function GuestHost({ store, shapeId }: { store: GuestShapeStore; shapeId: string
         <span className="component-fullscreen-title">{model.module}</span>
       </div>
       <div className="component-fullscreen-body">
-        <ComponentHost shapeId={shapeId} editor={store.editor as never} module={model.module} data={model.data} rev={model.rev} />
+        <ComponentHost shapeId={shapeId} editor={store.editor as never} module={model.module} data={model.data} rev={model.rev} dataSource={model.dataSource} />
       </div>
     </div>
   );

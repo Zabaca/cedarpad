@@ -36,3 +36,41 @@ describe('normalize preserves the parentId rule at every call site', () => {
     expect(normalizeIncomingShape({ id: 'shape:e', type: 'embed', x: 0, y: 0, parentId: 'page:page' }).parentId).toBeUndefined();
   });
 });
+
+// #239: a component names a mart via dataSource ({kind:'mart', name}), never a URL
+// (ADR-0017). normalizeShape must carry this through like every other component field.
+describe('normalizeShape: component dataSource', () => {
+  test('a component with no dataSource stays exactly as today (backward compatible)', () => {
+    const shape = normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: { x: 1 }, rev: 1 });
+    expect(shape.type === 'component' && shape.dataSource).toBeUndefined();
+  });
+
+  test('a valid mart dataSource is preserved', () => {
+    const shape = normalizeShape({
+      id: 'shape:c',
+      type: 'component',
+      x: 0,
+      y: 0,
+      module: 'KpiCard',
+      data: {},
+      rev: 1,
+      dataSource: { kind: 'mart', name: 'mart_runway' },
+    });
+    expect(shape.type === 'component' ? shape.dataSource : undefined).toEqual({ kind: 'mart', name: 'mart_runway' });
+  });
+
+  test('a malformed dataSource is rejected', () => {
+    expect(() =>
+      normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: {}, rev: 1, dataSource: { kind: 'url', name: 'x' } }),
+    ).toThrow();
+  });
+
+  // MartName (mart-contract.ts) is the same rule the mart route enforces — a name that
+  // could never resolve to a real mart is rejected HERE, at placement, not silently
+  // stored and left to fail later at render (CLAUDE.md §7: parse at the boundary).
+  test('a mart dataSource with a name that fails MartName is rejected', () => {
+    expect(() =>
+      normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: {}, rev: 1, dataSource: { kind: 'mart', name: 'Not-Valid!' } }),
+    ).toThrow();
+  });
+});
