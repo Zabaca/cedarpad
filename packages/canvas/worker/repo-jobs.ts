@@ -18,10 +18,20 @@ export type RepoJob = {
   description: string;
   schedule: 'daily' | 'manual';
   prompt: string;
+  // What the job dispatches to (#240, ADR-0017): `'agent'` (default) is a chat turn
+  // wrapped by the platform law and kicked at the warm canvas container's bridge, same
+  // as before this field existed. `'warehouse'` is a materialize run — deterministic
+  // SQL, no judgment — dispatched to the Warehouse container instead, batch not a turn.
+  // Explicit opt-in, not inferred from the job's name: an unknown/absent value degrades
+  // to `'agent'`, mirroring `schedule`'s "never surprise" rule one level down (a merge
+  // can surprise-schedule a chat turn against a repo, same as always, but can never
+  // silently start dispatching to a container that carries no agent SDK).
+  target: 'agent' | 'warehouse';
 };
 
-/** Parse one job file: `---` frontmatter (name/description/schedule) + body-as-prompt.
- *  Unknown schedule values degrade to `manual` — a merge must never surprise-schedule. */
+/** Parse one job file: `---` frontmatter (name/description/schedule/target) + body-as-prompt.
+ *  Unknown schedule values degrade to `manual` — a merge must never surprise-schedule.
+ *  Unknown/absent target degrades to `'agent'` for the same reason. */
 export function parseJobFile(path: string, content: string): Omit<RepoJob, 'repo'> | null {
   const filename = path.split('/').pop()?.replace(/\.md$/, '') ?? '';
   let body = content;
@@ -40,6 +50,7 @@ export function parseJobFile(path: string, content: string): Omit<RepoJob, 'repo
     name: fm.name || filename,
     description: fm.description ?? '',
     schedule: fm.schedule === 'daily' ? 'daily' : 'manual',
+    target: fm.target === 'warehouse' ? 'warehouse' : 'agent',
     prompt,
   };
 }
@@ -142,7 +153,9 @@ export async function evaluateScheduledJobs(
   deps: {
     nowMs: number;
     discover: () => Promise<RepoJob[]>;
-    kick: (repo: string, job: { name: string; prompt: string }) => Promise<Response>;
+    // `target` rides along so the caller can branch dispatch (#240) — the warehouse
+    // branch wakes the Warehouse container instead of the bridge; see worker/index.ts.
+    kick: (repo: string, job: { name: string; prompt: string; target: 'agent' | 'warehouse' }) => Promise<Response>;
   },
 ): Promise<{ kicked: string[] }> {
   const { getJobRunStamp, stampJobRun } = await import('../web-poc/lib/db/queries/job-stamps.ts');
@@ -154,7 +167,7 @@ export async function evaluateScheduledJobs(
     const last = await getJobRunStamp(database, key);
     if (last && deps.nowMs - last.getTime() < DAILY_DEBOUNCE_MS) continue;
     try {
-      const res = await deps.kick(job.repo, { name: job.name, prompt: job.prompt });
+      const res = await deps.kick(job.repo, { name: job.name, prompt: job.prompt, target: job.target });
       const body = res.status === 202 ? ((await res.json().catch(() => null)) as { joined?: boolean } | null) : null;
       if (body && !body.joined) {
         await stampJobRun(database, { ...key, nowMs: deps.nowMs });
