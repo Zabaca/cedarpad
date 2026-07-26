@@ -11,10 +11,10 @@ export default function Dashboard({
 }) {
   return (
     <div style={{ padding: 16, font: '13px ui-sans-serif, system-ui' }}>
-      <div style={{ fontWeight: 700, fontSize: 16, color: '#0f172a', marginBottom: 12 }}>{title}</div>
+      <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text)', marginBottom: 12 }}>{title}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
         {kpis.map((k, i) => (
-          <div key={i} style={{ border: '1px solid #e2e8f0', borderRadius: 10 }}>
+          <div key={i} style={{ border: '1px solid var(--line)', borderRadius: 10 }}>
             <KpiCard {...k} />
           </div>
         ))}
