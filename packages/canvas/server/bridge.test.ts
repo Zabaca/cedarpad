@@ -960,6 +960,26 @@ describe('POST /api/canvas/shapes/{create,update} + /api/components/place — di
     expect(placed.status).toBe(400);
   });
 
+  // #250: `data` is arbitrary component props, agent- and author-supplied — a component
+  // whose props legitimately include a field NAMED "dataSource" (a natural prop name for
+  // a chart) must still be placeable. Traced end-to-end (PlaceComponentBody's `data` is
+  // `z.record(z.unknown())`, buildShape's 'component' case only ever reads the sibling
+  // `raw.dataSource`, never `raw.data.dataSource`) and reproduced against this exact
+  // payload: no code path here reads `data.dataSource`, so it is already inert — passed
+  // through to the component as an ordinary prop, byte-for-byte, and never promoted to
+  // the shape-level mart reference. This test locks that contract in (CLAUDE.md §7: the
+  // boundary's behavior on this key is a deliberate decision, not an accident) and is the
+  // never-a-500 guarantee #250 asks for: same value, key named "dataSource" instead of
+  // "nested", still 200.
+  test('place_component: a `dataSource` key INSIDE `data` is just a prop, never a 500, never promoted to the shape-level mart ref', async () => {
+    const value = { kind: 'mart', name: 'mart_session_events' };
+    const placed = await post('/api/components/place', { module: 'ZzTestMod2b', x: 5, y: 6, data: { dataSource: value } });
+    expect(placed.status).toBe(200);
+    const comp = (await readShapes()).find((s) => s.type === 'component' && s.module === 'ZzTestMod2b')!;
+    expect(comp.data).toEqual({ dataSource: value }); // reaches the component as an ordinary prop, untouched
+    expect(comp.dataSource).toBeUndefined(); // never promoted to the sibling mart reference
+  });
+
   // A mart name is validated at PLACEMENT (MartName, mart-contract.ts), not just at
   // fetch time — otherwise an invalid name lands in persisted canvas state and only
   // fails later at render, far from the mistake (CLAUDE.md §7: parse at the boundary).
