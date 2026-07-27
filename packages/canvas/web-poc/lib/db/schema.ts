@@ -590,6 +590,37 @@ export const workspaceRepos = sqliteTable(
 export type WorkspaceRepoRow = typeof workspaceRepos.$inferSelect;
 
 /* ------------------------------------------------------------------ *
+ * Workspace connectors (#241, ADR-0016 pattern) — one row per
+ * third-party connector credential a workspace's warehouse pipeline
+ * (dlt sources, ADR-0017) can use. Same shape as workspace_repos' PAT
+ * rows: `encryptedSecret` is AES-GCM sealed with the platform key
+ * (secret-box.ts), never plaintext at rest. `connectorName` is the
+ * connector's own identifier (e.g. 'slack', 'stripe') chosen by the
+ * owner, not validated against a fixed source list.
+ * ------------------------------------------------------------------ */
+export const workspaceConnectors = sqliteTable(
+  "workspace_connectors",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    connectorName: text("connector_name").notNull(),
+    encryptedSecret: text("encrypted_secret").notNull(),
+    addedByUserId: text("added_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [
+    uniqueIndex("workspace_connectors_ws_name_ux").on(t.workspaceId, t.connectorName),
+    index("workspace_connectors_ws_idx").on(t.workspaceId),
+  ],
+);
+
+export type WorkspaceConnectorRow = typeof workspaceConnectors.$inferSelect;
+
+/* ------------------------------------------------------------------ *
  * Workspace membership + invitations (#179) — on the REGISTRY
  *
  * Membership belongs to the platform `workspaces` registry above, NOT the

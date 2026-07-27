@@ -61,12 +61,17 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
 });
 
 // Env for the warehouse container (ADR-0017, #236) — deliberately just the R2 S3 creds
-// it needs to write parquet under workspaces/<ws>/warehouse/. No CLAUDE_CODE_OAUTH_TOKEN,
-// no Turso/auth secrets, no future extraction secret: the second container class exists
-// so those are structurally unreachable from it, not merely undialed by convention.
-export const warehouseContainerEnv = (env: Env): Record<string, string> => ({
+// it needs to write parquet under workspaces/<ws>/warehouse/, plus (#241) the workspace's
+// decrypted connector credentials (dlt sources) so its pipeline can read from them. No
+// CLAUDE_CODE_OAUTH_TOKEN, no Turso/auth secrets: the second container class exists so
+// those are structurally unreachable from it, not merely undialed by convention. Safe to
+// add connector secrets here because the warehouse container carries no agent SDK and
+// runs a fixed command with no prompt (#241 re-scoping) — there is no model in it that an
+// attacker could steer into leaking one.
+export const warehouseContainerEnv = (env: Env, connectorSecrets: Record<string, string> = {}): Record<string, string> => ({
   R2_BUCKET: env.R2_BUCKET,
   R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
   R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
   R2_ENDPOINT: env.R2_ENDPOINT,
+  ...connectorSecrets,
 });
