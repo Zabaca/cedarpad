@@ -545,6 +545,7 @@ const turnDeps: TurnDeps = {
       console.error('[inbox] transcript backup failed:', err),
     ),
   sendToChat: (targetChatId, message, canvasId) => sendToChat(targetChatId, message, canvasId),
+  listMarts: () => blobStore.listMarts(WORKSPACE),
 };
 
 /** Cross-chat messaging (the agent's send_message tool): post into another chat card's

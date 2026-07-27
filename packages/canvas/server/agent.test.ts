@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { buildExternalMcpServers } from './agent.ts';
+import type { MartSidecar } from '../shared/mart-contract.ts';
+import { buildExternalMcpServers, formatMartListing } from './agent.ts';
 
 // ADR-0013 train 2 (#176): `buildExternalMcpServers` is the container-side half of the registry
 // contract — it turns "which registry servers did this request name a token for" into the
@@ -83,5 +84,48 @@ describe('sendMessageOp: the send_message tool body', () => {
     const store = createStore([chatShape]);
     const text = sendMessageOp(store, () => ({ ok: false, error: 'turn in flight' }), { chat_id: 'shape:target', message: 'hi' }, 'shape:origin');
     expect(text).toContain('Not delivered: turn in flight');
+  });
+});
+
+// Mart discovery (list_marts): the agent's ONLY way to learn a mart exists and what columns it
+// has. Marts live in R2, never on the container filesystem, so a wrong guess at a mart name
+// renders an empty component that reads as "no data yet" — the listing has to carry enough for
+// the model to name the mart AND read the right fields.
+const sidecar = (over: Partial<MartSidecar> = {}): MartSidecar => ({
+  name: 'mart_session_events',
+  description: 'One row per assistant turn. Canvas-chat turns only.',
+  columns: [
+    { name: 'session_id', type: 'VARCHAR', description: 'Claude Code session id.' },
+    { name: 'input_tokens', type: 'BIGINT', description: 'Non-cached input tokens.' },
+  ],
+  generatedAt: '2026-07-27T09:01:05.107Z',
+  rowCount: 2465,
+  ...over,
+});
+
+describe('formatMartListing: what the agent sees when it asks what marts exist', () => {
+  test('a mart renders with its columns, types, meanings, and freshness', () => {
+    const text = formatMartListing([sidecar()]);
+    expect(text).toContain('mart_session_events');
+    expect(text).toContain('input_tokens (BIGINT)');
+    expect(text).toContain('Non-cached input tokens.');
+    expect(text).toContain('2026-07-27T09:01:05.107Z');
+    expect(text).toContain('2465 rows');
+  });
+
+  test('the description is carried through — a mart may cover less than its name implies', () => {
+    expect(formatMartListing([sidecar()])).toContain('Canvas-chat turns only.');
+  });
+
+  test('every mart appears, so the agent can pick between them', () => {
+    const text = formatMartListing([sidecar(), sidecar({ name: 'mart_runway' })]);
+    expect(text).toContain('mart_session_events');
+    expect(text).toContain('mart_runway');
+  });
+
+  test('no marts ⇒ steers to static data instead of leaving the agent to invent a name', () => {
+    const text = formatMartListing([]);
+    expect(text).toMatch(/no marts/i);
+    expect(text).toContain('data');
   });
 });

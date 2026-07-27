@@ -34,6 +34,13 @@ function r2Backend(bucket: MartBucket): BlobBackend {
       throw new Error('mart-api: r2Backend is read-only');
     },
     exists: async (key) => (await bucket.get(key)) !== null,
+    // This route resolves a mart the caller already NAMED (and `decideMartAccess` gates it);
+    // it never enumerates. Listing would also need `MartBucket` to widen to R2's `list`, which
+    // §2 says not to add for a read nobody makes. Discovery is the container's job
+    // (BlobStore.listMarts), where the agent asks what exists.
+    list: async () => {
+      throw new Error('mart-api: r2Backend does not list');
+    },
   };
 }
 

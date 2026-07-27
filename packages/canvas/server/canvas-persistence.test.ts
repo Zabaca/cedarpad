@@ -24,6 +24,7 @@ const trackingBroken = () => {
     },
     put: async (key) => void puts.push(key),
     exists: async () => false,
+    list: async () => [],
   };
   return { backend, puts };
 };

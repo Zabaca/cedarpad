@@ -11,7 +11,7 @@
 // never the "what" (each collaborator). All imports are type-only — a turn is pure orchestration
 // parameterized by injected functions.
 
-import type { CanvasImage, ChatEvent, OpenPr, SendToChat, runChat } from './agent.ts';
+import type { CanvasImage, ChatEvent, ListMarts, OpenPr, SendToChat, runChat } from './agent.ts';
 import type { CanvasSession } from './canvas-sessions.ts';
 import type { EndTurnDeps } from './inbox.ts';
 
@@ -101,6 +101,9 @@ export interface TurnDeps {
    *  `send_message` tool posts into another chat card and kicks its turn. Optional — absent
    *  in contexts without a dispatcher (tests) ⇒ the tool is omitted. */
   sendToChat?: SendToChat;
+  /** Mart discovery seam (the bridge holds the workspace's BlobStore): the agent's
+   *  `list_marts` tool. Optional — absent in tests ⇒ the tool is omitted. */
+  listMarts?: ListMarts;
 }
 
 /**
@@ -156,6 +159,9 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       flavor.kind === 'chat' ? deps.sendToChat : undefined,
       // Per-chat MCP tool opt-outs — meaningful for chat turns only (dev-agent has no MCP).
       flavor.kind === 'chat' ? mcpDisallowedTools : undefined,
+      // Mart discovery is a CANVAS capability — chat turns only (a dev-agent turn places no
+      // components, so it has nothing to point at a mart).
+      flavor.kind === 'chat' ? deps.listMarts : undefined,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
       // Row-at-start: index the session the moment its id lands (the init event). Tracked (not
