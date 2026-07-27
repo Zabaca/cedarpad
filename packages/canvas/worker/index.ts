@@ -7,6 +7,7 @@ import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
 import { resolveCanvas } from './access.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
+import { handleConnectorSecretsApi } from './connector-secrets.ts';
 import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo, workspaceRepoSet } from './github-connection.ts';
 import { handleAdminApi } from './admin.ts';
 import { handleMembersApi } from './members.ts';
@@ -525,6 +526,15 @@ export default {
     }
     if (url.pathname === '/api/github/setup') {
       return handleGithubSetup(request, env, createDbForWorker(env as unknown as Bindings), user, { nowMs: Date.now() });
+    }
+
+    // Connector secrets (#241): per-workspace encrypted third-party credentials (dlt
+    // sources for the warehouse pipeline, ADR-0017). Owner-gated mutation, member-visible
+    // list (name + presence only — never plaintext or ciphertext). Edge-only.
+    const connectorsMatch = /^\/api\/workspaces\/([^/]+)\/connectors$/.exec(url.pathname);
+    if (connectorsMatch) {
+      const wsId = connectorsMatch[1] as string;
+      return handleConnectorSecretsApi(request, env, createDbForWorker(env as unknown as Bindings), user, wsId);
     }
 
     // Canvas registry API (Canvas app index), scoped to the active workspace via the

@@ -1,4 +1,7 @@
 import { getSandbox } from '@cloudflare/sandbox';
+import type { Bindings } from '../web-poc/worker/context.ts';
+import { createDbForWorker } from '../web-poc/worker/runtime.ts';
+import { resolveConnectorEnv } from './connector-secrets.ts';
 import type { Env } from './index.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv, warehouseContainerEnv } from './container-env.ts';
 import { singleFlight } from './single-flight.ts';
@@ -50,11 +53,15 @@ const MATERIALIZE_COMMAND = 'bun run warehouse/materialize.ts';
  *  module will fail with "export not found" against the mock, not the real package. */
 export const warehouseExec = async (env: Env, coords: SandboxCoords) => {
   const sandbox = getSandbox(env.Warehouse, coords.sandboxId, { normalizeId: true });
+  // Connector secrets (#241): decrypted per-workspace so the pipeline's dlt sources can
+  // read from them. `coords.canvasWorkspace` is the same id the R2 prefix and the DB
+  // workspace row share (v1: one container = one workspace).
+  const connectorEnv = await resolveConnectorEnv(env, createDbForWorker(env as unknown as Bindings), coords.canvasWorkspace);
   const result = await sandbox.exec(MATERIALIZE_COMMAND, {
     cwd: CANVAS_CONTAINER_CWD,
     // CANVAS_WORKSPACE scopes the pipeline's R2 read/write, same key the canvas
     // container's bridge uses — materialize.ts's CLI entry reads it directly.
-    env: { ...warehouseContainerEnv(env), CANVAS_WORKSPACE: coords.canvasWorkspace },
+    env: { ...warehouseContainerEnv(env, connectorEnv), CANVAS_WORKSPACE: coords.canvasWorkspace },
   });
   return { success: result.success, stdout: result.stdout, stderr: result.stderr };
 };

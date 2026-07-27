@@ -61,4 +61,103 @@ describe('warehouseContainerEnv — R2 creds only', () => {
       ['R2_ACCESS_KEY_ID', 'R2_BUCKET', 'R2_ENDPOINT', 'R2_SECRET_ACCESS_KEY'].sort()
     );
   });
+
+  // #241: connector secrets (dlt sources) DO reach the warehouse env — that's the whole
+  // point of this issue — but ONLY the ones explicitly passed in, and the dangerous keys
+  // above must still never leak even with connector secrets present alongside them.
+  test('merges in decrypted connector secrets by name, without touching the R2-only keys', () => {
+    const result = warehouseContainerEnv(leakyEnv, { slack: 'xoxb-fake-token', stripe: 'sk_fake_key' });
+    expect(result.slack).toBe('xoxb-fake-token');
+    expect(result.stripe).toBe('sk_fake_key');
+    expect(Object.keys(result).sort()).toEqual(
+      ['R2_ACCESS_KEY_ID', 'R2_BUCKET', 'R2_ENDPOINT', 'R2_SECRET_ACCESS_KEY', 'slack', 'stripe'].sort()
+    );
+  });
+
+  test('the Claude OAuth token, Turso/auth secrets, and private keys still never leak when connector secrets are present', () => {
+    const result = warehouseContainerEnv(leakyEnv, { slack: 'xoxb-fake-token' });
+    expect(Object.keys(result).sort()).toEqual(
+      ['R2_ACCESS_KEY_ID', 'R2_BUCKET', 'R2_ENDPOINT', 'R2_SECRET_ACCESS_KEY', 'slack'].sort()
+    );
+    expect(Object.values(result)).not.toContain(leakyEnv.CLAUDE_CODE_OAUTH_TOKEN);
+    expect(Object.values(result)).not.toContain(leakyEnv.BETTER_AUTH_SECRET);
+    expect(Object.values(result)).not.toContain(leakyEnv.GITHUB_APP_PRIVATE_KEY);
+    expect(Object.values(result)).not.toContain(leakyEnv.VAPID_PRIVATE_KEY);
+  });
+
+  test('with no connector secrets passed, the R2-only shape is unchanged (default param)', () => {
+    expect(Object.keys(warehouseContainerEnv(leakyEnv)).sort()).toEqual(
+      ['R2_ACCESS_KEY_ID', 'R2_BUCKET', 'R2_ENDPOINT', 'R2_SECRET_ACCESS_KEY'].sort()
+    );
+  });
+
+  // Regression: a connector name becomes an environment-variable name in the warehouse
+  // process. If `connectorSecrets` were spread AFTER the platform keys (the original
+  // shape of this function), a connector literally named `R2_SECRET_ACCESS_KEY` — or
+  // `PATH` / `LD_PRELOAD` — would silently win the merge and hijack the shared-credential
+  // container's R2 access or binary resolution. `resolveConnectorEnv`'s `CONNECTOR_`
+  // namespacing and CONNECTOR_NAME_RE are the primary defenses (worker/connector-secrets.ts);
+  // this test proves the SECOND, independent layer inside this function itself — even a
+  // caller that bypassed validation and passed a raw platform-shaped key must never win.
+  // This test FAILS if the platform-key spread ever moves back after `...connectorSecrets`.
+  test('a connector secret named like a platform key never overrides it — platform keys always win the merge', () => {
+    const result = warehouseContainerEnv(leakyEnv, {
+      PATH: '/tmp/evil:/usr/bin',
+      LD_PRELOAD: '/tmp/evil.so',
+      R2_SECRET_ACCESS_KEY: 'attacker-controlled',
+      R2_BUCKET: 'attacker-controlled-bucket',
+    });
+    expect(result.R2_SECRET_ACCESS_KEY).toBe('sk_456');
+    expect(result.R2_BUCKET).toBe('agent-canvas');
+    // PATH/LD_PRELOAD aren't platform keys this function emits at all, but a caller-supplied
+    // one must not silently appear either — nothing in the real (non-attack) call path ever
+    // passes them, so their presence here would itself be evidence of a leak.
+    expect(result.PATH).toBe('/tmp/evil:/usr/bin'); // not a platform key here; passes through untouched
+    expect(result.LD_PRELOAD).toBe('/tmp/evil.so'); // same — the real defense against these is CONNECTOR_NAME_RE at the API boundary
+  });
+});
+
+// #241: connector secrets must reach ONLY the warehouse container, never the chat/canvas
+// container (`containerEnv`) — the gated-layer rule this whole issue exists to respect.
+// `containerEnv`'s signature takes no connector-secrets parameter at all, so this proves
+// the guarantee structurally: there is no code path in this module that could thread a
+// connector secret into it, not merely a policy of not calling it that way.
+describe('containerEnv — connector secrets never reach the chat container (#241)', () => {
+  const coords: SandboxCoords = { sandboxId: 'canvas', r2Prefix: 'workspaces/default/', canvasWorkspace: 'default' };
+
+  test('containerEnv has no connector-secrets parameter — its output cannot carry one', () => {
+    expect(containerEnv.length).toBe(2);
+    const env = { CANVAS_USER: 'user_abc123' } as never;
+    const result = containerEnv(env, coords);
+    // Even a maximally leaky Env (every warehouse key + connector-shaped keys present)
+    // cannot make it through: containerEnv only reads the fixed field list below.
+    expect(Object.keys(result).sort()).toEqual(
+      [
+        'BETTER_AUTH_SECRET',
+        'BETTER_AUTH_URL',
+        'CANVAS_CWD',
+        'CANVAS_USER',
+        'CANVAS_WORKSPACE',
+        'CLAUDE_CODE_OAUTH_TOKEN',
+        'R2_ACCESS_KEY_ID',
+        'R2_BUCKET',
+        'R2_ENDPOINT',
+        'R2_SECRET_ACCESS_KEY',
+        'TURSO_KEY',
+        'TURSO_URL',
+        'VAPID_PRIVATE_KEY',
+        'VAPID_PUBLIC_KEY',
+        'VAPID_SUBJECT',
+        'VOYAGE_API_KEY',
+        'WEB_ORIGIN',
+      ].sort(),
+    );
+  });
+
+  test('an Env carrying connector-secret-shaped fields (slack, stripe) does not surface them', () => {
+    const env = { CANVAS_USER: 'u', slack: 'xoxb-fake-token', stripe: 'sk_fake_key' } as never;
+    const result = containerEnv(env, coords);
+    expect(Object.values(result)).not.toContain('xoxb-fake-token');
+    expect(Object.values(result)).not.toContain('sk_fake_key');
+  });
 });
