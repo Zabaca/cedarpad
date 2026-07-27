@@ -68,10 +68,19 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
 // add connector secrets here because the warehouse container carries no agent SDK and
 // runs a fixed command with no prompt (#241 re-scoping) — there is no model in it that an
 // attacker could steer into leaking one.
+//
+// `connectorSecrets` is spread FIRST, platform keys LAST, so a platform variable always
+// wins the object-literal merge — defense in depth alongside `resolveConnectorEnv`'s
+// `CONNECTOR_`-prefix namespacing (worker/connector-secrets.ts) and CONNECTOR_NAME_RE's
+// input validation. A connector name becomes an environment-variable name in the process
+// that runs the materialize command; without all three layers an owner could set a
+// connector literally named `R2_SECRET_ACCESS_KEY` (or `PATH`, `LD_PRELOAD`) and hijack
+// the shared-credential warehouse container — which reaches every workspace's data, not
+// just their own (the R2 bucket is shared, credentials are bucket- not prefix-scoped).
 export const warehouseContainerEnv = (env: Env, connectorSecrets: Record<string, string> = {}): Record<string, string> => ({
+  ...connectorSecrets,
   R2_BUCKET: env.R2_BUCKET,
   R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
   R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
   R2_ENDPOINT: env.R2_ENDPOINT,
-  ...connectorSecrets,
 });

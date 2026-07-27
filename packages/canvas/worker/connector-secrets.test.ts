@@ -120,13 +120,13 @@ describe('handleConnectorSecretsApi (#241) — owner-gated, list never leaks the
 });
 
 describe('resolveConnectorEnv (#241) — the decrypted env the warehouse container reads', () => {
-  test('decrypts every connector secret a workspace holds, keyed by connector name', async () => {
+  test('decrypts every connector secret a workspace holds, keyed as CONNECTOR_<UPPERCASED NAME>', async () => {
     const ws = await freshWorkspace('connectors-resolve');
     await handleConnectorSecretsApi(req('POST', { connectorName: 'slack', secret: 'xoxb-fake' }), KEYED_ENV, database, OWNER, ws.id);
     await handleConnectorSecretsApi(req('POST', { connectorName: 'stripe', secret: 'sk_fake' }), KEYED_ENV, database, OWNER, ws.id);
 
     const env = await resolveConnectorEnv(KEYED_ENV, database, ws.id);
-    expect(env).toEqual({ slack: 'xoxb-fake', stripe: 'sk_fake' });
+    expect(env).toEqual({ CONNECTOR_SLACK: 'xoxb-fake', CONNECTOR_STRIPE: 'sk_fake' });
   });
 
   test('an empty workspace resolves to an empty env; a missing key resolves to an empty env', async () => {
@@ -135,5 +135,38 @@ describe('resolveConnectorEnv (#241) — the decrypted env the warehouse contain
 
     await handleConnectorSecretsApi(req('POST', { connectorName: 'slack', secret: 'x' }), KEYED_ENV, database, OWNER, ws.id);
     expect(await resolveConnectorEnv({} as Env, database, ws.id)).toEqual({});
+  });
+});
+
+// Blocking finding from PR review: a connector name becomes an environment-variable name
+// in the warehouse container's process env (worker/container-env.ts). Without validation,
+// an owner could set a connector literally named `R2_SECRET_ACCESS_KEY` (or `PATH`,
+// `LD_PRELOAD`) — and because the R2 bucket is SHARED across every workspace
+// (blob-store.ts: `workspaces/<ws>/…` inside one bucket, credentials are bucket- not
+// prefix-scoped), code execution or credential replacement in the warehouse container is
+// a cross-tenant escalation, not a self-inflicted mistake confined to the attacker's own
+// workspace. This test is the boundary check: it must reject these names at the API layer
+// BEFORE any encryption or storage happens.
+describe('connector name validation (#241) — rejects env-var-injection-shaped names', () => {
+  test.each(['PATH', 'R2_SECRET_ACCESS_KEY', 'LD_PRELOAD', 'CONNECTOR_SLACK', '', 'has spaces', '../etc/passwd'])(
+    'rejects %p with a 400, storing nothing',
+    async (badName) => {
+      const ws = await freshWorkspace(`connectors-reject-${badName || 'empty'}`);
+      const res = await handleConnectorSecretsApi(
+        req('POST', { connectorName: badName, secret: 'attacker-controlled' }),
+        KEYED_ENV,
+        database,
+        OWNER,
+        ws.id,
+      );
+      expect(res.status).toBe(400);
+      expect(await listWorkspaceConnectors(database, ws.id)).toEqual([]);
+    },
+  );
+
+  test('a valid lowercase name is accepted', async () => {
+    const ws = await freshWorkspace('connectors-accept-valid');
+    const res = await handleConnectorSecretsApi(req('POST', { connectorName: 'slack', secret: 'x' }), KEYED_ENV, database, OWNER, ws.id);
+    expect(res.status).toBe(200);
   });
 });

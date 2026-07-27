@@ -90,6 +90,31 @@ describe('warehouseContainerEnv — R2 creds only', () => {
       ['R2_ACCESS_KEY_ID', 'R2_BUCKET', 'R2_ENDPOINT', 'R2_SECRET_ACCESS_KEY'].sort()
     );
   });
+
+  // Regression: a connector name becomes an environment-variable name in the warehouse
+  // process. If `connectorSecrets` were spread AFTER the platform keys (the original
+  // shape of this function), a connector literally named `R2_SECRET_ACCESS_KEY` — or
+  // `PATH` / `LD_PRELOAD` — would silently win the merge and hijack the shared-credential
+  // container's R2 access or binary resolution. `resolveConnectorEnv`'s `CONNECTOR_`
+  // namespacing and CONNECTOR_NAME_RE are the primary defenses (worker/connector-secrets.ts);
+  // this test proves the SECOND, independent layer inside this function itself — even a
+  // caller that bypassed validation and passed a raw platform-shaped key must never win.
+  // This test FAILS if the platform-key spread ever moves back after `...connectorSecrets`.
+  test('a connector secret named like a platform key never overrides it — platform keys always win the merge', () => {
+    const result = warehouseContainerEnv(leakyEnv, {
+      PATH: '/tmp/evil:/usr/bin',
+      LD_PRELOAD: '/tmp/evil.so',
+      R2_SECRET_ACCESS_KEY: 'attacker-controlled',
+      R2_BUCKET: 'attacker-controlled-bucket',
+    });
+    expect(result.R2_SECRET_ACCESS_KEY).toBe('sk_456');
+    expect(result.R2_BUCKET).toBe('agent-canvas');
+    // PATH/LD_PRELOAD aren't platform keys this function emits at all, but a caller-supplied
+    // one must not silently appear either — nothing in the real (non-attack) call path ever
+    // passes them, so their presence here would itself be evidence of a leak.
+    expect(result.PATH).toBe('/tmp/evil:/usr/bin'); // not a platform key here; passes through untouched
+    expect(result.LD_PRELOAD).toBe('/tmp/evil.so'); // same — the real defense against these is CONNECTOR_NAME_RE at the API boundary
+  });
 });
 
 // #241: connector secrets must reach ONLY the warehouse container, never the chat/canvas

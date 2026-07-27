@@ -23,8 +23,15 @@ import { openSecret, sealSecret } from './secret-box.ts';
 // unrequested new secret, not a safety improvement. Named generically (not "repo") because
 // the secret-box format has no notion of what it's sealing.
 
-const SetInput = z.object({ connectorName: z.string().min(1).max(100), secret: z.string().min(1).max(4000) });
-const DeleteInput = z.object({ connectorName: z.string().min(1).max(100) });
+// A connector name becomes an environment-variable name (container-env.ts injects it as
+// `CONNECTOR_<NAME>`) — an unrestricted name is a boundary-crossing injection vector, not
+// merely bad input. Same style as MART_NAME_RE (shared/mart-contract.ts): reject at the
+// boundary with a 400, never sanitize-and-continue.
+export const CONNECTOR_NAME_RE = /^[a-z][a-z0-9_]*$/;
+const ConnectorName = z.string().min(1).max(100).regex(CONNECTOR_NAME_RE, 'connector name: lowercase letters/digits/_, starting with a letter');
+
+const SetInput = z.object({ connectorName: ConnectorName, secret: z.string().min(1).max(4000) });
+const DeleteInput = z.object({ connectorName: ConnectorName });
 
 /**
  * /api/workspaces/:id/connectors — owner-gated connector credential management.
@@ -77,11 +84,15 @@ export async function handleConnectorSecretsApi(
   return new Response('method not allowed', { status: 405 });
 }
 
-/** Decrypt every connector secret a workspace holds, keyed by connector name — the env
- *  the warehouse container's dlt sources read from (worker/container-env.ts). Unopenable
- *  seals (wrong/rotated key, tamper) are dropped rather than thrown — same "treat like
- *  missing" policy as openSecret's own contract. Edge-internal only: callers must already
- *  know which workspace's warehouse run this is for. */
+/** Decrypt every connector secret a workspace holds, keyed as `CONNECTOR_<NAME>` — the env
+ *  the warehouse container's dlt sources read from (worker/container-env.ts). The
+ *  `CONNECTOR_` prefix is load-bearing, not cosmetic: a connector name becomes an
+ *  environment-variable name in the warehouse process, and namespacing it makes collision
+ *  with a platform variable (R2_*, PATH, LD_PRELOAD, …) structurally impossible, even if
+ *  CONNECTOR_NAME_RE were ever loosened. Unopenable seals (wrong/rotated key, tamper) are
+ *  dropped rather than thrown — same "treat like missing" policy as openSecret's own
+ *  contract. Edge-internal only: callers must already know which workspace's warehouse run
+ *  this is for. */
 export async function resolveConnectorEnv(env: Env, database: Database, workspaceId: string): Promise<Record<string, string>> {
   const key = env.REPO_TOKEN_KEY;
   if (!key) return {};
@@ -89,7 +100,7 @@ export async function resolveConnectorEnv(env: Env, database: Database, workspac
   const out: Record<string, string> = {};
   for (const row of rows) {
     const secret = await openSecret(key, row.encryptedSecret);
-    if (secret !== null) out[row.connectorName] = secret;
+    if (secret !== null) out[`CONNECTOR_${row.connectorName.toUpperCase()}`] = secret;
   }
   return out;
 }
