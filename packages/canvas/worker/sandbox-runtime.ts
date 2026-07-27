@@ -139,7 +139,10 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
   // below does `new Request(request)`, which marks request's body used, so retrying
   // the same object throws "Cannot reconstruct a Request with a used body" for any
   // POST/PUT (e.g. a login) that falls through to the cold path. (#preview)
-  const retryReq = request.clone();
+  // `Request.clone()`'s ambient type carries the CfProperties<Cf> generic in a shape
+  // TS won't re-widen to the bare `Request` that `proxy()` expects — same runtime
+  // object, just re-asserted to the type `request` itself already had.
+  const retryReq = request.clone() as Request;
   try {
     const res = await proxy(sandbox, request, sandboxId);
     // Treating every app 4xx/5xx as not-ready re-proxied each one and turned

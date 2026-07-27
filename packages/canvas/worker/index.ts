@@ -300,7 +300,8 @@ export default {
         request,
         createDbForWorker(env as unknown as Bindings),
         session?.user ?? null,
-        inviteMatch[1],
+        // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
+        inviteMatch[1]!,
         { signUp: inviteSignUp(env) },
       );
     }
@@ -465,7 +466,8 @@ export default {
         request,
         createDbForWorker(env as unknown as Bindings),
         user,
-        invitationsMatch[1],
+        // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
+        invitationsMatch[1]!,
         invitationsMatch[2],
       );
     }
@@ -478,7 +480,8 @@ export default {
         request,
         createDbForWorker(env as unknown as Bindings),
         user,
-        membersMatch[1],
+        // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
+        membersMatch[1]!,
         membersMatch[2],
       );
     }
@@ -661,7 +664,8 @@ export default {
     // LIST (`/api/inbox`, above) stays edge-only and never wakes a runner.
     const inboxBridgeMatch = /^\/inbox\/([^/]+)\/bridge(\/.*)?$/.exec(url.pathname);
     if (inboxBridgeMatch) {
-      return handleInboxBridge(request, env, user, inboxBridgeMatch[1], inboxBridgeMatch[2] ?? '/');
+      // First capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
+      return handleInboxBridge(request, env, user, inboxBridgeMatch[1]!, inboxBridgeMatch[2] ?? '/');
     }
 
     // The Inbox is a Shell stage now (#108) — no standalone page. The legacy edge route

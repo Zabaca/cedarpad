@@ -12,7 +12,10 @@ async function aesKey(secret: string): Promise<CryptoKey> {
 }
 
 const toB64url = (buf: ArrayBuffer | Uint8Array): string => Buffer.from(buf as Uint8Array).toString('base64url');
-const fromB64url = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, 'base64url'));
+// Annotated `Uint8Array<ArrayBuffer>` (not the default `Uint8Array<ArrayBufferLike>`)
+// because `new Uint8Array(...)` always backs onto a fresh ArrayBuffer here, and
+// crypto.subtle's BufferSource param requires that narrower generic.
+const fromB64url = (s: string): Uint8Array<ArrayBuffer> => new Uint8Array(Buffer.from(s, 'base64url'));
 
 /** Seal a plaintext credential for storage. Fresh IV per call. */
 export async function sealSecret(secret: string, plaintext: string): Promise<string> {

@@ -153,7 +153,9 @@ export function workspaceGithub(env: Env, ws: WsGithubRow): WorkspaceGithub {
 function installationFor(installations: ConnectedInstallation[], fullName: string): string {
   const owner = fullName.split('/')[0]?.toLowerCase();
   const match = installations.find((i) => i.accountLogin?.toLowerCase() === owner);
-  return (match ?? installations[0]).installationId;
+  // Callers only reach here when `conn.connected`, which always carries at least one
+  // installation (see `workspaceGithub`) — `installations[0]` is assumed non-empty.
+  return (match ?? installations[0]!).installationId;
 }
 
 /** One repo of the workspace's set, with how it authenticates (ADR-0016). The
@@ -248,8 +250,9 @@ async function probePublicRepo(
   let auth: string | null = null;
   if (conn.connected && env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY) {
     try {
+      // `conn.connected` always carries at least one installation (see `workspaceGithub`).
       const { token } = await mintInstallationToken(
-        { appId: env.GITHUB_APP_ID, installationId: conn.installations[0].installationId, privateKey: env.GITHUB_APP_PRIVATE_KEY },
+        { appId: env.GITHUB_APP_ID, installationId: conn.installations[0]!.installationId, privateKey: env.GITHUB_APP_PRIVATE_KEY },
         { permissions: { contents: 'read' }, nowSec: opts.nowSec, fetchImpl: opts.fetchImpl },
       );
       auth = `token ${token}`;
