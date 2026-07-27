@@ -4,10 +4,15 @@
 // an in-memory Map in tests. No policy lives here — the data-loss guard is in
 // `canvas-persistence.ts`. Glossary: workspace = container/fs; canvas = board.
 
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { type MartSidecar, MartSidecarSchema } from '../shared/mart-contract.ts';
 import type { CanvasState } from '../src/shapes.ts';
 import type { ChatMeta } from './chat-meta.ts';
+
+/** Sidecar filename suffix — `martSidecarKey`'s tail, factored out so listing can strip it. */
+const SIDECAR_SUFFIX = '.schema.json';
 
 /** workspace-scoped per-canvas board state. */
 export const canvasStateKey = (ws: string, canvas: string): string =>
@@ -48,12 +53,18 @@ export const skillsKey = (ws: string): string => `workspaces/${ws}/skills.tar`;
  * `{ sessionId, model, effort, forkNext }`. */
 export const chatMetaKey = (ws: string): string => `workspaces/${ws}/chat-meta.json`;
 
+/** workspace-scoped warehouse prefix — every mart artifact for `ws` lives under it. */
+export const warehousePrefix = (ws: string): string => `workspaces/${ws}/warehouse/`;
+
 /** Minimal blob seam. `get` returns null for an absent key (legitimately empty),
- * and throws only on a real backend failure — the two are distinct. */
+ * and throws only on a real backend failure — the two are distinct. `list` returns full
+ * keys under `prefix` (empty array when nothing matches — an absent prefix is not an
+ * error), and is the only way to discover marts a caller can't already name. */
 export interface BlobBackend {
   get(key: string): Promise<Uint8Array | null>;
   put(key: string, data: Uint8Array): Promise<void>;
   exists(key: string): Promise<boolean>;
+  list(prefix: string): Promise<string[]>;
 }
 
 /** In-memory backend for tests. */
@@ -63,6 +74,7 @@ export const memBackend = (): BlobBackend => {
     get: async (key) => map.get(key) ?? null,
     put: async (key, data) => void map.set(key, data),
     exists: async (key) => map.has(key),
+    list: async (prefix) => [...map.keys()].filter((k) => k.startsWith(prefix)),
   };
 };
 
@@ -75,6 +87,16 @@ export const fsBackend = (root: string): BlobBackend => ({
   },
   put: async (key, data) => void (await Bun.write(join(root, key), data)),
   exists: (key) => Bun.file(join(root, key)).exists(),
+  // A prefix maps to a directory here; an absent one means "nothing stored yet", not a
+  // failure, so ENOENT is the empty listing (matching `get`'s null-for-absent contract).
+  list: async (prefix) => {
+    try {
+      const names = await readdir(join(root, prefix));
+      return names.map((n) => `${prefix}${n}`);
+    } catch {
+      return [];
+    }
+  },
 });
 
 /** Prod backend: R2 via Bun's S3-compatible client. Creds read from env at the
@@ -94,6 +116,12 @@ export const s3Backend = (): BlobBackend => {
     },
     put: async (key, data) => void (await client.file(key).write(data)),
     exists: (key) => client.file(key).exists(),
+    // R2 is flat: `prefix` is a literal key prefix, not a directory. `contents` is absent
+    // (not empty) when nothing matches.
+    list: async (prefix) => {
+      const res = await client.list({ prefix });
+      return (res?.contents ?? []).map((o) => o.key);
+    },
   };
 };
 
@@ -180,5 +208,26 @@ export class BlobStore {
 
   async saveMartSidecar(ws: string, name: string, sidecar: unknown): Promise<void> {
     await this.backend.put(martSidecarKey(ws, name), enc.encode(JSON.stringify(sidecar)));
+  }
+
+  /** Every materialized mart in the workspace, as its parsed sidecar — the discovery seam
+   * the chat agent needs to know a mart EXISTS and what columns it has (without this it can
+   * only guess a name, and a wrong guess renders an empty component that looks like "no data
+   * yet"). Keys off `.schema.json`, not the parquet: a mart is not a mart without its
+   * declared schema (mart-contract.ts), so a parquet with no sidecar is not listable.
+   * A malformed sidecar is SKIPPED rather than thrown, so one bad artifact can't blind the
+   * agent to every other mart. */
+  async listMarts(ws: string): Promise<MartSidecar[]> {
+    const prefix = warehousePrefix(ws);
+    const keys = (await this.backend.list(prefix)).filter((k) => k.endsWith(SIDECAR_SUFFIX));
+    const names = keys.map((k) => k.slice(prefix.length, -SIDECAR_SUFFIX.length));
+    const parsed = await Promise.all(
+      names.map(async (name) => {
+        const raw = await this.loadMartSidecar(ws, name);
+        const result = MartSidecarSchema.safeParse(raw);
+        return result.success ? result.data : null;
+      }),
+    );
+    return parsed.filter((m): m is MartSidecar => m !== null);
   }
 }

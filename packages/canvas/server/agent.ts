@@ -8,7 +8,7 @@ import { type McpHttpServerConfig, type SDKUserMessage, createSdkMcpServer, quer
 import { z } from 'zod';
 
 import { SHAPE_COLORS } from '../src/shapes.ts';
-import { DataSourceSchema } from '../shared/mart-contract.ts';
+import { DataSourceSchema, type MartSidecar } from '../shared/mart-contract.ts';
 import type { CanvasStore } from '../src/store.ts';
 import {
   type OpResult,
@@ -102,6 +102,31 @@ export type OpenPr = (input: { title: string; body: string; commitMessage: strin
  * agent gets a `send_message` tool; absent (tests, non-bridge contexts) ⇒ omitted. */
 export type SendToChat = (targetChatId: string, message: string, canvasId?: string) => { ok: true } | { ok: false; error: string };
 
+/** The `list_marts` tool body (bridge binds it — it holds the workspace's BlobStore). Marts
+ * live only in R2, never on the container filesystem, so WITHOUT this seam the agent has no
+ * way to learn a mart exists or what columns it has: it can only guess a name at
+ * `place_component`, and a wrong guess renders an empty component indistinguishable from
+ * "no data yet". Present ⇒ the agent gets a `list_marts` tool; absent (tests, non-bridge
+ * contexts) ⇒ omitted, and the `data_source` params stay usable for a caller who already
+ * knows the name. */
+export type ListMarts = () => Promise<MartSidecar[]>;
+
+/** The `list_marts` tool body, extracted so it unit-tests without the SDK. Renders each mart's
+ * schema + freshness for the model. The EMPTY case is not an error — it is the answer to "does
+ * a mart back this?", and it must steer the agent to static `data` rather than leave it to
+ * invent a name (an unknown mart renders an empty component that reads as "no data yet"). */
+export function formatMartListing(marts: MartSidecar[]): string {
+  if (marts.length === 0) {
+    return 'No marts are materialized in this workspace. Use static `data` (or write_data) instead of `data_source`.';
+  }
+  return marts
+    .map((m) => {
+      const cols = m.columns.map((c) => `    - ${c.name} (${c.type}) — ${c.description}`).join('\n');
+      return `${m.name} — ${m.description}\n  as of ${m.generatedAt} · ${m.rowCount} rows\n  columns:\n${cols}`;
+    })
+    .join('\n\n');
+}
+
 /** The `send_message` tool body, extracted so the guard rails unit-test without the SDK:
  * self-sends and unknown targets are refused; a delivered message is attributed to the
  * origin chat card and routed on the SENDER's canvas. */
@@ -130,7 +155,7 @@ export function endTurnSummaryLine(summary: string | undefined, question: string
   return 'Turn complete.';
 }
 
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat) {
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts) {
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -333,7 +358,7 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
           h: z.number().optional().describe('Box height. Default 260.'),
           data: z.record(z.unknown()).optional().describe('Static props object passed to the component (the data channel). Omit when using data_source.'),
           data_source: DataSourceSchema.optional().describe(
-            'Names a workspace mart this component should render LIVE, e.g. {kind:"mart", name:"mart_runway"} — never a URL. The mart\'s rows + freshness are resolved at render time in the browser, so the canvas stays current without you re-calling this tool.',
+            'Names a workspace mart this component should render LIVE, names a mart from `list_marts` — never a URL, and never a guess (an unknown mart renders EMPTY). The mart\'s rows + freshness are resolved at render time in the browser, so the canvas stays current without you re-calling this tool.',
           ),
         },
         async ({ id, module, x, y, w, h, data, data_source }) =>
@@ -345,7 +370,7 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         {
           id: z.string().describe('The component shape id.'),
           data: z.record(z.unknown()).describe('New props object for the component.'),
-          data_source: DataSourceSchema.optional().describe('Names a workspace mart this component should render LIVE, e.g. {kind:"mart", name:"mart_runway"} — never a URL.'),
+          data_source: DataSourceSchema.optional().describe('Names a workspace mart this component should render LIVE — a name from `list_marts`, never a URL and never a guess.'),
         },
         async ({ id, data, data_source }) => result(setComponentDataOp(store, id, data, data_source)),
       ),
@@ -356,6 +381,19 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
         { ids: z.array(z.string()).min(2), edge: z.enum(['left', 'right', 'top', 'bottom', 'center-x', 'center-y']) },
         async ({ ids, edge }) => result(alignOp(store, ids, edge)),
       ),
+      // Mart discovery: present only when the bridge injected the seam (it holds the
+      // workspace's BlobStore). This is the ONLY way the agent learns what marts exist and
+      // what columns they have — see the ListMarts type.
+      ...(listMarts
+        ? [
+            tool(
+              'list_marts',
+              'List this workspace\'s materialized warehouse MARTS — each one\'s name, what it covers, its columns (name + type + meaning), and how fresh it is ("as of" + row count). Call this BEFORE placing anything that shows an operational number, a KPI, or a table of current records, the same way you call list_components before authoring: it tells you whether a mart already backs the request, and its column names are what your component must read. Pass a name you saw here as `data_source` on place_component. NEVER guess a mart name — an unknown name renders an EMPTY component that looks like "no data yet". An empty list means this workspace has no marts, so use static `data` instead. Read each mart\'s description before you label a card with it: a mart may cover a narrower slice than its name suggests, and that caveat belongs on the card.',
+              {},
+              async () => result({ text: formatMartListing(await listMarts()) }),
+            ),
+          ]
+        : []),
       // Cross-chat messaging: present only when the bridge injected the seam (it holds ChatMeta
       // + the turn dispatcher). Mirrors the edge MCP's send_message, scoped to chat cards on
       // THIS canvas. Fire-and-forget; the origin chat is stamped into the delivered message so
@@ -431,7 +469,7 @@ export type { ChatEvent } from '../shared/chat-wire.ts';
 // SECURITY: the canvas chat is a full Claude Code agent — unsandboxed code execution
 // driven by a local web chat box with no auth. Anything that can reach the bridge can
 // run commands on this machine, so keep the bridge bound to localhost / a trusted LAN.
-const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and have canvas tools (mcp__canvas__*): read_canvas, read_connected (call with no args to get YOUR own connected subgraph — the shapes arrow-linked to your chat card, each with full state — since shapes you create are auto-linked back to you), read_image (see a screenshot/photo the human pasted onto the canvas; read_canvas/read_connected list image shapes but redact the pixels), view_canvas, create_shapes, update_shapes, delete_shapes, clear_canvas, align_shapes (primitives: rectangle, ellipse, text, note, arrow in colors ${SHAPE_COLORS.join(', ')}; page coordinates, visible area roughly x 0..1000 y 0..700). Plus a reusable COMPONENT library: list_components / read_component / write_component / edit_component author real React files in this canvas's own component dir (with the workspace shared library and the read-only platform library as fallbacks), write_data authors sibling data files (.json/.csv/.txt/.md) a component can import, and place_component / set_component_data render instances on the canvas with a \`data\` props object. If this workspace has a materialized warehouse MART backing what you're placing (an operational KPI, a live table, anything that should reflect current reality rather than a point-in-time snapshot), pass \`data_source: {kind:'mart', name:'mart_x'}\` instead of a static \`data\` snapshot — the component then renders the mart's current rows with NO further tool call needed to stay fresh, and the canvas shows the mart's "as of"/row-count itself so nobody mistakes it for live-live. A component names a mart, never a URL or endpoint — there is no fetch/poll capability, so don't reach for one. Static \`data\` (or write_data files) is still the right choice for anything point-in-time, illustrative, or not backed by a mart. These registered tools are the ONLY way to author component and data files — the generic Write/Edit tools are disabled in chat. Components compose (import each other) and take data — prefer them over hand-placed primitives for charts/tables/cards/dashboards/diagrams. Components you author also receive a \`setData(patch)\` prop that persists their own state (merges into the instance data, syncs to everyone, survives reload); use real controls (button/input/select/[role=button]) so clicks reach the component instead of dragging the shape. They also receive \`currentUser\` (\`{id, name?, email?, color, kind: 'user'|'guest'}\`, null-ish until resolved) — the viewer's identity — and \`setDisplayName(name)\` (persists a GUEST's chosen name browser-wide; no-op for logged-in users). For anything attributing actions to a person (comments, votes, Q&A), prefer \`currentUser.name\`/\`currentUser.id\` and only fall back to asking for a name (via setDisplayName) when it is unset — never ask per-component. ALWAYS \`list_components\` FIRST before authoring anything — the library already has many components and creating a duplicate (e.g. a new "Markdown" when "MarkdownCard" exists) is a mistake. If one already fits the request, \`place_component\` it (or \`edit_component\` to extend it); \`read_component\` a close match for its conventions; only \`write_component\` a NEW module when nothing suitable exists. When unsure whether something exists, list and read before writing. Use all of this to visualize, diagram, or build whatever the human asks — e.g. read files and draw the architecture, or build a data-driven dashboard, on the canvas.
+const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and have canvas tools (mcp__canvas__*): read_canvas, read_connected (call with no args to get YOUR own connected subgraph — the shapes arrow-linked to your chat card, each with full state — since shapes you create are auto-linked back to you), read_image (see a screenshot/photo the human pasted onto the canvas; read_canvas/read_connected list image shapes but redact the pixels), view_canvas, create_shapes, update_shapes, delete_shapes, clear_canvas, align_shapes (primitives: rectangle, ellipse, text, note, arrow in colors ${SHAPE_COLORS.join(', ')}; page coordinates, visible area roughly x 0..1000 y 0..700). Plus a reusable COMPONENT library: list_components / read_component / write_component / edit_component author real React files in this canvas's own component dir (with the workspace shared library and the read-only platform library as fallbacks), write_data authors sibling data files (.json/.csv/.txt/.md) a component can import, and place_component / set_component_data render instances on the canvas with a \`data\` props object. \`list_marts\` shows this workspace's materialized warehouse MARTS — their columns, meaning, and freshness. CALL IT FIRST, like list_components, whenever the human asks for an operational KPI, a live table, or anything that should reflect current reality rather than a point-in-time snapshot; then pass \`data_source: {kind:'mart', name:'<a name list_marts returned>'}\` instead of a static \`data\` snapshot — the component then renders the mart's current rows with NO further tool call needed to stay fresh, and the canvas shows the mart's "as of"/row-count itself so nobody mistakes it for live-live. A component names a mart, never a URL or endpoint — there is no fetch/poll capability, so don't reach for one. NEVER invent a mart name: an unknown one renders an EMPTY component that looks like "no data yet", so if list_marts returns nothing (or nothing that fits), use static \`data\` and say so. A mart's description may narrow what it actually covers — read it, and put that caveat on the card's label rather than titling it more broadly than the data supports. Static \`data\` (or write_data files) is still the right choice for anything point-in-time, illustrative, or not backed by a mart. These registered tools are the ONLY way to author component and data files — the generic Write/Edit tools are disabled in chat. Components compose (import each other) and take data — prefer them over hand-placed primitives for charts/tables/cards/dashboards/diagrams. Components you author also receive a \`setData(patch)\` prop that persists their own state (merges into the instance data, syncs to everyone, survives reload); use real controls (button/input/select/[role=button]) so clicks reach the component instead of dragging the shape. They also receive \`currentUser\` (\`{id, name?, email?, color, kind: 'user'|'guest'}\`, null-ish until resolved) — the viewer's identity — and \`setDisplayName(name)\` (persists a GUEST's chosen name browser-wide; no-op for logged-in users). For anything attributing actions to a person (comments, votes, Q&A), prefer \`currentUser.name\`/\`currentUser.id\` and only fall back to asking for a name (via setDisplayName) when it is unset — never ask per-component. ALWAYS \`list_components\` FIRST before authoring anything — the library already has many components and creating a duplicate (e.g. a new "Markdown" when "MarkdownCard" exists) is a mistake. If one already fits the request, \`place_component\` it (or \`edit_component\` to extend it); \`read_component\` a close match for its conventions; only \`write_component\` a NEW module when nothing suitable exists. When unsure whether something exists, list and read before writing. Use all of this to visualize, diagram, or build whatever the human asks — e.g. read files and draw the architecture, or build a data-driven dashboard, on the canvas.
 
 BACKEND: when a component needs server-side work (call a third-party API with a secret, hit a database, receive a webhook), author a CUSTOM HANDLER at \`server/custom/<name>.ts\` — \`export default (req: Request) => Response\` (or any JSON-serializable value) — reached at \`/api/custom/<name>\`. It may call outbound (APIs, DBs) and the core canvas via \`\${CANVAS_BRIDGE}/api/canvas\` (CANVAS_BRIDGE is in its env); it runs in an isolated process and so CANNOT touch canvas state directly — go through that HTTP API. Read \`server/custom/hello.ts\` first for the shape. New/edited handlers hot-reload with no restart.
 
@@ -560,6 +598,9 @@ export async function* runChat(
   // Per-chat MCP tool opt-outs (`mcp__<server>__<tool>`, from the chat's ChatMeta selection):
   // appended to disallowedTools so a de-selected tool never reaches the model this turn.
   mcpToolOptOuts?: string[],
+  // Mart discovery seam (bridge-bound: it holds the workspace's BlobStore). Present ⇒ the
+  // agent gets `list_marts` and can discover what the warehouse actually holds.
+  listMarts?: ListMarts,
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn; end_turn reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
@@ -574,7 +615,7 @@ export async function* runChat(
         return text;
       }
     : undefined;
-  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr, sendToChat);
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr, sendToChat, listMarts);
   const stopGate = endTurnSeam
     ? makeStopGate(
         () => turnEnded,

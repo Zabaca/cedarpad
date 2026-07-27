@@ -56,6 +56,7 @@ describe('ChatMetaStore', () => {
       },
       put: async () => {},
       exists: async () => false,
+      list: async () => [],
     };
     const s = new ChatMetaStore(new BlobStore(broken), 'ws1');
     expect(s.load()).rejects.toThrow(/backend down/);
@@ -83,7 +84,7 @@ describe('ChatMetaStore.persistable — participates in the ADR-0003 sink', () =
   });
 
   test('M7 a backend save failure is recorded as failed health, not thrown', async () => {
-    const broken: BlobBackend = { get: async () => null, put: async () => { throw new Error('put down'); }, exists: async () => false };
+    const broken: BlobBackend = { get: async () => null, put: async () => { throw new Error('put down'); }, exists: async () => false, list: async () => [] };
     const store = new ChatMetaStore(new BlobStore(broken), 'ws1');
     await store.load();
     store.set('c1', { model: 'opus' });
