@@ -44,7 +44,10 @@ export async function mintGuestCookie(secret: string, payload: GuestSession): Pr
   return `${b64url(body)}.${b64url(sig)}`;
 }
 
-const fromB64url = (s: string): Uint8Array => {
+// Annotated `Uint8Array<ArrayBuffer>` (not the default `Uint8Array<ArrayBufferLike>`)
+// because `Uint8Array.from(...)` always backs onto a fresh ArrayBuffer here, and
+// crypto.subtle's BufferSource param requires that narrower generic.
+const fromB64url = (s: string): Uint8Array<ArrayBuffer> => {
   const padded = s.replaceAll('-', '+').replaceAll('_', '/').padEnd(Math.ceil(s.length / 4) * 4, '=');
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
 };

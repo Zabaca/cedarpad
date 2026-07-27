@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "types": ["@cloudflare/workers-types", "vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "~/*": ["src/*"]
+    }
+  },
+  "include": ["worker", "worker-configuration.d.ts"],
+  "// worker": "worker/ imports the Cloudflare Workers runtime (Durable Objects, R2, D1), which conflicts with the bun/node ambient types used by the rest of the package (see tsconfig.json) — mirrors web-poc/tsconfig.json's split for the same reason. Test files are excluded because bun:test's `expect` typings clash with @cloudflare/workers-types' stricter Response/Request shapes when both are in one program.",
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}

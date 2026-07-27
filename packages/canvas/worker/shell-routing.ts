@@ -26,7 +26,8 @@ export const DEFAULT_CANVAS_ID = 'default';
  */
 export function parseWorkspaceRoute(pathname: string): { workspaceId: string } | null {
   const m = /^\/w\/([^/]+)(?:\/.*)?$/.exec(pathname);
-  return m ? { workspaceId: m[1] } : null;
+  // Capture group is `[^/]+` (one or more chars) — always defined when `m` matches.
+  return m ? { workspaceId: m[1]! } : null;
 }
 
 /** Read the workspace-selection cookie, or null when unset. */
@@ -50,7 +51,8 @@ function readCookie(cookieHeader: string | null, name: string): string | null {
  */
 export function parseCanvasRoute(pathname: string): { workspaceId: string; canvasId: string } | null {
   const m = /^\/w\/([^/]+)\/canvas\/([^/]+)\/?$/.exec(pathname);
-  return m ? { workspaceId: m[1], canvasId: m[2] } : null;
+  // Both capture groups are `[^/]+` (one or more chars) — always defined when `m` matches.
+  return m ? { workspaceId: m[1]!, canvasId: m[2]! } : null;
 }
 
 /**
@@ -62,7 +64,8 @@ export function parseCanvasRoute(pathname: string): { workspaceId: string; canva
  */
 export function parsePadRoute(pathname: string): { workspaceId: string; canvasId: string } | null {
   const m = /^\/w\/([^/]+)\/canvas\/([^/]+)\/pad\/?$/.exec(pathname);
-  return m ? { workspaceId: m[1], canvasId: m[2] } : null;
+  // Both capture groups are `[^/]+` (one or more chars) — always defined when `m` matches.
+  return m ? { workspaceId: m[1]!, canvasId: m[2]! } : null;
 }
 
 /**
@@ -71,7 +74,8 @@ export function parsePadRoute(pathname: string): { workspaceId: string; canvasId
  * it's behavior-preserving); otherwise their first (oldest) workspace.
  */
 export function selectInitialWorkspace(list: ReadonlyArray<{ id: string }>): string {
-  return list.length ? list[0].id : DEFAULT_WORKSPACE_ID;
+  // `list.length` guards the access, so `list[0]` is always defined here.
+  return list.length ? list[0]!.id : DEFAULT_WORKSPACE_ID;
 }
 
 export type WorkspaceRouteDecision =
