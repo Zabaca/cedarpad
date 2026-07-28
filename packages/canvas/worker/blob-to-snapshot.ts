@@ -105,7 +105,10 @@ const DEFAULT_PROPS: Record<string, () => Record<string, unknown>> = {
     labelColor: styleDefaults.labelColor,
     size: styleDefaults.size,
     font: styleDefaults.font,
-    fontSizeAdjustment: 0,
+    // 1, NOT 0 — a MULTIPLIER, matching tldraw's own note default. `NoteShapeUtil` draws
+    // the label at `(fontSizeAdjustment ?? 1) * labelFontSize`, and `0 ?? 1` is 0, so a 0
+    // renders every note's text at 0px. See the same constant in src/tl-record-builder.ts.
+    fontSizeAdjustment: 1,
     align: styleDefaults.align,
     verticalAlign: styleDefaults.verticalAlign,
     growY: 0,
