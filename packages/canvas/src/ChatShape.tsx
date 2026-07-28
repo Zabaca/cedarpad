@@ -3,13 +3,14 @@
 // chat-store. Drag the header to move the card; the body (log + input) is
 // interactive. Deleting the shape ends the session (App watches for removal).
 
-import { T, type TLBaseShape } from 'tldraw';
+import type { TLBaseShape } from 'tldraw';
 
 import { setActiveChat } from './agent-link';
 import { ChatView } from '../shared/ChatView';
 import { DOCK_CHAT, isEmbedded, postDockMessage } from '../shared/dock-messages';
 import { type EventGuards, InteractiveBoxShapeUtil } from './InteractiveBoxShapeUtil';
 import { inChatBody, inChatLog, isInteractiveControl } from './predicates';
+import { chatShapeProps } from './shape-props';
 
 // `chatId` overrides which chat the card fronts (the attach flow places a card for a chat
 // born elsewhere); '' — the default — means "the shape id IS the chat id", as always.
@@ -27,7 +28,9 @@ export const chatIdOf = (shape: ChatShapeTl): string => shape.props.chatId || sh
 
 export class ChatShapeUtil extends InteractiveBoxShapeUtil<'chat', { title: string; chatId: string }> {
   static override type = 'chat' as const;
-  static override props = { w: T.number, h: T.number, title: T.string, chatId: T.string };
+  // Defined in ./shape-props (React-free) so the sync room's schema and this
+  // ShapeUtil validate `chat` identically. See ADR-0019.
+  static override props = chatShapeProps;
 
   override getDefaultProps(): ChatShapeTl['props'] {
     return { w: 380, h: 460, title: 'Chat', chatId: '' };

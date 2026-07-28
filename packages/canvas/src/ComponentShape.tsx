@@ -4,7 +4,7 @@
 // module and renders it. Editing the file + bumping rev re-imports it live.
 
 import * as React from 'react';
-import { type Editor, T, type TLBaseShape } from 'tldraw';
+import { type Editor, type TLBaseShape } from 'tldraw';
 
 import { type AgentComponent, LOAD_ATTEMPTS, loadComponent } from './component-loader';
 import { activeCanvasId } from './active-canvas';
@@ -12,6 +12,7 @@ import { requestExpand } from './component-expand';
 import { setDisplayName, useCurrentUser } from './identity';
 import { type EventGuards, InteractiveBoxShapeUtil } from './InteractiveBoxShapeUtil';
 import { isInteractiveControl } from './predicates';
+import { componentShapeProps } from './shape-props';
 import { fetchMart, type MartData } from './mart-data';
 import type { DataSource } from '../shared/mart-contract';
 // ComponentStatus is the read bridge's concern too, so it lives in the model
@@ -318,14 +319,9 @@ export class ComponentShapeUtil extends InteractiveBoxShapeUtil<
   { module: string; data: Record<string, unknown>; rev: number; dataSource: DataSource | null }
 > {
   static override type = 'component' as const;
-  static override props = {
-    w: T.number,
-    h: T.number,
-    module: T.string,
-    data: T.jsonValue as T.Validator<Record<string, unknown>>,
-    rev: T.number,
-    dataSource: T.jsonValue as T.Validator<DataSource | null>,
-  };
+  // Defined in ./shape-props (React-free) so the sync room's schema and this
+  // ShapeUtil validate `component` identically. See ADR-0019.
+  static override props = componentShapeProps;
 
   override getDefaultProps(): ComponentShapeTl['props'] {
     return { w: 360, h: 260, module: 'Missing', data: {}, rev: 0, dataSource: null };
