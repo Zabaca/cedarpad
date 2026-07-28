@@ -1,8 +1,9 @@
 // What survives on the canvas SSE stream after ADR-0019 moved the DOCUMENT onto tldraw
-// sync: the agent's screenshot round-trip and the presence leg. Neither is carried by the
-// sync protocol, so neither may vanish with `sync.ts`. The screenshot half is the one
-// with logic worth pinning: the agent's `view_canvas` tool blocks on a reply, so EVERY
-// path — including "nothing on the canvas" and "rendering threw" — must answer.
+// sync, and #293 moved PRESENCE onto sync's own channel: the agent's screenshot
+// round-trip. It is not carried by the sync protocol, so it may not vanish with
+// `sync.ts`. It is also the leg with logic worth pinning: the agent's `view_canvas` tool
+// blocks on a reply, so EVERY path — including "nothing on the canvas" and "rendering
+// threw" — must answer.
 
 import { describe, expect, test } from 'bun:test';
 

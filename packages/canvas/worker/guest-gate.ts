@@ -33,7 +33,6 @@ const VITE_PREFIXES = ['/src/', '/shared/', '/@vite/', '/@fs/', '/@id/', '/node_
 const CANVAS_API = new Set([
   `GET ${BRIDGE_ROUTES.canvas}`,
   `GET ${BRIDGE_ROUTES.canvasStream}`,
-  `POST ${BRIDGE_ROUTES.presence}`,
   `POST ${BRIDGE_ROUTES.shapes}`,
   `POST ${BRIDGE_ROUTES.shapesCreate}`,
   `POST ${BRIDGE_ROUTES.shapesUpdate}`,

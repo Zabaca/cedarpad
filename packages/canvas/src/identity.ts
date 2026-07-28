@@ -94,8 +94,18 @@ export function setDisplayName(name: string): void {
   notify();
 }
 
+/** Subscribe to identity changes outside React (kicks off resolution). Returns
+ * unsubscribe. Presence (#293) mirrors identity into a tldraw signal through this. */
+export function subscribeIdentity(cb: () => void): () => void {
+  start();
+  listeners.add(cb);
+  return () => {
+    listeners.delete(cb);
+  };
+}
+
 /** Kick off identity resolution (idempotent) and read the current snapshot without
- * React — the presence heartbeat (#212) polls this on its own timer. */
+ * React. */
 export function currentUserSnapshot(): CurrentUser | null {
   start();
   return snapshot;

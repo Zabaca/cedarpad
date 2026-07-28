@@ -246,7 +246,7 @@ export default function CanvasArch() {
       <Box x={syncBox.x} y={syncBox.y} w={syncBox.w} h={syncBox.h} color={COLORS.teal} label="useSync() · canvas-sync.ts" chip="tldraw sync">
         <Tag label="WS → Durable Object room" color={COLORS.teal} pulse />
         <Tag label="deltas, both ways" color={COLORS.orange} />
-        <Tag label="canvas-stream.ts: screenshot + presence" color={COLORS.muted} />
+        <Tag label="canvas-stream.ts: screenshot" color={COLORS.muted} />
       </Box>
 
       {/* vite */}

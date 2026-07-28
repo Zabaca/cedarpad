@@ -66,6 +66,28 @@ function componentShape(id: string, x = 0) {
   };
 }
 
+/** One `instance_presence` record, as a client's sync push carries it (#293). */
+function presenceRecord(userId: string) {
+  return {
+    id: `instance_presence:${userId}`,
+    typeName: 'instance_presence',
+    userId: `user:${userId}`,
+    userName: 'Ada',
+    lastActivityTimestamp: 1,
+    color: '#ff0000',
+    camera: { x: 0, y: 0, z: 1 },
+    cursor: { x: 10, y: 20, type: 'default', rotation: 0 },
+    screenBounds: { x: 0, y: 0, w: 1024, h: 768 },
+    followingUserId: null,
+    brush: null,
+    scribbles: [],
+    selectedShapeIds: [],
+    currentPageId: 'page:page',
+    chatMessage: '',
+    meta: {},
+  };
+}
+
 // ADR-0019: exactly one TLSocketRoom per canvas, globally. The DO id is that guarantee,
 // so the derivation from canvas id must be total and deterministic — a canvas that
 // resolved to two different DO names would be hosted twice, and the two copies would
@@ -126,5 +148,35 @@ describe('createCanvasSyncRoom', () => {
 
     expect(JSON.stringify(b.messages())).toContain('shape:c1');
     expect(room.getCurrentSnapshot().documents.some((d) => d.state.id === 'shape:c1')).toBe(true);
+  });
+
+  // #293: presence now rides the sync protocol itself. The invariant the bespoke
+  // transport used to guarantee by construction (it was a separate wire) must still
+  // hold now that presence shares the wire with the document: a presence record
+  // reaches the other client but NEVER lands in persisted room state. A presence
+  // record in the snapshot is a real bug — it would be replayed to every future
+  // client as a ghost collaborator, and it is unbounded growth per visitor.
+  test('fans presence out to the other client without persisting it', () => {
+    const room = createCanvasSyncRoom({
+      initialSnapshot: { clock: 1, documents: [{ lastChangedClock: 1, state: PAGE }] },
+    });
+    const a = fakeSocket();
+    const b = fakeSocket();
+    room.handleSocketConnect({ sessionId: 'a', socket: a.socket, meta: { userId: 'u_1' } });
+    a.receive(connectMessage());
+    room.handleSocketConnect({ sessionId: 'b', socket: b.socket, meta: { userId: 'u_2' } });
+    b.receive(connectMessage());
+    b.sent.length = 0;
+
+    a.receive(
+      JSON.stringify({
+        type: 'push',
+        clientClock: 1,
+        presence: [RecordOpType.Put, presenceRecord('u_1')],
+      }),
+    );
+
+    expect(JSON.stringify(b.messages())).toContain('Ada');
+    expect(room.getCurrentSnapshot().documents.some((d) => d.state.typeName === 'instance_presence')).toBe(false);
   });
 });
