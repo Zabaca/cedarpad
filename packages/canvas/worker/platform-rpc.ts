@@ -1,7 +1,7 @@
 import type { Database } from '../web-poc/lib/db/client.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { findOrCreateConversation } from '../web-poc/lib/db/find-or-create-conversation.ts';
-import { type ConversationStartOutput, PlatformRpcRequest, verifyPlatformRpcToken } from '../shared/platform-rpc.ts';
+import { type ConversationStartOutput, PlatformRpcRequest, type TurnEndOutput, verifyPlatformRpcToken } from '../shared/platform-rpc.ts';
 import type { Env } from './index.ts';
 import { makeAssignmentPushNotify, type PushSend, webPushSender } from './push-notify.ts';
 
@@ -48,6 +48,26 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
   if (parsed.data.op === 'conversation.start') {
     const conv = await findOrCreateConversation(deps.db, parsed.data.input);
     return Response.json({ conversationId: conv.id } satisfies ConversationStartOutput);
+  }
+
+  // The settle-time backstop (#266): find-or-create by CHAT — the same call the start made, so
+  // a settle after a start touches the one row rather than racing a second into existence —
+  // then mark it active so an `end_turn`-less turn still surfaces in "All".
+  if (parsed.data.op === 'conversation.settle') {
+    const conv = await findOrCreateConversation(deps.db, parsed.data.input);
+    await conversations.markActivity(deps.db, conv.id);
+    return new Response(null, { status: 200 });
+  }
+
+  // `end_turn` (ADR-0012 / #266): the turn declares its ending and the EDGE owns the row
+  // transition. The container gets back only the id, which is the handle it then names in
+  // `notify` — it never learns the row.
+  if (parsed.data.op === 'turn.end') {
+    const { outcome, question, summary, ...identity } = parsed.data.input;
+    const conv = await findOrCreateConversation(deps.db, { ...identity, summary });
+    if (outcome === 'done') await conversations.markDone(deps.db, conv.id, summary);
+    else await conversations.promote(deps.db, conv.id, question ?? summary);
+    return Response.json({ conversationId: conv.id } satisfies TurnEndOutput);
   }
 
   const { conversationId, question } = parsed.data.input;

@@ -1,49 +1,50 @@
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import { createClient } from '@libsql/client';
-import { makeDb, conversations } from '../web-poc/lib/db/index.ts';
 import { memBackend } from './blob-store.ts';
 import { projectDirForCwd, transcriptKey } from './transcript-r2.ts';
-import { backfillCanvasEdges, dedupeLegacyConversations, endTurn, findOrCreateConversation, openConversation, placeChatCard, resumeConversation } from './inbox.ts';
+import { endTurn, openConversation, placeChatCard } from './inbox.ts';
+import type { PlatformRpc } from './platform-rpc-client.ts';
+import type { TurnEndInput } from '../shared/platform-rpc.ts';
 import { makeStopGate } from './agent.ts';
 
-// In-memory DB built from the real Drizzle migrations (mirrors conversations.test.ts, bun:test).
-const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, 'utf8')
-        .split('--> statement-breakpoint')
-        .map((s) => s.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n').trim())
-        .filter(Boolean),
-    );
-}
+// ADR-0018 / #266: the container holds NO platform-data-layer client, so nothing in this file
+// builds one. `end_turn` is tested against a RECORDING platform RPC — the container's whole
+// contribution is which operation it names and with what, because the edge owns the row (the
+// transitions themselves are asserted in worker/platform-rpc.test.ts against a real database).
 
-async function freshDb() {
-  const client = createClient({ url: ':memory:' });
-  for (const stmt of migrationStatements()) await client.execute(stmt);
-  return makeDb(client);
+/** A recording platform RPC: every operation the container can reach, and what it was asked. */
+function recordingRpc(overrides: Partial<PlatformRpc> = {}) {
+  const turnEnds: TurnEndInput[] = [];
+  const rpc: PlatformRpc = {
+    conversationStart: async () => {},
+    conversationSettle: async () => {},
+    turnEnd: async (input) => {
+      turnEnds.push(input);
+      return { conversationId: `conv_for_${input.sessionId}` };
+    },
+    notify: async () => {},
+    ...overrides,
+  };
+  return { rpc, turnEnds };
 }
 
 describe('end_turn protocol (ADR-0012)', () => {
-  test('needs_human: promotes the session Conversation (creating it), fires notify, returns without blocking', async () => {
-    const db = await freshDb();
+  test('needs_human: asks the edge to end the turn, then rings the doorbell for the row it filed', async () => {
+    const { rpc, turnEnds } = recordingRpc();
     const notified: Array<{ id: string; question: string }> = [];
     const sessionId = 'sess-ask-1';
 
     const text = await endTurn(
       {
-        db,
+        rpc,
         getSessionId: () => sessionId,
         userId: 'user_a',
         workspaceId: 'ws_a',
-        notify: (conv, question) => void notified.push({ id: conv.id, question }),
+        ownerRef: 'chat_ask',
+        notify: (id, question) => void notified.push({ id, question }),
       },
       { outcome: 'needs_human', summary: 'Need approval', question: 'Ship it?' },
     );
@@ -52,163 +53,72 @@ describe('end_turn protocol (ADR-0012)', () => {
     expect(text).toContain('Inbox');
     expect(text.toLowerCase()).toContain('end your turn');
 
-    const conv = await conversations.getBySessionId(db, sessionId);
-    expect(conv).not.toBeNull();
-    expect(conv?.status).toBe('open');
-    expect(conv?.waitingOn).toBe('human');
-    expect(conv?.unread).toBe(true);
-    expect(conv?.summary).toBe('Need approval');
+    // ONE named operation carried the whole ending — outcome and question included.
+    expect(turnEnds).toEqual([
+      {
+        sessionId,
+        userId: 'user_a',
+        workspaceId: 'ws_a',
+        kind: undefined,
+        ownerRef: 'chat_ask',
+        summary: 'Need approval',
+        outcome: 'needs_human',
+        question: 'Ship it?',
+      },
+    ]);
 
-    // Notify fired with the promoted conversation + the question.
-    expect(notified).toHaveLength(1);
-    expect(notified[0]?.id).toBe(conv!.id);
-    expect(notified[0]?.question).toBe('Ship it?');
-    // The row's preview is the question, so the Inbox list shows WHAT is being asked.
-    expect(conv?.lastMessagePreview).toBe('Ship it?');
+    // The doorbell names the Conversation BY ID — the container never held the row.
+    expect(notified).toEqual([{ id: `conv_for_${sessionId}`, question: 'Ship it?' }]);
   });
 
-  test('done: records completion — waiting_on:none, unread, preview = the summary, no notify', async () => {
-    const db = await freshDb();
+  test('done: declares the ending and never pings the human', async () => {
+    const { rpc, turnEnds } = recordingRpc();
     const notified: string[] = [];
-    const sessionId = 'sess-done-1';
 
     const text = await endTurn(
-      { db, getSessionId: () => sessionId, userId: 'user_a', workspaceId: 'ws_a', notify: (_c, q) => void notified.push(q) },
+      { rpc, getSessionId: () => 'sess-done-1', userId: 'user_a', workspaceId: 'ws_a', notify: (_id, q) => void notified.push(q) },
       { outcome: 'done', summary: 'Committed #3; nothing pending' },
     );
 
     expect(text.toLowerCase()).toContain('done');
-    const conv = await conversations.getBySessionId(db, sessionId);
-    expect(conv?.waitingOn).toBe('none'); // stays OUT of "Needs me"
-    expect(conv?.unread).toBe(true); // but "All" shows the activity dot
-    expect(conv?.lastMessagePreview).toBe('Committed #3; nothing pending');
-    expect(notified).toHaveLength(0); // done never pings the human
+    expect(turnEnds[0]).toMatchObject({ outcome: 'done', summary: 'Committed #3; nothing pending' });
+    expect(turnEnds[0]!.question).toBeUndefined(); // a completed turn asks nothing
+    expect(notified).toHaveLength(0);
   });
 
-  test('find-or-create by sessionId is idempotent: a second end_turn updates, not duplicates', async () => {
-    const db = await freshDb();
-    const sessionId = 'sess-ask-2';
-    const deps = { db, getSessionId: () => sessionId, userId: 'user_a', workspaceId: 'ws_a' };
-
-    await endTurn(deps, { outcome: 'needs_human', summary: 'first', question: 'q1' });
-    const first = await conversations.getBySessionId(db, sessionId);
-
-    // Human replies, handing the turn back; agent asks again on the SAME session.
-    await conversations.reply(db, first!.id);
-    await endTurn(deps, { outcome: 'needs_human', summary: 'second', question: 'q2' });
-
-    const all = await conversations.list(db);
-    const forSession = all.filter((c) => c.sessionId === sessionId);
-    expect(forSession).toHaveLength(1); // no duplicate row
-    expect(forSession[0]?.id).toBe(first!.id);
-    expect(forSession[0]?.waitingOn).toBe('human'); // re-promoted, not left on agent
-    expect(forSession[0]?.unread).toBe(true);
-  });
-
-  test('with no session id yet, end_turn degrades and creates nothing', async () => {
-    const db = await freshDb();
+  test('with no session id yet, end_turn degrades and asks the edge for nothing', async () => {
+    const { rpc, turnEnds } = recordingRpc();
     const text = await endTurn(
-      { db, getSessionId: () => null, userId: 'user_a', workspaceId: 'ws_a' },
+      { rpc, getSessionId: () => null, userId: 'user_a', workspaceId: 'ws_a' },
       { outcome: 'needs_human', summary: 's', question: 'q' },
     );
     expect(text.toLowerCase()).toContain('unavailable');
-    expect(await conversations.list(db)).toHaveLength(0);
-  });
-});
-
-// The Conversation's identity is the CHAT (ownerRef), not the SDK session: resume mints a
-// new sessionId per turn, and keying rows by sessionId created one duplicate row per turn.
-describe('findOrCreateConversation: chat identity (ownerRef)', () => {
-  test('a new turn on the same chat REUSES the row and re-points sessionId (no duplicate)', async () => {
-    const db = await freshDb();
-    const a = await findOrCreateConversation(db, { sessionId: 'sess-1', userId: 'u', workspaceId: 'w', ownerRef: 'chat_A', summary: 'first message' });
-    // Next turn: resume minted a NEW sessionId for the same chat.
-    const b = await findOrCreateConversation(db, { sessionId: 'sess-2', userId: 'u', workspaceId: 'w', ownerRef: 'chat_A', summary: 'first message' });
-    expect(b.id).toBe(a.id);
-    expect(b.sessionId).toBe('sess-2'); // the resume pointer follows the newest session
-    expect(await conversations.list(db)).toHaveLength(1);
+    expect(turnEnds).toHaveLength(0);
   });
 
-  test('a human initiator (assignTo) claims the row at birth; absent ⇒ unassigned (cron)', async () => {
-    const db = await freshDb();
-    const human = await findOrCreateConversation(db, { sessionId: 's-h', userId: 'canvas-user', workspaceId: 'w', ownerRef: 'chat_H', assignTo: 'james' });
-    expect(human.assignedTo).toBe('james');
-    expect(human.userId).toBe('canvas-user'); // creator attribution untouched
-    const cron = await findOrCreateConversation(db, { sessionId: 's-c', userId: 'canvas-user', workspaceId: 'w', ownerRef: 'chat_C' });
-    expect(cron.assignedTo).toBeNull();
+  // Best-effort by contract (ADR-0018): the hop can fail exactly as the write could, and the
+  // agent still gets its answer. Without a filed row there is no handle, so no doorbell.
+  test('an unreachable edge still answers the agent, and rings no doorbell', async () => {
+    const { rpc } = recordingRpc({ turnEnd: async () => null });
+    const notified: string[] = [];
+
+    const text = await endTurn(
+      { rpc, getSessionId: () => 'sess-down', userId: 'u', workspaceId: 'w', notify: (id) => void notified.push(id) },
+      { outcome: 'needs_human', summary: 's', question: 'q' },
+    );
+
+    expect(text).toContain('Inbox');
+    expect(notified).toHaveLength(0);
   });
 
-  test('a reply into an UNASSIGNED row auto-claims it for the replier; an assigned row is never stolen', async () => {
-    const db = await freshDb();
-    const born = await findOrCreateConversation(db, { sessionId: 's-1', userId: 'canvas-user', workspaceId: 'w', ownerRef: 'chat_R' });
-    expect(born.assignedTo).toBeNull();
-    // James replies (next turn, new resume sessionId): the unassigned row becomes his.
-    const claimed = await findOrCreateConversation(db, { sessionId: 's-2', userId: 'canvas-user', workspaceId: 'w', ownerRef: 'chat_R', assignTo: 'james' });
-    expect(claimed.id).toBe(born.id);
-    expect(claimed.assignedTo).toBe('james');
-    // Sam replies later: assignment is advisory but never silently re-targeted by a reply.
-    const kept = await findOrCreateConversation(db, { sessionId: 's-3', userId: 'canvas-user', workspaceId: 'w', ownerRef: 'chat_R', assignTo: 'sam' });
-    expect(kept.assignedTo).toBe('james');
-  });
-
-  test('a legacy row (found by sessionId, no ownerRef) gets its ownerRef backfilled', async () => {
-    const db = await freshDb();
-    const legacy = await conversations.create(db, { sessionId: 'sess-old', userId: 'u', workspaceId: 'w', summary: 'old' });
-    const found = await findOrCreateConversation(db, { sessionId: 'sess-old', userId: 'u', workspaceId: 'w', ownerRef: 'chat_B' });
-    expect(found.id).toBe(legacy.id);
-    expect((await conversations.getByOwnerRef(db, 'chat_B'))?.id).toBe(legacy.id);
-  });
-
-  test('a canvas-born chat records its canvas edge at creation', async () => {
-    const db = await freshDb();
-    const born = await findOrCreateConversation(db, { sessionId: 's-cv', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c1', canvasId: 'cv_1' });
-    expect(born.canvasId).toBe('cv_1');
-  });
-
-  test('a later turn carrying a canvas backfills a null edge but never overwrites one', async () => {
-    const db = await freshDb();
-    const bare = await findOrCreateConversation(db, { sessionId: 's-a', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c2' });
-    expect(bare.canvasId).toBeNull();
-    // The chat's canvas shows up on a later turn (e.g. after the pad starts stamping it).
-    const filled = await findOrCreateConversation(db, { sessionId: 's-b', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c2', canvasId: 'cv_1' });
-    expect(filled.canvasId).toBe('cv_1');
-    // First wins: a conflicting claim never re-homes the chat.
-    const kept = await findOrCreateConversation(db, { sessionId: 's-c', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c2', canvasId: 'cv_2' });
-    expect(kept.canvasId).toBe('cv_1');
-  });
-
-  test('a turn with no canvas (inbox reply, dev-agent run) leaves the edge untouched', async () => {
-    const db = await freshDb();
-    await findOrCreateConversation(db, { sessionId: 's-1', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c3', canvasId: 'cv_9' });
-    const later = await findOrCreateConversation(db, { sessionId: 's-2', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c3' });
-    expect(later.canvasId).toBe('cv_9');
-  });
-});
-
-describe('dedupeLegacyConversations: collapse the per-turn duplicate rows', () => {
-  test('keeps the best legacy row per (workspace, summary) — waiting_on:human wins — and deletes the rest', async () => {
-    const db = await freshDb();
-    // Three dupes of one chat (same summary), one of them promoted; plus an unrelated row.
-    const d1 = await conversations.create(db, { sessionId: 's1', userId: 'u', workspaceId: 'w', summary: 'explore run' });
-    const d2 = await conversations.create(db, { sessionId: 's2', userId: 'u', workspaceId: 'w', summary: 'explore run' });
-    await conversations.promote(db, d2.id);
-    const d3 = await conversations.create(db, { sessionId: 's3', userId: 'u', workspaceId: 'w', summary: 'explore run' });
-    const other = await conversations.create(db, { sessionId: 's4', userId: 'u', workspaceId: 'w', summary: 'different chat' });
-
-    const removed = await dedupeLegacyConversations(db, 'u');
-    expect(removed).toBe(2);
-    const left = await conversations.list(db);
-    expect(left.map((c) => c.id).sort()).toEqual([d2.id, other.id].sort()); // promoted row survives
-    void d1;
-    void d3;
-  });
-
-  test('rows keyed by ownerRef are never touched, and a second run is a no-op', async () => {
-    const db = await freshDb();
-    await conversations.create(db, { sessionId: 's1', userId: 'u', workspaceId: 'w', ownerRef: 'chat_1', summary: 'same title' });
-    await conversations.create(db, { sessionId: 's2', userId: 'u', workspaceId: 'w', ownerRef: 'chat_2', summary: 'same title' });
-    expect(await dedupeLegacyConversations(db, 'u')).toBe(0);
-    expect(await conversations.list(db)).toHaveLength(2);
+  // A bridge with no edge in front of it (rpc: null) is now a DEGRADED bridge, not one with a
+  // local fallback — #266 removed the fallback. It must still answer the tool.
+  test('with no edge configured at all, the tool still answers rather than throwing', async () => {
+    const text = await endTurn(
+      { rpc: null, getSessionId: () => 'sess-no-edge', userId: 'u', workspaceId: 'w' },
+      { outcome: 'done', summary: 'finished' },
+    );
+    expect(text.toLowerCase()).toContain('done');
   });
 });
 
@@ -235,178 +145,6 @@ describe('makeStopGate', () => {
   });
 });
 
-describe('findOrCreateConversation', () => {
-  test('returns the existing row on a second call for the same session', async () => {
-    const db = await freshDb();
-    const a = await findOrCreateConversation(db, { sessionId: 's-idem', userId: 'u', workspaceId: 'w', summary: 'x' });
-    const b = await findOrCreateConversation(db, { sessionId: 's-idem', userId: 'u', workspaceId: 'w', summary: 'y' });
-    expect(b.id).toBe(a.id);
-    expect(b.summary).toBe('x'); // create-only: the first title sticks, later turns don't overwrite it
-  });
-
-  test('a later call for an existing session touches lastActivity (a new turn sorts it to the top)', async () => {
-    const db = await freshDb();
-    const a = await findOrCreateConversation(db, { sessionId: 's-touch', userId: 'u', workspaceId: 'w', summary: 'x' });
-    // Age the row, then simulate the next turn's find-or-create.
-    await conversations.touch(db, a.id, new Date(Date.now() - 60_000));
-    const b = await findOrCreateConversation(db, { sessionId: 's-touch', userId: 'u', workspaceId: 'w', summary: 'x' });
-    expect(b.lastActivity.getTime()).toBeGreaterThan(a.lastActivity.getTime() - 30_000);
-    expect(b.lastActivity.getTime()).toBeGreaterThanOrEqual(Date.now() - 5_000);
-  });
-
-  test('a plain session lands in waiting_on:none — it shows in "All" but NOT in the "Needs me" view', async () => {
-    // The unified session index (every session gets a row) must not pollute the default attention
-    // view: a session that never called ask_human stays waiting_on:none until (if) it promotes.
-    const db = await freshDb();
-    await findOrCreateConversation(db, { sessionId: 's-plain', userId: 'u', workspaceId: 'w', summary: 'hello' });
-    expect((await conversations.list(db, { waitingOn: 'human' })).length).toBe(0);
-    expect((await conversations.list(db)).map((c) => c.sessionId)).toContain('s-plain');
-  });
-});
-
-describe('resumeConversation', () => {
-  test('restores the transcript from R2, resumes with the reply, flips waiting_on:agent', async () => {
-    const db = await freshDb();
-    const sessionId = 'sess-resume-1';
-    const cwd = '/workspace/app';
-
-    // A promoted (waiting_on:human) Conversation whose transcript sits in R2.
-    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
-    await conversations.promote(db, conv.id);
-
-    const getter = memBackend();
-    const jsonl = '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}\n';
-    await getter.put(transcriptKey(sessionId), new TextEncoder().encode(jsonl));
-
-    const projectsDir = join(tmpdir(), `Tmp_InboxResume_${process.pid}_${Math.random().toString(36).slice(2)}`);
-    const ran: Array<{ sessionId: string; message: string; transcriptOnDisk: boolean }> = [];
-    try {
-      const updated = await resumeConversation(
-        {
-          db,
-          getter,
-          projectsDir,
-          cwd,
-          // Assert restore happened BEFORE the turn: the JSONL must already be on disk here.
-          runTurn: (sid, msg) => {
-            const onDisk = existsSync(join(projectsDir, projectDirForCwd(cwd), `${sid}.jsonl`));
-            ran.push({ sessionId: sid, message: msg, transcriptOnDisk: onDisk });
-          },
-        },
-        conv,
-        'here is my answer',
-      );
-
-      expect(ran).toHaveLength(1);
-      expect(ran[0]?.sessionId).toBe(sessionId);
-      expect(ran[0]?.message).toBe('here is my answer');
-      expect(ran[0]?.transcriptOnDisk).toBe(true); // restore ran before runTurn
-
-      expect(updated?.waitingOn).toBe('agent');
-      expect(updated?.unread).toBe(false);
-    } finally {
-      if (existsSync(projectsDir)) rmSync(projectsDir, { recursive: true, force: true });
-    }
-  });
-
-  test('forwards the reply images to runTurn (unified reply/send contract, #123)', async () => {
-    const db = await freshDb();
-    const sessionId = 'sess-resume-img';
-    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
-    await conversations.promote(db, conv.id);
-
-    const getter = memBackend();
-    await getter.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
-
-    const images = [{ media_type: 'image/png', data: 'AAAA' }];
-    const ran: Array<{ images: unknown }> = [];
-    await resumeConversation(
-      {
-        db,
-        getter,
-        projectsDir: join(tmpdir(), `Tmp_InboxImg_${process.pid}_${Math.random().toString(36).slice(2)}`),
-        cwd: '/workspace/app',
-        runTurn: (_sid, _msg, imgs) => void ran.push({ images: imgs }),
-      },
-      conv,
-      'look at this',
-      images,
-    );
-
-    // The human's pasted images reach the resumed turn — not dropped to [].
-    expect(ran).toHaveLength(1);
-    expect(ran[0]?.images).toEqual(images);
-  });
-
-  test('with no images, runTurn receives an empty array (back-compat)', async () => {
-    const db = await freshDb();
-    const sessionId = 'sess-resume-noimg';
-    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
-    await conversations.promote(db, conv.id);
-
-    const getter = memBackend();
-    await getter.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
-
-    const ran: Array<{ images: unknown }> = [];
-    await resumeConversation(
-      {
-        db,
-        getter,
-        projectsDir: join(tmpdir(), `Tmp_InboxNoImg_${process.pid}_${Math.random().toString(36).slice(2)}`),
-        cwd: '/workspace/app',
-        runTurn: (_sid, _msg, imgs) => void ran.push({ images: imgs }),
-      },
-      conv,
-      'text only',
-    );
-
-    expect(ran).toHaveLength(1);
-    expect(ran[0]?.images).toEqual([]);
-  });
-
-  // resumeConversation is runner-agnostic (the caller supplies cwd + runTurn); the invariant
-  // this test pins is that restore lands the session JSONL at exactly the path a resume under
-  // that cwd reads (projectDirForCwd). (Dev-agent turns move the JSONL onward to their
-  // prepared worktree's project dir via adoptSession — ADR-0010 slice 6 / ADR-0011.)
-  test('restore lands the session JSONL at the cwd resume path', async () => {
-    const db = await freshDb();
-    const sessionId = 'sess-dev-agent-explore';
-    // The dev-agent container cwd shared by its explore session and its interactive bridge.
-    const devAgentRunnerCwd = '/app/agent-canvas/packages/canvas';
-
-    // A dev-agent Conversation (workspaceId = dev-agent) whose explore transcript sits in R2.
-    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'dev-agent' });
-    await conversations.promote(db, conv.id);
-
-    const getter = memBackend();
-    const jsonl = '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"explore"}]}}\n';
-    await getter.put(transcriptKey(sessionId), new TextEncoder().encode(jsonl));
-
-    const projectsDir = join(tmpdir(), `Tmp_DevAgentResume_${process.pid}_${Math.random().toString(36).slice(2)}`);
-    const resumePath = join(projectsDir, projectDirForCwd(devAgentRunnerCwd), `${sessionId}.jsonl`);
-    let onDiskAtResume = false;
-    try {
-      const updated = await resumeConversation(
-        {
-          db,
-          getter,
-          projectsDir,
-          cwd: devAgentRunnerCwd,
-          // The resumed turn (query({ resume })) reads exactly this path — assert it's present.
-          runTurn: () => void (onDiskAtResume = existsSync(resumePath)),
-        },
-        conv,
-        'approve candidate 1',
-      );
-
-      expect(onDiskAtResume).toBe(true); // restore reconstructed the exact SDK resume path
-      expect(updated?.waitingOn).toBe('agent'); // reply flips it off the attention list
-    } finally {
-      if (existsSync(projectsDir)) rmSync(projectsDir, { recursive: true, force: true });
-    }
-  });
-});
-
 // Opening an Inbox Conversation as a live <ChatView> on its owning bridge (ADR-0009, #124):
 // ensure the session JSONL is on the runner FS (restore from R2 iff the container cold-booted,
 // never clobbering a warm/live copy), then resolve the chatId the Shell subscribes to —
@@ -416,10 +154,10 @@ describe('openConversation', () => {
   const mkDir = () => join(tmpdir(), `Tmp_Open_${process.pid}_${Math.random().toString(36).slice(2)}`);
 
   test('cold container: restores the JSONL from R2 and resolves the homing canvas chat id (one stream, two views)', async () => {
-    const db = await freshDb();
     const sessionId = 'sess-open-1';
     const cwd = '/workspace/app';
-    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
+    // The forwarded row (#261): three fields, arriving on a header — never read from a database.
+    const conv = { id: 'conv-open-1', sessionId, ownerRef: null };
 
     const getter = memBackend();
     await getter.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
@@ -450,9 +188,8 @@ describe('openConversation', () => {
   });
 
   test('headless session (no canvas chat home): falls back to conv.id and seeds its ChatMeta', async () => {
-    const db = await freshDb();
     const sessionId = 'sess-open-2';
-    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
+    const conv = { id: 'conv-open-2', sessionId, ownerRef: null };
 
     const getter = memBackend();
     await getter.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
@@ -481,10 +218,9 @@ describe('openConversation', () => {
   });
 
   test('warm container: a live on-disk JSONL is NOT clobbered by a stale R2 restore', async () => {
-    const db = await freshDb();
     const sessionId = 'sess-open-3';
     const cwd = '/workspace/app';
-    const conv = await conversations.create(db, { sessionId, userId: 'u', workspaceId: 'w' });
+    const conv = { id: 'conv-open-3', sessionId, ownerRef: null };
 
     const projectsDir = mkDir();
     const diskPath = join(projectsDir, projectDirForCwd(cwd), `${sessionId}.jsonl`);
@@ -503,23 +239,6 @@ describe('openConversation', () => {
     } finally {
       if (existsSync(projectsDir)) rmSync(projectsDir, { recursive: true, force: true });
     }
-  });
-});
-
-// Lazy backfill (canvas pairing): chats born BEFORE edge capture existed live as shapes in
-// canvas state but their rows have no canvas edge. When a canvas session builds, the bridge
-// hands its chat-shape ids here; rows found by ownerRef get the edge — first-wins, so a row
-// already linked elsewhere is never re-homed, and unknown chat ids are ignored.
-describe('backfillCanvasEdges: canvas boot links pre-capture chats', () => {
-  test('fills null edges by ownerRef, skips linked rows and unknown chats', async () => {
-    const db = await freshDb();
-    const bare = await findOrCreateConversation(db, { sessionId: 's-1', userId: 'u', workspaceId: 'w', ownerRef: 'shape:a' });
-    const linked = await findOrCreateConversation(db, { sessionId: 's-2', userId: 'u', workspaceId: 'w', ownerRef: 'shape:b', canvasId: 'cv_other' });
-
-    await backfillCanvasEdges(db, 'cv_boot', ['shape:a', 'shape:b', 'shape:unknown']);
-
-    expect((await conversations.get(db, bare.id))?.canvasId).toBe('cv_boot');
-    expect((await conversations.get(db, linked.id))?.canvasId).toBe('cv_other');
   });
 });
 
@@ -578,19 +297,3 @@ describe('placeChatCard', () => {
   });
 });
 
-// Dev-agent is a session KIND, not a workspace: rows file under the workspace they run in,
-// and `kind` carries the type (the edge's token mint keys on it).
-describe('findOrCreateConversation: session kind', () => {
-  test('a dev-agent turn creates a dev-agent-kinded row in its real workspace', async () => {
-    const db = await freshDb();
-    const conv = await findOrCreateConversation(db, { sessionId: 's-da', userId: 'u', workspaceId: 'default', kind: 'dev-agent', ownerRef: 'chat_da' });
-    expect(conv.kind).toBe('dev-agent');
-    expect(conv.workspaceId).toBe('default');
-  });
-
-  test('kind defaults to chat', async () => {
-    const db = await freshDb();
-    const conv = await findOrCreateConversation(db, { sessionId: 's-c', userId: 'u', workspaceId: 'w', ownerRef: 'chat_c' });
-    expect(conv.kind).toBe('chat');
-  });
-});

@@ -12,10 +12,9 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { readFileSync, rmSync } from 'node:fs';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { chatHub, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, turnFlavor, webPocDb } from './bridge.ts';
-import { resumeConversation } from './inbox.ts';
+import { chatHub, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, turnFlavor } from './bridge.ts';
+import type { PlatformRpc } from './platform-rpc-client.ts';
 import type { ConversationStartInput } from '../shared/platform-rpc.ts';
-import { conversations } from '../web-poc/lib/db/index.ts';
 import { DEV_AGENT_KIND } from './dev-agent-workflow.ts';
 import { INBOX_CONVERSATION_HEADER } from '../shared/bridge-wire.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
@@ -557,47 +556,45 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
 // ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
 // (the init event), not when the first turn settles — that's what makes a headless dev-agent
 // run (and any long first turn) visible live in the "All" view.
+//
+// ADR-0018 / #266: the bridge has NO platform-data-layer client, so what it can be asserted to
+// do is exactly what it asks the edge for. The row semantics behind `conversation.start`
+// (idempotence, re-pointing the session, the canvas edge) are the edge's, and are asserted
+// against a real database in worker/platform-rpc.test.ts and web-poc's find-or-create tests.
 describe('indexSessionStart: a session enters the index when it starts (ADR-0011)', () => {
-  test('creates the Conversation row at init — waiting_on none, titled from the message', async () => {
+  const recordingRpc = () => {
+    const started: ConversationStartInput[] = [];
+    const rpc: PlatformRpc = {
+      conversationStart: async (input) => void started.push(input),
+      conversationSettle: async () => {},
+      turnEnd: async () => null,
+      notify: async () => {},
+    };
+    return { rpc, started };
+  };
+
+  test('files the session over the platform RPC at init — titled from the message', async () => {
+    const { rpc, started } = recordingRpc();
     const sessionId = `sess_start_${crypto.randomUUID()}`;
 
-    await indexSessionStart('chat_start', sessionId, 'Architecture explore: survey this repo for deepening opportunities. (long instructions follow)');
-
-    const row = await conversations.getBySessionId(webPocDb, sessionId);
-    expect(row).not.toBeNull();
-    expect(row!.waitingOn).toBe('none'); // visible in "All", never clutters "Needs me"
-    expect(row!.summary).toContain('Architecture explore');
-  });
-
-  test('idempotent: a resumed turn re-inits the same session without duplicating or retitling', async () => {
-    const sessionId = `sess_reinit_${crypto.randomUUID()}`;
-
-    await indexSessionStart('chat_a', sessionId, 'the original first message');
-    const first = await conversations.getBySessionId(webPocDb, sessionId);
-    await indexSessionStart('chat_a', sessionId, 'a later reply that must not retitle');
-    const second = await conversations.getBySessionId(webPocDb, sessionId);
-
-    expect(second!.id).toBe(first!.id); // one row per session
-    expect(second!.summary).toBe('the original first message');
-  });
-
-  // ADR-0018: with an edge in front of it, the container does not write the row itself — it
-  // asks the edge to, over the platform RPC's one named operation.
-  test('with the platform RPC configured, the row is filed over the RPC instead of locally', async () => {
-    const sessionId = `sess_rpc_${crypto.randomUUID()}`;
-    const started: ConversationStartInput[] = [];
-
-    await indexSessionStart('chat_rpc', sessionId, 'over the wire', undefined, undefined, undefined, undefined, undefined, {
-      rpc: { conversationStart: async (input) => void started.push(input), notify: async () => {} },
-    });
+    await indexSessionStart('chat_start', sessionId, 'Architecture explore: survey this repo for deepening opportunities. (long instructions follow)', undefined, undefined, undefined, undefined, undefined, { rpc });
 
     expect(started).toHaveLength(1);
-    expect(started[0]).toMatchObject({ sessionId, ownerRef: 'chat_rpc', summary: 'over the wire' });
-    expect(await conversations.getBySessionId(webPocDb, sessionId)).toBeNull();
+    expect(started[0]).toMatchObject({ sessionId, ownerRef: 'chat_start' });
+    expect(started[0]!.summary).toContain('Architecture explore');
+  });
+
+  test('records the chat→canvas edge when the turn carries one, and claims nothing when it does not', async () => {
+    const { rpc, started } = recordingRpc();
+
+    await indexSessionStart('chat_cv', 'sess_cv', 'born on a canvas', undefined, 'cv_9', undefined, undefined, undefined, { rpc });
+    await indexSessionStart('chat_nocv', 'sess_nocv', 'born in the inbox', undefined, undefined, undefined, undefined, undefined, { rpc });
+
+    expect(started.map((s) => s.canvasId)).toEqual(['cv_9', undefined]);
   });
 
   // The best-effort contract (ADR-0018): "an index failure never fails the turn" must survive
-  // the new hop exactly as it survived a failed platform-data-layer write.
+  // the hop exactly as it survived a failed platform-data-layer write.
   test('an unreachable edge is logged and the turn continues', async () => {
     const logged: unknown[] = [];
     const realError = console.error;
@@ -608,6 +605,8 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
           conversationStart: async () => {
             throw new Error('connect ECONNREFUSED');
           },
+          conversationSettle: async () => {},
+          turnEnd: async () => null,
           notify: async () => {},
         },
       });
@@ -617,81 +616,28 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
     expect(logged).toHaveLength(1);
     expect(String(logged[0])).toContain('session-start');
   });
+
+  // With no edge in front of it the bridge is DEGRADED, not locally-backed: #266 removed the
+  // fallback client, so the index is simply skipped — never a throw into the turn.
+  test('with no platform RPC at all, indexing is skipped rather than failing the turn', async () => {
+    await expect(
+      indexSessionStart('chat_no_edge', 'sess_no_edge', 'no edge', undefined, undefined, undefined, undefined, undefined, { rpc: null }),
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe('reply/send share ONE image contract (#123)', () => {
-  test('the same parse feeds both the canvas send and the inbox reply', () => {
+  test('one parse feeds the turn, whether the message came from a canvas send or an Inbox reply', () => {
     // A messy body: one valid image + two malformed entries the shared parse must drop.
     const body = { images: [{ media_type: 'image/png', data: 'AAAA' }, { media_type: 'image/png' }, null] };
     const parsed = parseCanvasImages(body);
     expect(parsed).toEqual([{ media_type: 'image/png', data: 'AAAA' }]);
 
-    // Type-level: the parse output is exactly what BOTH sinks accept — runChat's `images`
-    // param (the canvas /send turn) and resumeConversation's runTurn `images` param (the
-    // inbox reply). If either narrowed to a second schema, these assignments would not compile.
+    // Type-level: the parse output is exactly what the turn accepts. There is only ONE sink to
+    // check now — an Inbox reply IS a chat send since ADR-0009 / #124, and #266 removed the
+    // retired /api/inbox/:id/reply route that was the second one.
     const toSend: Parameters<typeof runChat>[4] = parsed;
-    const runTurn: Parameters<typeof resumeConversation>[3] = parsed;
     expect(toSend).toBe(parsed);
-    expect(runTurn).toBe(parsed);
-  });
-});
-
-describe('POST /api/inbox/:id/reply routes EVERY conversation through the chat turn (#126)', () => {
-  let restore: () => void = () => {};
-  let dispatched: Array<{ chatId: string; message: string; sessionId: string | null }> = [];
-
-  beforeEach(() => {
-    dispatched = [];
-    // The chat-turn dispatcher is the SIGNAL: resumeConversation → runTurn → dispatchChatTurn.
-    // Before #126 a dev-agent reply bypassed this entirely (it ran runDevAgentApproval → a fresh
-    // worktree + PR), so `dispatched` would stay empty — this test is the mutation check.
-    restore = setChatTurnDispatcher((chatId, message, sessionId) => {
-      dispatched.push({ chatId, message, sessionId });
-    });
-  });
-
-  afterEach(() => restore());
-
-  const replyReq = (id: string, message: string): Request =>
-    new Request(`http://localhost/api/inbox/${encodeURIComponent(id)}/reply`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message }),
-    });
-
-  test('a dev-agent Conversation reply resumes as a chat turn (NOT the old approval→PR path)', async () => {
-    const conv = await conversations.create(webPocDb, {
-      sessionId: `sess_devagent_${crypto.randomUUID()}`,
-      userId: 'default',
-      workspaceId: 'default',
-      kind: DEV_AGENT_KIND,
-      summary: 'architecture deepening candidates',
-    });
-
-    const res = await handleRequest(replyReq(conv.id, 'go with candidate #1'));
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ ok: true });
-    // The reply drove a chat turn — the same machinery every conversation uses.
-    expect(dispatched).toHaveLength(1);
-    expect(dispatched[0]!.message).toBe('go with candidate #1');
-    expect(dispatched[0]!.sessionId).toBe(conv.sessionId);
-  });
-
-  test('a product Conversation reply resumes as a chat turn too (regression: unaffected)', async () => {
-    const conv = await conversations.create(webPocDb, {
-      sessionId: `sess_product_${crypto.randomUUID()}`,
-      userId: 'default',
-      workspaceId: 'cs_workspace_abc',
-      summary: 'a normal product session',
-    });
-
-    const res = await handleRequest(replyReq(conv.id, 'here is my answer'));
-
-    expect(res.status).toBe(200);
-    expect(dispatched).toHaveLength(1);
-    expect(dispatched[0]!.message).toBe('here is my answer');
-    expect(dispatched[0]!.sessionId).toBe(conv.sessionId);
   });
 });
 
@@ -710,7 +656,8 @@ describe('GET /api/inbox/:id/chat: served from the forwarded Conversation, no ro
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ chatId: 'chat_owner' });
-    expect(await conversations.get(webPocDb, id)).toBeNull(); // never existed — the route read nothing
+    // Nothing was read: since #266 this bridge has no platform-data-layer client at all, so the
+    // forwarded header is not merely preferred over a row read — it is the only source there is.
   });
 
   test('an absent, off-contract, or id-mismatched payload is a 404 — never acted on', async () => {
@@ -771,51 +718,6 @@ describe('/api/chat/:id/send: the explicit canvas reaches the dispatch; absence 
     const res = await handleRequest(sendReq('chat_inbox'));
     expect(res.status).toBe(202);
     expect(dispatched).toEqual([{ chatId: 'chat_inbox', canvasId: undefined }]);
-  });
-});
-
-describe('indexSessionStart: records the chat→canvas edge when the turn carries one', () => {
-  test('a canvas-born session lands with its canvas edge; an unaddressed one stays null', async () => {
-    const withCanvas = `sess_cv_${crypto.randomUUID()}`;
-    await indexSessionStart('chat_cv', withCanvas, 'born on a canvas', undefined, 'cv_9');
-    expect((await conversations.getBySessionId(webPocDb, withCanvas))!.canvasId).toBe('cv_9');
-
-    const without = `sess_nocv_${crypto.randomUUID()}`;
-    await indexSessionStart('chat_nocv', without, 'born in the inbox');
-    expect((await conversations.getBySessionId(webPocDb, without))!.canvasId).toBeNull();
-  });
-});
-
-describe('POST /api/inbox/:id/reply routes the resumed turn to the conversation’s canvas', () => {
-  let restore: () => void = () => {};
-  let dispatched: Array<{ canvasId?: string }> = [];
-
-  beforeEach(() => {
-    dispatched = [];
-    restore = setChatTurnDispatcher((_chatId, _message, _sessionId, _images, _model, _fork, _effort, canvasId) => {
-      dispatched.push({ canvasId });
-    });
-  });
-
-  afterEach(() => restore());
-
-  test('a linked conversation resumes on ITS canvas store, not the default', async () => {
-    const conv = await conversations.create(webPocDb, {
-      sessionId: `sess_linked_${crypto.randomUUID()}`,
-      userId: 'default',
-      workspaceId: 'cs_workspace_abc',
-      canvasId: 'cv_linked',
-      summary: 'a canvas-born chat',
-    });
-    const res = await handleRequest(
-      new Request(`http://localhost/api/inbox/${encodeURIComponent(conv.id)}/reply`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message: 'continue' }),
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(dispatched).toEqual([{ canvasId: 'cv_linked' }]);
   });
 });
 

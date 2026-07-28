@@ -7,7 +7,7 @@ import { conversations, makeDb } from '../web-poc/lib/db/index.ts';
 import { findOrCreateConversation } from '../web-poc/lib/db/find-or-create-conversation.ts';
 import * as pushStore from '../web-poc/lib/db/queries/push-subscriptions.ts';
 import { PushPayload } from '../shared/push-contract.ts';
-import { ConversationStartOutput, PLATFORM_RPC_PATH, platformRpcToken } from '../shared/platform-rpc.ts';
+import { ConversationStartOutput, PLATFORM_RPC_PATH, TurnEndOutput, platformRpcToken } from '../shared/platform-rpc.ts';
 import { handlePlatformRpc } from './platform-rpc.ts';
 import type { PushSend } from './push-notify.ts';
 
@@ -82,6 +82,104 @@ describe('platform RPC: conversation.start', () => {
     expect(row?.summary).toBe('first message');
     // The chat is the identity; the newest session is re-pointed onto the one row.
     expect(row?.sessionId).toBe('s-2');
+  });
+});
+
+// #266: the container has no database at all now, so the settle-time backstop and the
+// end_turn transition are RPC operations too.
+describe('platform RPC: conversation.settle', () => {
+  test('files the row when the start never landed, and marks it active', async () => {
+    const db = await freshDb();
+
+    const res = await rpc(
+      {
+        op: 'conversation.settle',
+        input: { sessionId: 's-settle', userId: 'u', workspaceId: 'w', ownerRef: 'chat_S', summary: 'a turn that settled' },
+      },
+      { db },
+    );
+
+    expect(res.status).toBe(200);
+    const row = await conversations.getByOwnerRef(db, 'chat_S');
+    expect(row?.summary).toBe('a turn that settled');
+    expect(row?.unread).toBe(true); // markActivity: it shows in "All"
+  });
+
+  test('a settle after a start touches the SAME row — never a second one for the chat', async () => {
+    const db = await freshDb();
+    const input = { sessionId: 's-1', userId: 'u', workspaceId: 'w', ownerRef: 'chat_S2', summary: 'first message' };
+
+    const started = ConversationStartOutput.parse(
+      await (await rpc({ op: 'conversation.start', input }, { db })).json(),
+    );
+    await rpc({ op: 'conversation.settle', input }, { db });
+
+    expect((await conversations.list(db)).map((r) => r.id)).toEqual([started.conversationId]);
+  });
+});
+
+describe('platform RPC: turn.end', () => {
+  test('done: the work is complete — waiting_on none, the summary is the preview', async () => {
+    const db = await freshDb();
+
+    const res = await rpc(
+      {
+        op: 'turn.end',
+        input: { sessionId: 's-d', userId: 'u', workspaceId: 'w', ownerRef: 'chat_D', summary: 'shipped it', outcome: 'done' },
+      },
+      { db },
+    );
+
+    expect(res.status).toBe(200);
+    const { conversationId } = TurnEndOutput.parse(await res.json());
+    const row = await conversations.get(db, conversationId);
+    expect(row?.waitingOn).toBe('none');
+    expect(row?.lastMessagePreview).toBe('shipped it');
+  });
+
+  test('needs_human: the Conversation is promoted with the question as the preview', async () => {
+    const db = await freshDb();
+
+    const res = await rpc(
+      {
+        op: 'turn.end',
+        input: {
+          sessionId: 's-h',
+          userId: 'u',
+          workspaceId: 'w',
+          ownerRef: 'chat_H',
+          summary: 'blocked on a product call',
+          outcome: 'needs_human',
+          question: 'which branch?',
+        },
+      },
+      { db },
+    );
+
+    const { conversationId } = TurnEndOutput.parse(await res.json());
+    const row = await conversations.get(db, conversationId);
+    expect(row?.waitingOn).toBe('human');
+    expect(row?.status).toBe('open');
+    expect(row?.unread).toBe(true);
+    expect(row?.lastMessagePreview).toBe('which branch?');
+  });
+
+  test('the id it returns is the handle the container then asks `notify` for — one row, both ops', async () => {
+    const db = await freshDb();
+    const { conversationId } = TurnEndOutput.parse(
+      await (
+        await rpc(
+          {
+            op: 'turn.end',
+            input: { sessionId: 's-x', userId: 'u', workspaceId: 'w', ownerRef: 'chat_X', summary: 's', outcome: 'needs_human', question: 'q' },
+          },
+          { db },
+        )
+      ).json(),
+    );
+
+    const notified = await rpc({ op: 'notify', input: { conversationId, question: 'q' } }, { db });
+    expect(notified.status).toBe(200); // resolvable: the handle names a real row
   });
 });
 

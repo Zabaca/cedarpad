@@ -1,43 +1,31 @@
-// The human-in-the-loop promote protocol (PRD #50, Inbox — slice #61). Two halves of the
-// checkpoint-and-resume dance, kept pure and seam-driven so they test under a fake SDK:
-//   askHuman(...)           — the `ask_human` MCP tool's logic: find-or-create the Conversation
-//                             for THIS session, promote it (→ open/human/unread), notify, and
-//                             return text telling the agent to END ITS TURN. It NEVER blocks.
-//   resumeConversation(...) — a human reply: restore the session JSONL from R2 onto the runner,
-//                             resume the SDK Session with the reply, flip → waiting_on:agent.
-// Neither imports the bridge or the SDK directly; the caller injects the db, the R2 seam, a
-// notify seam, and a `runTurn` that actually drives `query({ resume })`.
+// The container's half of the Inbox (PRD #50 — slice #61), kept pure and seam-driven so it
+// tests under a fake SDK:
+//   endTurn(...)           — the `end_turn` tool's logic: declare this turn's ending over the
+//                            platform RPC, ask for the notification, and return text telling
+//                            the agent to STOP. It NEVER blocks.
+//   openConversation(...)  — prepare a Conversation to be opened live: restore its session
+//                            JSONL from R2 onto the runner and resolve its chatId.
+//   placeChatCard(...)     — canvas pairing's container half (#264).
+// ADR-0018 / #266: none of these hold a platform-data-layer client. Every row-shaped step
+// happens at the edge — either pushed down through the proxy or asked for over the RPC — so
+// this module's only injected collaborators are that RPC, the R2 seam, and a notify seam.
 
-import { conversations } from '../web-poc/lib/db/index.ts';
 import { findOrCreateConversation } from '../web-poc/lib/db/find-or-create-conversation.ts';
-import type { Database } from '../web-poc/lib/db/index.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { ForwardedPairing } from '../shared/bridge-wire.ts';
-import type { CanvasImage } from './agent.ts';
+import type { PlatformRpc } from './platform-rpc-client.ts';
 import { type BlobGetter, readRawTranscript, restore as restoreTranscript } from './transcript-r2.ts';
 
-/** Best-effort attention signal fired when a Conversation flips to waiting_on:human. A stub/log
- * this slice; wire a real PushNotification later. Never throws into the tool path. */
-export type Notify = (conversation: ConversationRow, question: string) => void | Promise<void>;
+/** Best-effort attention signal fired when a Conversation flips to waiting_on:human. Named by
+ * ID, not by row: since #266 the container never holds a Conversation, and delivery (who is
+ * watching, which devices they hold) is resolved entirely at the edge. Never throws into the
+ * tool path. */
+export type Notify = (conversationId: string, question: string) => void | Promise<void>;
 
 // `findOrCreateConversation` now lives in the platform data layer (ADR-0018): the edge runs it
 // too, for the platform RPC's `conversation.start` operation, and worker code cannot import this
 // module (it reaches node:fs through the transcript seam). Re-exported so call sites are unchanged.
 export { findOrCreateConversation };
-
-/**
- * Lazy backfill (canvas pairing): chats born before edge capture existed live as `chat`
- * shapes in canvas state, but their rows carry no canvas edge. When a canvas session builds,
- * the bridge hands its chat-shape ids here; each row found by ownerRef gets the edge.
- * First-wins (attachCanvas fills only a null edge) and unknown chat ids are ignored, so the
- * call is idempotent and safe to fire on every boot. Best-effort per row.
- */
-export async function backfillCanvasEdges(db: Database, canvasId: string, chatIds: string[]): Promise<void> {
-  for (const chatId of chatIds) {
-    const row = await conversations.getByOwnerRef(db, chatId);
-    if (row && !row.canvasId) await conversations.attachCanvas(db, row.id, canvasId);
-  }
-}
 
 /** The seam card placement needs from a canvas session: current shapes (for free-space
  * placement) and an upsert (to place the card). The bridge adapts its CanvasSession registry to
@@ -83,40 +71,10 @@ export async function placeChatCard(deps: PlaceChatCardDeps, pairing: ForwardedP
   ]);
 }
 
-/**
- * One-time cleanup for the pre-ownerRef era: sessionId-keyed rows piled up one duplicate per
- * turn (same chat, same first-message summary). For each (workspaceId, summary) group of
- * LEGACY rows (ownerRef null), keep the best row — waiting_on:human first, else newest
- * activity — and hard-delete the rest. Rows with an ownerRef are already correctly keyed and
- * are never touched. Idempotent; safe to run at every boot (post-cleanup groups have size 1).
- */
-export async function dedupeLegacyConversations(db: Database, _userId: string): Promise<number> {
-  // Post-shared-inbox: the cleanup sweeps ALL legacy rows (the list is no longer
-  // user-scoped); the userId param is kept for call-site compatibility.
-  const rows = await conversations.list(db);
-  const legacy = rows.filter((r) => !r.ownerRef);
-  const groups = new Map<string, ConversationRow[]>();
-  for (const r of legacy) {
-    const key = `${r.workspaceId}\n${r.summary ?? ''}`;
-    groups.set(key, [...(groups.get(key) ?? []), r]);
-  }
-  let removed = 0;
-  for (const group of groups.values()) {
-    if (group.length < 2) continue;
-    const rank = (r: ConversationRow) => (r.waitingOn === 'human' ? 0 : 1);
-    const at = (r: ConversationRow) => (r.lastActivity instanceof Date ? r.lastActivity.getTime() : Number(r.lastActivity));
-    const [keep, ...rest] = [...group].sort((a, b) => rank(a) - rank(b) || at(b) - at(a));
-    for (const r of rest) {
-      await conversations.remove(db, r.id);
-      removed += 1;
-    }
-    void keep;
-  }
-  return removed;
-}
-
 export interface EndTurnDeps {
-  db: Database;
+  /** The container's only path into the platform data layer (ADR-0018 / #266). Null when there
+   *  is no edge in front of this bridge — the tool then only answers the agent. */
+  rpc: PlatformRpc | null;
   /** The running session's id. Read lazily: a NEW session is only assigned an id mid-turn (the
    *  SDK init message), so the tool reads it at call time, not at factory time. */
   getSessionId: () => string | null;
@@ -140,27 +98,33 @@ export type EndTurnInput =
  *                 question), fire notify. The human's reply later resumes the session.
  *   done        — the work is complete: waiting_on:none, unread, preview = the summary.
  * Returns agent-facing text. NEVER blocks for a reply.
+ *
+ * ADR-0018 / #266: the row transition happens at the EDGE, over the platform RPC's `turn.end`
+ * operation — the container has no platform-data-layer client to make it with. The id that
+ * comes back is the handle the `notify` ping then names, so this tool still orchestrates the
+ * two steps; it just no longer touches a row. Best-effort throughout: an unreachable edge
+ * still answers the agent, exactly as a failed write did.
  */
 export async function endTurn(deps: EndTurnDeps, input: EndTurnInput): Promise<string> {
   const sessionId = deps.getSessionId();
   if (!sessionId) {
     return 'end_turn is unavailable right now (this session has no id yet). Finish your message and stop.';
   }
-  const conv = await findOrCreateConversation(deps.db, {
+  const filed = await deps.rpc?.turnEnd({
     sessionId,
     userId: deps.userId,
     workspaceId: deps.workspaceId,
     kind: deps.kind,
     ownerRef: deps.ownerRef,
     summary: input.summary,
+    outcome: input.outcome,
+    ...(input.outcome === 'needs_human' ? { question: input.question } : {}),
   });
   if (input.outcome === 'done') {
-    await conversations.markDone(deps.db, conv.id, input.summary);
     return 'Turn ending recorded (done). Stop here — do not continue working.';
   }
-  const promoted = await conversations.promote(deps.db, conv.id, input.question);
   try {
-    await deps.notify?.(promoted ?? conv, input.question);
+    if (filed) await deps.notify?.(filed.conversationId, input.question);
   } catch {
     // Notify is best-effort: a delivery failure must not fail the tool (the item is already
     // in the inbox, which is the durable signal).
@@ -170,40 +134,6 @@ export async function endTurn(deps: EndTurnDeps, input: EndTurnInput): Promise<s
     'This tool does NOT wait for a reply. Commit any work in progress, briefly note that you are',
     'waiting on the human, and END YOUR TURN. Their reply will resume this session with full context.',
   ].join(' ');
-}
-
-export interface ResumeDeps {
-  db: Database;
-  /** R2 read seam — the runner's blob backend. */
-  getter: BlobGetter;
-  /** `~/.claude/projects` on the runner (where resume reads the JSONL). */
-  projectsDir: string;
-  /** The cwd the session ran under (so restore lands the JSONL at the exact resume path). */
-  cwd: string;
-  /** Drive one resumed turn: `query({ resume: sessionId, prompt: message })` + persist/stream.
-   *  `images` are the human's pasted attachments — the SAME `CanvasImage[]` a canvas `/send`
-   *  carries (one reply/send contract, ADR-0009 / #123), so a reply streams multimodal too. */
-  runTurn: (sessionId: string, message: string, images: CanvasImage[]) => void | Promise<void>;
-  /** Override for tests; defaults to transcript-r2 restore. */
-  restore?: typeof restoreTranscript;
-}
-
-/**
- * Resume a Conversation on a human reply: pull the session JSONL from R2 back onto the runner FS
- * (so `query({ resume })` finds it after a sleep), drive the resumed turn with the reply, then flip
- * the Conversation to waiting_on:agent (clears unread). Reusable across runners — the caller
- * supplies `runTurn` (the product bridge dispatches its chat-turn machinery; #51's dev-agent runner
- * supplies its own).
- */
-export async function resumeConversation(
-  deps: ResumeDeps,
-  conversation: ConversationRow,
-  humanMessage: string,
-  images: CanvasImage[] = [],
-): Promise<ConversationRow | null> {
-  await (deps.restore ?? restoreTranscript)(deps.getter, deps.projectsDir, deps.cwd, conversation.sessionId);
-  await deps.runTurn(conversation.sessionId, humanMessage, images);
-  return conversations.reply(deps.db, conversation.id);
 }
 
 export interface OpenConversationDeps {

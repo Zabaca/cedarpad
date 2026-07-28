@@ -1,18 +1,24 @@
 import {
+  type ConversationSettleInput,
   type ConversationStartInput,
   type NotifyInput,
   PLATFORM_RPC_PATH,
   PlatformRpcRequest,
+  type TurnEndInput,
+  TurnEndOutput,
   platformRpcToken,
 } from '../shared/platform-rpc.ts';
 
-// The container half of the platform RPC (ADR-0018). The container originates exactly two
-// writes into the platform data layer; this is the only way it makes them, and the surface is
-// two named verbs — there is no query, exec, or table name to reach for.
+// The container half of the platform RPC (ADR-0018). Since #266 the container holds NO
+// platform-data-layer client at all, so this is the only way it writes — and the surface is
+// four named verbs; there is no query, exec, or table name to reach for.
 
-/** The two operations, as the bridge calls them. Both resolve even when the edge is down. */
+/** The operations, as the bridge calls them. All resolve even when the edge is down. */
 export interface PlatformRpc {
   conversationStart(input: ConversationStartInput): Promise<void>;
+  conversationSettle(input: ConversationSettleInput): Promise<void>;
+  /** The one operation whose reply is read: the id is the handle `notify` then names. */
+  turnEnd(input: TurnEndInput): Promise<TurnEndOutput | null>;
   notify(input: NotifyInput): Promise<void>;
 }
 
@@ -39,7 +45,7 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
 
   // Best-effort by contract (bridge.ts: "an index failure never fails the turn"). A dead edge
   // degrades exactly as a failed platform-data-layer write does today: logged, turn continues.
-  const call = async (body: PlatformRpcRequest): Promise<void> => {
+  const call = async (body: PlatformRpcRequest): Promise<Response | null> => {
     try {
       const res = await doFetch(`${origin}${PLATFORM_RPC_PATH}`, {
         method: 'POST',
@@ -48,14 +54,29 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
         // fails here rather than as a confusing 400 from the edge.
         body: JSON.stringify(PlatformRpcRequest.parse(body)),
       });
-      if (!res.ok) console.error(`[platform-rpc] ${body.op} failed: ${res.status}`);
+      if (!res.ok) {
+        console.error(`[platform-rpc] ${body.op} failed: ${res.status}`);
+        return null;
+      }
+      return res;
     } catch (err) {
       console.error(`[platform-rpc] ${body.op} failed:`, err);
+      return null;
     }
   };
 
   return {
-    conversationStart: (input) => call({ op: 'conversation.start', input }),
-    notify: (input) => call({ op: 'notify', input }),
+    conversationStart: async (input) => void (await call({ op: 'conversation.start', input })),
+    conversationSettle: async (input) => void (await call({ op: 'conversation.settle', input })),
+    turnEnd: async (input) => {
+      const res = await call({ op: 'turn.end', input });
+      if (!res) return null;
+      // Parse on the way IN as well: a malformed reply is the same "the edge did not answer"
+      // as an unreachable one, never a half-trusted id handed on to `notify`.
+      const parsed = TurnEndOutput.safeParse(await res.json().catch(() => null));
+      if (!parsed.success) console.error('[platform-rpc] turn.end returned an off-contract reply');
+      return parsed.success ? parsed.data : null;
+    },
+    notify: (input) => call({ op: 'notify', input }).then(() => undefined),
   };
 }

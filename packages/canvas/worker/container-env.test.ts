@@ -134,7 +134,6 @@ describe('containerEnv — connector secrets never reach the chat container (#24
     expect(Object.keys(result).sort()).toEqual(
       [
         'BETTER_AUTH_SECRET',
-        'BETTER_AUTH_URL',
         'CANVAS_CWD',
         'CANVAS_USER',
         'CANVAS_WORKSPACE',
@@ -144,12 +143,29 @@ describe('containerEnv — connector secrets never reach the chat container (#24
         'R2_BUCKET',
         'R2_ENDPOINT',
         'R2_SECRET_ACCESS_KEY',
-        'TURSO_KEY',
-        'TURSO_URL',
-        'VOYAGE_API_KEY',
-        'WEB_ORIGIN',
       ].sort(),
     );
+  });
+
+  // ADR-0018 / #266 — THE decision, as a test: the container is handed no way to reach a
+  // datastore. Not "does not use one" — cannot. This is the assertion that fails if anyone
+  // re-adds the forwarding lines, so it names the values rather than the variables.
+  test('no platform data layer credentials reach the container', () => {
+    const env = {
+      TURSO_URL: 'libsql://prod.turso.io',
+      TURSO_KEY: 'turso_fake_key',
+      VOYAGE_API_KEY: 'voyage_fake_key',
+      CANVAS_USER: 'u',
+    } as never;
+
+    const result = containerEnv(env, coords);
+
+    expect(Object.keys(result)).not.toContain('TURSO_URL');
+    expect(Object.keys(result)).not.toContain('TURSO_KEY');
+    expect(Object.values(result)).not.toContain('libsql://prod.turso.io');
+    expect(Object.values(result)).not.toContain('turso_fake_key');
+    // VOYAGE_API_KEY went with the same mount: embeddings are a Notebook (edge) concern.
+    expect(Object.values(result)).not.toContain('voyage_fake_key');
   });
 
   test('an Env carrying connector-secret-shaped fields (slack, stripe) does not surface them', () => {

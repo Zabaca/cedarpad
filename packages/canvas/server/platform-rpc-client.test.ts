@@ -57,8 +57,57 @@ describe('platform RPC client', () => {
     expect(String(logged[0])).toContain('platform-rpc');
   });
 
+  // #266: the container has no database left, so `end_turn` is an RPC operation too — and it is
+  // the ONE operation whose reply the container reads, because the id it returns is the handle
+  // it then names in `notify`.
+  test('turn.end returns the Conversation id the edge filed', async () => {
+    const bodies: unknown[] = [];
+    const client = platformRpc({
+      origin: 'https://app.cedarpad.com',
+      secret: SECRET,
+      fetchImpl: async (_input, init) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return Response.json({ conversationId: 'conv_end' });
+      },
+    })!;
+
+    const out = await client.turnEnd({
+      sessionId: 's-1',
+      userId: 'u',
+      workspaceId: 'w',
+      ownerRef: 'chat_A',
+      summary: 'blocked',
+      outcome: 'needs_human',
+      question: 'which branch?',
+    });
+
+    expect(out).toEqual({ conversationId: 'conv_end' });
+    expect(PlatformRpcRequest.parse(bodies[0]).op).toBe('turn.end');
+  });
+
+  test('a failed turn.end yields null rather than throwing — the tool still answers the agent', async () => {
+    const realError = console.error;
+    console.error = () => {};
+    try {
+      const client = platformRpc({
+        origin: 'https://app.cedarpad.com',
+        secret: SECRET,
+        fetchImpl: async () => new Response('nope', { status: 500 }),
+      })!;
+
+      await expect(
+        client.turnEnd({ sessionId: 's', userId: 'u', workspaceId: 'w', summary: 's', outcome: 'done' }),
+      ).resolves.toBeNull();
+      // The settle backstop is void-shaped and equally unfailing.
+      await expect(client.conversationSettle({ sessionId: 's', userId: 'u', workspaceId: 'w' })).resolves.toBeUndefined();
+    } finally {
+      console.error = realError;
+    }
+  });
+
   test('unconfigured (no origin) yields no client, so the caller keeps its local path', () => {
     expect(platformRpc({ origin: '', secret: SECRET })).toBeNull();
+    expect(platformRpc({ origin: undefined, secret: SECRET })).toBeNull();
     expect(platformRpc({ origin: 'https://app.cedarpad.com', secret: '' })).toBeNull();
   });
 });

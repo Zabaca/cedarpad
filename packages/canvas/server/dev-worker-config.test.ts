@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { devWorkerConfig, parseJsonc } from './dev-worker-config.ts';
+import { LOCAL_DEV_PLATFORM_SECRET } from '../shared/platform-rpc.ts';
 
 const base = {
   name: 'agent-canvas',
@@ -50,6 +51,10 @@ describe('devWorkerConfig: the edge Worker as local dev runs it', () => {
       BETTER_AUTH_URL: 'http://localhost:4520',
       DEV_AGENT_ENABLED: 'false',
       CANVAS_USER: 'usr_1',
+      // ADR-0018 / #266: the bridge has no database, so it reaches the platform data layer
+      // over the RPC — which needs both ends to share a trust root even in a worktree with no
+      // `.dev.vars`. `.dev.vars` still wins when it exists (wrangler's own precedence).
+      BETTER_AUTH_SECRET: LOCAL_DEV_PLATFORM_SECRET,
     });
   });
 

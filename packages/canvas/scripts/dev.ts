@@ -33,6 +33,10 @@ const edge = process.env.IS_SANDBOX
 
 const bridge = Bun.spawn(bridgeArgs, {
   stdio: ['inherit', 'inherit', 'inherit'],
+  // ADR-0018 / #266: the bridge has no database, so the edge Worker we just started IS its
+  // platform data layer — point its RPC at it. In the container (IS_SANDBOX) the real edge is
+  // the deployed Worker and `PLATFORM_RPC_ORIGIN` already arrives in the injected env.
+  env: edge ? { ...process.env, PLATFORM_RPC_ORIGIN: EDGE } : process.env,
 });
 // `bun run dev:web`, not `bunx vite`: the container base image ships `bun` but
 // not the `bunx` shim, so `bunx` ENOENTs and the dev stack dies on boot.

@@ -1,32 +1,26 @@
 import { createClient } from '@libsql/client';
 
-import { localDevDbUrl } from '../../server/local-d1.ts';
+import { requireLocalD1File } from '../../server/local-d1.ts';
 import { expect, test } from '../fixtures/test.ts';
 
 /**
- * A chat turn files its Conversation (ADR-0018 / #262).
+ * A chat turn files its Conversation (ADR-0018 / #262, #266).
  *
- * The acceptance this guards is behavioural, not structural: starting a turn must still result
- * in a Conversation appearing in the Inbox, whether the row is written by the container's own
- * platform-data-layer client (today, and in local dev) or asked for over the platform RPC's
- * `conversation.start` operation (in the container, where WEB_ORIGIN points at the edge).
+ * This is the acceptance test for the whole ADR: the container has no database, so the ONLY
+ * way this row can exist is if the turn asked the edge Worker for it over the platform RPC and
+ * the edge wrote it into miniflare's D1. Before #266 the same spec passed with the bridge
+ * writing the file itself; now the row's existence proves the hop.
  *
  * The spec drives the LIVE dev stack end to end — vite → bun bridge → the real turn pipeline
- * (row-at-start index, settle-time upsert, transcript backup). The single stubbed thing is the
- * Claude SDK turn itself (`E2E_MODE`, see server/bridge.ts), because it needs a real OAuth
- * token and a model round-trip.
- *
- * SCOPE NOTE, as in open-conversation.spec.ts: the harness starts vite + the bridge only, not
- * the edge Worker, and there is no auth fixture — so with no WEB_ORIGIN the bridge takes its
- * local path. Both legs of the RPC hop itself are covered by unit tests instead
- * (worker/platform-rpc.test.ts, server/platform-rpc-client.test.ts), and standing up
- * `wrangler dev` in the harness is ADR-0018 slice #263.
+ * (row-at-start index, settle-time upsert, transcript backup) → the edge Worker. The single
+ * stubbed thing is the Claude SDK turn itself (`E2E_MODE`, see server/bridge.ts), because it
+ * needs a real OAuth token and a model round-trip.
  */
 
 test('starting a chat turn files its Conversation', async ({ request }) => {
-  // The same local D1 the bridge and the edge Worker share (ADR-0018 / #263), resolved from
-  // this worktree's miniflare state dir.
-  const devDbUrl = localDevDbUrl();
+  // The local D1 the EDGE serves the platform data layer from (ADR-0018 / #263), resolved from
+  // this worktree's miniflare state dir. Read-only here: the spec is a witness, not a writer.
+  const devDbUrl = `file:${requireLocalD1File()}`;
 
   const chatId = `e2e-chat-${Date.now()}`;
   const message = `first message ${chatId}`;
