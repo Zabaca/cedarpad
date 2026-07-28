@@ -110,7 +110,11 @@
   "durable_objects": {
     "bindings": [
       { "class_name": "Sandbox", "name": "Sandbox" },
-      { "class_name": "Warehouse", "name": "Warehouse" }
+      { "class_name": "Warehouse", "name": "Warehouse" },
+      // One instance per canvas, hosting that canvas's tldraw sync room (ADR-0019, #288).
+      // Unlike Sandbox/Warehouse this is NOT a container class — it is a plain SQLite-backed
+      // DO, and its SQLite tables ARE the room's persistence.
+      { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" }
     ]
   },
   // Native R2 binding (ADR-0017, #238): the edge Worker (workerd) reads mart parquet and
@@ -146,7 +150,11 @@
     // Warehouse (#236) is a new DO class, not a change to Sandbox's storage — a
     // separate migration tag, per wrangler's "one new_sqlite_classes entry per class
     // introduced" convention (mirrors how Sandbox itself was introduced under v1).
-    { "tag": "v2", "new_sqlite_classes": ["Warehouse"] }
+    { "tag": "v2", "new_sqlite_classes": ["Warehouse"] },
+    // CanvasSyncRoom (#288). new_SQLITE_classes is required, not optional here: the room's
+    // documents/tombstones/clock live in this DO's SQLite tables (sync-core's
+    // SQLiteSyncStorage), so a KV-backed class would have nowhere to put them.
+    { "tag": "v3", "new_sqlite_classes": ["CanvasSyncRoom"] }
   ],
   // Preview environment (zbc: `apply preview canvas` -> `wrangler deploy --env
   // preview`). A SEPARATE worker `agent-canvas-preview` in the same account, on a
@@ -206,7 +214,11 @@
       "durable_objects": {
         "bindings": [
           { "class_name": "Sandbox", "name": "Sandbox" },
-          { "class_name": "Warehouse", "name": "Warehouse" }
+          { "class_name": "Warehouse", "name": "Warehouse" },
+          // Redeclared verbatim from the top level (#288) — named envs inherit no
+          // durable_objects. Preview gets its OWN room instances: DO storage is per-worker,
+          // not shared like Turso/R2/D1 are.
+          { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" }
         ]
       },
       // Preview shares production's mart bucket too, matching Turso/waitlist D1 sharing.
@@ -229,7 +241,8 @@
       ],
       "migrations": [
         { "tag": "v1", "new_sqlite_classes": ["Sandbox"] },
-        { "tag": "v2", "new_sqlite_classes": ["Warehouse"] }
+        { "tag": "v2", "new_sqlite_classes": ["Warehouse"] },
+        { "tag": "v3", "new_sqlite_classes": ["CanvasSyncRoom"] }
       ]
     }
   }
