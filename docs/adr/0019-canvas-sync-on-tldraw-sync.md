@@ -105,6 +105,33 @@ Branch `spike/arm1-tldraw-sync` is a useful reference — a working room, a cust
 React-free validators, and a non-browser writer. Branches `spike/arm2-reactflow-yjs` and
 `spike/arm3-reactflow-codemix` edited root `package.json` workspaces and **must never be merged**.
 
+## What the Durable Object turned out to be (#288, implemented)
+
+Four things did not match the documentation or this design's assumptions. Recorded because the
+first two are live risks and the third constrains everything downstream.
+
+- **`serializeAttachment`'s limit is 16 KiB, not the documented 2 KiB.** workerd's actual error is
+  `A WebSocket 'attachment' cannot be larger than 16384 bytes`; 4096 is accepted and 32768 is
+  rejected. A live session snapshot measures 1062 bytes, 822 of which is the serialized schema. So
+  hibernation has roughly 15 KiB of headroom — but only because the real limit is 8× the documented
+  one. At the documented 2 KiB, a presence record carrying a large selection could have overflowed
+  it. Do not design closer to this bound on the strength of the docs.
+- **Hibernation *wake* is unproven.** `ctx.acceptWebSocket` and `webSocketMessage` delivery work —
+  the fan-out test depends on them. But miniflare and `wrangler dev` never evict a Durable Object,
+  so `handleSocketResume` in the constructor has never executed, locally or anywhere. It is written
+  from the 5.2.5 docs with no evidence. **This is the first place to look if the production cutover
+  misbehaves.**
+- **The DO cannot `extends DurableObject` from `cloudflare:workers`.** That import is unresolvable
+  outside workerd, and wrangler requires the class to be re-exported from `worker/index.ts` — which
+  breaks `bun test` for every suite that transitively imports the entrypoint (93 failures, measured).
+  It is a plain class instead. The knock-on is load-bearing: `CANVAS_SYNC` is an unparameterised
+  `DurableObjectNamespace`, so **DO RPC methods are unavailable and `stub.fetch` is the only way in**.
+  Fine for the room; the agent write path must not reach for RPC.
+- **`cs_gate` does not exist.** This design and the PRD before it named it as the auth scheme; it was
+  deleted in the #47 cutover. Edge Better Auth (`authenticate` + `decideGate`) is the sole scheme.
+  The sync route self-gates ahead of `decideGate`, because the gate's deny branch returns login HTML
+  at status 200 — useless to a WebSocket client, which needs a 401 before any DO is addressed.
+
 ## Consequences
 
 - **`tldraw` must move 5.1.1 → 5.2.5**, and `@tldraw/tlschema` is pinned exact at 5.1.1 (for the
