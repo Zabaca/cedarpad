@@ -252,3 +252,22 @@ describe('blobToRoomSnapshot', () => {
     expect(roundTrip(shapes).map((s) => s.id)).toEqual(shapes.map((s) => s.id));
   });
 });
+
+// The migration's twin of the same defect (see src/tl-record-builder.test.ts). tldraw
+// draws a note's label at `(fontSizeAdjustment ?? 1) * labelFontSize`; `0 ?? 1` is 0, so
+// a 0 here migrated every sticky note's text to 0px — intact in the record, invisible on
+// the board. The blobs and the loaded snapshots always held the right text, which is why
+// `verify` (a shape-model comparison) reported a clean cutover.
+describe('migrated notes render their text at a visible size', () => {
+  test('a migrated note carries a non-zero fontSizeAdjustment multiplier', () => {
+    const snap = blobToRoomSnapshot(
+      { version: 1, shapes: [{ id: 'shape:n', type: 'note', x: 0, y: 0, text: 'hello' }] } as never,
+      'cv_test',
+    );
+    const note = snap.documents
+      .map((d) => d.state as unknown as { type?: string; props: Record<string, unknown> })
+      .find((r) => r.type === 'note');
+    expect(note).toBeDefined();
+    expect(note.props.fontSizeAdjustment).toBeGreaterThan(0);
+  });
+});

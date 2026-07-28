@@ -39,3 +39,25 @@ describe('buildShapeRecord', () => {
     expect(() => buildShapeRecord(draw, undefined, 'page:page')).toThrow(UnbuildableShapeError);
   });
 });
+
+// A note's text is rendered by tldraw at `(fontSizeAdjustment ?? 1) * labelFontSize`.
+// `0 ?? 1` is 0 — nullish coalescing does not catch 0 — so a 0 here draws every note's
+// text at 0px: present, correct, and invisible. That shipped in the 2026-07-28 cutover
+// and hid the text on every migrated sticky note. It is not data loss, which is why the
+// migration's `verify` (comparing the shape model) passed straight over it.
+//
+// Asserted as "renders at a visible size" rather than "== 1", so the same class of bug
+// cannot return as a 0-equivalent.
+describe('note defaults render text at a visible size', () => {
+  const note: CanvasShape = { id: 'shape:n', type: 'note', x: 0, y: 0, color: 'yellow', text: 'hello' };
+  const noteProps = () =>
+    (buildShapeRecord(note, undefined, 'page:p') as unknown as { props: Record<string, unknown> }).props;
+
+  test('a created note carries a non-zero fontSizeAdjustment multiplier', () => {
+    expect(noteProps().fontSizeAdjustment).toBeGreaterThan(0);
+  });
+
+  test('and it keeps the text that would be rendered at that size', () => {
+    expect(plaintextOf(noteProps().richText)).toBe('hello');
+  });
+});

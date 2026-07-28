@@ -64,7 +64,14 @@ const DEFAULT_PROPS: Record<string, Record<string, unknown>> = {
     labelColor: 'black',
     size: 'm',
     font: 'draw',
-    fontSizeAdjustment: 0,
+    // 1, NOT 0 — this is a MULTIPLIER, and tldraw's own note default is 1.
+    // `NoteShapeUtil` renders the label at `(fontSizeAdjustment ?? 1) * labelFontSize`,
+    // and `0 ?? 1` is 0 (nullish coalescing does not catch 0), so a 0 here draws every
+    // note's text at 0px: present, correct, and invisible. It survived review because it
+    // is not data loss — the richText is intact and `verify` compares the shape model,
+    // not tldraw's render props. Regression: it shipped in the 2026-07-28 cutover and hid
+    // the text on every migrated sticky note.
+    fontSizeAdjustment: 1,
     align: 'middle',
     verticalAlign: 'middle',
     growY: 0,
