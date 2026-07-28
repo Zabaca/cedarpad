@@ -54,39 +54,75 @@ export async function openRemoteCanvasStore(
   let state = await send(endpoint, fetchImpl, { op: 'read' }, headers);
   let mirror = createStore(state.shapes);
   let queue: CanvasMutation[] = [];
+  let poison: RemoteStoreError | null = null;
 
   const adopt = (next: Result) => {
     state = next;
     mirror = createStore(next.shapes);
   };
 
+  // A failed flush POISONS the store: every later call throws instead of answering.
+  //
+  // The batch is not atomic — the ops go one at a time — so a failure partway through
+  // leaves the room holding a PREFIX of what the mirror has applied. That makes the
+  // mirror wrong for reads, not just for writes, and no local recovery can fix it: we
+  // cannot know whether the failed op landed, and the ops after it were never sent. The
+  // alternative (re-queue the remainder and let the caller retry) quietly re-offers a
+  // mirror we already know disagrees with the room, which is exactly how "the agent says
+  // it drew the thing and the canvas disagrees" becomes expensive to trace. Failing loud
+  // and early is cheaper. The caller's recovery is to open a fresh store, which re-reads
+  // the room's actual state.
+  const live = <T>(fn: () => T): T => {
+    if (poison) throw poison;
+    return fn();
+  };
+
   return {
     getState(): CanvasState {
       // The room's clock, not the mirror's local counter: the version an agent observes
       // has to be the one the room and every browser client agree on.
-      return { version: state.version, shapes: mirror.getState().shapes };
+      return live(() => ({ version: state.version, shapes: mirror.getState().shapes }));
     },
     upsert(shapes: CanvasShape[]): number {
-      const v = mirror.upsert(shapes);
-      if (shapes.length) queue.push({ op: 'upsert', shapes });
-      return v;
+      return live(() => {
+        const v = mirror.upsert(shapes);
+        if (shapes.length) queue.push({ op: 'upsert', shapes });
+        return v;
+      });
     },
     remove(ids: string[]): number {
-      const v = mirror.remove(ids);
-      if (ids.length) queue.push({ op: 'remove', ids });
-      return v;
+      return live(() => {
+        const v = mirror.remove(ids);
+        if (ids.length) queue.push({ op: 'remove', ids });
+        return v;
+      });
     },
     clear(): number {
-      const v = mirror.clear();
-      queue.push({ op: 'clear' });
-      return v;
+      return live(() => {
+        const v = mirror.clear();
+        queue.push({ op: 'clear' });
+        return v;
+      });
     },
     async flush(): Promise<void> {
+      if (poison) throw poison;
       const pending = queue;
       queue = [];
       // Sequential, never concurrent: the ops are ordered (a create then a delete of the
       // same id is not the same as the reverse) and the room applies them as it gets them.
-      for (const m of pending) adopt(await send(endpoint, fetchImpl, m, headers));
+      for (let i = 0; i < pending.length; i++) {
+        try {
+          adopt(await send(endpoint, fetchImpl, pending[i]!, headers));
+        } catch (e) {
+          const unsent = pending.length - i - 1;
+          poison = new RemoteStoreError(
+            `canvas mutation ${i + 1}/${pending.length} failed, ${unsent} later mutation(s) not sent — this store is now unusable, reopen it: ${
+              (e as Error).message
+            }`,
+          );
+          throw poison;
+        }
+      }
     },
   };
 }

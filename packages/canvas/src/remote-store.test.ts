@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { CanvasMutation, type CanvasMutationResult } from '../shared/canvas-mutation';
 import { createShapesOp, deleteShapesOp } from './canvas-ops';
-import { openRemoteCanvasStore } from './remote-store';
+import { openRemoteCanvasStore, RemoteStoreError } from './remote-store';
 import type { CanvasShape } from './shapes';
 
 const rect: CanvasShape = { id: 'shape:r', type: 'rectangle', x: 1, y: 2, w: 30, h: 40, color: 'blue', text: 'hi' };
@@ -54,6 +54,28 @@ describe('openRemoteCanvasStore', () => {
     await store.flush();
     expect(room.sent.map((m) => m.op)).toEqual(['read', 'upsert', 'remove']);
     expect(store.getState().shapes.map((s) => s.type)).toEqual(['note']);
+  });
+
+  test('a mid-batch failure does not silently drop the remainder — it poisons the store', async () => {
+    const room = fakeRoom([rect]);
+    let calls = 0;
+    const failOnSecondMutation: typeof fetch = (async (url: string, init: { body: string }) => {
+      // 0 is the opening read; 1 is the upsert; 2 is the remove, which fails.
+      if (++calls === 3) return new Response(JSON.stringify({ error: 'nope' }), { status: 400 });
+      return room.post(url as never, init as never);
+    }) as unknown as typeof fetch;
+
+    const store = await openRemoteCanvasStore('/api/canvas-sync/c1/mutate', failOnSecondMutation);
+    createShapesOp(store, [{ type: 'note', x: 0, y: 0, text: 'n' }]);
+    deleteShapesOp(store, [rect.id]);
+    createShapesOp(store, [{ type: 'note', x: 1, y: 1, text: 'later' }]);
+
+    await expect(store.flush()).rejects.toThrow(/not sent/);
+    // The room holds only the prefix that succeeded, so the mirror is wrong for READS
+    // too. Serving it — or letting a retry send nothing — is the silent-divergence bug.
+    expect(() => store.getState()).toThrow(RemoteStoreError);
+    expect(() => store.upsert([rect])).toThrow(RemoteStoreError);
+    await expect(store.flush()).rejects.toThrow(RemoteStoreError);
   });
 
   test('a rejected write surfaces the room’s reason', async () => {
