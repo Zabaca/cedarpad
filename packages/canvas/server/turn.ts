@@ -1,18 +1,17 @@
 // The turn: one chat turn's lifecycle, made a module (extracted from bridge.ts's inline
-// runChatTurn). A turn is the one thing in this system that sequences the others — it wakes the
-// active canvas session, prepares the dev-agent worktree, drives the agent (runChat), streams
-// its events, and on settle stamps the resume pointer, persists, indexes the Inbox Conversation,
-// and backs up the transcript. Every collaborator it touches is already a module (canvas
-// session, inbox transition, dev-agent prep, persist batch); this makes the SEQUENCE that calls
-// them a module too, so the settle path is testable under fakes instead of only through a live
-// SDK turn.
+// runChatTurn). A turn is the one thing in this system that sequences the others — it opens a
+// store on the active canvas's room, prepares the dev-agent worktree, drives the agent
+// (runChat), streams its events, and on settle stamps the resume pointer, persists, indexes the
+// Inbox Conversation, and backs up the transcript. Every collaborator it touches is already a
+// module (the room store, inbox transition, dev-agent prep, persist batch); this makes the
+// SEQUENCE that calls them a module too, so the settle path is testable under fakes instead of
+// only through a live SDK turn.
 //
 // bridge.ts composes the deps from its singletons; this file owns only the "when" (phase order),
 // never the "what" (each collaborator). Imports are type-only but for one: opening the turn's
 // room-backed canvas store (#310) is part of the phase order, not a collaborator that varies.
 
-import type { CanvasImage, ChatEvent, ListMarts, OpenPr, SendToChat, runChat } from './agent.ts';
-import type { CanvasSession } from './canvas-sessions.ts';
+import type { CanvasImage, CaptureView, ChatEvent, ListMarts, OpenPr, SendToChat, runChat } from './agent.ts';
 import type { EndTurnDeps } from './inbox.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
 import { openTurnCanvasStore } from './turn-canvas-store.ts';
@@ -58,12 +57,12 @@ export interface TurnDeps {
   /** The edge-minted token is the COMPLETE definition of a dev-agent turn: it decides the
    *  Inbox workspace tag + the skill policy (bridge.turnFlavor; skills absent = all discovered). */
   flavor: (token: string | undefined) => { workspaceId: string; kind: 'chat' | 'dev-agent'; skills?: string[] };
-  /** Resolve the request's active canvas session (#79) — screenshots + the canvas id. */
-  getSession: (canvasId: string) => Promise<CanvasSession>;
-  /** Open a store on the canvas's Durable-Object-hosted ROOM (ADR-0019, #310). Present ⇒ the
-   *  agent draws into the room, which is what every browser reads since #290; absent (tests,
-   *  non-edge contexts) ⇒ the session's in-memory store, unchanged. */
-  openCanvasRoom?: (canvasId: string) => Promise<RemoteCanvasStore>;
+  /** The active canvas's screenshot round-trip (`view_canvas`) — the one rider left on the
+   *  bridge's SSE stream after #297 (server/screenshot-channel.ts). */
+  requestScreenshot: (canvasId: string) => CaptureView;
+  /** Open a store on the canvas's Durable-Object-hosted ROOM (ADR-0019, #310). Since #297
+   *  there is no in-process store to fall back to: this is where canvas state lives. */
+  openCanvasRoom: (canvasId: string) => Promise<RemoteCanvasStore>;
   /** Where an UNADDRESSED turn routes (the bridge's default canvas id). */
   defaultCanvasId: string;
   /** Prepare the dev-agent worktree + open_pr for this turn (undefined for a product turn). */
@@ -75,8 +74,6 @@ export interface TurnDeps {
   ) => Promise<{ openPr: OpenPr; cwd: string } | undefined>;
   /** The agent SDK turn (an async generator of ChatEvents). Injected so tests fake it. */
   runChat: typeof runChat;
-  /** Fan a shared-library rev-bump out to every open canvas (#55). */
-  bumpSharedModuleAcrossCanvases: (module: string) => number;
   /** Tag each ChatEvent with its chatId and push it to every SSE subscriber. */
   broadcast: (chatId: string, ev: ChatEvent) => void;
   /** The inbox context base for the end_turn tool — workspaceId + ownerRef are per-turn. */
@@ -131,13 +128,10 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
     // The request's active canvas (#79): the agent's reads, writes, tools, and screenshot
     // round-trip all use THIS store, so shapes land on the human's canvas and broadcast there.
     const activeCanvasId = canvasId ?? deps.defaultCanvasId;
-    const session = await deps.getSession(activeCanvasId);
-    // #310: the agent draws into the ROOM. Opening REJECTS rather than falling back to the
-    // session store — a turn that cannot reach the room would otherwise draw into a store
-    // nobody reads and report success, which is exactly the bug this closes.
-    const store = deps.openCanvasRoom
-      ? await openTurnCanvasStore(() => deps.openCanvasRoom!(activeCanvasId))
-      : session.store;
+    // #310: the agent draws into the ROOM. Opening REJECTS rather than degrading — a turn
+    // that cannot reach the room has nowhere else to draw (#297 deleted the in-process
+    // store), and reporting success over an unchanged canvas is the bug this closes.
+    const store = await openTurnCanvasStore(() => deps.openCanvasRoom(activeCanvasId));
     const inbox = { ...deps.inbox, workspaceId: flavor.workspaceId, kind: flavor.kind, ownerRef: chatId };
     // A dev-agent send runs in its prepared worktree with open_pr armed; a prepare failure
     // (clone/auth) surfaces through the catch below as the turn's error — better a visible
@@ -147,15 +141,18 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       store,
       message,
       sessionId,
-      session.requestScreenshot,
+      deps.requestScreenshot(activeCanvasId),
       images,
       chatId,
       model,
       forkSession,
       ac,
       effort,
-      session.canvasId,
-      deps.bumpSharedModuleAcrossCanvases,
+      activeCanvasId,
+      // #297: the cross-canvas shared-library rev-bump fanned over the in-memory session
+      // registry, which nothing has read since #290. Without it, `write_component` on a
+      // shared module bumps the agent's OWN canvas (agent.ts's `reloadAfterAuthor` fallback).
+      undefined,
       inbox,
       devAgent?.openPr,
       devAgent?.cwd,

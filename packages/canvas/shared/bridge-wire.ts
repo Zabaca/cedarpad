@@ -144,10 +144,12 @@ export function decodeForwardedPairing(header: string | null): ForwardedPairing 
  * the MCP proxy (worker/mcp-tools.ts) — NOT every bridge route. The bridge's own route
  * matches read from here too, so the guest allowlist can no longer drift from the paths
  * the bridge actually serves. */
+// (#297 removed two entries with the old sync plane: `canvasStream` — `/api/canvas/stream`
+// still exists but carries only the agent's screenshot ask, is not guest-reachable and is not
+// an MCP route, so it has no business here — and `shapes`, the browser's whole-shape upsert,
+// whose route is gone entirely.)
 export const BRIDGE_ROUTES = {
   canvas: '/api/canvas',
-  canvasStream: '/api/canvas/stream',
-  shapes: '/api/canvas/shapes',
   shapesCreate: '/api/canvas/shapes/create',
   shapesUpdate: '/api/canvas/shapes/update',
   deleteShapes: '/api/canvas/delete',

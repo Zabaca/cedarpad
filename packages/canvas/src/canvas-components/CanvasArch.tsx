@@ -260,14 +260,14 @@ export default function CanvasArch() {
       {/* Bridge */}
       <Box x={bridgeBox.x} y={bridgeBox.y} w={bridgeBox.w} h={bridgeBox.h} color={COLORS.teal} label="Bridge Server">
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Tag label="GET /api/canvas/stream (SSE)" color={COLORS.teal} pulse />
-          <Tag label="POST /api/canvas/shapes" color={COLORS.orange} />
-          <Tag label="POST /api/canvas/delete" color={COLORS.orange} />
+          <Tag label="GET /api/canvas/stream (SSE — screenshot only)" color={COLORS.teal} pulse />
           <Tag label="POST /api/canvas/screenshot" color={COLORS.orange} />
+          <Tag label="POST /api/canvas/shapes/{create,update}" color={COLORS.orange} />
+          <Tag label="POST /api/canvas/delete" color={COLORS.orange} />
           <Tag label="GET /api/chat/stream (SSE, all chats)" color={COLORS.green} pulse pulseDelay={400} />
           <Tag label="POST /api/chat/:id/send" color={COLORS.orange} />
         </div>
-        <div style={{ marginTop: 4, color: COLORS.muted, fontSize: 9 }}>in-memory CanvasState (version + shapes[] + pages[]) · canvas persisted to a JSON file · chat transcript derived from the SDK session JSONL (server-owned ChatMeta)</div>
+        <div style={{ marginTop: 4, color: COLORS.muted, fontSize: 9 }}>ADR-0019: no canvas state here — every write opens a short-lived store on the canvas&rsquo;s Durable-Object room and flushes before answering · chat transcript derived from the SDK session JSONL (server-owned ChatMeta)</div>
       </Box>
 
       {/* Agent */}

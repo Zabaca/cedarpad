@@ -29,22 +29,30 @@ const VITE_PREFIXES = ['/src/', '/shared/', '/@vite/', '/@fs/', '/@id/', '/node_
 /** Bridge API ops a guest may use, ALWAYS scoped to the link's canvas via the request's
  * canvas selection. No default-canvas fallback for guests: an unaddressed request is
  * denied outright (the write_component canvas_id lesson — a wrong-canvas write is
- * invisible until something 404s; force the address, surface the mistake). */
-const CANVAS_API = new Set([
-  `GET ${BRIDGE_ROUTES.canvas}`,
-  `GET ${BRIDGE_ROUTES.canvasStream}`,
-  `POST ${BRIDGE_ROUTES.shapes}`,
-  `POST ${BRIDGE_ROUTES.shapesCreate}`,
-  `POST ${BRIDGE_ROUTES.shapesUpdate}`,
-  `POST ${BRIDGE_ROUTES.deleteShapes}`,
-  `GET ${BRIDGE_ROUTES.components}`,
-  `POST ${BRIDGE_ROUTES.componentsPlace}`,
-]);
+ * invisible until something 404s; force the address, surface the mistake).
+ *
+ * READ-ONLY since ADR-0019 / #297. Two things happened at once and they had to move
+ * together:
+ *
+ *  - The canvas READS a guest used to make here (`GET /api/canvas`, `GET
+ *    /api/canvas/stream`) are served by the read-only room connection now (#294). Leaving
+ *    them listed would have authorized a guest to reach a route that no longer answers.
+ *  - The canvas WRITES (`/api/canvas/shapes`, `/shapes/create`, `/shapes/update`,
+ *    `/api/canvas/delete`, `/api/components/place`) contradicted #294's read-only
+ *    WebSocket, and since #305 they wrote to the room under the CONTAINER's service
+ *    credential — a guest's write, authorized as the container. Closed here.
+ *
+ * What is left is exactly a read: list the library. #320 owns what guests SHOULD be
+ * allowed to do; this list is only what makes the two doors say the same thing. */
+const CANVAS_API = new Set([`GET ${BRIDGE_ROUTES.components}`]);
 
-/** Per-module component ops (own-dir read/write + data write for THAT canvas). Promote/
- * adopt are deliberately absent — they mutate the workspace-shared tier. */
+/** Per-module component READS (own-dir source + data for THAT canvas). PUT went with the
+ * writes above (#297): `PUT /api/components/:module` writes executable component source
+ * that hot-reloads into members' browsers, and it would otherwise have been left as the
+ * single accidental guest write path. Promote/adopt were already absent — they mutate the
+ * workspace-shared tier. */
 const COMPONENT_MODULE = /^\/api\/components\/(?:data\/)?([^/]+)$/;
-const COMPONENT_DENY = new Set(['promote', 'adopt', 'place']); // place is in CANVAS_API; promote/adopt denied
+const COMPONENT_DENY = new Set(['promote', 'adopt', 'place']);
 
 export function decideGuestGate(req: GuestRequest, guest: GuestSession): GuestGate {
   const { pathname, method } = req;
@@ -89,7 +97,7 @@ export function decideGuestGate(req: GuestRequest, guest: GuestSession): GuestGa
   if (req.canvas !== guest.canvasId) return deny;
   if (CANVAS_API.has(`${method} ${pathname}`)) return allow;
   const mod = COMPONENT_MODULE.exec(pathname);
-  if (mod && !COMPONENT_DENY.has(mod[1] as string) && (method === 'GET' || method === 'PUT')) return allow;
+  if (mod && !COMPONENT_DENY.has(mod[1] as string) && method === 'GET') return allow;
 
   return deny;
 }

@@ -1,8 +1,10 @@
 // Blob store for canvas persistence. Two concerns, kept dumb: deterministic key
 // layout, and a swappable `BlobBackend`. The backend is the ONLY thing that
 // knows where bytes live — local disk for dev (no cloud), R2 in the container,
-// an in-memory Map in tests. No policy lives here — the data-loss guard is in
-// `canvas-persistence.ts`. Glossary: workspace = container/fs; canvas = board.
+// an in-memory Map in tests. No policy lives here. Glossary: workspace = container/fs;
+// canvas = board. (The canvas-state data-loss guard that used to sit above this in
+// `canvas-persistence.ts` went with the old sync plane — ADR-0019 / #297. The canvas key
+// and its READER stay: the retained blobs are the cutover's import source.)
 
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -135,13 +137,15 @@ const dec = new TextDecoder();
 export class BlobStore {
   constructor(private readonly backend: BlobBackend) {}
 
+  /**
+   * READ-ONLY since ADR-0019 / #297. The canvas document lives in the room now, so nothing
+   * writes `canvas-state.json` any more — but the retained blobs are exactly what the
+   * production cutover imports (`scripts/migrate-canvas-rooms.ts`, #295) and what a
+   * rollback re-imports. The reader survives on purpose; only the writer was deleted.
+   */
   async loadCanvasState(ws: string, canvas: string): Promise<CanvasState | null> {
     const bytes = await this.backend.get(canvasStateKey(ws, canvas));
     return bytes === null ? null : (JSON.parse(dec.decode(bytes)) as CanvasState);
-  }
-
-  async saveCanvasState(ws: string, canvas: string, state: CanvasState): Promise<void> {
-    await this.backend.put(canvasStateKey(ws, canvas), enc.encode(JSON.stringify(state)));
   }
 
   loadSharedComponents(ws: string): Promise<Uint8Array | null> {
