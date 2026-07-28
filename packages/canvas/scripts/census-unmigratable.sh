@@ -3,8 +3,12 @@
 #
 # WHY: scripts/migrate-canvas-rooms.ts refuses to run on a dump containing unmigratable
 # shapes unless `--accept-loss` is passed (ADR-0019). That flag exists for a real defect
-# but should never be typed against production — measured 2026-07-28 across all 20
-# canvases: 560 shapes, 98 arrows, ZERO draw shapes, ZERO dangling bindings.
+# but should never be typed against production. An earlier version of this script counted
+# canvases from D1 instead of R2 and, on 2026-07-28, reported 21 canvases / 601 shapes /
+# 0 dangling — while `migrate-canvas-rooms.ts dump`, which enumerates R2 blobs directly,
+# found 30 canvases / 790 shapes / 3 dangling-binding arrows. Nine blobs had no matching D1
+# row, including the `default` canvas (125 shapes), which held every one of the bad arrows.
+# The D1-backed census's confident "0" was computed over a set that excluded every problem.
 #
 # The blobs are mutable. One freehand stroke drawn on any canvas invalidates that. So this
 # is a PRECONDITION to re-check immediately before migrating, not a fact to cite.
@@ -28,20 +32,32 @@ BUCKET=${BUCKET:-agent-canvas}
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 
-echo "→ listing canvases (D1 is authoritative for WHICH canvases exist)"
-# wrangler resolves a binding name from the wrangler.jsonc in its CWD, so this must run
-# from packages/canvas — from the repo root, PLATFORM_DB "does not exist".
+echo "→ listing canvases (R2 is authoritative for WHICH blobs the migration will read)"
+# Same enumeration migrate-canvas-rooms.ts's `dump` uses (listFromR2 / s3Backend in
+# server/blob-store.ts): list R2 keys under the workspace's canvases prefix and derive ids
+# from the ones ending in canvas-state.json. D1 rows are not consulted — a canvas can have
+# a blob with no D1 row (the 2026-07-28 incident) and the migration would still read it.
 CANVAS_DIR="$REPO_ROOT/packages/canvas"
-IDS=$(cd "$CANVAS_DIR" && sops exec-env "$SECRETS" \
-  "CI=true CLOUDFLARE_ACCOUNT_ID=99a19e584439be0568f33aad0477372b ./node_modules/.bin/wrangler d1 execute PLATFORM_DB --remote --json --command 'select id from canvases'" 2>/dev/null \
-  | python3 -c "
-import sys, json
-s = sys.stdin.read()
-print('\n'.join(r['id'] for r in json.loads(s[s.index('['):])[0]['results']))
-" 2>/dev/null)
+LIST_SCRIPT="$OUT/list-r2-canvases.ts"
+cat > "$LIST_SCRIPT" <<'TS'
+const client = new Bun.S3Client({
+  accessKeyId: process.env.R2_ACCESS_KEY_ID,
+  secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  bucket: process.env.R2_BUCKET,
+  endpoint: process.env.R2_ENDPOINT,
+});
+const prefix = `workspaces/${process.env.WORKSPACE}/canvases/`;
+const res = await client.list({ prefix });
+const keys = (res?.contents ?? []).map((o) => o.key);
+for (const key of keys) {
+  const m = /^workspaces\/[^/]+\/canvases\/([^/]+)\/canvas-state\.json$/.exec(key);
+  if (m) console.log(m[1]);
+}
+TS
+IDS=$(cd "$CANVAS_DIR" && sops exec-env "$SECRETS" "bun run $LIST_SCRIPT" 2>/dev/null)
 
 if [ -z "$IDS" ]; then
-  echo "❌ could not list canvases — refusing to report a census over an unknown denominator."
+  echo "❌ could not list canvas blobs from R2 — refusing to report a census over an unknown denominator."
   echo "   A partial census reads exactly like a clean one. Fix the listing first."
   exit 1
 fi
@@ -97,7 +113,7 @@ if unreadable:
         print(f'   {cid}: {err}')
     fail = True
 if len(rows) != expected:
-    print(f'\n❌ counted {len(rows)} canvases but D1 lists {expected} — incomplete census.')
+    print(f'\n❌ counted {len(rows)} canvases but R2 lists {expected} — incomplete census.')
     fail = True
 if tot['draw'] or tot['bad']:
     print(f"\n❌ {tot['draw']} draw shape(s) and {tot['bad']} dangling-binding arrow(s) CANNOT be migrated.")
