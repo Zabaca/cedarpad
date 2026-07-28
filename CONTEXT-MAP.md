@@ -13,7 +13,7 @@
 - [App](./packages/app/CONTEXT.md) — the cedarpad outliner + per-node Claude conversations
 - [Canvas](./packages/canvas/CONTEXT.md) — tldraw canvas with a built-in Claude chat agent that draws on it and reads from it
 - [Infra](./packages/infra/CONTEXT.md) — module instances and environments managed by `zbc apply`
-- [Web POC](./packages/web-poc/CONTEXT.md) — single Cloudflare Worker serving a Vite/React SPA + Hono `/api/*`
+- [Notebook / platform data layer](./packages/canvas/web-poc/) — the Notebook app (Observations/Problems, `buildApp`'s `/v1/*`) **and** the **platform data layer** (schema, query modules, migrations) that every App consumes. Mounted at the **edge** inside the canvas worker (ADR-0007 #56), not its own Worker. `web-poc` is a legacy directory name; see root [CONTEXT.md](./CONTEXT.md) for the term.
 - [WWW](./packages/www/CONTEXT.md) — Astro marketing site + waitlist at `cedarpad.com` (ADR-0014)
 
 ## Relationships
