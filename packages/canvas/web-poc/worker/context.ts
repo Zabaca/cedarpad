@@ -4,10 +4,17 @@ import type { AccessScope } from "./access.js";
 /** Cloudflare Worker env bindings (from wrangler vars/secrets or .dev.vars). */
 export interface Bindings {
   /**
-   * The platform data layer on D1 (ADR-0018). Bound in LOCAL DEV only for now
-   * (miniflare's local D1, #263); when present it wins over TURSO_* below.
+   * The platform data layer on D1 (ADR-0018). Bound in local dev (miniflare's local D1,
+   * #263) and, since #265, in production too — but INERT there until PLATFORM_DB_ENABLED
+   * flips (#267).
    */
   PLATFORM_DB?: import("@cloudflare/workers-types").D1Database;
+  /**
+   * The cutover switch (#265). Only "true" makes a bound PLATFORM_DB win over TURSO_*;
+   * anything else (including a bound-but-not-enabled D1) keeps the Turso path. Set as an
+   * edge Worker var, so the cutover and its rollback are both a var flip + deploy.
+   */
+  PLATFORM_DB_ENABLED?: string;
   TURSO_URL: string;
   TURSO_KEY?: string;
   ANTHROPIC_API_KEY?: string;

@@ -22,6 +22,21 @@ import { cloudflareModule } from '../../modules/cloudflare'
  * CLOUDFLARE_API_TOKEN invalidates them — recompute and re-`sops set` the four
  * R2_* keys on rotation.
  *
+ * Platform data layer (ADR-0018, #265): D1 `cedarpad-platform`, bound as PLATFORM_DB in
+ * the package's wrangler.jsonc. Created once, out of band, the same way the waitlist D1
+ * was (see www.ts) — the cloudflare module is a wrangler deploy orchestrator and does not
+ * provision databases:
+ *
+ *   sops exec-env packages/infra/environments/production/secrets.yaml \
+ *     'cd packages/canvas && CLOUDFLARE_ACCOUNT_ID=<accountId> \
+ *        ./node_modules/.bin/wrangler d1 create cedarpad-platform'
+ *
+ * then paste the printed database_id into wrangler.jsonc (top level AND the preview env —
+ * named environments inherit nothing). Schema migrations are applied by
+ * `scripts/deploy.sh` before each rollout. The binding is INERT until the
+ * PLATFORM_DB_ENABLED var flips (#267); TURSO_* below stays exactly where it is until the
+ * cutover has soaked (#268).
+ *
  * No build step: the worker is bundled by wrangler and the container is built from
  * the package's Dockerfile (Docker must be running locally at apply time, on a
  * Workers Paid plan with Containers enabled).

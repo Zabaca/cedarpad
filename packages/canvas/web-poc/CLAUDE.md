@@ -75,7 +75,9 @@ secrets.yaml` and are pushed as Worker secrets by the zbc module — now as
   `/api/auth/*` from (ADR-0018; apply migrations with
   `bun run webpoc:db:migrate:local`); in prod it's remote Turso from env.
   (`worker/runtime.ts` `createDbForWorker` is the edge's own path: the D1 binding
-  when bound, otherwise workerd's `@libsql/client/web` against Turso.)
+  when it is both bound AND `PLATFORM_DB_ENABLED === "true"`, otherwise workerd's
+  `@libsql/client/web` against Turso. Production carries the binding but the flag is
+  "false" — inert until the cutover, #265/#267.)
 
 ## Dev / test workflow
 

@@ -122,14 +122,20 @@ DOCKER_CONFIG="$DC" docker build -f Dockerfile.warehouse -t agent-canvas-warehou
   || { echo "❌ warehouse image failed to build — aborting before rollout"; exit 1; }
 echo "✅ warehouse image builds clean"
 
-# Migrate remote Turso BEFORE the rollout. server/bridge.ts deliberately skips remote
-# migrations ("remote Turso is migrated by the deploy") and edge worker routes read
-# Turso directly — shipping edge code that reads a new column before the ALTER lands
-# 500s the API (incident 2026-07-15, migration 0016). Drizzle's migrator is idempotent,
-# so a deploy with no pending migrations is a no-op here.
-echo "→ migrating remote Turso (drizzle, idempotent)"
-( cd "$CANVAS_DIR" && sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" 'bun run webpoc:db:migrate' ) \
-  || { echo "❌ remote Turso migration failed — aborting before rollout"; exit 1; }
+# Migrate the platform data layer BEFORE the rollout. Shipping edge code that reads a new
+# column before the ALTER lands 500s the API (incident 2026-07-15, migration 0016).
+#
+# Since ADR-0018 / #265 the platform data layer is D1, so this applies the SAME drizzle
+# migrations through wrangler instead of drizzle's own migrator against Turso. Wrangler
+# tracks what it has applied in the database's own `d1_migrations` ledger, so a deploy with
+# nothing pending is a no-op. Turso is deliberately NOT migrated here any more: it is frozen
+# as the rollback target, and while PLATFORM_DB_ENABLED is "false" (wrangler.jsonc) that is
+# also what production still reads — so a deploy carrying a NEW migration must not land
+# before the cutover (#267). Migrations 0000–0025 are already applied to both.
+echo "→ migrating the platform data layer on D1 (wrangler, idempotent)"
+( cd "$CANVAS_DIR" && sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" \
+    "CI=true CLOUDFLARE_ACCOUNT_ID=99a19e584439be0568f33aad0477372b ./node_modules/.bin/wrangler d1 migrations apply PLATFORM_DB --remote" ) \
+  || { echo "❌ D1 migration failed — aborting before rollout"; exit 1; }
 
 echo "→ zbc apply production canvas (build + deploy + push secrets — both container images)"
 ( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }
