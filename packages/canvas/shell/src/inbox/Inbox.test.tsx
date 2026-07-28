@@ -33,6 +33,8 @@ type Item = {
   lastActivity: number;
   canvasId: string | null;
   assignedTo: string | null;
+  /** The chatId that birthed the row — how a draft is matched back to its Conversation. */
+  ownerRef?: string;
 };
 
 const realFetch = globalThis.fetch;
@@ -470,5 +472,175 @@ describe('the list collapses', () => {
 
     await click(container.querySelector('[title="Show conversations"]'));
     expect(container.querySelector('.inbox-items')).not.toBeNull();
+  });
+});
+
+// Starting a new chat from the Inbox (Concept 2): the entry point is a PRIMARY button that sits
+// ABOVE the filter row (not wedged inside it), and the not-yet-saved chat is a PINNED row-zero in
+// the list — "New chat · draft" — so it is visible and obviously unsaved until the first send
+// births the Conversation row. Clicking it mints a client-side chatId and mounts a live
+// <ChatView>; NO request is made at click time (the row is born by the first send, row-at-start).
+describe('starting a new chat', () => {
+  const newChatButton = () => container.querySelector('.inbox-new-chat');
+  /** The draft's client-minted chatId, read off the same-origin transcript request <ChatView>
+   *  makes on mount — an observable of the component, not a peek at its state. */
+  const draftChatId = (): string | null => {
+    let found: string | null = null;
+    for (const c of calls) {
+      const m = /^GET .*\/api\/chat\/(chat_[^/]+)\/transcript$/.exec(c);
+      if (m && !c.includes('/bridge/')) found = m[1] as string;
+    }
+    return found;
+  };
+
+  test('the New chat button sits above the filter row, not inside it', async () => {
+    store = [item({ id: 'c1', summary: 'Ship it' })];
+    await mount();
+
+    const button = newChatButton();
+    expect(button).not.toBeNull();
+    expect(button?.textContent).toContain('New chat');
+    // Above the filters: not a descendant of `.inbox-filters`, and earlier in the list pane.
+    expect(container.querySelector('.inbox-filters .inbox-new-chat')).toBeNull();
+    const pane = container.querySelector('.inbox-list');
+    const filters = container.querySelector('.inbox-filters');
+    expect(pane?.contains(button as Node)).toBe(true);
+    expect((button as Node).compareDocumentPosition(filters as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test('clicking it opens a draft thread — no Conversation is created, no runner woken', async () => {
+    store = [item({ id: 'c1', summary: 'Ship it' })];
+    await mount();
+    calls = [];
+
+    await click(newChatButton());
+
+    expect(container.querySelector('.inbox-threadhead')?.textContent).toContain('New chat');
+    // Row-at-start: the Conversation is born by the FIRST SEND, never by the click. So the click
+    // writes nothing (no POST) and wakes nothing (no `/inbox/:id/bridge` resolve).
+    expect(calls.filter((c) => !c.startsWith('GET '))).toEqual([]);
+    expect(calls.filter((c) => c.includes('/bridge'))).toEqual([]);
+  });
+
+  test('the draft is a pinned, selected row at the top of the list', async () => {
+    store = [item({ id: 'c1', summary: 'Ship it' })];
+    await mount();
+    expect(items().length).toBe(1);
+
+    await click(newChatButton());
+
+    const rows = items();
+    expect(rows.length).toBe(2);
+    // Row zero, ahead of every real conversation, badged so it reads as not-yet-saved.
+    expect(rows[0]?.querySelector('b')?.textContent).toContain('New chat');
+    expect(rows[0]?.textContent).toContain('draft');
+    expect(rows[0]?.className).toContain('sel');
+    expect(rows[1]?.querySelector('b')?.textContent).toBe('Ship it');
+  });
+
+  test('opening a real conversation drops the draft row', async () => {
+    store = [item({ id: 'c1', summary: 'Ship it' })];
+    await mount();
+    await click(newChatButton());
+    expect(items().length).toBe(2);
+
+    await click(items()[1] ?? null);
+
+    expect(items().length).toBe(1);
+    expect(container.querySelector('.inbox-item.draft')).toBeNull();
+  });
+
+  test('a list refetch that has not borne the draft yet keeps the draft row', async () => {
+    store = [item({ id: 'c1', summary: 'Ship it' })];
+    await mount();
+    await click(newChatButton());
+
+    // The first send has not landed (or failed) — the refetch returns the same rows as before.
+    await changeSelect(viewFilter(), 'all');
+
+    const rows = items();
+    expect(rows.length).toBe(2);
+    expect(rows[0]?.className).toContain('draft');
+    expect(container.querySelector('.inbox-threadhead')?.textContent).toContain('New chat');
+  });
+
+  test('once the row is born (ownerRef matches) the draft is replaced by the real conversation', async () => {
+    store = [item({ id: 'c1', summary: 'Ship it' })];
+    await mount();
+    await click(newChatButton());
+    const chatId = (container.querySelector('.inbox-threadhead') as HTMLElement | null) && draftChatId();
+    expect(chatId).toBeTruthy();
+
+    // The first send created the Conversation on the bridge; the next list load returns it.
+    store.push(item({ id: 'c2', summary: 'Pricing page copy', ownerRef: chatId as string }));
+    await changeSelect(viewFilter(), 'all');
+
+    expect(container.querySelector('.inbox-item.draft')).toBeNull();
+    expect(container.querySelector('.inbox-threadhead')?.textContent).toContain('Pricing page copy');
+    const selected = container.querySelector('.inbox-item.sel');
+    expect(selected?.querySelector('b')?.textContent).toBe('Pricing page copy');
+  });
+
+  test('the button renders (and still drafts) while the list is loading, when empty, and on error', async () => {
+    // Empty: the button is present alongside the empty-list message.
+    store = [];
+    await mount();
+    expect(newChatButton()).not.toBeNull();
+    expect(container.querySelector('.inbox-empty')?.textContent).toContain('No conversations.');
+    await click(newChatButton());
+    expect(items().length).toBe(1);
+    expect(items()[0]?.className).toContain('draft');
+
+    // Error: the list fetch fails, but drafting is a client-side state change and still works.
+    await act(async () => root.unmount());
+    container.remove();
+    globalThis.fetch = (async () => new Response('boom', { status: 500 })) as unknown as typeof fetch;
+    await mount();
+    expect(container.querySelector('.inbox-empty')?.textContent).toContain('Failed to load.');
+    expect(newChatButton()).not.toBeNull();
+    await click(newChatButton());
+    expect(container.querySelector('.inbox-threadhead')?.textContent).toContain('New chat');
+  });
+
+  test('the button is present before the list resolves (loading)', async () => {
+    // A list request that never settles: the pane is in its loading state the whole time.
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (new URL(url, 'https://poc.cedarpad.com').pathname === '/api/inbox') return new Promise(() => {}) as never;
+      return new Response('not found', { status: 404 });
+    }) as unknown as typeof fetch;
+    await mount();
+
+    expect(container.querySelector('.inbox-empty')?.textContent).toContain('Loading…');
+    expect(newChatButton()).not.toBeNull();
+    expect((newChatButton() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  test('Cmd/Ctrl+N opens a draft from anywhere in the stage', async () => {
+    store = [item({ id: 'c1', summary: 'Ship it' })];
+    await mount();
+    expect(container.querySelector('.inbox-item.draft')).toBeNull();
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true, bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(container.querySelector('.inbox-item.draft')).not.toBeNull();
+    expect(container.querySelector('.inbox-threadhead')?.textContent).toContain('New chat');
+  });
+
+  test('pressing New chat again reuses the open draft rather than stacking a second one', async () => {
+    store = [item({ id: 'c1', summary: 'Ship it' })];
+    await mount();
+    await click(newChatButton());
+    const first = draftChatId();
+    expect(first).toBeTruthy();
+
+    await click(newChatButton());
+
+    // One draft row, and the SAME chat — a second click must not discard a half-typed message.
+    expect(container.querySelectorAll('.inbox-item.draft').length).toBe(1);
+    expect(draftChatId()).toBe(first as string);
   });
 });
