@@ -31,6 +31,7 @@ import { handleShareLinksApi } from './share-links-api.ts';
 import { handleShareAccept, readGuestSession } from './guest-session.ts';
 import { decideGuestGate } from './guest-gate.ts';
 import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.ts';
+import { handleCanvasSnapshot, parseCanvasSnapshotPath } from './canvas-snapshot-api.ts';
 import { handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
 import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
 import { handleMartApi, loadCanvasStateFromBucket, MART_ROUTE } from './mart-api.ts';
@@ -341,6 +342,13 @@ export default {
     const mutateCanvasId = parseCanvasMutatePath(url.pathname);
     if (mutateCanvasId) {
       return handleCanvasMutate(request, env, mutateCanvasId, session?.user ?? null);
+    }
+
+    // The migration door onto the same room (#295): export/import a room snapshot.
+    // Self-gating like the two above, and ADMIN-only — see canvas-snapshot-api.ts.
+    const snapshotCanvasId = parseCanvasSnapshotPath(url.pathname);
+    if (snapshotCanvasId) {
+      return handleCanvasSnapshot(request, env, snapshotCanvasId, session?.user ?? null);
     }
 
     // Canvas assets (ADR-0019): the R2 bytes behind an image shape's `src`. Self-gating
