@@ -12,11 +12,12 @@ import { expect, test } from '../fixtures/test.ts';
  * it exercises the container half of that seam for real: routing, header parsing, transcript
  * restore, ChatMeta seeding, and the JSON response.
  *
- * SCOPE NOTE: the harness starts vite + the bridge only — not the edge Worker, and there is no
- * auth fixture (see .claude/skills/worktree/SKILL.md). So the edge's own legs — the ownership
- * check and the stamping of this header — are covered by worker/inbox-bridge.test.ts rather
- * than here. Standing up wrangler dev + a seeded Better Auth session is the deferred Shell-flow
- * work, deliberately not bundled into this slice.
+ * SCOPE NOTE: this spec drives the bridge DIRECTLY, stamping the header itself. Since #263 the
+ * harness does start the edge Worker (on the worktree's derived port) — but there is still no
+ * auth fixture (see .claude/skills/worktree/SKILL.md), so the edge's own legs — the ownership
+ * check and the stamping of this header — remain covered by worker/inbox-bridge.test.ts rather
+ * than here. Driving this route through the edge needs a seeded Better Auth session: the
+ * deferred Shell-flow work, deliberately not bundled into either slice.
  */
 
 const forwarded = (conv: unknown) => ({ 'x-inbox-conversation': JSON.stringify(conv) });
