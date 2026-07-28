@@ -48,7 +48,8 @@ conflict merge, and reconnect/resume come from the protocol rather than from us.
 - **Referential integrity is ours.** Sync-core contains zero binding logic. If a shape with a bound
   arrow is deleted, the write path cleans up the binding itself.
 - **Cut over all canvases at once.** No production users, no feature flag, no phased rollout. Old
-  blobs are retained, so rollback is re-import, not restore.
+  blobs are retained, so rollback is re-import, not restore. (The migration itself turned out to be
+  a rebuild rather than a reshape — see the correction below.)
 
 ## The write API: `updateStore` over `storage.transaction`
 
@@ -131,6 +132,46 @@ first two are live risks and the third constrains everything downstream.
   deleted in the #47 cutover. Edge Better Auth (`authenticate` + `decideGate`) is the sole scheme.
   The sync route self-gates ahead of `decideGate`, because the gate's deny branch returns login HTML
   at status 200 — useless to a WebSocket client, which needs a 401 before any DO is addressed.
+
+## Correction: the migration is a rebuild, not a reshape (#295)
+
+This design said *"Migration is reshaping, not translating — the stored shapes are already tldraw
+records."* **That is wrong**, and the error was in this ADR rather than in any implementation.
+
+`canvas-state.json` holds the **simplified `CanvasShape` model**, not tldraw records.
+`src/shapes.ts`'s own header says so: *"Deliberately smaller than tldraw's internal record model…
+Translation to/from real tldraw shapes lives only in the browser."* Real records only ever existed
+in the browser, built by an `Editor` filling every default prop from `ShapeUtil.getDefaultProps()`.
+A Durable Object has neither an Editor nor a DOM. So the migration **rebuilds** records, and the
+default-props table is hand-maintained — the most likely thing to rot on a tldraw bump.
+
+Two things cannot survive the rebuild, because the information is not in the blob:
+
+- **Freehand `draw` shapes.** The blob keeps flattened `points`; tldraw needs `segments` with
+  per-point pressure. `src/tldraw-conventions.ts:144` has always returned `null` for them, with the
+  comment *"Freehand is authored only by the local human; never recreated from the model."*
+- **Arrows with a dangling binding.** A bound terminal stores `{0,0}` placeholders, so a migrated
+  arrow whose target is missing collapses to zero length at the origin, or becomes a stray line
+  from the origin to a real point. It never had geometry — only a relationship, and the
+  relationship is gone. There is nothing to preserve, so such arrows are **dropped whole**.
+
+Both are **hard failures** requiring an explicit `--accept-loss` flag, not silent drops. The
+retained blob is the only copy, and drop-and-report protects only an operator who reads the output.
+
+## `loadSnapshot()` does not validate — the same hole, a second time (#295)
+
+`TLSocketRoom.loadSnapshot()` writes records straight into storage without validating them. An
+invalid record is accepted at import and then breaks every client that opens the room.
+
+This is the **identical hazard** that made this ADR choose `room.updateStore()` over
+`storage.transaction` for the write path — and it reappeared on the import path, where the reasoning
+had not been applied. Validating every record against `createCanvasTLSchema()` at dump time and
+again in the room immediately caught a real defect that round-trip tests structurally could not see:
+image assets carried `fileSize: -1`, which the schema rejects. Green tests, unloadable records.
+
+The general lesson: **a round-trip test proves symmetry, not validity.** Anywhere records enter the
+room from outside, validate against the schema explicitly — the room will not do it for you except
+through `updateStore`.
 
 ## Consequences
 
