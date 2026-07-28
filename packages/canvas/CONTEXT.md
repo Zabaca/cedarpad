@@ -473,9 +473,16 @@ and reconnect/resume are the sync protocol's job now, not ours. What remains our
   `recordType.validate`; `storage.transaction`'s `txn.set` and `loadSnapshot()` do
   **not**. An invalid record is accepted and then breaks every client that opens the
   room. A round-trip test proves symmetry, not validity.
-- **Ids are primed from room state** before the agent's first mint (`src/remote-store.ts`),
-  or a cold container would mint `shape:agent_1` into an occupied id — an upsert where a
-  create was meant. Concurrent writers can still collide (#327).
+- **Minted shape ids are random, not sequential** — `shape:agent_<16 hex>`
+  (`src/normalize.ts`, #327). A counter is only unique within one process, so two
+  containers writing one canvas mint the same next id and the second flush upserts over
+  the first: an upsert where a create was meant, reported as success. Priming the counter
+  from room state (#324) closed the cold-container case but not that one, and is gone.
+  Existing `shape:agent_<n>` ids are never rewritten and still address their shapes.
+  Because the ids are no longer guessable, `create_shapes` / `place_component` return
+  every id they mint and say so in their descriptions. Still open by other routes: a blind
+  upsert onto an already-occupied id (a stale or hand-written id) overwrites and reports
+  success — the mutate contract has no create-vs-update distinction.
 
 ## Guest share links (ADR 0015, PRD #220 — live)
 

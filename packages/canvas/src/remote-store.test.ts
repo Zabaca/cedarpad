@@ -88,11 +88,14 @@ describe('openRemoteCanvasStore', () => {
   });
 });
 
-// #324: a COLD container on a WARM room. The mint counter lives in the container process
-// and starts at 0, so without priming the first create mints `shape:agent_1` — which on a
-// canvas the agent has drawn on before already exists. Upsert-by-id then overwrites a real
-// shape and reports success: silent data loss, worst on the canvases with the most history.
-describe('the id counter is primed from the room (#324)', () => {
+// #324/#327: a create on a WARM room must never land on an id the room already holds —
+// upsert-by-id would overwrite a real shape and report success, which is silent data loss
+// and worst on the canvases with the most history. #324 answered it by priming a counter
+// from the room; #327 replaced the counter with random ids, so the property now holds with
+// no read-then-prime step at all (the two-independent-writers case that priming could not
+// cover is pinned in normalize.test.ts). The legacy `shape:agent_N` ids below are the real
+// thing: existing canvases are not rewritten, and they must keep working.
+describe('a create never lands on an id the room already holds (#324, #327)', () => {
   const agentNote = (n: number, text: string): CanvasShape => ({
     id: `shape:agent_${n}`,
     type: 'note',
@@ -102,11 +105,7 @@ describe('the id counter is primed from the room (#324)', () => {
     text,
   });
 
-  // The assertion is on the MINTED NUMBER, not on an exact collision: the counter is a
-  // module global, so which id an unprimed store happens to mint depends on what other
-  // tests in this process minted first. "greater than every agent id the room already
-  // holds" is the property that actually rules out the overwrite, whatever the start.
-  test('creating on a room that already holds shape:agent_N never overwrites one of them', async () => {
+  test('creating on a room that already holds legacy shape:agent_N leaves them intact', async () => {
     const seeded = [agentNote(216, 'keep me'), agentNote(217, 'me too')];
     const room = fakeRoom(seeded);
     const store = await openRemoteCanvasStore('/api/canvas-sync/c1/mutate', room.post);
@@ -118,6 +117,21 @@ describe('the id counter is primed from the room (#324)', () => {
     expect(after).toHaveLength(3);
     for (const s of seeded) expect(after.find((a) => a.id === s.id)).toEqual(s);
     const minted = after.find((s) => !seeded.some((k) => k.id === s.id))!;
-    expect(Number(/_(\d+)$/.exec(minted.id)![1])).toBeGreaterThan(217);
+    expect(minted).toMatchObject({ type: 'note', text: 'new' });
+  });
+
+  // The other half of "not rewritten": a legacy id the agent passes back is honoured as a
+  // handle, so an update from a transcript written before #327 still finds its shape.
+  test('a legacy shape:agent_N id still addresses its shape on update', async () => {
+    const seeded = [agentNote(216, 'keep me')];
+    const room = fakeRoom(seeded);
+    const store = await openRemoteCanvasStore('/api/canvas-sync/c1/mutate', room.post);
+
+    store.upsert([agentNote(216, 'edited')]);
+    await store.flush();
+
+    const after = store.getState().shapes;
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ id: 'shape:agent_216', text: 'edited' });
   });
 });

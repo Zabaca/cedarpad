@@ -5,22 +5,25 @@
 import { type CanvasShape, type ShapeColor, SHAPE_SIZE_DEFAULTS, isColor } from './shapes';
 import { DataSourceSchema, type DataSource } from '../shared/mart-contract';
 
-let counter = 0;
-/** Mint a tldraw-compatible shape id. Not for seeds — runtime uniqueness only. */
-export function mintId(prefix = 'agent'): string {
-  counter += 1;
-  return `shape:${prefix}_${counter}`;
-}
-
 /**
- * Advance the mint counter past any `shape:<prefix>_<n>` ids already present (e.g.
- * after loading persisted shapes), so freshly minted ids never collide with them.
+ * Mint a tldraw-compatible shape id: a readable prefix for provenance, then 64 random
+ * bits. Not for seeds — runtime uniqueness only.
+ *
+ * RANDOM, not sequential (#327). A counter is only unique within one process, so two
+ * containers writing the same canvas both mint the same next id and the second flush
+ * upserts over the first: no error, the agent reports success, a shape is gone. #324
+ * primed the counter from room state, which closed the cold-container case but not this
+ * one — priming cannot help when both writers prime from the same snapshot. Randomness is
+ * unique without any coordination between writers, which is the only property that makes
+ * the collision impossible rather than unlikely.
+ *
+ * Ids already on real canvases (`shape:agent_217`) are NOT rewritten — they are opaque
+ * strings to everything that reads them, and they keep working unchanged.
  */
-export function primeIdCounter(existingIds: Iterable<string>): void {
-  for (const id of existingIds) {
-    const m = /_(\d+)$/.exec(id);
-    if (m) counter = Math.max(counter, Number(m[1]));
-  }
+export function mintId(prefix = 'agent'): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  const suffix = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `shape:${prefix}_${suffix}`;
 }
 
 function num(v: unknown, field: string): number {
