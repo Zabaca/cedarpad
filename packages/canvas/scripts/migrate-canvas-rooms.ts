@@ -1,6 +1,7 @@
 // Move every canvas's persisted `canvas-state.json` blob into its tldraw sync room
-// (ADR-0019, #295). Same discipline as scripts/migrate-platform-data.ts: three explicit
-// verbs a human runs one at a time, reading the output between each.
+// (ADR-0019, #295). Same discipline as the D1 cutover's now-retired dump/load/verify
+// tool (#267/#268): three explicit verbs a human runs one at a time, reading the
+// output between each.
 //
 //   bun run scripts/migrate-canvas-rooms.ts dump   [--out <dir>] [--from <blobRoot>]
 //   bun run scripts/migrate-canvas-rooms.ts load   --dump <dir> --target <origin|memory> [--force] [--accept-loss]

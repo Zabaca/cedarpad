@@ -135,46 +135,14 @@ echo "✅ warehouse image builds clean"
 # column before the ALTER lands 500s the API (incident 2026-07-15, migration 0016).
 #
 # Since ADR-0018 / #265 the platform data layer is D1, so this applies the SAME drizzle
-# migrations through wrangler instead of drizzle's own migrator against Turso. Wrangler
-# tracks what it has applied in the database's own `d1_migrations` ledger, so a deploy with
-# nothing pending is a no-op. Turso is deliberately NOT migrated here any more: it is frozen
-# as the rollback target, and while PLATFORM_DB_ENABLED is "false" (wrangler.jsonc) that is
-# also what production still reads — so a deploy carrying a NEW migration must not land
-# before the cutover (#267). Migrations 0000–0025 are already applied to both.
+# migrations through wrangler instead of drizzle's own migrator. Wrangler tracks what it
+# has applied in the database's own `d1_migrations` ledger, so a deploy with nothing
+# pending is a no-op. The Turso rollback path (the cutover safety net that used to gate
+# here) was retired in #268 — D1 is the only store now.
 echo "→ migrating the platform data layer on D1 (wrangler, idempotent)"
 ( cd "$CANVAS_DIR" && sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" \
     "CI=true CLOUDFLARE_ACCOUNT_ID=99a19e584439be0568f33aad0477372b ./node_modules/.bin/wrangler d1 migrations apply PLATFORM_DB --remote" ) \
   || { echo "❌ D1 migration failed — aborting before rollout"; exit 1; }
-
-# Cutover safety net (#267). Once PLATFORM_DB_ENABLED is "true" in wrangler.jsonc, a
-# deploy repoints production's reads and writes at D1. If the rows are not in D1 yet, that
-# deploy is a silent data outage: every user, canvas and session vanishes from the app while
-# sitting safely in Turso. The import (scripts/migrate-platform-data.ts) must land FIRST.
-# So: with the flag on, refuse to roll out onto a D1 whose `user` table is empty. With the
-# flag off — today, and after a rollback — this check does not run at all.
-#
-# This is a BACKSTOP, not the control. `bunx @zabaca/zbc apply production canvas` deploys
-# without going through this script, so the guard simply does not run on that path. The
-# actual control is that PLATFORM_DB_ENABLED stays "false" on main and is flipped by hand
-# at cutover time, after the import has been verified.
-#
-# Read the flag by grep, not by parsing the .jsonc: stripping `//` comments with a regex
-# also eats the `https://` inside the URL vars. -m1 takes the FIRST occurrence, which is
-# the top-level (production) block — preview's redeclaration comes later in the file.
-FLAG=$(grep -m1 -o '"PLATFORM_DB_ENABLED": *"[a-z]*"' "$CANVAS_DIR/wrangler.jsonc" | sed 's/.*"\([a-z]*\)"$/\1/')
-if [ "$FLAG" = "true" ]; then
-  echo "→ PLATFORM_DB_ENABLED=true — checking the platform D1 actually holds rows before cutting over"
-  USERS=$(sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" \
-    "CI=true CLOUDFLARE_ACCOUNT_ID=99a19e584439be0568f33aad0477372b $CANVAS_DIR/node_modules/.bin/wrangler d1 execute PLATFORM_DB --remote --json --command 'select count(*) as n from \"user\"'" \
-    | python3 -c "import sys,json; s=sys.stdin.read(); print(json.loads(s[s.index('['):])[0]['results'][0]['n'])" 2>/dev/null || echo 0)
-  if [ "${USERS:-0}" -lt 1 ]; then
-    echo "❌ PLATFORM_DB_ENABLED is \"true\" but the platform D1 has $USERS user row(s)."
-    echo "   Deploying now would cut production over to an EMPTY database."
-    echo "   Import first:  bun run scripts/migrate-platform-data.ts dump | load | verify  (see #267)"
-    exit 1
-  fi
-  echo "✅ platform D1 holds $USERS user row(s) — cutover deploy may proceed"
-fi
 
 echo "→ zbc apply production canvas (build + deploy + push secrets — both container images)"
 ( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }

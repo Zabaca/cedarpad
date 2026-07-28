@@ -32,7 +32,7 @@ import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 // interrupt + transcript + `/api/alive` all address the Conversation's OWNING bridge instead
 // of same-origin. This module owns that resolution (`conv.workspaceId → coords`) and the
 // proxy, kept SEPARATE from the edge Inbox list/detail API (`inbox.ts`) so the Worker's test
-// can exercise the real proxy while still stubbing that Turso/R2-backed list handler.
+// can exercise the real proxy while still stubbing that D1/R2-backed list handler.
 
 const db = (env: Env) => createDbForWorker(env as unknown as Bindings);
 

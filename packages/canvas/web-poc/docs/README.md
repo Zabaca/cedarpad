@@ -36,10 +36,11 @@ Design points that **changed** after migration (newer than the docs):
   `ASYNC_PIPELINE.md`'s "embed happens in the agent job" is superseded — the
   agent job now only does LLM classification/linking/synthesis.
 - **No background worker for the core loop.** The Cron/`scheduled` consumer was
-  removed; the `agent_jobs` queue is **optional and inert** unless you run
-  `bun run dev:worker`. (See `../MIGRATION.md` → "Async agent jobs".)
-- **Env names**: `TURSO_URL` / `TURSO_KEY` (was `TURSO_DATABASE_URL` /
-  `TURSO_AUTH_TOKEN`).
+  removed; the `agent_jobs` queue is **inert** (see `../MIGRATION.md` →
+  "Async agent jobs").
+- **Store**: the platform D1 (ADR-0018) — the `TURSO_URL`/`TURSO_KEY` env vars
+  (which had themselves replaced the pre-merge `TURSO_DATABASE_URL`/
+  `TURSO_AUTH_TOKEN`) were retired with the Turso rollback path (#268).
 - **Migrations** live in `lib/db/migrations` (single clean baseline at 1024 dims).
 
 ## Index

@@ -1,20 +1,15 @@
-# Copy to web-poc/.dev.vars (gitignored). The canvas bridge reads these when it
-# mounts web-poc (`cd packages/canvas && bun run dev`). In prod these are Worker
-# secrets on the canvas worker, pushed by the zbc module (from SOPS), never here.
-
-# Local libSQL: leave TURSO_URL BLANK in dev — the bridge then uses a local file
-# (packages/canvas/.web-poc-dev.db) and migrates on boot (no `turso` daemon needed).
-# Set it to a remote Turso URL only to point local dev at a real DB.
-TURSO_URL=""
-TURSO_KEY=""
+# Copy to web-poc/.dev.vars (gitignored). The edge Worker reads these when local
+# dev runs it (ADR-0018) — wrangler gives `.dev.vars` precedence over `vars`. In
+# prod these are Worker secrets on the canvas worker, pushed by the zbc module
+# (from SOPS), never here.
 
 # Embeddings: Voyage (active embedding provider, voyage-3.5-lite). Without it the
 # embedder falls back to the deterministic local hash (lexical, not semantic).
 VOYAGE_API_KEY=""
 
 # LLM agent providers — only used if you run the optional agent-jobs consumer
-# (`bun scripts/worker.ts` from web-poc/) for classification/linking/synthesis.
-# Not needed for the inline embed→store→search loop.
+# for classification/linking/synthesis. Not needed for the inline
+# embed→store→search loop.
 ANTHROPIC_API_KEY=""
 OPENAI_API_KEY=""
 

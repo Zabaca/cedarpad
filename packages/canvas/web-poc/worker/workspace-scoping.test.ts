@@ -46,7 +46,6 @@ function freshDb() {
 const embedder = createHashEmbedder(configuration.ai.embeddingDimensions);
 
 const env = {
-  TURSO_URL: ":memory:",
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long!!",
   BETTER_AUTH_URL: "http://localhost:8787",
   DEV_AUTH_WORKSPACE: "any", // enables the dev hatch (x-dev-workspace picks the ws)

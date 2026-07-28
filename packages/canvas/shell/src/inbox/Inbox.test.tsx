@@ -11,7 +11,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { connectionTarget } from '../../../shared/chat-store';
 import { InboxStage } from './Inbox';
 
-// A minimal in-memory edge for the Inbox stage. The LIST is Turso-only (`/api/inbox*`), scoped
+// A minimal in-memory edge for the Inbox stage. The LIST is D1-only (`/api/inbox*`), scoped
 // server-side to the active workspace (no client-sent `?workspace=` anymore — worker/inbox.ts
 // resolves it from the `cs_workspace` cookie), and must never wake a runner. OPENING a
 // Conversation is a live <ChatView> over the owning bridge via the edge proxy (ADR-0009 / #124):
@@ -63,7 +63,7 @@ function stubInbox() {
     calls.push(`${method} ${url}`);
     const u = new URL(url, 'https://poc.cedarpad.com');
 
-    // GET /api/inbox?view=  — the edge list (Turso, no wake; server-side workspace-scoped, no
+    // GET /api/inbox?view=  — the edge list (D1, no wake; server-side workspace-scoped, no
     // client ?workspace= param). view maps to the same status filter the edge's
     // viewToListOpts applies.
     if (u.pathname === '/api/inbox' && method === 'GET') {
@@ -230,7 +230,7 @@ describe('the inbox list', () => {
     await mount();
     await changeSelect(viewFilter(), 'all'); // filter around
 
-    // No /inbox/:id/bridge/* call (that is the only wake path); the list is Turso-only —
+    // No /inbox/:id/bridge/* call (that is the only wake path); the list is D1-only —
     // the workspace roster (the assignee filter's options) is an edge read too, never a wake.
     expect(calls.some((c) => c.includes('/bridge'))).toBe(false);
     expect(calls.every((c) => c.includes('/api/inbox') || /\/api\/workspaces\/[^/]+\/members/.test(c))).toBe(true);

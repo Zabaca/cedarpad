@@ -33,9 +33,8 @@ import { cloudflareModule } from '../../modules/cloudflare'
  *
  * then paste the printed database_id into wrangler.jsonc (top level AND the preview env —
  * named environments inherit nothing). Schema migrations are applied by
- * `scripts/deploy.sh` before each rollout. The binding is INERT until the
- * PLATFORM_DB_ENABLED var flips (#267); TURSO_* below stays exactly where it is until the
- * cutover has soaked (#268).
+ * `scripts/deploy.sh` before each rollout. D1 is the platform data layer's store; the
+ * Turso rollback path was retired in #268.
  *
  * No build step: the worker is bundled by wrangler and the container is built from
  * the package's Dockerfile (Docker must be running locally at apply time, on a
@@ -59,8 +58,6 @@ export default cloudflareModule.instance({
       // web-poc is mounted into the canvas bridge (one instance), so its secrets ride
       // this container too. Must exist in production/secrets.yaml. (BETTER_AUTH_URL /
       // WEB_ORIGIN are non-secret vars in the package's wrangler.jsonc.)
-      'TURSO_URL',
-      'TURSO_KEY',
       'VOYAGE_API_KEY',
       'BETTER_AUTH_SECRET',
       // Dev-agent GitHub App auth (#96). The EDGE mints short-lived, repo-scoped

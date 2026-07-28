@@ -2,7 +2,7 @@ import { DEFAULT_WORKSPACE, type ResolvableWorkspace } from './sandbox-resolver.
 
 // The edge Shell's PURE routing/selection decisions (ADR-0007, #46), kept free of any
 // DB or `@cloudflare/sandbox` import so they're unit-testable off a live runtime. The
-// Turso lookup and the Shell HTML / registry API (which DO touch the DB) live in
+// D1 lookup and the Shell HTML / registry API (which DO touch the DB) live in
 // `shell.ts`; those consume the decisions made here.
 
 /** Cookie that pins which workspace the container proxy serves for absolute-path

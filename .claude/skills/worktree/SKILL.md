@@ -216,7 +216,7 @@ locally it sits BESIDE vite, which proxies only `/api/auth/*` and `/v1/*` to it.
 
 **Never write the live D1 from a test.** `joinBridgeWorkspace` is the one raw-SQL seam —
 the container files its Conversations into the legacy `default` workspace, and no API
-creates that row (production seeded it by hand, `scripts/seed-default-workspace.ts`). But
+creates that row (production seeded it by hand, once, #179). But
 the edge Worker holds that SQLite file open, and D1's write lock admits ONE writer: an
 external write landing mid-request makes *miniflare's* write fail, and it surfaces
 somewhere else entirely — a sign-up `422 FAILED_TO_CREATE_USER`, or

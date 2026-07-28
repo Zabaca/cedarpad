@@ -19,7 +19,7 @@ import { inboxStateFromUrl, urlWithInboxState } from './inbox-url';
 
 // The Inbox stage (ADR-0009 / #124): the `stage === 'inbox'` case of the Shell, under the ONE
 // chrome (the rail). Panes over the edge API: a left LIST of the user's Conversations
-// (Turso only, SCOPED SERVER-SIDE to the active workspace — waiting_on:human badged, unread dot,
+// (D1 only, SCOPED SERVER-SIDE to the active workspace — waiting_on:human badged, unread dot,
 // status filter, never wakes a runner), a THREAD that is a LIVE <ChatView> over the
 // Conversation's OWNING bridge (through the /inbox/:id/bridge proxy) — streaming transcript +
 // reply + image paste, the SAME component the canvas renders — and, once a conversation is open,
@@ -156,7 +156,7 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
     void loadList();
     // Push-driven list: the container's chat stream is the doorbell — frames that imply a
     // row changed (turn start, turn settle, an end_turn declaration) trigger a debounced
-    // refetch of the authoritative Turso list. A slow poll + tab-return refetch stay as the
+    // refetch of the authoritative D1 list. A slow poll + tab-return refetch stay as the
     // safety net (the stream can be closed by the idle gate or drop mid-deploy). The stream
     // itself is opened by loadList once it knows a conversation to route through.
     let debounce: ReturnType<typeof setTimeout> | undefined;

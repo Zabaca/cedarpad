@@ -42,7 +42,7 @@
   // preview instance does this) — a plain build + `wrangler deploy --env preview`
   // silently deploys the production config. Named environments do not inherit
   // BINDINGS (assets/D1 redeclared verbatim; preview shares the production waitlist
-  // DB, matching how canvas preview shares production's Turso) — but they DO
+  // DB, matching how canvas preview shares production's platform D1) — but they DO
   // inherit routes, hence the explicit empty routes so preview never grabs the
   // cedarpad.com apex.
   "env": {

@@ -7,7 +7,7 @@ Rules and orientation for AI sessions working in this package. Read `CONTEXT.md`
 ## What this is
 
 The Cedarpad Problem/Solution app: a React SPA (`src/`) + Hono API (`worker/`),
-backed by Turso (libSQL) with Voyage embeddings. Shared libs in `lib/`
+backed by the platform D1 (ADR-0018) with Voyage embeddings. Shared libs in `lib/`
 (`ai`/`config`/`contract`/`db`/`realtime`).
 
 **As of 2026-07-01 this is an in-tree module of `@cedarpad/canvas`, not a
@@ -52,10 +52,12 @@ secrets.yaml` and are pushed as Worker secrets by the zbc module — now as
 ## Architecture notes
 
 - **Worker entry**: `worker/index.ts` exports `buildApp` (a Hono `OpenAPIHono`
-  factory). It runs **in the canvas bridge process** (`packages/canvas/server/
-  bridge.ts`), which injects the db; the bridge routes `/v1/*` and `/api/auth/*`
-  to it. (There is no standalone `export default` worker / `run_worker_first` /
-  Cloudflare Assets path anymore — canvas's vite serves the SPA and proxies.)
+  factory). Since ADR-0018 it is mounted **at the edge** (`packages/canvas/worker/
+  index.ts`), which builds the db per request via `createDbForWorker` and routes
+  `/v1/*` and `/api/auth/*` to it — not in the canvas bridge process, which holds
+  no database client at all. (There is no standalone `export default` worker /
+  `run_worker_first` / Cloudflare Assets path anymore — canvas's vite serves the
+  SPA and proxies.)
 - **Embeddings: Voyage `voyage-3.5-lite`, 1024 dims.** `createEmbedder`
   (`worker/agent.ts`) uses Voyage when `VOYAGE_API_KEY` is set, else a
   deterministic local hash (lexical, offline). Asymmetric `input_type` is
@@ -69,21 +71,19 @@ secrets.yaml` and are pushed as Worker secrets by the zbc module — now as
   drains it unless you run `bun run dev:worker`. There is no Cron/`scheduled`
   consumer (removed). To productionize it later: Cron `scheduled` handler,
   Cloudflare Queues, or Workflows — see `MIGRATION.md` → "Async agent jobs".
-- **DB client**: the canvas bridge builds **one** `@libsql/client` (node — speaks
-  both a local file and remote Turso) and passes it to `makeDb` → `buildApp`. In
-  dev that file is miniflare's local D1, which the edge Worker serves `/v1/*` +
-  `/api/auth/*` from (ADR-0018; apply migrations with
-  `bun run webpoc:db:migrate:local`); in prod it's remote Turso from env.
-  (`worker/runtime.ts` `createDbForWorker` is the edge's own path: the D1 binding
-  when it is both bound AND `PLATFORM_DB_ENABLED === "true"`, otherwise workerd's
-  `@libsql/client/web` against Turso. Production carries the binding but the flag is
-  "false" — inert until the cutover, #265/#267.)
+- **DB client**: `worker/runtime.ts`'s `createDbForWorker` builds a Drizzle db from
+  the edge Worker's `PLATFORM_DB` D1 binding (ADR-0018) — the container/bridge holds
+  no database client at all. In dev that binding is miniflare's local D1 (apply
+  migrations with `bun run webpoc:db:migrate:local`); in prod it's the same D1
+  binding, live since the cutover (#267). The Turso rollback path was retired in
+  #268.
 
 ## Dev / test workflow
 
 - **No `turso` CLI / daemon needed.** Run the whole stack from canvas:
   `cd packages/canvas && bun run dev` (vite :4510 + bridge :4511 + edge Worker
-  :4513). Migrations are explicit: `bun run webpoc:db:migrate:local`.
+  :4513, the last of which serves web-poc's `/v1/*` + `/api/auth/*` against local
+  D1). Migrations are explicit: `bun run webpoc:db:migrate:local`.
 - **Contract changes** (`lib/contract`): the web client types are NOT automatic.
   From `packages/canvas`: `bun run webpoc:openapi:emit` (writes `openapi.json` from
   the registered routes) then `bun run webpoc:gen:api` (regenerates

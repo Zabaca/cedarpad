@@ -5,7 +5,7 @@ Status: accepted (design). Extends [ADR-0007](./0007-workspace-platform-topology
 ("Tenancy" section).
 
 A **Workspace** is the platform's unit of isolation, tenancy, and membership — all at once:
-- a **deployment** (its own isolated stack: container + Turso DB + R2), provisioned/routed by a
+- a **deployment** (its own isolated stack: container + D1 DB + R2), provisioned/routed by a
   **control plane** (the shared edge layer);
 - an **org/tenant** — it *is* the Better Auth **organization** (members + invitations); you invite
   people **directly to a Workspace**;
@@ -51,10 +51,10 @@ is "provision one of these per Workspace."
 ## Relationship to what's built (the 20 shipped slices)
 
 Today is the **single-deployment approximation**: one edge Worker + per-workspace **containers** +
-per-workspace R2, but **one shared Turso DB with `workspace_id` scoping** (#43/#57). That's the
+per-workspace R2, but **one shared D1 DB with `workspace_id` scoping** (#43/#57; the store moved
+from Turso to D1 per [ADR-0018](./0018-platform-data-layer-on-d1.md), cutover #267). That's the
 one-deployment starting point. The control plane later **promotes** each Workspace to a real
-isolated deployment (its own database — D1 per [ADR-0018](./0018-platform-data-layer-on-d1.md)), at
-which point `workspace_id` scoping becomes vestigial.
+isolated deployment (its own database), at which point `workspace_id` scoping becomes vestigial.
 The per-workspace sandbox ids / R2 prefixes (ADR-0007) are already the right grain.
 
 ## Consequences

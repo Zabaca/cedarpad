@@ -15,7 +15,7 @@ import type { SandboxCoords } from './sandbox-resolver.ts';
 // now including the Render Pad at `/w/:ws/canvas/:id/pad` (#105) — sits behind it, so an
 // unauthenticated request can never cold-boot a container. We exercise the real handler
 // with only its INTEGRATION seams stubbed: the sandbox proxy, the Better Auth session
-// lookup, and the two Turso ownership lookups. The pure decisions (`decideGate`,
+// lookup, and the two D1 ownership lookups. The pure decisions (`decideGate`,
 // `decideCanvasRoute`, `parsePadRoute`) run for real.
 
 let session: realAuthGate.ResolvedSession = { user: { id: 'u_1' } };
@@ -151,7 +151,7 @@ afterAll(() => {
   getActiveShareLinkImpl = realGetActiveShareLink;
 });
 // The edge Inbox LIST/detail API is out of scope for this slice — stub it so we can assert the
-// Worker still ROUTES `/api/inbox*` to it (unchanged) without exercising Turso/R2.
+// Worker still ROUTES `/api/inbox*` to it (unchanged) without exercising D1/R2.
 mock.module('./inbox.ts', () => ({
   handleInboxApi: (_req: Request, _env: unknown, _user: unknown, id?: string, action?: string) => {
     inboxCalls.push({ id, action });

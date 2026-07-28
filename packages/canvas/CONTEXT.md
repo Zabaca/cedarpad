@@ -479,7 +479,7 @@ and reconnect/resume are the sync protocol's job now, not ours. What remains our
 
 ## Guest share links (ADR 0015, PRD #220 — live)
 
-- **Share Link** — a member-minted, revocable capability row (`share_links`, Turso) granting
+- **Share Link** — a member-minted, revocable capability row (`share_links`, D1) granting
   outsiders access to exactly one canvas, with per-link permissions
   `{collaboration, guestChat}`. No default expiry; lives until revoked.
 - **Guest Session** — a real session minted at `/share/<linkId>`, carrying

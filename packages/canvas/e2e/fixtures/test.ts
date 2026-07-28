@@ -9,8 +9,8 @@
  *   (`server/dev-worker-config.ts` drops `AUTH_DISABLE_SIGNUP`), so e2e uses the same door a
  *   dev user does, and the session is verified by the same `worker/auth-gate.ts` prod runs.
  * - `joinBridgeWorkspace()` — the one piece of state no API can create: membership of the
- *   workspace the container files its Conversations into. Seeded straight into the local D1,
- *   as `scripts/seed-default-workspace.ts` does for production.
+ *   workspace the container files its Conversations into. Seeded straight into the local D1
+ *   (production's `default` workspace row was seeded the same way, by hand, once, #179).
  *
  * Both are addressed at the EDGE ORIGIN, not vite's. In production the edge is in front of
  * everything; in local dev it sits BESIDE vite (which proxies only `/api/auth/*` and `/v1/*`

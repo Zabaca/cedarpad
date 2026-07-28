@@ -15,10 +15,10 @@ import { cloudflareModule } from '../../modules/cloudflare'
  * Requires `packages/infra/environments/preview/secrets.yaml` (SOPS-encrypted)
  * holding CLOUDFLARE_API_TOKEN (deploy) + every key in `workerSecrets` below.
  * Currently REUSES production's values (secrets.yaml is a copy of production's), so
- * preview shares production's R2 bucket (`agent-canvas`) and Turso DB.
+ * preview shares production's R2 bucket (`agent-canvas`) and platform D1.
  * ⚠️  This means preview and production read/write the SAME persisted canvas state
  * and the SAME web-poc data — a preview edit can mutate what production serves at
- * poc.cedarpad.com. Give preview its own R2 bucket + Turso DB before using it for
+ * poc.cedarpad.com. Give preview its own R2 bucket + D1 database before using it for
  * anything real. As with production, Docker must be running locally at apply time
  * (the worker is container-backed) on a Workers Paid plan with Containers enabled.
  *
@@ -37,8 +37,8 @@ export default cloudflareModule.instance({
     // Selects env.preview in packages/canvas/wrangler.jsonc → agent-canvas-preview.
     wranglerEnv: 'preview',
     // Same secrets as production (web-poc rides the canvas worker) — currently the
-    // SAME values (preview/secrets.yaml copies production/secrets.yaml), so R2_* and
-    // TURSO_* point at prod's bucket + DB (see the ⚠️ in the header).
+    // SAME values (preview/secrets.yaml copies production/secrets.yaml), so R2_* points
+    // at prod's bucket (see the ⚠️ in the header).
     // BETTER_AUTH_URL / WEB_ORIGIN are non-secret vars in env.preview, not here.
     workerSecrets: [
       'CLAUDE_CODE_OAUTH_TOKEN',
@@ -46,8 +46,6 @@ export default cloudflareModule.instance({
       'R2_ENDPOINT',
       'R2_ACCESS_KEY_ID',
       'R2_SECRET_ACCESS_KEY',
-      'TURSO_URL',
-      'TURSO_KEY',
       'VOYAGE_API_KEY',
       'BETTER_AUTH_SECRET',
       // Dev-agent GitHub App auth (#96). The edge mints short-lived, repo-scoped

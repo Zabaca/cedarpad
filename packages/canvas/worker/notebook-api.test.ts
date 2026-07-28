@@ -10,14 +10,13 @@ import type { Bindings } from '../web-poc/worker/context.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 
 // Edge-level coverage for #56: Notebook's Hono API served at the edge against an
-// injected (in-memory, remote-shaped) libSQL db, self-gated by web-poc's auth
-// middleware. Mirrors the injected-db shape the worker uses at the edge
-// (`buildApp` + a libSQL client), minus the network Turso.
+// injected (in-memory) libSQL db, self-gated by web-poc's auth middleware. Mirrors
+// the injected-db shape the worker uses at the edge (`buildApp` + a libSQL client),
+// minus the D1 network hop.
 
 const WORKSPACE = 'ws_edge_test';
 
 const env = {
-  TURSO_URL: ':memory:',
   BETTER_AUTH_SECRET: 'test-secret-at-least-32-characters-long!!',
   BETTER_AUTH_URL: 'http://localhost:8787',
   // Dev escape hatch: `x-dev-workspace` acts as this workspace with full access
