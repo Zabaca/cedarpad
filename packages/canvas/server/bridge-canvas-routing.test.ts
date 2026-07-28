@@ -16,32 +16,57 @@
 // marker ids are unique per run for the same reason: state persisted by a previous run must
 // never satisfy this one. Because runChatTurn is fire-and-forget, we poll until it lands.
 //
-// #305 changed WHERE we look. Canvas writes from the bridge's own handlers now go to the
-// canvas's Durable-Object-hosted room, and GET /api/canvas reads the room — but the CHAT
-// TURN still receives the in-memory session store (`turnDeps`, server/turn.ts), which #305
-// deliberately did not touch: a turn holds one store across many tool calls, so it needs a
-// flush cadence the per-call open→mutate→flush→discard shape does not answer. That is an
-// open gap, not a decision this test can paper over, so the assertion moved OFF the read
-// route and onto the store the turn was actually handed: distinct canvases must get
-// distinct stores, and each marker must land in its own.
+// #310 closed the gap #305 left: the CHAT TURN now draws into the canvas's
+// Durable-Object-hosted room too, through a per-turn store settled after every tool call
+// (server/turn-canvas-store.ts). So routing is asserted where it is now observable — in the
+// ROOM the turn opened. The fake agent goes through the REAL canvas tool handler, so what is
+// exercised is the whole path: session resolution → room open → op → commit.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import type { CanvasShape } from '../src/shapes.ts';
-import type { runChat } from './agent.ts';
-import { chatHub, handleRequest, setTurnRunChat } from './bridge.ts';
+import { createCanvasTools, type runChat } from './agent.ts';
+import { chatHub, handleRequest, setCanvasRoomOpener, setTurnRunChat } from './bridge.ts';
+import { createStore, type CanvasStore } from '../src/store.ts';
+import type { RemoteCanvasStore } from '../src/remote-store.ts';
 
-type TurnStore = { upsert(s: CanvasShape[]): number; getState(): { shapes: CanvasShape[] } };
+type TurnStore = CanvasStore;
 
-/** message → the store the bridge handed that turn. Identity is the assertion: two messages
- *  routed to the same canvas share a store, two canvases never do. */
+/** canvasId → that canvas's room. Mutations only reach it on flush, like the real one. */
+const rooms = new Map<string, CanvasStore>();
+const roomFor = (canvasId: string): CanvasStore => {
+  const existing = rooms.get(canvasId);
+  if (existing) return existing;
+  const made = createStore([]);
+  rooms.set(canvasId, made);
+  return made;
+};
+
+/** The room opener seam, as #305's test uses it: one store per open, queueing until flush. */
+const fakeOpener = async (canvasId: string): Promise<RemoteCanvasStore> => {
+  const room = roomFor(canvasId);
+  const mirror = createStore(room.getState().shapes);
+  const queue: Array<() => void> = [];
+  return {
+    getState: () => mirror.getState(),
+    upsert: (s) => (queue.push(() => room.upsert(s)), mirror.upsert(s)),
+    remove: (ids) => (queue.push(() => room.remove(ids)), mirror.remove(ids)),
+    clear: () => (queue.push(() => room.clear()), mirror.clear()),
+    flush: async () => {
+      for (const op of queue.splice(0)) op();
+    },
+  };
+};
+
+/** message → the store the bridge handed that turn (kept so a turn is observably done). */
 const storeOf = new Map<string, TurnStore>();
 
-// The fake runChat: write a marker shape into the store the bridge passed as arg 0, then
-// finish. A null sessionId keeps runChatTurn off the transcript-backup branch.
+// The fake runChat: draw a marker through the REAL create_shapes tool handler, so the
+// commit-after-every-tool-call wrapper (#310) is part of what this exercises. A null
+// sessionId keeps runChatTurn off the transcript-backup branch.
 const fakeRunChat = async function* (store: TurnStore, message: string) {
-  const shape: CanvasShape = { id: `shape:${message}`, type: 'note', color: 'black', x: 0, y: 0, text: message };
-  store.upsert([shape]);
+  const create = createCanvasTools(store).find((t) => t.name === 'create_shapes')!;
+  await create.handler({ shapes: [{ type: 'note', x: 0, y: 0, text: message }] } as never, undefined as never);
   storeOf.set(message, store);
   yield { kind: 'done', sessionId: null, costUsd: 0 };
 } as unknown as typeof runChat;
@@ -66,7 +91,9 @@ const storeForTurn = async (message: string, tries = 50): Promise<TurnStore> => 
   throw new Error(`turn for ${message} never ran`);
 };
 
-const has = (store: TurnStore, id: string): boolean => store.getState().shapes.some((s) => s.id === id);
+/** Did canvas `canvasId`'s ROOM end up with a note carrying this marker? */
+const roomHas = (canvasId: string, marker: string): boolean =>
+  roomFor(canvasId).getState().shapes.some((sh: CanvasShape) => sh.type === 'note' && sh.text === marker);
 
 const fakeSubscriber = (): ReadableStreamDefaultController =>
   ({ enqueue() {}, close() {}, error() {} }) as unknown as ReadableStreamDefaultController;
@@ -78,39 +105,43 @@ describe('agent chat routes to the active canvas session (#79)', () => {
     sub = fakeSubscriber(); // one subscriber = the /send guard passes
     chatHub.subscribe(sub);
     restoreRunChat = setTurnRunChat(fakeRunChat);
+    setCanvasRoomOpener(fakeOpener);
   });
   afterEach(() => {
     restoreRunChat();
+    setCanvasRoomOpener(null);
     chatHub.resetForTests();
+    rooms.clear();
   });
 
-  test('a turn sent with x-canvas-id=B creates the shape in canvas B, not the default', async () => {
+  test('a turn sent with x-canvas-id=B draws in canvas B\'s room, not the default\'s', async () => {
     expect((await handleRequest(send('chat_b', 'canvasB', `onB-${RUN}`))).status).toBe(202);
     expect((await handleRequest(send('chat_d', null, `onD-${RUN}`))).status).toBe(202);
 
-    const onB = await storeForTurn(`onB-${RUN}`);
-    const onDefault = await storeForTurn(`onD-${RUN}`);
-    expect(onB).not.toBe(onDefault);
-    expect(has(onB, `shape:onB-${RUN}`)).toBe(true);
-    expect(has(onDefault, `shape:onB-${RUN}`)).toBe(false);
+    await storeForTurn(`onB-${RUN}`);
+    await storeForTurn(`onD-${RUN}`);
+    expect(roomHas('canvasB', `onB-${RUN}`)).toBe(true);
+    expect(roomHas('default', `onB-${RUN}`)).toBe(false);
+    expect(roomHas('default', `onD-${RUN}`)).toBe(true);
   });
 
   test('per-canvas isolation: a turn on B leaves another canvas C untouched', async () => {
     expect((await handleRequest(send('chat_iso', 'canvasIsoB', `iso-${RUN}`))).status).toBe(202);
     expect((await handleRequest(send('chat_isoc', 'canvasIsoC', `isoC-${RUN}`))).status).toBe(202);
 
-    const onB = await storeForTurn(`iso-${RUN}`);
-    const onC = await storeForTurn(`isoC-${RUN}`);
-    expect(onB).not.toBe(onC);
-    expect(has(onC, `shape:iso-${RUN}`)).toBe(false);
+    await storeForTurn(`iso-${RUN}`);
+    await storeForTurn(`isoC-${RUN}`);
+    expect(roomHas('canvasIsoB', `iso-${RUN}`)).toBe(true);
+    expect(roomHas('canvasIsoC', `iso-${RUN}`)).toBe(false);
   });
 
-  test('no canvas selection resolves to the default session, the same one every time', async () => {
+  test('no canvas selection resolves to the default canvas, the same one every time', async () => {
     expect((await handleRequest(send('chat_default', null, `noSel-${RUN}`))).status).toBe(202);
     expect((await handleRequest(send('chat_default2', null, `noSel2-${RUN}`))).status).toBe(202);
 
-    const first = await storeForTurn(`noSel-${RUN}`);
-    expect(await storeForTurn(`noSel2-${RUN}`)).toBe(first);
-    expect(has(first, `shape:noSel-${RUN}`)).toBe(true);
+    await storeForTurn(`noSel-${RUN}`);
+    await storeForTurn(`noSel2-${RUN}`);
+    expect(roomHas('default', `noSel-${RUN}`)).toBe(true);
+    expect(roomHas('default', `noSel2-${RUN}`)).toBe(true);
   });
 });

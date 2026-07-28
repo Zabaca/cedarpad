@@ -52,7 +52,7 @@ import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { refreshCheckout, removeCheckout } from './repo-checkout.ts';
 import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
-import { type CanvasImage, type ChatEvent, type OpenPr, parseCanvasImages, runChat } from './agent.ts';
+import { type CanvasImage, type ChatEvent, type OpenPr, createCanvasTools, parseCanvasImages, runChat } from './agent.ts';
 import { MCP_TOKENS_HEADER, McpSelectionSchema, applyMcpSelection, decodeMcpTokens, mcpDisallowedTools } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { isShared, listComponentDetails, listComponents, readComponent, writeComponent, writeDataFile } from './components.ts';
@@ -509,9 +509,31 @@ async function settleConversation(input: { chatId: string; sessionId: string; me
  * index, the settle-time upsert, the transcript backup. Nothing else is stubbed.
  */
 const E2E_MODE = process.env.NODE_ENV !== 'production' && process.env.E2E_MODE === '1';
-async function* e2eRunChat(..._args: Parameters<typeof runChat>): AsyncGenerator<ChatEvent> {
+async function* e2eRunChat(...args: Parameters<typeof runChat>): AsyncGenerator<ChatEvent> {
+  const [store, message] = args;
   const sessionId = `e2e-session-${crypto.randomUUID()}`;
   yield { kind: 'init', sessionId };
+  // #310 shim: a message `draw:<marker>` makes the stub agent draw TWO notes in TWO separate
+  // tool calls, seconds apart, through the REAL create_shapes handler — so an e2e spec can
+  // watch the first note appear in a browser while the turn is still running (the progressive
+  // claim), not only after it settles. Only the model's decision to call the tool is faked.
+  const marker = /^draw:(\S+)$/.exec(message.trim())?.[1];
+  if (marker) {
+    const create = createCanvasTools(store).find((t) => t.name === 'create_shapes')!;
+    for (const [i, suffix] of ['a', 'b'].entries()) {
+      const r = (await create.handler({ shapes: [{ type: 'note', x: 100 + i * 300, y: 100, text: `${marker}-${suffix}` }] } as never, undefined as never)) as {
+        content: Array<{ text?: string }>;
+        isError?: boolean;
+      };
+      // A commit failure comes back as the tool's OWN error result — surface it as the turn's
+      // error rather than reporting a cheerful done over an unchanged canvas.
+      if (r.isError) {
+        yield { kind: 'done', sessionId, costUsd: 0, error: r.content[0]?.text ?? 'canvas write failed' };
+        return;
+      }
+      if (suffix === 'a') await Bun.sleep(4000);
+    }
+  }
   yield { kind: 'done', sessionId, costUsd: 0 };
 }
 
@@ -521,6 +543,9 @@ const turnDeps: TurnDeps = {
   aborters: chatHub.aborters,
   flavor: turnFlavor,
   getSession: (canvasId) => canvasSessions.get(canvasId),
+  // #310: the chat agent draws into the room, like every other canvas write since #305.
+  // Indirected through the mutable `openCanvasRoom` so `setCanvasRoomOpener` swaps it in tests.
+  openCanvasRoom: (canvasId) => openCanvasRoom(canvasId),
   defaultCanvasId: DEFAULT_CANVAS_ID,
   prepareDevAgent: (token, repo, chatId, sessionId) => prepareDevAgentTurn(token, repo, chatId, sessionId),
   runChat: E2E_MODE ? e2eRunChat : runChat,

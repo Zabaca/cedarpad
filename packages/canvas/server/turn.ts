@@ -8,12 +8,14 @@
 // SDK turn.
 //
 // bridge.ts composes the deps from its singletons; this file owns only the "when" (phase order),
-// never the "what" (each collaborator). All imports are type-only — a turn is pure orchestration
-// parameterized by injected functions.
+// never the "what" (each collaborator). Imports are type-only but for one: opening the turn's
+// room-backed canvas store (#310) is part of the phase order, not a collaborator that varies.
 
 import type { CanvasImage, ChatEvent, ListMarts, OpenPr, SendToChat, runChat } from './agent.ts';
 import type { CanvasSession } from './canvas-sessions.ts';
 import type { EndTurnDeps } from './inbox.ts';
+import type { RemoteCanvasStore } from '../src/remote-store.ts';
+import { openTurnCanvasStore } from './turn-canvas-store.ts';
 
 /** What varies per turn — the request's parameters. */
 export interface TurnInput {
@@ -56,8 +58,12 @@ export interface TurnDeps {
   /** The edge-minted token is the COMPLETE definition of a dev-agent turn: it decides the
    *  Inbox workspace tag + the skill policy (bridge.turnFlavor; skills absent = all discovered). */
   flavor: (token: string | undefined) => { workspaceId: string; kind: 'chat' | 'dev-agent'; skills?: string[] };
-  /** Resolve the request's active canvas session (#79) — the agent reads/draws on THAT store. */
+  /** Resolve the request's active canvas session (#79) — screenshots + the canvas id. */
   getSession: (canvasId: string) => Promise<CanvasSession>;
+  /** Open a store on the canvas's Durable-Object-hosted ROOM (ADR-0019, #310). Present ⇒ the
+   *  agent draws into the room, which is what every browser reads since #290; absent (tests,
+   *  non-edge contexts) ⇒ the session's in-memory store, unchanged. */
+  openCanvasRoom?: (canvasId: string) => Promise<RemoteCanvasStore>;
   /** Where an UNADDRESSED turn routes (the bridge's default canvas id). */
   defaultCanvasId: string;
   /** Prepare the dev-agent worktree + open_pr for this turn (undefined for a product turn). */
@@ -124,14 +130,21 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
   try {
     // The request's active canvas (#79): the agent's reads, writes, tools, and screenshot
     // round-trip all use THIS store, so shapes land on the human's canvas and broadcast there.
-    const session = await deps.getSession(canvasId ?? deps.defaultCanvasId);
+    const activeCanvasId = canvasId ?? deps.defaultCanvasId;
+    const session = await deps.getSession(activeCanvasId);
+    // #310: the agent draws into the ROOM. Opening REJECTS rather than falling back to the
+    // session store — a turn that cannot reach the room would otherwise draw into a store
+    // nobody reads and report success, which is exactly the bug this closes.
+    const store = deps.openCanvasRoom
+      ? await openTurnCanvasStore(() => deps.openCanvasRoom!(activeCanvasId))
+      : session.store;
     const inbox = { ...deps.inbox, workspaceId: flavor.workspaceId, kind: flavor.kind, ownerRef: chatId };
     // A dev-agent send runs in its prepared worktree with open_pr armed; a prepare failure
     // (clone/auth) surfaces through the catch below as the turn's error — better a visible
     // failure than an agent silently editing the live app tree.
     const devAgent = await deps.prepareDevAgent(devAgentGitToken, devAgentRepo, chatId, sessionId);
     for await (const ev of deps.runChat(
-      session.store,
+      store,
       message,
       sessionId,
       session.requestScreenshot,

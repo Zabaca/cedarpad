@@ -191,6 +191,34 @@ The general lesson: **a round-trip test proves symmetry, not validity.** Anywher
 room from outside, validate against the schema explicitly — the room will not do it for you except
 through `updateStore`.
 
+## The chat turn's await point is ABOVE the seam, not inside it (#310)
+
+The HTTP write handlers open a room store per call (open → mutate → flush → discard), but a chat
+turn is handed **one** `CanvasStore` for the whole turn, and that interface is synchronous
+precisely so `src/canvas-ops.ts` never changes. So there appeared to be nowhere to `await` a
+flush between an agent's tool calls — a genuine gap, and the reason #305 stopped at the handlers.
+
+The resolution is that the await point **already existed one level above the seam**: every MCP
+tool handler in `server/agent.ts` is already `async`, and it wraps the synchronous op rather than
+being it. Settling there costs `canvas-ops.ts` nothing — it is not edited, and it still sees a
+plain synchronous `CanvasStore` — while still putting an `await` between every pair of tool
+calls. **Shapes therefore appear as the agent draws them, not at the turn boundary**, which was
+the concern that ruled out flushing on settle.
+
+Two rules follow, both mirroring `inRoom` in `bridge.ts`:
+
+- A **commit failure becomes the failing tool's own error result**, in the room's own words. It is
+  never deferred and never swallowed — `openRemoteCanvasStore` poisons itself on a partial batch
+  exactly so this divergence is loud, and an auto-flush at some boundary the agent does not
+  control would have re-hidden it.
+- A **refused op discards** instead of committing: nothing a rejected tool queued may reach the room.
+
+Each settle also **reopens** the store, which is what makes a per-turn store equivalent to the
+per-call pattern: the next tool call reads a mirror freshly taken from the room (so a human edit
+mid-turn is visible to the agent's next `read_canvas`), and a poisoned store never spans two tool
+calls. A reopen failure alone is deliberately not raised — the write it followed already landed,
+and a stale mirror is the mirror's ordinary condition, not a lie.
+
 ## Consequences
 
 - **`tldraw` must move 5.1.1 → 5.2.5**, and `@tldraw/tlschema` is pinned exact at 5.1.1 (for the
