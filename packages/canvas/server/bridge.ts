@@ -26,7 +26,7 @@ import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import { makeAssignmentPushNotify, webPushSender } from './push-notify.ts';
+import { type PlatformRpc, platformRpc } from './platform-rpc-client.ts';
 import { type Notify, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, placeChatCard, resumeConversation } from './inbox.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
@@ -141,22 +141,18 @@ const webPocApp = buildApp({ db: webPocDb });
 // single-user localhost surface, so the inbox owner + platform workspace come from env (the
 // authenticated-user wiring is a platform/#62 concern). notify is a best-effort stub this slice.
 const INBOX_USER = process.env.CANVAS_USER ?? 'default';
+// The platform RPC (ADR-0018): the container's only path back into the platform data layer, for
+// the two writes that originate HERE. Null when unconfigured — a bridge with no edge in front of
+// it (local dev: vite + bridge) keeps its direct client, which slice #266 removes for good.
+const platformRpcClient = platformRpc({ origin: webPocEnv.PLATFORM_RPC_ORIGIN, secret: webPocEnv.BETTER_AUTH_SECRET });
 // #87: the real attention signal. Web push (shell/src/push.ts → worker/push.ts →
-// push_subscriptions), logged either way. Unconfigured VAPID ⇒ `webPushSender` is null and this
-// stays exactly the log stub it was. #231: recipients follow the Conversation's assignment —
-// the assignee alone, or the whole workspace roster when nobody has claimed it.
-const pushSend = webPushSender(webPocEnv);
-const pushNotify = pushSend
-  ? makeAssignmentPushNotify({
-      db: webPocDb,
-      // `loadWebPocEnv` always fills WEB_ORIGIN (WEBPOC_ORIGIN in dev, the real origin in prod).
-      origin: (webPocEnv.WEB_ORIGIN ?? WEBPOC_ORIGIN).replace(/\/$/, ''),
-      send: pushSend,
-    })
-  : null;
+// push_subscriptions), logged either way. Delivery itself now runs at the EDGE (it reads the
+// subscription rows and prunes dead endpoints), so the container asks for it by name and never
+// learns who is subscribed. #231: recipients follow the Conversation's assignment — the assignee
+// alone, or the whole workspace roster when nobody has claimed it — resolved edge-side.
 const notify: Notify = async (conv, question) => {
   console.log(`[inbox] waiting_on:human conv=${conv.id} session=${conv.sessionId} q=${question.slice(0, 80)}`);
-  await pushNotify?.(conv, question);
+  await platformRpcClient?.notify({ conversationId: conv.id, question });
 };
 // One-time cleanup of the pre-ownerRef duplicate rows (one per turn); idempotent per boot.
 void dedupeLegacyConversations(webPocDb, INBOX_USER)
@@ -447,11 +443,16 @@ export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId:
  * cluttering "Needs me". Also seeds ChatMeta right away so `chatIdForSession` resolves this
  * chat MID-turn (opening the running Conversation attaches to this chat's live stream).
  * Idempotent (find-or-create by chat, rebinding the newest sessionId) and
- * best-effort — an index failure never fails the turn. */
-export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string, assignTo?: string): Promise<void> {
+ * best-effort — an index failure never fails the turn.
+ *
+ * ADR-0018: this is one of the two writes that ORIGINATE in the container, so with an edge in
+ * front of it the row is filed over the platform RPC's `conversation.start` operation instead
+ * of through a local client. The best-effort contract is unchanged either way — the hop can
+ * fail exactly as the write could, and the turn continues. */
+export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string, assignTo?: string, deps: { rpc: PlatformRpc | null } = { rpc: platformRpcClient }): Promise<void> {
   if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
   if (canvasId) chatHub.bindCanvas(chatId, canvasId); // #220: the guest stream filter's binding
-  await findOrCreateConversation(webPocDb, {
+  const input = {
     sessionId,
     userId: INBOX_USER,
     workspaceId,
@@ -461,7 +462,10 @@ export async function indexSessionStart(chatId: string, sessionId: string, messa
     repo,
     summary: message.slice(0, 200),
     assignTo,
-  }).catch((err) => console.error('[inbox] session-start row upsert failed:', err));
+  };
+  await (deps.rpc ? deps.rpc.conversationStart(input) : findOrCreateConversation(webPocDb, input)).catch((err) =>
+    console.error('[inbox] session-start row upsert failed:', err),
+  );
 }
 
 /** The dev-agent turn context (ADR-0010): armed iff the edge minted a git token for this
@@ -529,6 +533,21 @@ async function settleConversation(input: { chatId: string; sessionId: string; me
     .catch((err) => console.error('[inbox] session-row upsert failed:', err));
 }
 
+/**
+ * E2E shim (.claude/skills/worktree — "shim only what blocks e2e"). The one thing a spec cannot
+ * drive is the Claude SDK turn itself: it needs a real OAuth token and a real model round-trip.
+ * Under `E2E_MODE=1` (exported by scripts/with-worktree-port.sh, and only outside production)
+ * the SDK call is replaced by a turn that emits the two events the Inbox path keys on — `init`
+ * with a session id, then `done`. Everything after that is the REAL pipeline: the row-at-start
+ * index, the settle-time upsert, the transcript backup. Nothing else is stubbed.
+ */
+const E2E_MODE = process.env.NODE_ENV !== 'production' && process.env.E2E_MODE === '1';
+async function* e2eRunChat(..._args: Parameters<typeof runChat>): AsyncGenerator<ChatEvent> {
+  const sessionId = `e2e-session-${crypto.randomUUID()}`;
+  yield { kind: 'init', sessionId };
+  yield { kind: 'done', sessionId, costUsd: 0 };
+}
+
 /** The turn's collaborators, each bound to its singleton. `runChatTurn` (below) turns a request
  * into a `TurnInput` and hands it here; `server/turn.ts` owns the phase order. */
 const turnDeps: TurnDeps = {
@@ -537,7 +556,7 @@ const turnDeps: TurnDeps = {
   getSession: (canvasId) => canvasSessions.get(canvasId),
   defaultCanvasId: DEFAULT_CANVAS_ID,
   prepareDevAgent: (token, repo, chatId, sessionId) => prepareDevAgentTurn(token, repo, chatId, sessionId),
-  runChat,
+  runChat: E2E_MODE ? e2eRunChat : runChat,
   bumpSharedModuleAcrossCanvases,
   broadcast: broadcastChat,
   inbox: { db: webPocDb, userId: INBOX_USER, notify },

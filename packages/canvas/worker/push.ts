@@ -7,7 +7,7 @@ import type { Env } from './index.ts';
 
 // Web push device registry (#87) — the opt-in half of the `notify` seam. Edge-only against
 // remote Turso: subscribing never wakes a container. The container bridge reads these rows
-// back out when a Conversation flips to waiting_on:human (server/push-notify.ts).
+// back out when a Conversation flips to waiting_on:human (worker/push-notify.ts).
 //
 // The subscription is bound to the AUTHENTICATED user (`user.id`), never to anything the
 // body claims — and unsubscribe is user-scoped in the store for the same reason.

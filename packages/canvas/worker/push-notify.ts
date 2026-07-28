@@ -5,7 +5,6 @@ import * as pushStore from '../web-poc/lib/db/queries/push-subscriptions.ts';
 import { listWorkspaceMembers } from '../web-poc/lib/db/queries/workspaces.ts';
 import type { ConversationRow, PushSubscriptionRow } from '../web-poc/lib/db/schema.ts';
 import { PushPayload, type PushSubscriptionInput } from '../shared/push-contract.ts';
-import type { Notify } from './inbox.ts';
 
 /**
  * Web push delivery for the `notify` seam (#87): when a background agent flips a Conversation
@@ -13,10 +12,14 @@ import type { Notify } from './inbox.ts';
  * "sessions appear when they need my attention" half of the Inbox. The Inbox row is still the
  * durable signal; push is the doorbell, so every failure here is swallowed.
  *
- * The send runs in the CONTAINER (that's where the seam is), so VAPID_PRIVATE_KEY must be
- * forwarded through `worker/container-env.ts`. Its capability is narrow — it can address only
- * endpoints already in `push_subscriptions`, and reads nothing.
+ * The send runs AT THE EDGE (ADR-0018): delivery reads `push_subscriptions` and prunes dead
+ * endpoints, so it belongs on the side that holds the platform data layer. The container asks
+ * for it by name over the platform RPC's `notify` operation — it never learns who is
+ * subscribed. VAPID therefore stays an edge secret and no longer reaches a container.
  */
+
+/** The delivery seam as the RPC calls it: wake whoever is watching this Conversation. */
+export type Notify = (conversation: ConversationRow, question: string) => void | Promise<void>;
 
 /** What the push service said about one device. `gone` = 404/410: the subscription is dead. */
 export type PushSendResult = 'delivered' | 'gone';

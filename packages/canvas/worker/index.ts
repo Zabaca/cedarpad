@@ -22,6 +22,8 @@ import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts'
 import { coordsForWorkspace, handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
 import { handlePushApi } from './push.ts';
+import { PLATFORM_RPC_PATH } from '../shared/platform-rpc.ts';
+import { handlePlatformRpc, platformRpcDeps } from './platform-rpc.ts';
 import { handleMcpReadApi, handleMcpTokenApi } from './mcp-tokens-api.ts';
 import { probeMcpTools } from './mcp-probe.ts';
 import { MCP_REGISTRY } from '../server/mcp-registry.ts';
@@ -119,8 +121,9 @@ export interface Env {
   // simply not connected; a stored per-workspace token row overrides it.
   FREDRIN_KEY?: string;
   // Web push (#87). The edge only ever hands out the PUBLIC half — the browser needs it as
-  // `applicationServerKey` to subscribe. The private key is forwarded to the container, which
-  // is where the `notify` seam signs and sends. Unset ⇒ /api/push/key answers `''` and the
+  // `applicationServerKey` to subscribe. The private key now stays HERE too: delivery moved to
+  // the edge with ADR-0018 (worker/push-notify.ts), so no VAPID key reaches a container at all
+  // and the container asks for a ping by name over the platform RPC. Unset ⇒ /api/push/key answers `''` and the
   // shell's opt-in toggle stays hidden, so push is simply off (the local-dev default).
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
@@ -288,6 +291,16 @@ export default {
     }
     if (url.pathname === '/mcp') {
       return handleMcp(request, env);
+    }
+
+    // The platform RPC (ADR-0018): the container calling back for the two writes that
+    // originate inside it. Routed ahead of the session gate for the same reason /mcp is — the
+    // caller is a process, not a browser, so it has no Better Auth cookie and the gate would
+    // hand it the login page. It SELF-gates on a bearer derived from BETTER_AUTH_SECRET (the
+    // same trust root the guest cookie is signed with), so an unauthenticated request cannot
+    // invoke either operation.
+    if (url.pathname === PLATFORM_RPC_PATH) {
+      return handlePlatformRpc(request, env, platformRpcDeps(env, createDbForWorker(env as unknown as Bindings)));
     }
 
     const session = await authenticate(request, env);

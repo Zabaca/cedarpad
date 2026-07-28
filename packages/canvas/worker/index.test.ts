@@ -161,9 +161,20 @@ mock.module('./inbox.ts', () => ({
 // The #122 chat proxy (`./inbox-bridge.ts`) is kept REAL — it's what this slice adds — so its
 // ownership check + `conv.workspaceId → coords` resolution run for real against a stubbed
 // Conversation lookup and the stubbed serveWorkspace above.
+// Delegate + restore (see worker/push.test.ts): bun's mock.module rebinds the module for every
+// LATER test file in this process, so the canned `get` hands back to the real one after.
+const realConversations = await import('../web-poc/lib/db/queries/conversations.ts');
+// Captured as a VALUE before the mock: bun rebinds the namespace, so reading `.get` back off
+// it in afterAll would restore this wrapper onto itself (infinite delegation).
+const realGetConv = realConversations.get;
+let getConvImpl: typeof realGetConv = (() => Promise.resolve(conv)) as never;
 mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
-  get: () => Promise.resolve(conv),
+  ...realConversations,
+  get: (...args: Parameters<typeof realGetConv>) => getConvImpl(...args),
 }));
+afterAll(() => {
+  getConvImpl = realGetConv;
+});
 // ADR-0013 train 2 (#176): both proxy points (this fallthrough and the inbox bridge above)
 // read a workspace's connected external-MCP tokens before attaching them to a chat send —
 // stubbed by workspaceId so a test can assert connect/no-connect/isolation. See
