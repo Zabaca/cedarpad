@@ -119,15 +119,15 @@ import Layout from '../layouts/Layout.astro'
         <div class="beat-copy">
           <h3>Zero learning curve</h3>
           <p>
-            Underneath it all is a real whiteboard: take notes, draw shapes, paste screenshots,
-            talk things through — live cursors, follow a teammate's view. The familiar part is
-            familiar; the new part is who else is on the board.
+            Underneath it all is a real whiteboard: notes, shapes, live cursors, follow a
+            teammate's view. The familiar part is familiar; the new part is who else is on the
+            board.
           </p>
         </div>
         <div class="beat-visual">
           <div class="board-row">
             <div class="sticky">launch blockers?</div>
-            <div class="shot">▣ screenshot.png</div>
+            <div class="shot">▣ diagram</div>
           </div>
           <div class="cursors">
             <span class="cur c-blue">▲ khoa</span>
@@ -137,6 +137,83 @@ import Layout from '../layouts/Layout.astro'
       </div>
 
       <div class="beat flip">
+        <div class="beat-copy">
+          <h3>Smart paste</h3>
+          <p>
+            What's different is what happens when you paste. Drop a spreadsheet and get a live
+            table. Paste JSON, markdown, a mermaid block, a page of HTML, a GitHub link — each
+            one lands as the right kind of working card, not a screenshot of one.
+          </p>
+        </div>
+        <div class="beat-visual">
+          {/* One paste gesture, three destinations: the clipboard and the card it becomes
+              cross-fade together on one loop, so the beat shows the ROUTING rather than a
+              single CSV case. Frames are stacked absolutely; reduced motion holds frame 1. */}
+          <div class="cyc">
+            <div class="clip-lbl"><span class="kbd">⌘V</span> clipboard</div>
+            <div class="cyc-clip">
+              <div>
+                <div class="clip">
+                  <span>plan,seats,mrr</span><span>Team,24,4800</span><span>Studio,9,2700</span>
+                </div>
+              </div>
+              <div>
+                <div class="clip">
+                  <span># Findings</span><span>Churn is up 4pts</span><span>## Pricing</span>
+                </div>
+              </div>
+              <div>
+                <div class="clip">
+                  <span>https://github.com/</span><span class="ind">acme/api</span>
+                </div>
+              </div>
+            </div>
+            <div class="cyc-arrow">↓</div>
+            <div class="cyc-stage">
+              <div>
+                <div class="mc mc-table">
+                  <div class="ti">q3-plans.csv</div>
+                  <table>
+                    <tr><th>plan</th><th class="n">seats</th><th class="n">mrr</th></tr>
+                    <tr><td>Team</td><td class="n">24</td><td class="n">$4,800</td></tr>
+                    <tr><td>Studio</td><td class="n">9</td><td class="n">$2,700</td></tr>
+                  </table>
+                  <div class="ft"><span>1,284 rows</span><span>live</span></div>
+                </div>
+              </div>
+              <div>
+                <div class="mc mc-md">
+                  <div class="bar"><span class="tog">≡</span> notes.md</div>
+                  <div class="split">
+                    <div class="toc">
+                      <div>Findings</div>
+                      <div class="i1">Churn</div>
+                      <div class="i1">Pricing</div>
+                    </div>
+                    <div class="body">
+                      <b>Findings</b>
+                      <i class="w1"></i><i class="w3"></i><i class="w2"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div class="mc mc-repo">
+                  <div class="hd">
+                    <span aria-hidden="true">🐙</span>
+                    <span class="nm">acme/api</span>
+                    <span class="chip2">cloned</span>
+                  </div>
+                  <div class="path">.repos/acme__api/</div>
+                  <div class="sub">Linked chats read this checkout like local files.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="beat">
         <div class="beat-copy">
           <h3>Everyone gets an agent</h3>
           <p>
@@ -152,25 +229,53 @@ import Layout from '../layouts/Layout.astro'
         </div>
       </div>
 
+      <div class="beat flip">
+        <div class="beat-copy">
+          <h3>Talk it through, out loud</h3>
+          <p>
+            Start a huddle and the agent is in the room with you — listening to the whole
+            conversation, answering when it's addressed, building on the board while you keep
+            talking. Guests you've shared a link with can join by voice too. No recording, no
+            meeting, no agenda — it's live while you're live.
+          </p>
+        </div>
+        <div class="beat-visual">
+          <div class="hd-pill"><span class="hd-dot"></span> cedar · listening</div>
+          <div class="hd-peers">
+            <div class="hd-peer">james</div>
+            <div class="hd-peer">khoa</div>
+            <div class="hd-peer">guest</div>
+          </div>
+          <div class="hd-cap"><b>khoa:</b> …cedar, chart that against last quarter</div>
+        </div>
+      </div>
+
       <div class="beat">
         <div class="beat-copy">
           <h3>Nothing gets lost</h3>
           <p>
             Questions and decisions are recorded where the work is. When an agent needs a human,
-            the whole team sees it — one shared inbox, a badge on the rail, a chime. Keep a canvas
-            private while you think; publish it when it's ready.
+            the whole team sees it — one shared inbox, and a notification that finds the person
+            it's assigned to, even with the tab closed. Keep a canvas private while you think;
+            publish it when it's ready.
           </p>
         </div>
         <div class="beat-visual">
           <div class="ibx-head">Inbox · workspace <span class="badge">2</span></div>
           <div class="ibx-row"><span class="pin">needs you</span> <b>Ship the pricing page?</b></div>
-          <div class="ibx-done"><span class="g">✓</span> Usage dashboard · decided</div>
+          <div class="push">
+            <div class="push-t">cedarpad · now</div>
+            <div class="push-b">Ship the pricing page? — assigned to you</div>
+          </div>
+          <div class="push-meta">delivered with the tab closed</div>
         </div>
       </div>
     </section>
 
     <div class="exit">
-      When it's decided, take it wherever your builders work. <a href="/why">Where this is going →</a>
+      When it's decided, it doesn't stop at the board. Connect your repos and the work leaves as
+      pull requests and scheduled jobs your builders — human or agent — pick up on their
+      own. <a href="/why">Where this is going →</a>
     </div>
 
     <section id="access">
@@ -527,9 +632,344 @@ import Layout from '../layouts/Layout.astro'
     font-weight: 700;
     margin-right: 5px;
   }
-  .ibx-done {
-    color: var(--muted);
+  /* Web push (the Inbox beat): an OS-shaped notification, lifted off the card. */
+  .push {
+    background: var(--raised);
+    border: 1px solid var(--line-strong);
+    border-radius: 9px;
+    padding: 8px 9px;
+    margin-top: 7px;
+    box-shadow: var(--shadow-lift);
+  }
+  .push-t {
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    color: var(--faint);
+    margin-bottom: 3px;
+  }
+  .push-b {
     font-size: 0.68rem;
+    color: var(--text);
+  }
+  .push-meta {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--faint);
+    text-align: center;
+    margin-top: 6px;
+  }
+  /* Huddle beat: mirrors the shipped status overlay — cedar's live state, peers, a caption. */
+  .hd-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    background: var(--void);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: 999px;
+    padding: 3px 9px;
+  }
+  .hd-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    animation: hd-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes hd-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.25;
+    }
+  }
+  .hd-peers {
+    display: flex;
+    gap: 5px;
+    margin: 8px 0 7px;
+  }
+  .hd-peer {
+    flex: 1;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 6px 7px;
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--muted);
+  }
+  .hd-cap {
+    border: 1px solid var(--line);
+    background: var(--void);
+    border-radius: 7px;
+    padding: 7px 9px;
+    font-size: 0.66rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .hd-cap b {
+    color: var(--text);
+    font-weight: 600;
+  }
+  /* Smart-paste cycler: three (clipboard, card) frames stacked absolutely, cross-faded on
+     one 9s loop so the pair always agrees. Fixed heights keep the beat-visual from jumping. */
+  .clip-lbl {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--mono);
+    font-size: 0.55rem;
+    color: var(--faint);
+    margin-bottom: 5px;
+  }
+  .kbd {
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    padding: 0 4px;
+    color: var(--muted);
+    background: var(--raised);
+  }
+  .clip {
+    background: var(--void);
+    border: 1px dashed var(--line-strong);
+    border-radius: 7px;
+    padding: 6px 8px;
+    font-family: var(--mono);
+    font-size: 0.55rem;
+    color: var(--faint);
+    line-height: 1.65;
+    overflow: hidden;
+  }
+  /* One line per span: Astro collapses literal newlines in the template, so `white-space: pre`
+     on the source text would render the blob as a single run. */
+  .clip span {
+    display: block;
+    white-space: nowrap;
+  }
+  .clip span.ind {
+    padding-left: 1ch;
+  }
+  .cyc-clip {
+    position: relative;
+    height: 46px;
+    margin-bottom: 4px;
+  }
+  .cyc-stage {
+    position: relative;
+    height: 118px;
+  }
+  .cyc-clip > div,
+  .cyc-stage > div {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    animation: cyc 9s infinite;
+  }
+  .cyc-clip > div:nth-child(2),
+  .cyc-stage > div:nth-child(2) {
+    animation-delay: 3s;
+  }
+  .cyc-clip > div:nth-child(3),
+  .cyc-stage > div:nth-child(3) {
+    animation-delay: 6s;
+  }
+  @keyframes cyc {
+    0% {
+      opacity: 0;
+    }
+    3% {
+      opacity: 1;
+    }
+    30% {
+      opacity: 1;
+    }
+    34% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  /* The loop is decoration: hold the first frame when motion is unwelcome. */
+  @media (prefers-reduced-motion: reduce) {
+    .cyc-clip > div,
+    .cyc-stage > div {
+      animation: none;
+    }
+    .cyc-clip > div:first-child,
+    .cyc-stage > div:first-child {
+      opacity: 1;
+    }
+    .hd-dot {
+      animation: none;
+    }
+  }
+  .cyc-arrow {
+    text-align: center;
+    color: var(--line-strong);
+    font-size: 0.75rem;
+    margin: 1px 0 4px;
+  }
+  /* Card miniatures. These deliberately copy the real components' chrome — the light
+     DataTable/GithubRepoCard surfaces and MarkdownCard's dark shell — so a reader
+     recognises them on the board later. Their colors are literal, not tokens. */
+  .mc {
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .mc-table {
+    background: #fff;
+    color: #111827;
+    border: 1px solid #e2e8f0;
+  }
+  .mc-table .ti {
+    padding: 6px 9px 3px;
+    font-weight: 700;
+    font-size: 0.7rem;
+  }
+  .mc-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.63rem;
+  }
+  .mc-table th {
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 3px 9px;
+  }
+  .mc-table td {
+    padding: 3px 9px;
+    color: #374151;
+    font-variant-numeric: tabular-nums;
+  }
+  .mc-table th.n,
+  .mc-table td.n {
+    text-align: right;
+  }
+  .mc-table tr + tr td {
+    border-top: 1px solid #f1f5f9;
+  }
+  .mc-table .ft {
+    border-top: 1px solid #e2e8f0;
+    padding: 4px 9px;
+    font-size: 0.57rem;
+    color: #6b7280;
+    display: flex;
+    justify-content: space-between;
+  }
+  .mc-md {
+    background: #11141a;
+    border: 1px solid #262a33;
+    color: #c9cdd6;
+  }
+  .mc-md .bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 9px;
+    border-bottom: 1px solid #262a33;
+    background: #0d1017;
+    font-size: 0.55rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .mc-md .tog {
+    width: 11px;
+    height: 11px;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    display: grid;
+    place-items: center;
+    font-size: 0.48rem;
+    line-height: 1;
+  }
+  .mc-md .split {
+    display: flex;
+  }
+  .mc-md .toc {
+    width: 78px;
+    flex: none;
+    border-right: 1px solid #262a33;
+    padding: 6px;
+    font-size: 0.55rem;
+    color: #7a7f8c;
+    line-height: 1.85;
+  }
+  .mc-md .toc .i1 {
+    padding-left: 7px;
+  }
+  .mc-md .body {
+    flex: 1;
+    padding: 6px 9px;
+    min-width: 0;
+  }
+  .mc-md .body b {
+    display: block;
+    color: #e6e9ee;
+    font-size: 0.64rem;
+    margin-bottom: 4px;
+  }
+  .mc-md .body i {
+    display: block;
+    height: 3px;
+    border-radius: 2px;
+    background: #262a33;
+    margin-bottom: 4px;
+  }
+  .mc-md .body i.w1 {
+    width: 94%;
+  }
+  .mc-md .body i.w2 {
+    width: 70%;
+  }
+  .mc-md .body i.w3 {
+    width: 85%;
+  }
+  .mc-repo {
+    background: #fff;
+    color: #111827;
+    border: 1px solid #e2e8f0;
+    padding: 9px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .mc-repo .hd {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .mc-repo .nm {
+    font-weight: 600;
+    font-size: 0.68rem;
+  }
+  .mc-repo .chip2 {
+    margin-left: auto;
+    background: #dcfce7;
+    color: #166534;
+    border-radius: 999px;
+    padding: 1px 7px;
+    font-size: 0.54rem;
+  }
+  .mc-repo .path {
+    font-family: var(--mono);
+    font-size: 0.57rem;
+    color: #374151;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 5px;
+    padding: 4px 6px;
+  }
+  .mc-repo .sub {
+    font-size: 0.55rem;
+    color: #6b7280;
   }
   .exit {
     border-top: 1px solid var(--line);
