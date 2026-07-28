@@ -137,6 +137,36 @@ echo "→ migrating the platform data layer on D1 (wrangler, idempotent)"
     "CI=true CLOUDFLARE_ACCOUNT_ID=99a19e584439be0568f33aad0477372b ./node_modules/.bin/wrangler d1 migrations apply PLATFORM_DB --remote" ) \
   || { echo "❌ D1 migration failed — aborting before rollout"; exit 1; }
 
+# Cutover safety net (#267). Once PLATFORM_DB_ENABLED is "true" in wrangler.jsonc, a
+# deploy repoints production's reads and writes at D1. If the rows are not in D1 yet, that
+# deploy is a silent data outage: every user, canvas and session vanishes from the app while
+# sitting safely in Turso. The import (scripts/migrate-platform-data.ts) must land FIRST.
+# So: with the flag on, refuse to roll out onto a D1 whose `user` table is empty. With the
+# flag off — today, and after a rollback — this check does not run at all.
+#
+# This is a BACKSTOP, not the control. `bunx @zabaca/zbc apply production canvas` deploys
+# without going through this script, so the guard simply does not run on that path. The
+# actual control is that PLATFORM_DB_ENABLED stays "false" on main and is flipped by hand
+# at cutover time, after the import has been verified.
+#
+# Read the flag by grep, not by parsing the .jsonc: stripping `//` comments with a regex
+# also eats the `https://` inside the URL vars. -m1 takes the FIRST occurrence, which is
+# the top-level (production) block — preview's redeclaration comes later in the file.
+FLAG=$(grep -m1 -o '"PLATFORM_DB_ENABLED": *"[a-z]*"' "$CANVAS_DIR/wrangler.jsonc" | sed 's/.*"\([a-z]*\)"$/\1/')
+if [ "$FLAG" = "true" ]; then
+  echo "→ PLATFORM_DB_ENABLED=true — checking the platform D1 actually holds rows before cutting over"
+  USERS=$(sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" \
+    "CI=true CLOUDFLARE_ACCOUNT_ID=99a19e584439be0568f33aad0477372b $CANVAS_DIR/node_modules/.bin/wrangler d1 execute PLATFORM_DB --remote --json --command 'select count(*) as n from \"user\"'" \
+    | python3 -c "import sys,json; s=sys.stdin.read(); print(json.loads(s[s.index('['):])[0]['results'][0]['n'])" 2>/dev/null || echo 0)
+  if [ "${USERS:-0}" -lt 1 ]; then
+    echo "❌ PLATFORM_DB_ENABLED is \"true\" but the platform D1 has $USERS user row(s)."
+    echo "   Deploying now would cut production over to an EMPTY database."
+    echo "   Import first:  bun run scripts/migrate-platform-data.ts dump | load | verify  (see #267)"
+    exit 1
+  fi
+  echo "✅ platform D1 holds $USERS user row(s) — cutover deploy may proceed"
+fi
+
 echo "→ zbc apply production canvas (build + deploy + push secrets — both container images)"
 ( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }
 # zbc apply's own success confirms the warehouse image was PUSHED (the call above builds
