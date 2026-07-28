@@ -36,8 +36,16 @@ BOOT_TIMEOUT=${BOOT_TIMEOUT:-300}
 # sub-2s response means the container was already warm and this check ran vacuously.
 MIN_COLD_SECONDS=${MIN_COLD_SECONDS:-2}
 
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)              # packages/canvas/scripts (absolute)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
+CANVAS_DIR="$REPO_ROOT/packages/canvas"
+
 ACCT=99a19e584439be0568f33aad0477372b
-SECRETS=${SECRETS:-packages/infra/environments/production/secrets.yaml}
+SECRETS=${SECRETS:-$REPO_ROOT/packages/infra/environments/production/secrets.yaml}
+# Derived the same way deploy.sh derives SANDBOX_APP: "<worker>-sandbox" from the worker
+# name in wrangler.jsonc, not hardcoded — a worker rename must not silently turn this
+# check into a no-op via a name that matches nothing.
+SANDBOX_APP=${SANDBOX_APP:-$(grep -m1 -o '"name": *"[a-z0-9-]*"' "$CANVAS_DIR/wrangler.jsonc" | sed 's/.*"\([a-z0-9-]*\)"$/\1/')-sandbox}
 
 echo "→ current served buildRev (may be warm):"
 WARM=$(curl -s --max-time 30 "$URL/api/buildrev" | python3 -c "import sys,json;print(json.load(sys.stdin).get('buildRev','?'))" 2>/dev/null || echo "?")
@@ -53,18 +61,22 @@ echo "→ checking the container application's instance state before the timed r
 # verify-container-image.sh.
 INSTANCES=$(sops exec-env "$SECRETS" 'curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   "https://api.cloudflare.com/client/v4/accounts/'"$ACCT"'/containers/applications"' 2>/dev/null \
-  | python3 -c "
-import sys, json
+  | SANDBOX_APP="$SANDBOX_APP" python3 -c "
+import os, sys, json
 apps = json.load(sys.stdin)['result']
-a = [x for x in apps if x['name'] == 'agent-canvas-sandbox'][0]
-instances = a['health']['instances']
+name = os.environ['SANDBOX_APP']
+matches = [x for x in apps if x['name'] == name]
+if not matches:
+    print(f'no container application named {name!r}', file=sys.stderr)
+    sys.exit(1)
+instances = matches[0]['health']['instances']
 total = sum(instances.values()) if isinstance(instances, dict) else instances
 print(total)
-" 2>/dev/null)
+")
 
 if [ -z "$INSTANCES" ]; then
   echo "❌ could not read instance state from the Cloudflare API — refusing to report a cold"
-  echo "   boot this script cannot prove. Fix the API call first."
+  echo "   boot this script cannot prove. Fix the API call first (SANDBOX_APP=$SANDBOX_APP)."
   exit 1
 fi
 if [ "$INSTANCES" -gt 0 ]; then
