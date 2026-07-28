@@ -71,15 +71,17 @@ secrets.yaml` and are pushed as Worker secrets by the zbc module — now as
   Cloudflare Queues, or Workflows — see `MIGRATION.md` → "Async agent jobs".
 - **DB client**: the canvas bridge builds **one** `@libsql/client` (node — speaks
   both a local file and remote Turso) and passes it to `makeDb` → `buildApp`. In
-  dev it's a local `packages/canvas/.web-poc-dev.db` file (migrations run on boot);
-  in prod it's remote Turso from env. (`worker/runtime.ts` `createDbForWorker` —
-  the old workerd `@libsql/client/web` path — is now unused, kept for reference.)
+  dev that file is miniflare's local D1, which the edge Worker serves `/v1/*` +
+  `/api/auth/*` from (ADR-0018; apply migrations with
+  `bun run webpoc:db:migrate:local`); in prod it's remote Turso from env.
+  (`worker/runtime.ts` `createDbForWorker` is the edge's own path: the D1 binding
+  when bound, otherwise workerd's `@libsql/client/web` against Turso.)
 
 ## Dev / test workflow
 
 - **No `turso` CLI / daemon needed.** Run the whole stack from canvas:
-  `cd packages/canvas && bun run dev` (vite :4510 + bridge :4511). The bridge uses
-  a local libSQL file and migrates on boot.
+  `cd packages/canvas && bun run dev` (vite :4510 + bridge :4511 + edge Worker
+  :4513). Migrations are explicit: `bun run webpoc:db:migrate:local`.
 - **Contract changes** (`lib/contract`): the web client types are NOT automatic.
   From `packages/canvas`: `bun run webpoc:openapi:emit` (writes `openapi.json` from
   the registered routes) then `bun run webpoc:gen:api` (regenerates

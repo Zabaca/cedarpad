@@ -21,6 +21,8 @@
     "webpoc:test": "cd web-poc && vitest run --passWithNoTests",
     "webpoc:db:generate": "cd web-poc && bunx --bun drizzle-kit generate",
     "webpoc:db:migrate": "cd web-poc && bun scripts/migrate.ts",
+    "webpoc:db:migrate:local": "bun run scripts/wrangler-local.ts d1 migrations apply PLATFORM_DB --local",
+    "webpoc:db:migrate:local:e2e": "bash scripts/with-worktree-db.sh bun run scripts/wrangler-local.ts d1 migrations apply PLATFORM_DB --local",
     "webpoc:seed": "cd web-poc && bun scripts/seed.ts",
     "webpoc:openapi:emit": "cd web-poc && bun scripts/emit-openapi.ts",
     "webpoc:gen:api": "cd web-poc && openapi-typescript ./openapi.json -o src/api-types.ts"

@@ -3,6 +3,11 @@ import type { AccessScope } from "./access.js";
 
 /** Cloudflare Worker env bindings (from wrangler vars/secrets or .dev.vars). */
 export interface Bindings {
+  /**
+   * The platform data layer on D1 (ADR-0018). Bound in LOCAL DEV only for now
+   * (miniflare's local D1, #263); when present it wins over TURSO_* below.
+   */
+  PLATFORM_DB?: import("@cloudflare/workers-types").D1Database;
   TURSO_URL: string;
   TURSO_KEY?: string;
   ANTHROPIC_API_KEY?: string;
