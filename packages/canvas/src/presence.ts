@@ -25,7 +25,8 @@ export type PresenceEntry = {
 export function entryToPresence(e: PresenceEntry, pageId: string, now: number): TLInstancePresence {
   return InstancePresenceRecordType.create({
     id: InstancePresenceRecordType.createId(e.userId),
-    userId: e.userId,
+    // tldraw 5.2 brands user ids (`TLUserId`); the wire carries a plain string.
+    userId: e.userId as TLInstancePresence['userId'],
     userName: e.name ?? 'Guest',
     color: e.color,
     currentPageId: pageId as TLPageId,
