@@ -32,6 +32,15 @@ URL=${CANVAS_URL:-https://app.cedarpad.com}
 TRIES=${POLL_TRIES:-60}
 CANVAS_REL=$(cd "$SCRIPT_DIR" && git rev-parse --show-prefix | sed 's:/*$::')  # e.g. packages/canvas
 
+# Cloudflare coordinates for the post-deploy container check (incident 2026-07-28, below).
+# The account id is already assumed inline by the D1 guard further down; named here so both
+# uses move together. The app name is DERIVED from the worker name + the DO class rather
+# than hardcoded — Cloudflare names a container application "<worker>-<class>", so a worker
+# rename must not silently turn this check into a no-op via a name that matches nothing.
+CF_ACCOUNT=${CLOUDFLARE_ACCOUNT_ID:-99a19e584439be0568f33aad0477372b}
+SANDBOX_APP=${SANDBOX_APP:-$(grep -m1 -o '"name": *"[a-z0-9-]*"' "$SCRIPT_DIR/wrangler.jsonc" | sed 's/.*"\([a-z0-9-]*\)"$/\1/')-sandbox}
+SANDBOX_APP_ID=${SANDBOX_APP_ID:-a03ba78e-7285-4761-b91d-ba494056087c}
+
 DC=$(mktemp -d)
 SNAPSHOT=""
 cleanup() {
@@ -175,6 +184,82 @@ echo "→ zbc apply production canvas (build + deploy + push secrets — both co
 # container (no dispatch path yet, see #240), so there is no served response to confirm
 # against. Say exactly what was verified, not more: pushed, not live.
 echo "✅ warehouse image built + pushed (not started — no dispatch path yet, see #240)"
+
+# --- the container application's PERSISTED image (incident 2026-07-28) -----------------
+#
+# The buildRev poll below reaches a live container and proves the SERVING instances carry
+# the new SHA. It does NOT prove the container application's stored configuration was
+# updated — and those are two different facts.
+#
+# On 2026-07-28 the D1-cutover deploy passed the buildRev poll: the rollout started new
+# instances on the new image and they answered correctly. But the application record kept
+# `configuration.image` at the PREVIOUS digest while its rollout reported "completed"
+# (from f654fd34…, to c223533d…, app stayed f654fd34…). Serving instances were right; the
+# configuration every FUTURE cold boot reads was not.
+#
+# That is invisible while an instance stays warm. The canvas worked for ~15 minutes. Then
+# the idle reaper (STALE_MS, server/bridge.ts) exited the process as designed, the next
+# request cold-booted the OLD image against the NEW worker env — which by then no longer
+# forwarded TURSO_URL/TURSO_KEY (ADR-0018 #266, worker/container-env.ts) — and every
+# container-bound request hung. `/__bootlog` hung too: it calls getProcessLogs on the
+# Sandbox DO, which was itself waiting on a container that never finished booting.
+#
+# So: assert the stored image equals the rollout's target. This is the check that would
+# have caught it at deploy time, when buildRev could not.
+echo "→ verifying the container application's STORED image matches its rollout target"
+IMG_CHECK=$(sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" \
+  'curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/'"$CF_ACCOUNT"'/containers/applications"' 2>/dev/null \
+  | APP_NAME="$SANDBOX_APP" python3 -c "
+import sys, json, os
+name = os.environ['APP_NAME']
+try:
+    apps = json.load(sys.stdin).get('result') or []
+except Exception as e:
+    print('SKIP could not parse the containers API response (%s)' % e); raise SystemExit
+match = [a for a in apps if a.get('name') == name]
+if not match:
+    print('SKIP no container application named %s' % name); raise SystemExit
+a = match[0]
+img = a['configuration']['image'].split('@')[-1]
+inst = a.get('health', {}).get('instances', {})
+print('%s %s %s %s' % ('OK', img, a.get('version'), inst.get('failed', 0)))
+" 2>/dev/null || echo "SKIP containers API call failed")
+
+case "$IMG_CHECK" in
+  SKIP*)
+    # Never fail the deploy on a diagnostic that could not run — but never let it pass
+    # silently either, or the check quietly stops existing.
+    echo "  ⚠️  could not verify the stored image (${IMG_CHECK#SKIP }) — check by hand:"
+    echo "     packages/canvas/scripts/verify-container-image.sh"
+    ;;
+  OK*)
+    set -- $IMG_CHECK
+    STORED=$2; APPVER=$3; NFAILED=$4
+    TARGET=$(sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" \
+      'curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/'"$CF_ACCOUNT"'/containers/applications/'"$SANDBOX_APP_ID"'/rollouts"' 2>/dev/null \
+      | python3 -c "
+import sys, json
+try:
+    r = (json.load(sys.stdin).get('result') or [])[0]
+    print(r['target_configuration']['image'].split('@')[-1])
+except Exception:
+    print('?')
+" 2>/dev/null || echo "?")
+    if [ "$TARGET" = "?" ]; then
+      echo "  ⚠️  stored image $STORED (app v$APPVER) — could not read the rollout target to compare"
+    elif [ "$STORED" != "$TARGET" ]; then
+      echo "❌ the container application's stored image does NOT match its rollout target."
+      echo "   stored : $STORED  (app v$APPVER)"
+      echo "   target : $TARGET"
+      echo "   The rollout may report \"completed\" anyway. Serving instances can be correct"
+      echo "   while this is wrong — the canvas will work until the first idle-sleep, then"
+      echo "   every cold boot wedges on the stale image. Re-run this deploy."
+      exit 1
+    else
+      echo "✅ stored image matches the rollout target ($STORED, app v$APPVER, failed instances: $NFAILED)"
+    fi
+    ;;
+esac
 
 # Verify against the public /api/buildrev (#74). Post-#47 the edge Better Auth gate is
 # the sole gate, so /api/status and /__recycle serve the login page to an unauthenticated
