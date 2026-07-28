@@ -1,5 +1,6 @@
 import { createClient } from '@libsql/client';
 
+import { localDevDbUrl } from '../../server/local-d1.ts';
 import { expect, test } from '../fixtures/test.ts';
 
 /**
@@ -22,11 +23,10 @@ import { expect, test } from '../fixtures/test.ts';
  * `wrangler dev` in the harness is ADR-0018 slice #263.
  */
 
-// The same per-worktree dev DB the bridge opened (exported by scripts/with-worktree-db.sh).
-const devDbUrl = process.env.CANVAS_DEV_DB;
-
 test('starting a chat turn files its Conversation', async ({ request }) => {
-  test.skip(!devDbUrl, 'CANVAS_DEV_DB is unset — run through `bun run test:e2e`');
+  // The same local D1 the bridge and the edge Worker share (ADR-0018 / #263), resolved from
+  // this worktree's miniflare state dir.
+  const devDbUrl = localDevDbUrl();
 
   const chatId = `e2e-chat-${Date.now()}`;
   const message = `first message ${chatId}`;
@@ -40,7 +40,7 @@ test('starting a chat turn files its Conversation', async ({ request }) => {
   expect(res.status()).toBe(202);
 
   // The turn is fire-and-forget: poll the platform data layer until its row lands.
-  const client = createClient({ url: devDbUrl! });
+  const client = createClient({ url: devDbUrl });
   await expect
     .poll(
       async () => {
