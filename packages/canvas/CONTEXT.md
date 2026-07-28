@@ -136,20 +136,31 @@ DESIGN.md owns the look.
 ## Architecture: one process, one source of truth
 
 ```
- browser (tldraw + chat)            bun bridge (:4511)               Claude Agent SDK
- ───────────────────────            ──────────────────               ────────────────
-  human draws ──POST /shapes──▶  ┌────────────────────┐
-  WS → Durable Object room ◀─▶   │  CanvasStore        │ ◀─tool calls─ create/update/
-  chat ──POST /chat (SSE)────▶   │  (id→shape, version)│   delete/clear/align/read
-                                 └────────────────────┘
-                                   the agent's tools mutate the SAME store,
-                                   so agent edits stream to the browser live.
+ browser (tldraw + chat)         edge Worker (workerd)          bun bridge + Agent SDK
+ ───────────────────────         ─────────────────────          ──────────────────────
+  human draws ─────WS──────▶  ┌──────────────────────┐
+  presence     ◀────WS──────▶ │ CanvasSyncRoom (DO)  │ ◀─HTTP──── CanvasStore facade
+  chat ──POST /chat (SSE)──────│  TLSocketRoom        │  /mutate   (src/remote-store.ts)
+                              │  room state in DO    │              ▲
+                              │  SQLite              │              │ tool calls
+                              └──────────────────────┘        create/update/delete/read
+                                 ONE room per canvas, globally.
+                                 Human and agent write the SAME room,
+                                 so agent edits stream to the browser live.
 ```
 
-- The **bridge** (`server/bridge.ts`) is the only stateful component. It owns a
-  `CanvasStore` and serves canvas sync + the `/api/chat` agent endpoint.
-- The **browser** (`src/`) is a pure client: a full-bleed tldraw editor wired to
-  the bridge by `src/sync.ts`. Chat lives **in the canvas** — each session is a
+The canvas document lives in the **Durable Object**, not the bridge (ADR-0019). The
+browser is a `useSync` client; the agent writes over an authenticated HTTP mutation
+endpoint on the same DO. `CanvasStore` (`src/store.ts`) is still the seam every agent
+tool talks to — `src/remote-store.ts` implements it against the room, so `canvas-ops.ts`
+never learned the document moved.
+
+- The **bridge** (`server/bridge.ts`) runs the agent and serves `/api/chat`. It no
+  longer owns canvas state: since ADR-0019 the document is the DO's, and the bridge
+  opens a short-lived `CanvasStore` against the room per tool call (open → mutate →
+  flush → discard).
+- The **browser** (`src/`) is a pure client: a full-bleed tldraw editor synced by
+  `useSync` against the room. Chat lives **in the canvas** — each session is a
   `chat` shape (`src/ChatShape.tsx`); a floating "New chat" control spawns one.
 - Dev runs both with `bun run dev` (bridge :4511, vite :4510; vite proxies
   `/api/*` → bridge).
@@ -205,9 +216,11 @@ A `CanvasShape` is one of:
   converters bridge that: editor→model resolves the asset's data URL into the
   shape's `src` (`tldraw-bridge.ts` via `editor.getAsset`), and model→editor
   recreates the asset from `src` before the shape (`sync.ts` `ensureImageAssets`,
-  using a deterministic `imageAssetId(shapeId)`). `src` rides inline in the model
-  (and over SSE / in persistence) — fine at POC scale, a few screenshots; revisit
-  (a separate asset endpoint) if many/large images make full-state broadcasts heavy.
+  using a deterministic `imageAssetId(shapeId)`). **Pixels no longer ride inline on the
+  wire**: since ADR-0019 the room's asset records carry a URL and the bytes live in R2
+  behind `/api/canvas-assets/:canvas/:key` (`worker/canvas-assets.ts`). Inlining base64
+  into records would put images in DO SQLite and rebroadcast them on every sync — the
+  "revisit if images get heavy" note this replaces.
   `src` is **redacted** from `read_canvas`/`read_connected` (a data URL would flood
   the agent's context); the agent views an image via the **`read_image(id)`** tool,
   which returns it as a real image block. The agent cannot create images.
@@ -244,18 +257,18 @@ A `CanvasShape` is one of:
   `localStorage`), degrading to guest when the endpoint is absent (local dev).
   Guest naming is ask-once: `setDisplayName` persists browser-wide and is a no-op
   for logged-in users. Presence (#212) reuses this identity.
-- **Live presence (#212)**: transport is ours, rendering is tldraw's. Each browser
-  heartbeats `{userId, name, color, cursor, camera}` to `POST /api/canvas/presence`
-  (change-gated ~150ms, 2s keepalive; `src/presence.ts`); the bridge keeps an
-  ephemeral per-canvas room (`server/presence.ts`, never persisted, 10s staleness IS
-  the disconnect) and broadcasts the merged set over the EXISTING canvas SSE as
-  throttled `event: presence` frames. The client maps remote entries (self excluded)
-  to `instance_presence` records — invisible to shape sync, which filters on
-  typeName — and tldraw's built-in collaborator UI does the rest: labeled cursors,
-  the people face-pile (`DefaultSharePanel`/`DefaultPeopleMenu` in `App.tsx`), and
-  click-to-follow via `startFollowingUser` (auto-unfollow on local pan/zoom). The
-  wire type `PresenceEntry` lives in `src/presence.ts`; `parseHeartbeat` is the
-  bridge-side guard of the same contract.
+- **Live presence (#212, moved onto sync by #293)**: **both** transport and rendering
+  are tldraw's now. `useSync` takes a `users: TLUserStore` built from our identity
+  (`createCanvasUserStore`, `src/presence.ts`) and the protocol carries presence. The
+  bespoke heartbeat — `POST /api/canvas/presence`, `server/presence.ts`, the throttled
+  `event: presence` SSE frames — is **deleted**; only the identity mapping survived.
+  tldraw's built-in collaborator UI still does the rest: labeled cursors, the people
+  face-pile (`DefaultSharePanel`/`DefaultPeopleMenu` in `App.tsx`), and click-to-follow
+  via `startFollowingUser` (auto-unfollow on local pan/zoom).
+  Two things worth keeping in mind: tldraw **brands user ids** and rejects an
+  unprefixed one at record validation (closing the socket), so `createUserId` in
+  `tlUserFor` is load-bearing; and presence records must never reach persisted room
+  state — the room guarantees it, and `worker/sync-room.test.ts` pins it.
 
 - **Interactive box**: the shared kind behind the two shapes whose content is live,
   interactive DOM (`component`, `chat`) — a resizable rounded card that takes real
@@ -345,8 +358,10 @@ components sink). Dev-agent turns keep the full preset (worktree edits are their
 job). Bash remains, so this steers the model rather than sandboxing it.
 
 The agent's "thinking" and replies to the human are its normal chat text — not a
-tool. The human watches shapes appear in real time via the canvas SSE while the
-text streams on the chat channel.
+tool. The human watches shapes appear in real time over the sync room while the
+text streams on the chat channel. Shapes land **per tool call**, not at the end of
+the turn: the turn's store settles after every tool (#310), so a long turn draws
+progressively and a failed write surfaces as that tool's own error.
 
 **`send_message` (cross-chat)** — a chat turn may post a message into ANOTHER
 chat card's thread on its canvas and kick that card's turn (parity with the edge
@@ -437,26 +452,30 @@ The round-trip:
 > components dir, but the code it writes is not sandboxed. Fine for a local POC;
 > revisit before any non-local exposure.
 
-## Sync invariants (`src/sync.ts`) — echo-safety
+## Sync invariants (ADR-0019)
 
-- **remote → editor:** SSE state is diff-reconciled into the editor inside
-  `editor.store.mergeRemoteChanges(...)`, so applying it does **not** re-trigger
-  the push listener (which is scoped to `source: 'user'`). Frames older than the
-  last applied `version` are ignored — **except** that the SSE `onopen` resets the
-  high-water mark to `-1`, so a reconnect (the bridge restarts and resets its
-  version counter on every server-code reload) always re-accepts the bridge's
-  state as authoritative instead of silently drifting out of sync.
-- A local shape is only **deleted** by reconciliation if the server once had it
-  and now dropped it (`mirrored` set) — never a brand-new local shape mid-draw.
-- **editor → remote:** the user's document changes are translated and POSTed,
-  **debounced 80ms** to batch drags.
-- **Arrow bindings live in separate `binding` records, not shape props** (tldraw
-  v5). An arrow's `startShapeId`/`endShapeId` are reconciled into real bindings
-  *after* shapes exist, inside `mergeRemoteChanges` (`reconcileArrowBindings`,
-  idempotent). Upward, `fromTldrawShape` reads `getArrowBindings` and zeroes a
-  bound terminal's coords (so dragging the target doesn't churn the diff), and the
-  store listener also watches `binding` records to re-push the affected arrow when
-  a human binds/unbinds. A bound terminal follows its target on move.
+The hand-rolled reconcile loop is gone. `src/sync.ts` and `src/sync-plan.ts`
+(`planReconcile`, the 80ms debounced POST, the in-memory version counter, the
+`onopen` high-water reset) were **deleted** — echo-safety, ordering, conflict merge,
+and reconnect/resume are the sync protocol's job now, not ours. What remains ours:
+
+- **Room uniqueness is load-bearing.** Exactly one `TLSocketRoom` per canvas globally;
+  the Durable Object is that guarantee. Never host the same canvas twice.
+- **Referential integrity is ours.** Sync-core contains *zero* binding logic — that
+  lives at Editor level, and a DO has no DOM. So the write path sweeps binding records
+  itself (`worker/canvas-mutate.ts`), inside the same `updateStore` transaction as the
+  delete. Deleting a bound shape leaves **the arrow, unbound** — matching tldraw's own
+  `ArrowBindingUtil.arrowDidUpdate`, because a human and an agent write the same room
+  and the server must not answer the same event differently from the client.
+- **Arrow bindings are separate `binding` records, not shape props** (tldraw v5) —
+  unchanged, and now the reason the point above exists.
+- **Validate anything entering the room from outside.** `updateStore()` validates via
+  `recordType.validate`; `storage.transaction`'s `txn.set` and `loadSnapshot()` do
+  **not**. An invalid record is accepted and then breaks every client that opens the
+  room. A round-trip test proves symmetry, not validity.
+- **Ids are primed from room state** before the agent's first mint (`src/remote-store.ts`),
+  or a cold container would mint `shape:agent_1` into an occupied id — an upsert where a
+  create was meant. Concurrent writers can still collide (#327).
 
 ## Guest share links (ADR 0015, PRD #220 — live)
 
