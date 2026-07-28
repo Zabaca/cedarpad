@@ -4,7 +4,7 @@ import * as realPushStore from '../web-poc/lib/db/queries/push-subscriptions.ts'
 import type { GateUser } from './auth-gate.ts';
 
 // The push subscription API (#87): the device registry behind the shell's opt-in toggle.
-// Edge-only — it never wakes a container. Delivery lives in the bridge (server/push-notify.ts).
+// Edge-only — it never wakes a container. Delivery is edge-side too (worker/push-notify.ts).
 
 let saved: Array<{ userId: string; endpoint: string; p256dh: string; auth: string }> = [];
 let removed: Array<{ userId: string; endpoint: string }> = [];

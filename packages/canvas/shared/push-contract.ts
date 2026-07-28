@@ -4,9 +4,9 @@ import { z } from 'zod';
  * Web push contract (#87 — the `notify` seam made real).
  *
  * ONE module for every push boundary (CLAUDE.md §7): the browser → edge subscribe/unsubscribe
- * bodies, and the JSON payload the container encrypts and the service worker decrypts. Three
+ * bodies, and the JSON payload the edge encrypts and the service worker decrypts. Three
  * processes parse against these schemas — the shell (`shell/src/push.ts`), the edge
- * (`worker/push.ts`), and the container bridge (`server/push-notify.ts`) — so a field rename
+ * (`worker/push.ts`), and edge delivery (`worker/push-notify.ts`) — so a field rename
  * is a mechanical refactor, not archaeology.
  *
  * `shell/public/sw.js` is the one consumer that CANNOT import this (it is a raw service-worker

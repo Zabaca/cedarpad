@@ -98,21 +98,42 @@ afterAll(() => {
   getCanvasImpl = realGetCanvas;
   createCanvasImpl = realCreateCanvas;
 });
-mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
-  get: () => Promise.resolve(conv),
-  reply: (_db: unknown, id: string) => {
+// Delegate + restore, like the canvases mock above: the canned impls hand back to the real
+// module in afterAll so this file's stubs don't rebind conversations for every LATER test file.
+// The real implementations are captured as VALUES up front — bun rebinds the namespace object
+// itself, so reading them back off the namespace later would hand you this very wrapper.
+const realConversations = await import('../web-poc/lib/db/queries/conversations.ts');
+const realConvFns = {
+  get: realConversations.get,
+  reply: realConversations.reply,
+  markRead: realConversations.markRead,
+  attachCanvas: realConversations.attachCanvas,
+};
+let convImpls = {
+  get: (() => Promise.resolve(conv)) as typeof realConvFns.get,
+  reply: ((_db: unknown, id: string) => {
     replyCalls.push(id);
     return Promise.resolve(conv);
-  },
-  markRead: (_db: unknown, id: string) => {
+  }) as never as typeof realConvFns.reply,
+  markRead: ((_db: unknown, id: string) => {
     markReadCalls.push(id);
     return Promise.resolve(conv);
-  },
-  attachCanvas: (_db: unknown, id: string, canvasId: string) => {
+  }) as never as typeof realConvFns.markRead,
+  attachCanvas: ((_db: unknown, id: string, canvasId: string) => {
     attachCanvasCalls.push([id, canvasId]);
     return Promise.resolve(conv);
-  },
+  }) as never as typeof realConvFns.attachCanvas,
+};
+mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
+  ...realConversations,
+  get: (...args: Parameters<typeof realConvFns.get>) => convImpls.get(...args),
+  reply: (...args: Parameters<typeof realConvFns.reply>) => convImpls.reply(...args),
+  markRead: (...args: Parameters<typeof realConvFns.markRead>) => convImpls.markRead(...args),
+  attachCanvas: (...args: Parameters<typeof realConvFns.attachCanvas>) => convImpls.attachCanvas(...args),
 }));
+afterAll(() => {
+  convImpls = { ...realConvFns };
+});
 // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens (per-workspace, not
 // per-conversation) — stubbed by workspaceId so a test can assert isolation between workspaces.
 mock.module('../web-poc/lib/db/queries/mcp-tokens.ts', () => ({

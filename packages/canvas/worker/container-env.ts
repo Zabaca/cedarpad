@@ -50,14 +50,17 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
   // sessions with `cwd: CANVAS_CWD`, matching START's cd — one derivation, no drift that
   // could orphan a session's JSONL by project-dir name.
   CANVAS_CWD: CANVAS_CONTAINER_CWD,
-  // Web push (#87): the `notify` seam lives in the bridge, so the VAPID keypair has to reach
-  // the container — the one deliberate exception to "signing keys stay at the edge"
-  // (GITHUB_APP_PRIVATE_KEY, LIVEKIT_*, REPO_TOKEN_KEY all stay behind). The capability is
-  // narrow: sign a push to an endpoint already in `push_subscriptions`, read nothing. Unset ⇒
-  // `webPushSender` returns null and notify degrades to its log line.
-  VAPID_PUBLIC_KEY: env.VAPID_PUBLIC_KEY ?? '',
-  VAPID_PRIVATE_KEY: env.VAPID_PRIVATE_KEY ?? '',
-  VAPID_SUBJECT: env.VAPID_SUBJECT ?? '',
+  // The platform RPC endpoint (ADR-0018): the edge origin the container calls back on for the
+  // two writes that originate inside it. Deliberately its OWN variable rather than reusing
+  // WEB_ORIGIN — WEB_ORIGIN is also the Better Auth origin and local dev always fills it, so
+  // keying the RPC off it would make a bridge with no edge in front of it (vite + bridge) post
+  // into the void. Set ⇒ there is an edge; unset ⇒ the bridge keeps its direct client.
+  PLATFORM_RPC_ORIGIN: env.WEB_ORIGIN ?? '',
+  // Web push (#87) no longer needs anything here: delivery moved to the EDGE with ADR-0018
+  // (it reads `push_subscriptions` and prunes dead endpoints, so it belongs on the side that
+  // holds the platform data layer). The container asks for a ping by name over the platform
+  // RPC instead, so the VAPID keypair — the one deliberate exception to "signing keys stay at
+  // the edge" — stops reaching a container at all.
 });
 
 // Env for the warehouse container (ADR-0017, #236) — deliberately just the R2 S3 creds

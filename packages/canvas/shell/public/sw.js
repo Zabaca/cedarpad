@@ -3,7 +3,7 @@
  * Deliberately dependency-free plain JS: this file is served verbatim from `shell/dist/sw.js`
  * and is NOT part of the vite module graph, so it cannot import the zod contract in
  * `shared/push-contract.ts`. It reads the payload defensively instead; the contract is
- * enforced on the sending side (server/push-notify.ts parses before encrypting).
+ * enforced on the sending side (worker/push-notify.ts parses before encrypting).
  */
 
 self.addEventListener('install', () => self.skipWaiting());

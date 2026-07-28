@@ -14,6 +14,7 @@ import { readFileSync, rmSync } from 'node:fs';
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
 import { chatHub, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, turnFlavor, webPocDb } from './bridge.ts';
 import { resumeConversation } from './inbox.ts';
+import type { ConversationStartInput } from '../shared/platform-rpc.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { DEV_AGENT_KIND } from './dev-agent-workflow.ts';
 import { INBOX_CONVERSATION_HEADER } from '../shared/bridge-wire.ts';
@@ -578,6 +579,43 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
 
     expect(second!.id).toBe(first!.id); // one row per session
     expect(second!.summary).toBe('the original first message');
+  });
+
+  // ADR-0018: with an edge in front of it, the container does not write the row itself — it
+  // asks the edge to, over the platform RPC's one named operation.
+  test('with the platform RPC configured, the row is filed over the RPC instead of locally', async () => {
+    const sessionId = `sess_rpc_${crypto.randomUUID()}`;
+    const started: ConversationStartInput[] = [];
+
+    await indexSessionStart('chat_rpc', sessionId, 'over the wire', undefined, undefined, undefined, undefined, undefined, {
+      rpc: { conversationStart: async (input) => void started.push(input), notify: async () => {} },
+    });
+
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({ sessionId, ownerRef: 'chat_rpc', summary: 'over the wire' });
+    expect(await conversations.getBySessionId(webPocDb, sessionId)).toBeNull();
+  });
+
+  // The best-effort contract (ADR-0018): "an index failure never fails the turn" must survive
+  // the new hop exactly as it survived a failed platform-data-layer write.
+  test('an unreachable edge is logged and the turn continues', async () => {
+    const logged: unknown[] = [];
+    const realError = console.error;
+    console.error = (...args: unknown[]) => void logged.push(args);
+    try {
+      await indexSessionStart('chat_down', `sess_down_${crypto.randomUUID()}`, 'edge is down', undefined, undefined, undefined, undefined, undefined, {
+        rpc: {
+          conversationStart: async () => {
+            throw new Error('connect ECONNREFUSED');
+          },
+          notify: async () => {},
+        },
+      });
+    } finally {
+      console.error = realError;
+    }
+    expect(logged).toHaveLength(1);
+    expect(String(logged[0])).toContain('session-start');
   });
 });
 
