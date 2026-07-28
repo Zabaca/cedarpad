@@ -98,6 +98,20 @@ All cross-process boundaries (renderer ↔ Tauri ↔ sidecar, sidecar ↔ extern
 
 Why: IPC payloads, future sync messages, and persisted JSON are all "data crosses a trust boundary" moments — the same moments that drive most subtle bugs. One source of truth means renames, additions, and removals are mechanical refactors, not archaeology.
 
+## Running the tests
+
+`packages/canvas` has **three** test runners. Use the package scripts — never a bare runner invocation.
+
+| Scope | Runner | Command |
+| --- | --- | --- |
+| `server/`, `src/`, `shell/`, `worker/` | `bun test` | `bun run test` |
+| `web-poc/` (the platform data layer) | **vitest** | `bun run webpoc:test` |
+| `e2e/` | Playwright | `bun run test:e2e` |
+
+**Do not run bare `bun test`.** Its default glob also collects `web-poc/`'s **vitest** specs and runs them under the wrong runner, producing ~10 spurious failures in `conversations` / `mcp-tokens` query round-trips. They are not real — those files pass under `webpoc:test`. `bun run test` is scoped to exclude them, and `bun test` exposes no ignore option, so the script is the only guard.
+
+Typechecking is likewise split: `bun run typecheck` covers canvas + the edge Worker; `web-poc` needs `bun run webpoc:typecheck` separately. A change to the platform data layer's types is only fully checked once both have run.
+
 ## Agent skills
 
 ### Issue tracker
