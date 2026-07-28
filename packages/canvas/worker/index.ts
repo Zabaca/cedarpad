@@ -33,7 +33,7 @@ import { decideGuestGate } from './guest-gate.ts';
 import { guestCapabilities } from '../shared/guest-capabilities.ts';
 import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.ts';
 import { handleCanvasSnapshot, parseCanvasSnapshotPath } from './canvas-snapshot-api.ts';
-import { handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
+import { evictGuestSockets, handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
 import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
 import { handleMartApi, martsForGuestCanvas, MART_ROUTE } from './mart-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
@@ -660,6 +660,10 @@ export default {
         user,
         shareLinksMatch[1] as string,
         shareLinksMatch[2],
+        // #320 §5: revoking must also drop the link's already-open sync sockets — their
+        // capabilities were fixed at the handshake, so the tombstone alone would leave the
+        // connected guest writing.
+        (linkId) => evictGuestSockets(env, shareLinksMatch[1] as string, linkId, user.id),
       );
     }
 

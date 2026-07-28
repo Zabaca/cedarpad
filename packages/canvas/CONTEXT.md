@@ -526,6 +526,17 @@ and reconnect/resume are the sync protocol's job now, not ours. What remains our
   confinement (SSE frame filter, member-conversation view-only rule, the own-tier check on
   component source, guest turns are plain chat turns). Member surface: the Share panel in the
   canvas picker (`SharePanel`, Shell.tsx).
+- **Guest marking** (#320) — a guest names themselves on arrival (`GuestNamePrompt`,
+  `setDisplayName`) and presence renders them as "<name> (Guest)". The mark rides tldraw's
+  own `userName`, so the cursor label and the people list carry it without a second visual
+  language. Load-bearing, not chrome: revocation is a manual judgement call, so a member has
+  to notice an outsider is editing before they can act. Client-supplied and unverified — it
+  is a display name, never an authorization input (that is `guest:<sessionId>`).
+- **Revocation** — a tombstone on the row (stops the next connect) AND an eviction of the
+  link's OPEN sockets (`evictGuestSockets` → the DO's `/evict`, `socketsForLink`). Both,
+  because capabilities ride the handshake: the tombstone alone leaves the guest who is
+  connected right now writing with what they had. Contributions stay — removing them is a
+  merge conflict, not a delete; the per-session identity is what tells you what to remove.
 - Known v1 gaps: the bridge's chat→canvas / guest-owned-chat maps are in-memory (a recycle
   locks guests out of their pre-recycle chats, fails closed); `guestChat` links carry no
   turn budget (revocation is the only cost brake).

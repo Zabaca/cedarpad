@@ -13,7 +13,7 @@ import { applyMutation, MutationRejected } from './canvas-mutate.ts';
 import { isInteractOnly, narrowInteractPush } from './guest-socket-policy.ts';
 import type { Env } from './index.ts';
 import { handleSnapshotRequest } from './snapshot-io.ts';
-import { isReadonlyRequest, SYNC_GUEST_CAPS_HEADER, SYNC_USER_HEADER } from './sync-api.ts';
+import { isReadonlyRequest, SYNC_GUEST_CAPS_HEADER, SYNC_GUEST_LINK_HEADER, SYNC_USER_HEADER } from './sync-api.ts';
 import { createCanvasSyncRoom, type SyncSessionMeta } from './sync-room.ts';
 
 // The Durable Object that hosts a canvas's `TLSocketRoom` (ADR-0019). Shape follows
@@ -41,7 +41,20 @@ interface SocketAttachment {
    *  attachment because it is a property of the CONNECTION — established at the handshake
    *  from the link's capabilities — and it has to survive hibernation with the socket. */
   interactOnly?: boolean;
+  /** #320: which share link admitted this guest connection. Absent on a member's. It is
+   *  not identity (that is `meta.userId`) — it is the handle revocation drops sockets by,
+   *  and it rides the attachment because it must survive hibernation with the socket. */
+  linkId?: string;
   snapshot?: SessionStateSnapshot;
+}
+
+/**
+ * The connections a revoked share link opened (#320 §5). Pure over the socket list so the
+ * selection — the part where a mistake either leaves the revoked guest connected or
+ * disconnects innocent members — is testable without a Durable Object.
+ */
+export function socketsForLink(sockets: WebSocket[], linkId: string): WebSocket[] {
+  return sockets.filter((ws) => (ws.deserializeAttachment() as SocketAttachment | null)?.linkId === linkId);
 }
 
 // Deliberately NOT `extends DurableObject` from 'cloudflare:workers'. The Workers runtime
@@ -128,6 +141,17 @@ export class CanvasSyncRoom {
       return userId ? handleSnapshotRequest(this.room, request) : new Response('unauthorized', { status: 401 });
     }
 
+    // Revocation reaching the OPEN sockets (#320 §5). The member gate ran in the Worker
+    // (`handleShareLinksApi` resolved the canvas through their workspace); this is the
+    // member's door like the two above, so a guest connection cannot reach it.
+    if (url.pathname.endsWith('/evict')) {
+      if (!userId) return new Response('unauthorized', { status: 401 });
+      const linkId = url.searchParams.get('linkId');
+      if (!linkId) return new Response('linkId required', { status: 400 });
+      this.evict(linkId);
+      return new Response(null, { status: 204 });
+    }
+
     // The read-only decision arrives the same way identity does — stamped by
     // `handleSyncUpgrade`, never client-supplied (#294). A guest holds a capability to
     // READ one canvas, and sync-core drops a read-only session's document diffs inside
@@ -146,7 +170,12 @@ export class CanvasSyncRoom {
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server);
-    this.attach(server, { sessionId, meta: { userId: identity }, interactOnly });
+    this.attach(server, {
+      sessionId,
+      meta: { userId: identity },
+      interactOnly,
+      ...(guestCaps ? { linkId: request.headers.get(SYNC_GUEST_LINK_HEADER) ?? undefined } : {}),
+    });
     this.room.handleSocketConnect({ sessionId, socket: server, isReadonly: readonly, meta: { userId: identity } });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -195,6 +224,25 @@ export class CanvasSyncRoom {
     // Unassemblable: hand it on untouched so the room's own error handling runs.
     if (!('data' in res)) return this.room.handleSocketMessage(a.sessionId, raw);
     this.room.handleSocketMessage(a.sessionId, JSON.stringify(narrowInteractPush(res.data)));
+  }
+
+  /**
+   * Close every connection a revoked link opened (#320 §5). Revocation was already a
+   * tombstone that stops the NEXT connect, but capabilities ride the handshake, so a guest
+   * already on the socket kept their grants indefinitely — revoke did nothing at the one
+   * moment you reach for it. The room is told first, so the session is gone from its state
+   * before the socket dies; 1008 (policy violation) rather than a plain close, so the
+   * client does not read it as a blip and reconnect-loop.
+   */
+  private evict(linkId: string): void {
+    for (const ws of socketsForLink(this.ctx.getWebSockets(), linkId)) {
+      const a = this.attachmentOf(ws);
+      if (a) {
+        this.assemblers.delete(a.sessionId);
+        this.room.handleSocketClose(a.sessionId);
+      }
+      ws.close(1008, 'share link revoked');
+    }
   }
 
   private assemblerFor(sessionId: string): JsonChunkAssembler {

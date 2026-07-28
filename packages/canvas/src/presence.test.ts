@@ -27,4 +27,19 @@ describe('tlUserFor', () => {
     expect(tlUserFor({ id: 'g1', color: 'red', kind: 'guest' })?.name).toBe('Guest');
     expect(tlUserFor(null)).toBeNull();
   });
+
+  // #320 slice 2: revocation is a manual judgement call, so a member has to NOTICE an
+  // outsider is editing before they can act. The marking rides `userName` — the field
+  // tldraw already renders on the cursor label AND in the people list — so an
+  // unlabelled guest is impossible without also being invisible.
+  test('a share-link guest is marked, named or not', () => {
+    expect(tlUserFor({ id: 'g1', name: 'Sam', color: 'red', kind: 'guest' }, true)?.name).toBe('Sam (Guest)');
+    expect(tlUserFor({ id: 'g1', color: 'red', kind: 'guest' }, true)?.name).toBe('Guest');
+  });
+
+  test('a member is not marked, whatever the browser thinks it is', () => {
+    // `kind: 'guest'` only means "no Better Auth session resolved" (local bridge-only dev
+    // reads that way); the marking follows the share-link scope, which is the edge's answer.
+    expect(tlUserFor({ id: 'u1', name: 'James', color: 'red', kind: 'guest' }, false)?.name).toBe('James');
+  });
 });

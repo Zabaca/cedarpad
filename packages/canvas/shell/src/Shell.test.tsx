@@ -43,6 +43,8 @@ let calls: string[] = [];
 // the guest scope for a cs_guest session.
 let guestInfo: { canvasId: string; workspaceId: string; guestChat: boolean } | null = null;
 let shareLinks: Array<{ id: string; canvasId: string; guestChat: boolean; revokedAt: string | null }> = [];
+/** What the Share panel actually asked for at mint time (#320 capability toggles). */
+let mintBodies: Array<Record<string, unknown>> = [];
 
 /** The two edge APIs the shell talks to. Everything else 404s so a stray call is visible. */
 function stubEdge() {
@@ -53,6 +55,7 @@ function stubEdge() {
     // #220: the share-links API — one active link toggled by mint/revoke.
     if (url === '/api/canvases/cv_1/share-links') {
       if (init?.method === 'POST') {
+        mintBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
         shareLinks = [{ id: 'sl_1', canvasId: 'cv_1', guestChat: false, revokedAt: null }];
         return Response.json(shareLinks[0], { status: 201 });
       }
@@ -552,6 +555,24 @@ describe('share links UI (#220)', () => {
     await click(container.querySelector('.share-revoke'));
     expect(calls).toContain('DELETE /api/canvases/cv_1/share-links/sl_1');
     await waitFor(() => container.querySelector('.share-url') === null);
+  });
+
+  // #320: the three capabilities are decided while the link is being minted, in front of
+  // the person handing it out — not in a settings screen found afterwards.
+  test('the capability toggles ride the mint: interact preselected, both edits opt-in', async () => {
+    shareLinks = [];
+    mintBodies = [];
+    const roadmapRow = [...container.querySelectorAll('.page-row')][1] ?? null;
+    await click(roadmapRow?.querySelector('.page-share') ?? null);
+
+    const toggle = (name: string) => container.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+    expect(toggle('guestInteract')?.checked).toBe(true);
+    expect(toggle('guestEdit')?.checked).toBe(false);
+    expect(toggle('guestEditSource')?.checked).toBe(false);
+
+    await click(toggle('guestEdit'));
+    await click(container.querySelector('.share-new'));
+    expect(mintBodies[0]).toMatchObject({ guestInteract: true, guestEdit: true, guestEditSource: false });
   });
 });
 

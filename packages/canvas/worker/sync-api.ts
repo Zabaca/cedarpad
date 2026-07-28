@@ -102,12 +102,12 @@ export async function handleSyncUpgrade(
     // protocol's only binary is read-only, so it answers "may this session push anything
     // at all"; an interact-only session is narrowed per message inside the DO
     // (worker/guest-socket-policy.ts). Everything else about the session is the same.
-    return forwardToRoom(request, env, canvasId, null, !(guest.caps.editCanvas || guest.caps.interact), guest.caps);
+    return forwardToRoom(request, env, canvasId, null, !(guest.caps.editCanvas || guest.caps.interact), guest.caps, guest.linkId);
   }
   if (!(await canReach(env, canvasId, user.id))) {
     return new Response('forbidden', { status: 403 });
   }
-  return forwardToRoom(request, env, canvasId, user.id, false, null);
+  return forwardToRoom(request, env, canvasId, user.id, false, null, null);
 }
 
 /** The room trusts its caller for identity, for the read-only decision AND for the guest
@@ -122,6 +122,7 @@ function forwardToRoom(
   identity: string | null,
   readonly: boolean,
   caps: GuestCapabilities | null,
+  linkId: string | null,
 ): Promise<Response> {
   const id = env.CANVAS_SYNC.idFromName(syncRoomName(canvasId));
   const forwarded = new Request(request);
@@ -131,7 +132,25 @@ function forwardToRoom(
   else forwarded.headers.delete(SYNC_READONLY_HEADER);
   if (caps) forwarded.headers.set(SYNC_GUEST_CAPS_HEADER, JSON.stringify(caps));
   else forwarded.headers.delete(SYNC_GUEST_CAPS_HEADER);
+  if (linkId) forwarded.headers.set(SYNC_GUEST_LINK_HEADER, linkId);
+  else forwarded.headers.delete(SYNC_GUEST_LINK_HEADER);
   return env.CANVAS_SYNC.get(id).fetch(forwarded);
+}
+
+/**
+ * Drop every open connection that came in on `linkId` (#320 §5). Revocation is a
+ * tombstone, which stops the NEXT connection; but the capability set is established at the
+ * handshake, so the guest who is already connected would keep writing — revoke would do
+ * nothing at the moment you reach for it. Called by the revoke handler, after the row is
+ * tombstoned, so a racing reconnect finds a dead link.
+ *
+ * Best-effort by construction: the tombstone is the durable half, this is the immediate
+ * one. A failure here leaves a connection alive until it next reconnects, not a link live.
+ */
+export async function evictGuestSockets(env: Env, canvasId: string, linkId: string, userId: string): Promise<void> {
+  const id = env.CANVAS_SYNC.idFromName(syncRoomName(canvasId));
+  const url = `https://canvas-sync.internal/${encodeURIComponent(canvasId)}/evict?linkId=${encodeURIComponent(linkId)}`;
+  await env.CANVAS_SYNC.get(id).fetch(new Request(url, { method: 'POST', headers: { [SYNC_USER_HEADER]: userId } }));
 }
 
 /** Set by `handleSyncUpgrade` after authorization; read by the DO. Never client-supplied. */
@@ -145,6 +164,11 @@ export const SYNC_READONLY_HEADER = 'x-sync-readonly';
  *  is a guest's — a member's is deleted, so the DO cannot mistake one for the other.
  *  Set/cleared by `handleSyncUpgrade`, parsed in the DO with `readGuestCapabilities`. */
 export const SYNC_GUEST_CAPS_HEADER = 'x-sync-guest-caps';
+
+/** WHICH share link admitted this guest connection (#320). Present only on a guest's
+ *  upgrade, and only so the room can drop that link's sockets when it is revoked — it is
+ *  not an identity: two guests on one link are `guest:<sessionId>`, separately. */
+export const SYNC_GUEST_LINK_HEADER = 'x-sync-guest-link';
 
 /** The DO's half of that contract: one reader, so the two sides cannot drift on what
  *  counts as read-only. Anything but the exact value this module writes is writable —

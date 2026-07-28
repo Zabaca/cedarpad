@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { mintGuestCookie, GUEST_COOKIE } from './guest-session.ts';
 import {
+  evictGuestSockets,
   handleSyncUpgrade,
   parseSyncPath,
   resolveSyncGuest,
   SYNC_GUEST_CAPS_HEADER,
+  SYNC_GUEST_LINK_HEADER,
   SYNC_READONLY_HEADER,
   SYNC_USER_HEADER,
 } from './sync-api.ts';
@@ -211,6 +213,33 @@ describe('handleSyncUpgrade — guests', () => {
     expect(forwarded?.headers.get(SYNC_READONLY_HEADER)).toBe('1');
     expect(forwarded?.headers.get(SYNC_USER_HEADER)).toBeNull();
     expect(readGuestCapabilities(forwarded?.headers.get(SYNC_GUEST_CAPS_HEADER) ?? null).editCanvas).toBe(false);
+    expect(forwarded?.headers.get(SYNC_GUEST_LINK_HEADER)).toBe('sl_1');
+  });
+
+  // #320 slice 2: capabilities ride the handshake, so a live connection keeps what it had
+  // at connect time. Revoking has to reach it, and the room can only find it if the
+  // connection remembers WHICH link let it in.
+  test('a guest connection carries its link id; a member connection carries none', async () => {
+    await handleSyncUpgrade(upgrade('/api/canvas-sync/canvas_x/connect'), env, 'canvas_x', null, canReach, resolveGuest);
+    expect(forwarded?.headers.get(SYNC_GUEST_LINK_HEADER)).toBe('sl_1');
+    await handleSyncUpgrade(upgrade('/api/canvas-sync/canvas_x/connect'), env, 'canvas_x', { id: 'u_1' }, canReach, noGuest);
+    expect(forwarded?.headers.get(SYNC_GUEST_LINK_HEADER)).toBeNull();
+  });
+});
+
+// Revocation is a tombstone, which only stops the NEXT connection. Since the capability
+// set is established at the handshake, the guest who is ALREADY connected keeps writing —
+// which makes revoke meaningless exactly when you reach for it (#320 §5).
+describe('evictGuestSockets', () => {
+  test("addresses the canvas's own room and asks it to drop that link's connections", async () => {
+    await evictGuestSockets(env, 'canvas_x', 'sl_1', 'u_1');
+    expect(resolvedNames).toEqual([syncRoomName('canvas_x')]);
+    const url = new URL(forwarded?.url ?? '');
+    expect(url.pathname.endsWith('/evict')).toBe(true);
+    expect(url.searchParams.get('linkId')).toBe('sl_1');
+    // The evict door is the MEMBER's, so it is stamped with the revoking member's
+    // identity — the DO refuses it otherwise, as it does every other non-socket door.
+    expect(forwarded?.headers.get(SYNC_USER_HEADER)).toBe('u_1');
   });
 });
 

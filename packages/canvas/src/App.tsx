@@ -24,6 +24,8 @@ import { placeDetected, wirePasteCapture } from './paste-place';
 import { loadGuestScope, useGuestScope } from '../shared/guest-scope';
 import { HuddleControl, HuddleFloat } from './huddle';
 import { ComponentGuestView } from './ComponentGuestView';
+import { GuestNamePrompt } from './GuestNamePrompt';
+import { setDisplayName, useCurrentUser } from './identity';
 
 // Registered once, at editor construction: our two custom shapes. `component`
 // renders agent-authored React files; `chat` is a chat session living on the canvas.
@@ -228,6 +230,7 @@ function CanvasApp() {
     [],
   );
   const guest = useGuestScope();
+  const currentUser = useCurrentUser();
 
   // The canvas document (ADR-0019): a live connection to this canvas's TLSocketRoom in
   // its Durable Object. The SCHEMA comes from the shared factory — the same call the room
@@ -477,6 +480,9 @@ function CanvasApp() {
       {/* Mid-call with the panel collapsed: the huddle stays visible (and leavable) as a
           floating card — the connection itself lives in the module manager either way. */}
       {!guest && !panelOpen && <HuddleFloat canvasId={activeCanvasId()} />}
+      {/* #320: a guest names themselves on arrival, so presence can mark WHO is here and
+          not just that someone is. Members' names come from their account. */}
+      {guest && <GuestNamePrompt user={currentUser} onName={setDisplayName} />}
     </div>
   );
 }

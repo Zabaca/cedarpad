@@ -21,6 +21,12 @@ const MintInput = z.object({
   guestChat: z.boolean().default(false),
   /** Huddle capability (ADR-0017). Like guestChat, meaningless on component-scoped links. */
   guestHuddle: z.boolean().default(false),
+  /* #320 — the three capabilities, chosen at mint time. The defaults are the schema's:
+   * a link exists to show someone something, so using a component is on; editing the
+   * document and authoring source are deliberate opt-ins, never inherited. */
+  guestInteract: z.boolean().default(true),
+  guestEdit: z.boolean().default(false),
+  guestEditSource: z.boolean().default(false),
   shapeId: z.string().min(1).optional(),
 });
 
@@ -35,6 +41,9 @@ export async function handleShareLinksApi(
   user: GateUser,
   canvasId: string,
   linkId?: string,
+  /** #320 §5: drop the link's OPEN sockets as well as tombstoning the row. Injected
+   *  because it addresses a Durable Object, which this handler otherwise never touches. */
+  evictGuests?: (linkId: string) => Promise<void>,
 ): Promise<Response> {
   const workspaceId = await resolveCanvasWorkspace(db, canvasId, user.id);
   if (!workspaceId) return Response.json({ error: 'canvas not found' }, { status: 404 });
@@ -48,6 +57,9 @@ export async function handleShareLinksApi(
       createdBy: user.id,
       guestChat: parsed.data.shapeId ? false : parsed.data.guestChat,
       guestHuddle: parsed.data.shapeId ? false : parsed.data.guestHuddle,
+      guestInteract: parsed.data.guestInteract,
+      guestEdit: parsed.data.guestEdit,
+      guestEditSource: parsed.data.guestEditSource,
       shapeId: parsed.data.shapeId ?? null,
     });
     return Response.json(link, { status: 201 });
@@ -61,6 +73,10 @@ export async function handleShareLinksApi(
     const link = await getActiveShareLink(db, linkId);
     if (link && link.canvasId !== canvasId) return Response.json({ error: 'link not found' }, { status: 404 });
     await revokeShareLink(db, linkId);
+    // Row first, then the sockets: a guest racing a reconnect between the two finds a
+    // dead link. `link` is null when there was nothing live to revoke, and then there is
+    // nothing connected on it either.
+    if (link) await evictGuests?.(linkId);
     return new Response(null, { status: 204 });
   }
   return new Response('method not allowed', { status: 405 });
