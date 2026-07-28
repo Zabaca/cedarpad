@@ -324,7 +324,9 @@ export interface OpenConversationDeps {
  */
 export async function openConversation(
   deps: OpenConversationDeps,
-  conversation: ConversationRow,
+  // #261: only these three fields were ever read — so the edge can forward them and the
+  // bridge never needs the row itself.
+  conversation: Pick<ConversationRow, 'id' | 'sessionId' | 'ownerRef'>,
 ): Promise<{ chatId: string }> {
   const present = await (deps.hasLocalTranscript ??
     (async (sid: string) => {

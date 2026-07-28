@@ -23,7 +23,9 @@ let servedTokens: Array<string | null> = [];
 let servedCanvasIds: Array<string | null> = [];
 let servedRepos: Array<string | null> = [];
 let servedMcpTokenHeaders: Array<string | null> = [];
+let servedConversations: Array<string | null> = [];
 let replyCalls: string[] = [];
+let markReadCalls: string[] = [];
 let mintCalls = 0;
 let mintResult: string | null = 'ghs_minted';
 let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
@@ -44,6 +46,7 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedRepos.push(req.headers.get('x-dev-agent-repo'));
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     servedAssigns.push(req.headers.get('x-inbox-assign'));
+    servedConversations.push(req.headers.get('x-inbox-conversation'));
     return new Response('proxied');
   },
   sandboxFor: () => ({}),
@@ -83,6 +86,10 @@ mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
   get: () => Promise.resolve(conv),
   reply: (_db: unknown, id: string) => {
     replyCalls.push(id);
+    return Promise.resolve(conv);
+  },
+  markRead: (_db: unknown, id: string) => {
+    markReadCalls.push(id);
     return Promise.resolve(conv);
   },
 }));
@@ -149,7 +156,9 @@ beforeEach(() => {
   servedCanvasIds = [];
   servedRepos = [];
   servedMcpTokenHeaders = [];
+  servedConversations = [];
   replyCalls = [];
+  markReadCalls = [];
   mintCalls = 0;
   mintResult = 'ghs_minted';
   mcpTokensByWorkspace = {};
@@ -214,6 +223,47 @@ describe('handleInboxBridge: the inbox triage flip on a proxied send', () => {
     await proxy('GET', '/api/chat/chat_home/transcript');
 
     expect(servedAssigns).toEqual(['u_1', null]);
+  });
+});
+
+// ADR-0018 / #261: the edge already resolved and ownership-checked the Conversation, so the
+// open-conversation route carries it to the bridge instead of the container re-reading the row.
+describe('handleInboxBridge: the open-conversation GET forwards the resolved Conversation (#261)', () => {
+  test('GET /api/inbox/:id/chat carries the Conversation the edge resolved', async () => {
+    conv = row({ id: 'conv_1', sessionId: 'sess_9', ownerRef: 'chat_owner' });
+    await proxy('GET', '/api/inbox/conv_1/chat');
+
+    expect(servedConversations).toEqual([JSON.stringify({ id: 'conv_1', sessionId: 'sess_9', ownerRef: 'chat_owner' })]);
+  });
+
+  test('a client-sent header never survives: the edge overwrites it on the open GET and strips it elsewhere', async () => {
+    const forged = JSON.stringify({ id: 'conv_1', sessionId: 'someone_elses_session', ownerRef: null });
+    const req = (subPath: string, method: string) =>
+      handleInboxBridge(
+        new Request(`https://poc.cedarpad.com/inbox/conv_1/bridge${subPath}`, {
+          method,
+          headers: { 'x-inbox-conversation': forged },
+        }),
+        {} as never,
+        user,
+        'conv_1',
+        subPath,
+        mint,
+        async () => null,
+      );
+
+    await req('/api/inbox/conv_1/chat', 'GET');
+    await req('/api/chat/chat_1/transcript', 'GET');
+
+    expect(servedConversations).toEqual([JSON.stringify({ id: 'conv_1', sessionId: 's', ownerRef: null }), null]);
+  });
+
+  test('opening a thread clears unread at the edge; other proxied paths never do', async () => {
+    await proxy('GET', '/api/inbox/conv_1/chat');
+    await proxy('GET', '/api/chat/chat_1/transcript');
+    await settle();
+
+    expect(markReadCalls).toEqual(['conv_1']);
   });
 });
 

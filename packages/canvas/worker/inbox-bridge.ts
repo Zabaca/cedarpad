@@ -13,7 +13,13 @@ import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolver.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
-import { CANVAS_ID_HEADER, DEV_AGENT_GIT_TOKEN_HEADER, DEV_AGENT_REPO_HEADER } from '../shared/bridge-wire.ts';
+import {
+  CANVAS_ID_HEADER,
+  DEV_AGENT_GIT_TOKEN_HEADER,
+  DEV_AGENT_REPO_HEADER,
+  INBOX_CONVERSATION_HEADER,
+  encodeForwardedConversation,
+} from '../shared/bridge-wire.ts';
 
 // The edge chat proxy (ADR-0009, PRD #119 slice #122). Under "one chat system" every chat
 // surface is a LIVE VIEW of its session's runner bridge; a Shell-mounted <ChatView> points
@@ -50,6 +56,9 @@ export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
 // A proxied chat SEND (`POST /api/chat/:chatId/send`) — the human answering. The proxy is the
 // inbox-aware home for the triage flip; `<ChatView>` / the generic `/send` stay unaware of it.
 const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
+// The open-conversation GET (`GET /api/inbox/:convId/chat`) — the Shell resolving a thread to
+// its chatId. ADR-0018 / #261: the edge already holds the row, so it forwards it here.
+const IS_OPEN_CONVERSATION = /^\/api\/inbox\/[^/]+\/chat$/;
 
 export async function handleInboxBridge(
   request: Request,
@@ -72,6 +81,7 @@ export async function handleInboxBridge(
   }
 
   const isChatSend = request.method === 'POST' && IS_CHAT_SEND.test(subPath);
+  const isOpenConversation = request.method === 'GET' && IS_OPEN_CONVERSATION.test(subPath);
 
   // Inbox triage side-effect (ADR-0009 / #124): a reply is a chat SEND now (not the retired
   // /api/inbox/:id/reply), so flip the Conversation waiting_on:human → agent here — the same
@@ -116,6 +126,20 @@ export async function handleInboxBridge(
   // runs against the chat's own canvas store (the agent reads/draws the canvas it lives on).
   // Sends only — reads route by path, not by canvas claim.
   if (isChatSend && conv.canvasId) proxied.headers.set(CANVAS_ID_HEADER, conv.canvasId);
+
+  // ADR-0018 / #261: the open-conversation GET carries the Conversation the edge just resolved
+  // and ownership-checked, so the bridge serves the route without reading the platform data
+  // layer. Set-or-DELETE: a client-sent header must never survive into the container.
+  proxied.headers.delete(INBOX_CONVERSATION_HEADER);
+  if (isOpenConversation) {
+    // Opening a thread is reading it, not activity. Fire-and-forget + best-effort, exactly as
+    // the bridge did before: a failed clear must never block opening the chat.
+    void conversations.markRead(database, convId).catch(() => {});
+    proxied.headers.set(
+      INBOX_CONVERSATION_HEADER,
+      encodeForwardedConversation({ id: conv.id, sessionId: conv.sessionId, ownerRef: conv.ownerRef }),
+    );
+  }
 
   // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens ride a single JSON
   // header on the send — mirrors x-dev-agent-git-token above. `server/turn.ts` drops this for a

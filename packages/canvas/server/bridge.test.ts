@@ -16,6 +16,7 @@ import { chatHub, handleRequest, indexSessionStart, prepareDevAgentTurn, setChat
 import { resumeConversation } from './inbox.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { DEV_AGENT_KIND } from './dev-agent-workflow.ts';
+import { INBOX_CONVERSATION_HEADER } from '../shared/bridge-wire.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 
 const sendReq = (chatId: string, body: unknown = { message: 'hi' }): Request =>
@@ -656,23 +657,31 @@ describe('POST /api/inbox/:id/reply routes EVERY conversation through the chat t
   });
 });
 
-describe('GET /api/inbox/:id/chat: opening a thread marks it read', () => {
-  test('clears unread on the Conversation it opens', async () => {
-    const conv = await conversations.create(webPocDb, {
-      sessionId: `sess_open_${crypto.randomUUID()}`,
-      userId: 'default',
-      workspaceId: 'cs_workspace_abc',
-      summary: 'a session with an unread reply',
+// ADR-0018 / #261: the edge resolved and ownership-checked the Conversation already, so it
+// forwards it on the header instead of the bridge re-reading the platform data layer. The
+// bridge PARSES the forwarded shape (guideline 7) — it never trusts the raw header.
+describe('GET /api/inbox/:id/chat: served from the forwarded Conversation, no row read (#261)', () => {
+  const openReq = (id: string, forwarded: unknown) =>
+    new Request(`http://localhost/api/inbox/${id}/chat`, {
+      headers: forwarded === undefined ? {} : { [INBOX_CONVERSATION_HEADER]: JSON.stringify(forwarded) },
     });
-    await conversations.markActivity(webPocDb, conv.id); // unread:true
 
-    const res = await handleRequest(new Request(`http://localhost/api/inbox/${conv.id}/chat`));
+  test('resolves the chatId from the forwarded row — no Conversation row exists in the database', async () => {
+    const id = `conv_forwarded_${crypto.randomUUID()}`;
+    const res = await handleRequest(openReq(id, { id, sessionId: `sess_${id}`, ownerRef: 'chat_owner' }));
 
     expect(res.status).toBe(200);
-    // markRead is fire-and-forget; give its microtask a tick to land.
-    await new Promise((r) => setTimeout(r, 0));
-    const after = await conversations.get(webPocDb, conv.id);
-    expect(after?.unread).toBe(false);
+    expect(await res.json()).toEqual({ chatId: 'chat_owner' });
+    expect(await conversations.get(webPocDb, id)).toBeNull(); // never existed — the route read nothing
+  });
+
+  test('an absent, off-contract, or id-mismatched payload is a 404 — never acted on', async () => {
+    const id = 'conv_guard';
+    const absent = await handleRequest(openReq(id, undefined));
+    const offContract = await handleRequest(openReq(id, { id, ownerRef: null })); // no sessionId
+    const mismatched = await handleRequest(openReq(id, { id: 'conv_other', sessionId: 's', ownerRef: null }));
+
+    expect([absent.status, offContract.status, mismatched.status]).toEqual([404, 404, 404]);
   });
 });
 
