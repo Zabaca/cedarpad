@@ -1,142 +1,32 @@
-// Live presence (#212), client side. Transport is OURS (heartbeat POSTs + the
-// existing canvas SSE stream); rendering is TLDRAW-NATIVE: remote entries become
-// `instance_presence` records in the local store, which tldraw's collaborator
-// machinery turns into labeled cursors, the people face-pile, and follow mode
-// (`editor.startFollowingUser`). Our shape sync ignores presence records in both
-// directions (its listeners filter typeName 'shape'/'binding'), so nothing here
-// can leak into canvas-state or echo back to the bridge.
+// Live presence (#212) after #293: the TRANSPORT is tldraw sync's own presence channel
+// (ADR-0019) — no heartbeat POSTs, no SSE leg. Rendering was always tldraw-native and is
+// unchanged: sync derives an `instance_presence` record from the current user and the
+// collaborator machinery turns remote ones into labeled cursors, the people face-pile,
+// and follow mode (`editor.startFollowingUser`).
+//
+// All that is left on our side is the bridge from OUR identity (#211) to tldraw's
+// `TLUserStore`. The old invariant — presence must never reach persisted canvas state —
+// is now the room's to keep, and `worker/sync-room.test.ts` pins it there.
 
-import { InstancePresenceRecordType, type Editor, type TLInstancePresence, type TLPageId } from 'tldraw';
+import { atom, createUserId, UserRecordType, type TLUser, type TLUserStore } from 'tldraw';
 
-import { withCanvasHeader } from './active-canvas';
-import { currentUserSnapshot } from './identity';
+import { currentUserSnapshot, subscribeIdentity, type CurrentUser } from './identity';
 
-/** One participant on the wire — the single contract both sides parse (the bridge's
- * `server/presence.ts` imports this type; `parseHeartbeat` is its runtime guard). */
-export type PresenceEntry = {
-  userId: string;
-  name?: string;
-  color: string;
-  cursor: { x: number; y: number } | null;
-  camera: { x: number; y: number; z: number } | null;
-};
-
-/** Map one remote entry to a tldraw presence record (pure; unit-tested). */
-export function entryToPresence(e: PresenceEntry, pageId: string, now: number): TLInstancePresence {
-  return InstancePresenceRecordType.create({
-    id: InstancePresenceRecordType.createId(e.userId),
-    // tldraw 5.2 brands user ids (`TLUserId`); the wire carries a plain string.
-    userId: e.userId as TLInstancePresence['userId'],
-    userName: e.name ?? 'Guest',
-    color: e.color,
-    currentPageId: pageId as TLPageId,
-    cursor: e.cursor ? { ...e.cursor, type: 'default', rotation: 0 } : null,
-    camera: e.camera,
-    // "Active now" — drives tldraw's cursor fade + collaborator liveness.
-    lastActivityTimestamp: now,
+/** Our identity as a tldraw user record; `null` while identity is still resolving.
+ * tldraw brands user ids (`user:…`) and rejects an unprefixed one at validation. */
+export function tlUserFor(u: CurrentUser | null): TLUser | null {
+  if (!u) return null;
+  return UserRecordType.create({
+    id: createUserId(u.id),
+    name: u.name ?? 'Guest',
+    color: u.color,
   });
 }
 
-// Per-editor memory of the presence records WE own: record id → what we last wrote
-// (content key + when we last stamped liveness). Lets a frame apply without scanning
-// `store.allRecords()` (O(all shapes), and frames arrive ~10×/s while anyone moves —
-// the main-thread cost behind multi-user jitter) and lets an unchanged entry skip its
-// `store.put` entirely.
-type PresenceMemory = Map<string, { key: string; stampedAt: number }>;
-const presenceMemory = new WeakMap<Editor, PresenceMemory>();
-
-// How stale a parked collaborator's lastActivityTimestamp may get before we re-stamp
-// it anyway (keeps tldraw's liveness/fade machinery honest without per-frame writes).
-const RESTAMP_MS = 3_000;
-
-/** Reconcile the store's presence records against a broadcast: everyone else upserted,
- * SELF excluded (you are not your own collaborator), departed users removed. Writes only
- * what actually changed: an entry identical to what the store already holds is skipped
- * (re-stamped at most every RESTAMP_MS), and departures are diffed against our own
- * memory of written ids — never a full-store scan. */
-export function applyPresence(editor: Editor, entries: PresenceEntry[], selfId: string | undefined, now: number = Date.now()): void {
-  const pageId = editor.getCurrentPageId() as string;
-  let memory = presenceMemory.get(editor);
-  if (!memory) {
-    memory = new Map();
-    presenceMemory.set(editor, memory);
-  }
-  const mem = memory;
-
-  const records: TLInstancePresence[] = [];
-  const keep = new Set<string>();
-  for (const e of entries) {
-    if (e.userId === selfId) continue;
-    const rec = entryToPresence(e, pageId, now);
-    const id = rec.id as string;
-    keep.add(id);
-    // Content key: everything but the liveness stamp — a parked cursor writes nothing.
-    const key = JSON.stringify([e.name, e.color, e.cursor, e.camera, pageId]);
-    const known = mem.get(id);
-    if (known && known.key === key && now - known.stampedAt < RESTAMP_MS) continue;
-    mem.set(id, { key, stampedAt: now });
-    records.push(rec);
-  }
-  const gone: string[] = [];
-  for (const id of mem.keys()) {
-    if (!keep.has(id)) {
-      gone.push(id);
-      mem.delete(id);
-    }
-  }
-  if (!gone.length && !records.length) return; // nothing changed: no store write, no re-render
-  editor.store.mergeRemoteChanges(() => {
-    if (gone.length) editor.store.remove(gone as never[]);
-    if (records.length) editor.store.put(records);
-  });
-}
-
-/** The SSE `presence` frame handler (wired in sync.ts next to the state frames). */
-export function onPresenceFrame(editor: Editor, data: string): void {
-  try {
-    const { entries } = JSON.parse(data) as { entries: PresenceEntry[] };
-    applyPresence(editor, Array.isArray(entries) ? entries : [], currentUserSnapshot()?.id);
-  } catch {
-    // a malformed frame is dropped; the next broadcast heals
-  }
-}
-
-const BEAT_MS = 150; // change-detection cadence (a beat is sent only when something moved)
-const KEEPALIVE_MS = 2_000; // …except at least this often, so staleness ≈ liveness
-
-/** Start heartbeating this browser's cursor + camera to the bridge. Returns stop(). */
-export function startPresenceHeartbeat(editor: Editor, send: (body: PresenceEntry) => void = defaultSend): () => void {
-  let last = '';
-  let lastSentAt = 0;
-  const timer = setInterval(() => {
-    const u = currentUserSnapshot();
-    if (!u) return; // identity still resolving; beat once it lands
-    const p = editor.inputs.currentPagePoint;
-    const cam = editor.getCamera();
-    const body: PresenceEntry = {
-      userId: u.id,
-      ...(u.name ? { name: u.name } : {}),
-      color: u.color,
-      cursor: { x: Math.round(p.x), y: Math.round(p.y) },
-      camera: { x: Math.round(cam.x), y: Math.round(cam.y), z: Number(cam.z.toFixed(3)) },
-    };
-    const key = JSON.stringify(body);
-    const now = Date.now();
-    if (key === last && now - lastSentAt < KEEPALIVE_MS) return;
-    last = key;
-    lastSentAt = now;
-    send(body);
-  }, BEAT_MS);
-  return () => clearInterval(timer);
-}
-
-function defaultSend(body: PresenceEntry): void {
-  void fetch('/api/canvas/presence', {
-    method: 'POST',
-    headers: withCanvasHeader({ 'content-type': 'application/json' }),
-    body: JSON.stringify(body),
-    keepalive: true,
-  }).catch(() => {
-    // a missed beat is fine — the next one is 150ms away
-  });
+/** The user store `useSync` broadcasts presence from, kept in step with identity
+ * (which resolves asynchronously — a guest name can also land later). */
+export function createCanvasUserStore(): TLUserStore {
+  const user = atom<TLUser | null>('canvas-user', tlUserFor(currentUserSnapshot()));
+  subscribeIdentity(() => user.set(tlUserFor(currentUserSnapshot())));
+  return { currentUser: user };
 }

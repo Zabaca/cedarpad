@@ -37,7 +37,6 @@ describe('decideGuestGate — canvas API, scoped by the x-canvas-id the client s
   test("canvas read/sync/write ops are allowed when addressed to the guest's canvas", () => {
     expect(allow('/api/canvas', 'GET', 'cv_g')).toBe(true);
     expect(allow('/api/canvas/stream', 'GET', 'cv_g')).toBe(true);
-    expect(allow('/api/canvas/presence', 'POST', 'cv_g')).toBe(true);
     expect(allow('/api/canvas/shapes', 'POST', 'cv_g')).toBe(true);
     expect(allow('/api/canvas/shapes/create', 'POST', 'cv_g')).toBe(true);
     expect(allow('/api/canvas/shapes/update', 'POST', 'cv_g')).toBe(true);
@@ -47,6 +46,13 @@ describe('decideGuestGate — canvas API, scoped by the x-canvas-id the client s
     expect(allow('/api/components/MyCard', 'PUT', 'cv_g')).toBe(true);
     expect(allow('/api/components/data/MyCard', 'PUT', 'cv_g')).toBe(true);
     expect(allow('/api/components/place', 'POST', 'cv_g')).toBe(true);
+  });
+
+  // #293: presence moved onto the sync protocol, so the bridge no longer serves a
+  // heartbeat route. Leaving it in the allowlist would authorize a guest to reach a 404
+  // — dead authorization, and the kind that quietly outlives the thing it guarded.
+  test('the deleted presence heartbeat route is no longer allowlisted', () => {
+    expect(allow('/api/canvas/presence', 'POST', 'cv_g')).toBe(false);
   });
 
   test('the liveness ping is allowed WITHOUT a canvas address (the client sends none — prod 401, 2026-07-16)', () => {

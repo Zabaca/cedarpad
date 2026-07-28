@@ -147,7 +147,6 @@ export function decodeForwardedPairing(header: string | null): ForwardedPairing 
 export const BRIDGE_ROUTES = {
   canvas: '/api/canvas',
   canvasStream: '/api/canvas/stream',
-  presence: '/api/canvas/presence',
   shapes: '/api/canvas/shapes',
   shapesCreate: '/api/canvas/shapes/create',
   shapesUpdate: '/api/canvas/shapes/update',

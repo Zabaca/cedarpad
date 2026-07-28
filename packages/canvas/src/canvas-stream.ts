@@ -1,14 +1,16 @@
 // What is LEFT of the canvas SSE stream after ADR-0019.
 //
 // The document no longer travels here — `useSync` owns it, over a WebSocket to the
-// canvas's Durable Object (src/canvas-sync.ts). Two riders on this stream are NOT part of
-// the sync protocol and would have vanished with `sync.ts`, so they moved here instead:
+// canvas's Durable Object (src/canvas-sync.ts). ONE rider on this stream is not part of
+// the sync protocol and would have vanished with `sync.ts`, so it moved here instead:
 //
 //   - the agent's screenshot round-trip (`view_canvas`): the bridge asks, the browser
 //     renders a PNG with tldraw and POSTs it back. `/api/canvas/screenshot` is explicitly
 //     not part of the sync plane (#297).
-//   - presence frames (#212). The TRANSPORT is still ours until #293 moves it onto the
-//     sync protocol; the rendering was already tldraw-native and is untouched.
+//
+// Presence used to be the second rider; #293 moved it onto the sync protocol's own
+// presence channel, which is where it belongs. One rider left is not a reason to fold
+// this module away — the screenshot round-trip still needs a stream from the bridge.
 //
 // The idle gate and the recovery wrapper come along for the same reason they existed: an
 // always-open EventSource auto-reconnects, which re-wakes a slept CF container. That is
@@ -19,7 +21,6 @@ import type { Editor } from 'tldraw';
 
 import { registerStream } from './idle';
 import { createRecoveringStream } from './stream-recovery';
-import { onPresenceFrame } from './presence';
 import { withCanvasHeader, withCanvasParam } from './active-canvas';
 
 const API = '/api';
@@ -59,7 +60,7 @@ async function renderCanvasPng(editor: Editor): Promise<string | null> {
   return url;
 }
 
-/** Open the canvas SSE stream and keep the screenshot + presence legs alive. */
+/** Open the canvas SSE stream and keep the screenshot leg alive. */
 export function wireCanvasStream(editor: Editor): () => void {
   const postScreenshot = (id: string, url: string | null) => {
     void fetch(`${API}/canvas/screenshot`, {
@@ -74,7 +75,6 @@ export function wireCanvasStream(editor: Editor): () => void {
     es.addEventListener('screenshot', (e) => {
       void respondToScreenshot((e as MessageEvent).data as string, () => renderCanvasPng(editor), postScreenshot);
     });
-    es.addEventListener('presence', (e) => onPresenceFrame(editor, (e as MessageEvent).data as string));
     return es;
   });
   stream.open();

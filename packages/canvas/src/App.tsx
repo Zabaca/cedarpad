@@ -18,7 +18,7 @@ import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './Side
 import { createCanvasAssetStore, syncUri } from './canvas-sync';
 import { wireCanvasStream } from './canvas-stream';
 import { createCanvasTLSchema } from './tl-schema';
-import { startPresenceHeartbeat } from './presence';
+import { createCanvasUserStore } from './presence';
 import { detectPaste } from './paste-detect';
 import { placeDetected, wirePasteCapture } from './paste-place';
 import { loadGuestScope, useGuestScope } from '../shared/guest-scope';
@@ -75,7 +75,7 @@ function CanvasContextMenu(props: TLUiContextMenuProps) {
 
 // SharePanel/PeopleMenu (#212): tldraw's built-in collaborator UI — face pile, labeled
 // cursors, click-to-follow (auto-unfollow on local pan/zoom) — rendered straight from
-// the instance_presence records our presence stream writes. Off by default in tldraw;
+// the instance_presence records tldraw sync broadcasts. Off by default in tldraw;
 // enabling the components is all it takes.
 const tldrawComponents: TLComponents = {
   PageMenu: null,
@@ -232,16 +232,15 @@ function CanvasApp() {
   // makes (worker/sync-room.ts) — which is what makes the `component`/`chat` shapes
   // validate identically on both sides (CLAUDE.md §7, #287).
   //
-  // `getUserPresence: () => null` suppresses tldraw sync's OWN presence channel on
-  // purpose: presence still travels over the bespoke heartbeat + SSE transport today
-  // (src/presence.ts), and running both would give every collaborator two cursors. #293
-  // deletes the bespoke transport and this line together.
+  // Presence (#212) rides the sync protocol itself since #293: `users` is the only wiring
+  // it needs — sync derives this browser's `instance_presence` from the current user and
+  // broadcasts it on the room's presence channel, which the room never persists.
   const canvasId = useMemo(activeCanvasId, []);
   const store = useSync({
     uri: useMemo(() => syncUri(window.location.origin, canvasId), [canvasId]),
     assets: useMemo(() => createCanvasAssetStore(canvasId), [canvasId]),
     schema: useMemo(() => createCanvasTLSchema(), []),
-    getUserPresence: () => null,
+    users: useMemo(() => createCanvasUserStore(), []),
   });
   const menuSlotRef = useCallback((el: HTMLElement | null) => onSlots({ menu: el }), [onSlots]);
   const togglePanel = useCallback((open: boolean) => {
@@ -321,12 +320,15 @@ function CanvasApp() {
       cleanup.current?.(); // clean a prior mount (StrictMode double-invoke)
       editorRef.current = editor;
       setReady(true);
-      // The document is `useSync`'s job now (ADR-0019). What still rides the bridge's SSE
-      // stream is the agent screenshot round-trip and the presence leg — see canvas-stream.ts.
+      // e2e seam (#293). tldraw 5.2.5 draws collaborator cursors onto a <canvas>
+      // (`CollaboratorCursorOverlayUtil`, Path2D) — there is no DOM node to assert on, so
+      // the presence spec reads collaborators through the editor instead. Dev-only, and
+      // read-only: nothing in the app reads this back.
+      if (import.meta.env.DEV) (window as unknown as { __canvasEditor?: Editor }).__canvasEditor = editor;
+      // The document is `useSync`'s job now (ADR-0019), and presence is sync's too (#293).
+      // What still rides the bridge's SSE stream is the agent screenshot round-trip —
+      // see canvas-stream.ts.
       const unsync = wireCanvasStream(editor);
-      // Presence (#212): beat this browser's cursor + camera to the bridge; remote
-      // participants arrive over the sync stream as instance_presence records.
-      const unbeat = startPresenceHeartbeat(editor);
       setForkHandler((pid) => forkChat(pid as TLShapeId)); // chat cards' fork button routes here
       setExpandHandler((id) => setExpandedId(id)); // component cards' ⛶ button routes here
 
@@ -416,7 +418,6 @@ function CanvasApp() {
         unJsonPaste();
         uncam();
         unlisten();
-        unbeat();
         unsync();
       };
     },

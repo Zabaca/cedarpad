@@ -11,7 +11,6 @@ import { type CanvasStore, createStore } from '../src/store.ts';
 import { primeIdCounter } from '../src/normalize.ts';
 import type { BlobStore } from './blob-store.ts';
 import { CanvasPersistence } from './canvas-persistence.ts';
-import { type PresenceRoom, createPresenceRoom } from './presence.ts';
 import { sseData, sseEvent } from './sse.ts';
 
 /** Persistence health for one canvas, surfaced at /api/status and logged on every flush. */
@@ -38,10 +37,6 @@ export interface CanvasSession {
   requestScreenshot(timeoutMs?: number): Promise<string | null>;
   /** Resolve a pending screenshot (the browser POSTs the PNG back, correlated by id). */
   resolveScreenshot(id: string, url: string | null): void;
-  /** Ephemeral who's-here map (#212) — never persisted; staleness is the disconnect. */
-  readonly presence: PresenceRoom;
-  /** Push the merged presence set to every SSE client, throttled per room (~100ms). */
-  broadcastPresence(): void;
 }
 
 /**
@@ -176,26 +171,7 @@ export async function createCanvasSession(
     pendingShots.get(id)?.(url);
   }
 
-  // Presence (#212): heartbeats mark the room dirty; one throttled `event: presence`
-  // frame per window carries the whole merged set (N chatty clients ≠ N broadcasts).
-  const presence = createPresenceRoom();
-  let presenceTimer: ReturnType<typeof setTimeout> | null = null;
-  function broadcastPresence(): void {
-    if (presenceTimer) return; // a flush is already scheduled for this window
-    presenceTimer = setTimeout(() => {
-      presenceTimer = null;
-      const frame = sseEvent('presence', { entries: presence.snapshot() });
-      for (const c of clients) {
-        try {
-          c.enqueue(frame);
-        } catch {
-          clients.delete(c);
-        }
-      }
-    }, 100);
-  }
-
-  return { canvasId, store, persist, clients, saveHealth, requestScreenshot, resolveScreenshot, presence, broadcastPresence };
+  return { canvasId, store, persist, clients, saveHealth, requestScreenshot, resolveScreenshot };
 }
 
 /**
