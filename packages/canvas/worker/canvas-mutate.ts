@@ -51,16 +51,34 @@ function bindingViews(all: AnyRecord[]): Map<string, ArrowBindingsView> {
   return out;
 }
 
+/** Asset id → its `src`. An image shape holds only an `assetId`; the pixels (or, since
+ *  #290, the `/api/canvas-assets/...` URL that serves them) live on a separate asset
+ *  record. `snapshotToShapes` (worker/blob-to-snapshot.ts) resolves the same pointer the
+ *  same way — without it every image reaches the agent with an empty `src` (#340). */
+function assetSrcs(all: AnyRecord[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const r of all) {
+    if (r.typeName === 'asset') out.set(String(r.id), String((r.props as { src?: unknown } | undefined)?.src ?? ''));
+  }
+  return out;
+}
+
 /** The room's shape records, decoded back into the simplified model the agent reads.
  *  Ordered by id so reads are deterministic — the same guarantee `createStore` gives. */
 export function readShapes(room: Room): CanvasShape[] {
   const all = records(room);
   const bindings = bindingViews(all);
+  const assets = assetSrcs(all);
   const out: CanvasShape[] = [];
   for (const r of all) {
     if (r.typeName !== 'shape') continue;
     const plaintext = plaintextOf((r.props as { richText?: unknown } | undefined)?.richText);
-    const shape = fromTldrawShape(r as never, { plaintext, arrowBindings: bindings.get(String(r.id)) });
+    const assetId = (r.props as { assetId?: unknown } | undefined)?.assetId;
+    const shape = fromTldrawShape(r as never, {
+      plaintext,
+      arrowBindings: bindings.get(String(r.id)),
+      imageSrc: assetId ? assets.get(String(assetId)) : undefined,
+    });
     if (shape) out.push(shape);
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));

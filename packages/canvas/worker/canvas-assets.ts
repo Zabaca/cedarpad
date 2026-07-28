@@ -1,3 +1,4 @@
+import { verifyCanvasAssetReadToken } from '../shared/canvas-asset-read.ts';
 import {
   CANVAS_ASSET_LABEL,
   operatorRejection,
@@ -73,8 +74,17 @@ export async function handleCanvasAsset(
   if (presented) {
     const secret = env.BETTER_AUTH_SECRET;
     if (!secret) return new Response('unauthorized', { status: 401 });
-    const result = await verifyCanvasOperatorToken(secret, CANVAS_ASSET_LABEL, ref.canvasId, presented);
-    if (!result.ok) return new Response(operatorRejection(result.reason), { status: 401 });
+    // The CONTAINER principal (#340): `read_image` runs with no session, and since #290 the
+    // pixels it must show the agent are behind this door. Its own static label, checked
+    // ONLY on the read half — so the credential a chat turn carries can never overwrite a
+    // canvas's bytes. See shared/canvas-asset-read.ts for why it is not `canvas-asset/v1`.
+    const isRead = request.method === 'GET' || request.method === 'HEAD';
+    if (isRead && (await verifyCanvasAssetReadToken(secret, presented))) {
+      // authorized as the container; fall through to the bucket
+    } else {
+      const result = await verifyCanvasOperatorToken(secret, CANVAS_ASSET_LABEL, ref.canvasId, presented);
+      if (!result.ok) return new Response(operatorRejection(result.reason), { status: 401 });
+    }
   } else {
     if (!user) return new Response('unauthorized', { status: 401 });
     if (!(await canReach(env, ref.canvasId, user.id))) return new Response('forbidden', { status: 403 });

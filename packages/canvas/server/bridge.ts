@@ -11,7 +11,7 @@ import { resolve } from 'node:path';
 import type { CanvasState } from '../src/shapes.ts';
 import { bumpAllComponents, createShapesOp, nextComponentRev, placeComponentOp, updateShapesOp } from '../src/canvas-ops.ts';
 import type { OpResult } from '../src/canvas-ops.ts';
-import { canvasRoomOpener } from './canvas-room.ts';
+import { canvasAssetFetcher, canvasRoomOpener } from './canvas-room.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
 import { BlobStore, selectBackend } from './blob-store.ts';
 import { type ScreenshotChannel, createScreenshotChannels } from './screenshot-channel.ts';
@@ -557,6 +557,8 @@ const turnDeps: TurnDeps = {
   // #310: the chat agent draws into the room, like every other canvas write since #305.
   // Indirected through the mutable `openCanvasRoom` so `setCanvasRoomOpener` swaps it in tests.
   openCanvasRoom: (canvasId) => openCanvasRoom(canvasId),
+  // Lambda, not the binding: `canvasAssetFetcherFor` is declared below this object.
+  fetchAsset: (canvasId) => canvasAssetFetcherFor(canvasId),
   defaultCanvasId: DEFAULT_CANVAS_ID,
   prepareDevAgent: (token, repo, chatId, sessionId) => prepareDevAgentTurn(token, repo, chatId, sessionId),
   runChat: E2E_MODE ? e2eRunChat : runChat,
@@ -603,10 +605,16 @@ export function sendToChat(targetChatId: string, message: string, canvasId?: str
 // is a write nobody reads. Each write handler opens a store on the room for the duration of
 // ONE call — open → mutate → flush → discard (`src/remote-store.ts`) — which is also why
 // there is no cached store here to go stale behind a human's edits.
-const productionRoomOpener = canvasRoomOpener({
+const canvasEdgeConfig = {
   origin: webPocEnv.PLATFORM_RPC_ORIGIN,
   secret: webPocEnv.BETTER_AUTH_SECRET || (IS_LOCALHOST_EDGE ? LOCAL_DEV_PLATFORM_SECRET : undefined),
-});
+};
+const productionRoomOpener = canvasRoomOpener(canvasEdgeConfig);
+/** How `read_image` reaches the pixels: they live behind the edge's asset route since #290,
+ *  and the container has no session, so it presents its own read-only credential (#340).
+ *  Per-canvas, like the room opener above — the credential is accepted for ANY canvas, so
+ *  the canvas the turn is on is what narrows it. */
+const canvasAssetFetcherFor = canvasAssetFetcher(canvasEdgeConfig);
 let openCanvasRoom = productionRoomOpener;
 
 /** Test seam, as `setTurnRunChat` is: pass null to restore production. */

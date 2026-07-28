@@ -11,13 +11,14 @@ import { SHAPE_COLORS } from '../src/shapes.ts';
 import { DataSourceSchema, type MartSidecar } from '../shared/mart-contract.ts';
 import type { CanvasStore } from '../src/store.ts';
 import {
+  type FetchAsset,
   type OpResult,
   alignOp,
   bumpAllComponents,
   clearOp,
   connectedOp,
   createShapesOp,
-  imageSrcOf,
+  readImageOp,
   deleteShapesOp,
   nextComponentRev,
   placeComponentOp,
@@ -180,7 +181,7 @@ const isTurnStore = (s: CanvasStore): s is TurnCanvasStore => typeof (s as TurnC
  * tools are what most need it: the next `read_canvas` then answers from a mirror taken after the
  * previous tool call, which is how a human's mid-turn edit becomes visible to the agent.
  */
-export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts) {
+export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset) {
   const settle = <T extends { handler: (args: never, extra: never) => Promise<{ isError?: boolean }> }>(def: T): T => {
     if (!isTurnStore(store)) return def;
     const inner = def.handler;
@@ -201,18 +202,18 @@ export function createCanvasTools(store: CanvasStore, captureView?: CaptureView,
       },
     };
   };
-  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts).map(settle);
+  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts, fetchAsset).map(settle);
 }
 
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts) {
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset) {
   return createSdkMcpServer({
     name: 'canvas',
     version: '0.1.0',
-    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts),
+    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts, fetchAsset),
   });
 }
 
-function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts) {
+function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset) {
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -246,14 +247,12 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         'Look at an image shape on the canvas (a screenshot or photo the human pasted/dropped). read_canvas / read_connected list image shapes but redact the pixels; call this with the image shape id to actually SEE its contents at full resolution. Better than view_canvas for reading a specific pasted screenshot, since view_canvas re-renders the whole board small.',
         { id: z.string().describe('The image shape id (from read_canvas / read_connected).') },
         async ({ id }) => {
-          const src = imageSrcOf(store, id);
-          if (!src) return result({ text: `No image data for "${id}" (not an image shape, not found, or its pixels have not synced yet).`, isError: true });
-          const m = /^data:(image\/[a-z+]+);base64,(.+)$/s.exec(src);
-          if (!m) return result({ text: `Image "${id}" is not an inline data URL I can read (src starts with "${src.slice(0, 24)}...").`, isError: true });
+          const r = await readImageOp(store, id, fetchAsset);
+          if (!('image' in r)) return result(r);
           return {
             content: [
-              { type: 'image' as const, data: m[2] as string, mimeType: m[1] as string },
-              { type: 'text' as const, text: `Image shape ${id}.` },
+              { type: 'image' as const, data: r.image.data, mimeType: r.image.mimeType },
+              { type: 'text' as const, text: r.text },
             ],
           };
         },
@@ -654,6 +653,10 @@ export async function* runChat(
   // Mart discovery seam (bridge-bound: it holds the workspace's BlobStore). Present ⇒ the
   // agent gets `list_marts` and can discover what the warehouse actually holds.
   listMarts?: ListMarts,
+  // Asset-fetch seam (bridge-bound: it holds the edge origin + the service secret). Since #290
+  // an image shape's pixels live behind the edge's asset route, so WITHOUT this `read_image` can
+  // only serve the legacy inline data URLs. Absent (tests) ⇒ exactly that, and it says so.
+  fetchAsset?: FetchAsset,
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn; end_turn reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
@@ -668,7 +671,7 @@ export async function* runChat(
         return text;
       }
     : undefined;
-  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr, sendToChat, listMarts);
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr, sendToChat, listMarts, fetchAsset);
   const stopGate = endTurnSeam
     ? makeStopGate(
         () => turnEnded,

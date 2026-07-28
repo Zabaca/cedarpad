@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { canvasAssetReadToken } from '../shared/canvas-asset-read.ts';
+import { canvasMutateToken } from '../shared/canvas-mutation.ts';
 import { bearer, CANVAS_ASSET_LABEL, CANVAS_SNAPSHOT_LABEL, canvasOperatorToken } from '../shared/canvas-operator-token.ts';
 import { REQUEST_BOUND_WINDOW_MS } from '../shared/service-token.ts';
 import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
@@ -154,6 +156,13 @@ describe('handleCanvasAsset — the operator principal', () => {
     expect(b.objects.size).toBe(0);
   });
 
+  test('rejects a CONTAINER read token on the write half — a read credential is not a write one', async () => {
+    const b = bucketStub();
+    const res = await put(b, await canvasAssetReadToken(SECRET));
+    expect(res.status).toBe(401);
+    expect(b.objects.size).toBe(0);
+  });
+
   test('rejects an expired token, naming skew', async () => {
     const b = bucketStub();
     const stale = await canvasOperatorToken(SECRET, CANVAS_ASSET_LABEL, 'canvas_y', Date.now() - REQUEST_BOUND_WINDOW_MS - 1000);
@@ -161,5 +170,53 @@ describe('handleCanvasAsset — the operator principal', () => {
     expect(res.status).toBe(401);
     expect(await res.text()).toMatch(/SKEW/);
     expect(b.objects.size).toBe(0);
+  });
+});
+
+// #340: `read_image` runs in the CONTAINER, which has no session — and since #290 the
+// pixels it needs are behind this door, not in the shape record. Its own static label
+// (shared/canvas-asset-read.ts), accepted for reads only.
+describe('handleCanvasAsset — the container read principal', () => {
+  const seeded = async () => {
+    const b = bucketStub();
+    await b.bucket.put('canvas-assets/canvas_y/k.png', new Uint8Array([7, 8, 9]).buffer as ArrayBuffer);
+    return b;
+  };
+  const get = (b: ReturnType<typeof bucketStub>, token: string, method = 'GET') =>
+    handleCanvasAsset(
+      new Request('https://x.test/api/canvas-assets/canvas_y/k.png', { method, headers: bearer(token) }),
+      env(b),
+      { canvasId: 'canvas_y', key: 'k.png' },
+      null,
+      canReach,
+    );
+
+  test('reads a canvas the caller could never REACH as a member — the container has no session', async () => {
+    const b = await seeded();
+    const res = await get(b, await canvasAssetReadToken(SECRET));
+    expect(res.status).toBe(200);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([7, 8, 9]));
+  });
+
+  test('is refused on PUT — the read label is not a write capability', async () => {
+    const b = await seeded();
+    const res = await handleCanvasAsset(
+      new Request('https://x.test/api/canvas-assets/canvas_y/k.png', {
+        method: 'PUT',
+        body: 'evil',
+        headers: bearer(await canvasAssetReadToken(SECRET)),
+      }),
+      env(b),
+      { canvasId: 'canvas_y', key: 'k.png' },
+      null,
+      canReach,
+    );
+    expect(res.status).toBe(401);
+    expect(b.objects.get('canvas-assets/canvas_y/k.png')).toEqual(new Uint8Array([7, 8, 9]));
+  });
+
+  test('rejects a token minted for another container↔edge surface', async () => {
+    const b = await seeded();
+    expect((await get(b, await canvasMutateToken(SECRET))).status).toBe(401);
   });
 });
