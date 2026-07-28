@@ -32,6 +32,7 @@ import { handleShareAccept, readGuestSession } from './guest-session.ts';
 import { decideGuestGate } from './guest-gate.ts';
 import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.ts';
 import { handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
+import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
 import { handleMartApi, loadCanvasStateFromBucket, MART_ROUTE } from './mart-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
@@ -100,7 +101,9 @@ export interface Env {
   // itself (workerd) reads mart parquet straight off this binding, so browsing a mart
   // never wakes the container. Same bucket as R2_BUCKET; a native binding, not the S3
   // client, because Bun.S3Client isn't available in workerd.
-  MART_BUCKET: import('./mart-api.ts').MartBucket;
+  // Also the canvas asset bucket (ADR-0019): tldraw image/video bytes live here under
+  // `canvas-assets/`, which needs the WRITE half `MartBucket` deliberately omits.
+  MART_BUCKET: import('./mart-api.ts').MartBucket & import('./canvas-assets.ts').AssetBucket;
   CLAUDE_CODE_OAUTH_TOKEN: string;
   // web-poc (mounted in the bridge, served in-process): remote Turso + auth +
   // embeddings. Secrets (TURSO_*, VOYAGE_API_KEY, BETTER_AUTH_SECRET) come from
@@ -338,6 +341,14 @@ export default {
     const mutateCanvasId = parseCanvasMutatePath(url.pathname);
     if (mutateCanvasId) {
       return handleCanvasMutate(request, env, mutateCanvasId, session?.user ?? null);
+    }
+
+    // Canvas assets (ADR-0019): the R2 bytes behind an image shape's `src`. Self-gating
+    // for the same reason as the upgrade above — an `<img>` renders the gate's 200 login
+    // page as a broken box, so a refusal has to be a status code.
+    const assetRef = parseAssetPath(url.pathname);
+    if (assetRef) {
+      return handleCanvasAsset(request, env, assetRef, session?.user ?? null);
     }
 
     // #179: the invite accept flow — reachable WITHOUT a session (the email-bound,

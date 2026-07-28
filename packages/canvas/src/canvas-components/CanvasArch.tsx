@@ -242,11 +242,11 @@ export default function CanvasArch() {
         <Tag label="rev cache-bust" color={COLORS.muted} />
       </Box>
 
-      {/* sync.ts */}
-      <Box x={syncBox.x} y={syncBox.y} w={syncBox.w} h={syncBox.h} color={COLORS.teal} label="sync.ts · wireSync()" chip="bi-directional">
-        <Tag label="SSE → mergeRemoteChanges" color={COLORS.teal} pulse />
-        <Tag label="user edits → POST (80ms)" color={COLORS.orange} />
-        <Tag label="screenshot → POST /canvas/screenshot" color={COLORS.muted} />
+      {/* canvas sync (ADR-0019) */}
+      <Box x={syncBox.x} y={syncBox.y} w={syncBox.w} h={syncBox.h} color={COLORS.teal} label="useSync() · canvas-sync.ts" chip="tldraw sync">
+        <Tag label="WS → Durable Object room" color={COLORS.teal} pulse />
+        <Tag label="deltas, both ways" color={COLORS.orange} />
+        <Tag label="canvas-stream.ts: screenshot + presence" color={COLORS.muted} />
       </Box>
 
       {/* vite */}
