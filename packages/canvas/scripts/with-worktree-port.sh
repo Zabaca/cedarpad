@@ -7,9 +7,12 @@
 #   PORT               — vite dev server port  (vite.config.ts reads this)
 #   CANVAS_BRIDGE_PORT — bun bridge listen port (= PORT + 1; bridge.ts reads it,
 #                        scripts/dev.ts derives the vite /api proxy target from it)
+#   CUSTOM_PORT        — extension server listen port (= PORT + 2; server/extension-server.ts
+#                        reads it, the bridge proxies /api/custom/* to it). Derived here
+#                        because its 4512 default is a singleton two worktrees collide on.
 #   CANVAS_EDGE_PORT   — edge Worker (wrangler dev) listen port (= PORT + 3; ADR-0018
 #                        #263 — scripts/dev.ts derives the vite /v1 + /api/auth proxy
-#                        target from it). +3, not +2: 4512 is the extension server's.
+#                        target from it).
 #   E2E_BASE_URL       — http://localhost:$PORT (Playwright baseURL)
 #   E2E_MODE=1         — flag e2e-aware code paths can read to short-circuit
 #                        real auth / external calls for hermetic e2e. Consumers
@@ -44,6 +47,7 @@ PORT=$((PORT_LOW + (HASH_NUM % SLOTS) * 2))
 
 export PORT
 export CANVAS_BRIDGE_PORT=$((PORT + 1))
+export CUSTOM_PORT=$((PORT + 2))
 export CANVAS_EDGE_PORT=$((PORT + 3))
 export E2E_BASE_URL="http://localhost:${PORT}"
 export E2E_MODE=1
