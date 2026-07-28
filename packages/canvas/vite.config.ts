@@ -12,6 +12,9 @@ const SHARED_COMPONENTS = fileURLToPath(new URL('./shared/components', import.me
 // All same-origin /api/* calls proxy to the bridge so the browser never needs
 // to know the bridge port.
 const BRIDGE = process.env.CANVAS_BRIDGE ?? 'http://localhost:4511';
+// The edge Worker (ADR-0018, #263): the platform data layer's routes are served by the
+// edge locally, as they are in production. scripts/dev.ts sets this from the derived port.
+const EDGE = process.env.CANVAS_EDGE ?? 'http://localhost:4513';
 // Worktree-safe: the dev/e2e port comes from env (with-worktree-port.sh sets it);
 // unset falls back to 4510 so a plain `bun run dev` is unchanged.
 const PORT = Number(process.env.PORT ?? 4510);
@@ -30,10 +33,15 @@ export default defineConfig({
     // proxy under an arbitrary Host; the Worker is the gate, so accept any host.
     allowedHosts: true,
     proxy: {
-      // /api/* → canvas bridge (canvas sync + chat, and web-poc's Better Auth at
-      // /api/auth/*). /v1/* → web-poc's data API, also served by the bridge.
+      // The platform data layer's routes go to the EDGE WORKER (matched first — vite
+      // tries proxy keys in insertion order): Better Auth at /api/auth/* and the
+      // Notebook API at /v1/*, both against miniflare's local D1. That is the same
+      // split production runs (worker/index.ts handles them ahead of the container
+      // proxy), so dev no longer simulates the datastore.
+      '/api/auth': { target: EDGE, changeOrigin: true },
+      '/v1': { target: EDGE, changeOrigin: true },
+      // Everything else under /api/* → canvas bridge (canvas sync + chat).
       '/api': { target: BRIDGE, changeOrigin: true },
-      '/v1': { target: BRIDGE, changeOrigin: true },
     },
   },
 });

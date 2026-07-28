@@ -1,0 +1,73 @@
+// The edge Worker's LOCAL-DEV wrangler config (ADR-0018, #263), derived from the
+// deployed `wrangler.jsonc` so the two can't drift. Generated, never committed: the
+// production config stays free of the local D1 binding, so nothing here can reach a
+// deploy.
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/** Binding name for the platform data layer (root CONTEXT.md vocabulary). */
+export const PLATFORM_DB_BINDING = 'PLATFORM_DB';
+
+type Config = Record<string, unknown>;
+
+/**
+ * `base` is the parsed `wrangler.jsonc`; `packageDir` is the absolute
+ * `packages/canvas`. The generated config lives elsewhere (the state dir), so every
+ * path it carries is made absolute.
+ *
+ * What local dev drops: `routes` (production custom domains), `triggers` (the daily
+ * cron), `containers` (a docker image build the dev loop doesn't need — the container
+ * is reached through the deployed worker, not this one), and `env` (named environments
+ * are deploy targets).
+ */
+export function devWorkerConfig(base: Config, packageDir: string, origin: string): Config {
+  const { routes, triggers, containers, env, ...rest } = base;
+  const assets = base.assets as { directory: string } | undefined;
+  const { AUTH_DISABLE_SIGNUP, ...vars } = (base.vars ?? {}) as Record<string, string>;
+  return {
+    ...rest,
+    vars: {
+      ...vars,
+      // Better Auth is origin-sensitive: locally that origin is the vite dev server the
+      // browser talks to, not the production domain baked into wrangler.jsonc.
+      WEB_ORIGIN: origin,
+      BETTER_AUTH_URL: origin,
+      // Signup is open in dev (prod is James-only); scheduled work never runs locally.
+      DEV_AGENT_ENABLED: 'false',
+    },
+    main: join(packageDir, String(base.main)),
+    ...(assets ? { assets: { ...assets, directory: join(packageDir, assets.directory) } } : {}),
+    d1_databases: [
+      ...((base.d1_databases as Config[] | undefined) ?? []),
+      {
+        binding: PLATFORM_DB_BINDING,
+        database_name: 'cedarpad-platform',
+        // Local only: miniflare keys its persisted database off this id, and no such
+        // database exists in the account.
+        database_id: 'local-dev',
+        migrations_dir: join(packageDir, 'web-poc/lib/db/migrations'),
+      },
+    ],
+  };
+}
+
+/** Absolute `packages/canvas` — every path in the generated config resolves against it. */
+const PACKAGE_DIR = fileURLToPath(new URL('..', import.meta.url));
+
+/**
+ * Write the generated config into the (per-worktree) miniflare state dir and return its
+ * path, ready for `wrangler dev -c` / `wrangler d1 migrations apply -c`. It lives beside
+ * the state it describes, so two worktrees never share one.
+ */
+export async function writeDevWorkerConfig(stateDir: string, origin: string): Promise<string> {
+  // Bun parses JSONC natively; `wrangler.jsonc` stays the single source for both configs.
+  const base = (await import(join(PACKAGE_DIR, 'wrangler.jsonc'))).default as Config;
+  const config = devWorkerConfig(base, PACKAGE_DIR, origin);
+  // The assets directory must exist for wrangler to boot, even before a `bun run build`.
+  mkdirSync((config.assets as { directory: string }).directory, { recursive: true });
+  mkdirSync(stateDir, { recursive: true });
+  const path = join(stateDir, 'wrangler.dev.json');
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+  return path;
+}

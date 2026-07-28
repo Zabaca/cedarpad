@@ -11,6 +11,7 @@ import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { conversations, makeDb } from '../web-poc/lib/db/index.ts';
+import { localDevDbUrl } from './local-d1.ts';
 
 import type { CanvasState } from '../src/shapes.ts';
 import { normalizeIncomingShape } from '../src/normalize.ts';
@@ -105,26 +106,28 @@ function loadWebPocEnv(): Record<string, string> {
 
 const webPocEnv = loadWebPocEnv();
 
-// DB: local dev uses a libSQL FILE (no turso daemon needed); the container/prod
-// uses the real remote Turso from its env. `@libsql/client` (node) speaks both, so
-// the bridge builds ONE db and injects it into web-poc's app (buildApp then bypasses
-// its workerd `@libsql/client/web` path). Local migrations run on boot (idempotent);
-// remote Turso is migrated by the deploy, so we don't auto-migrate it here.
+// DB: the container/prod uses the real remote Turso from its env. LOCAL DEV reads the
+// SAME database the edge Worker serves the platform data layer from — miniflare's local
+// D1 (ADR-0018, #263) — by opening its SQLite file directly; `@libsql/client` (node)
+// speaks both, so the bridge builds ONE db and injects it into web-poc's app (buildApp
+// then bypasses its workerd path). Nothing migrates on boot any more: local D1 is
+// migrated by the explicit `bun run webpoc:db:migrate:local`, remote Turso by the deploy.
 const webPocRemoteTurso =
   !!webPocEnv.TURSO_URL && !/(^file:|127\.0\.0\.1|localhost)/.test(webPocEnv.TURSO_URL);
-// Worktree-safe: with-worktree-db.sh sets CANVAS_DEV_DB to a per-worktree file:
-// URL so parallel worktrees don't share one dev DB. Unset falls back to the
-// canonical .web-poc-dev.db, so a plain `bun run dev` is unchanged.
+// Unit tests run without a dev stack (and so without a local D1 state dir): they get a
+// private in-memory copy of the schema, migrated just below.
+const IS_UNIT_TEST = process.env.NODE_ENV === 'test';
 const webPocDbUrl = webPocRemoteTurso
   ? webPocEnv.TURSO_URL!
-  : (process.env.CANVAS_DEV_DB ??
-    `file:${fileURLToPath(new URL('../.web-poc-dev.db', import.meta.url))}`);
+  : IS_UNIT_TEST
+    ? 'file::memory:'
+    : localDevDbUrl();
 const webPocClient = createClient(
   webPocRemoteTurso && webPocEnv.TURSO_KEY
     ? { url: webPocDbUrl, authToken: webPocEnv.TURSO_KEY }
     : { url: webPocDbUrl },
 );
-if (!webPocRemoteTurso) {
+if (IS_UNIT_TEST && !webPocRemoteTurso) {
   await migrate(drizzle(webPocClient), {
     migrationsFolder: fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url)),
   });

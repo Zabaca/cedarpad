@@ -34,10 +34,12 @@ Canvas imports this module by **relative path** (no `@cedarpad/web-poc` package)
 behind its 3rd left-rail button (`packages/canvas/src/App.tsx`); the canvas
 **bridge** (`packages/canvas/server/bridge.ts`) runs `buildApp` in-process for
 `/v1/*` + `/api/auth/*`, building **one** `@libsql/client` (node) it injects via
-`makeDb` — a local `packages/canvas/.web-poc-dev.db` file in dev (migrations run on
-boot from `lib/db/migrations`, reads `web-poc/.dev.vars`), remote Turso in prod.
-The node libSQL client speaks both file and remote, so **no `turso dev` daemon is
-needed**; canvas's Vite serves the SPA and proxies `/v1` + `/api` to the bridge.
+`makeDb` — remote Turso in prod, and in dev the SQLite file behind miniflare's local
+D1, which the edge Worker serves those same routes from (ADR-0018). The node libSQL
+client speaks both file and remote, so **no `turso dev` daemon is needed**; canvas's
+Vite serves the SPA and proxies `/v1` + `/api/auth` to the edge Worker, the rest of
+`/api` to the bridge. Nothing migrates on boot — `bun run webpoc:db:migrate:local`
+applies `lib/db/migrations` to the local D1.
 
 For the full request flow (dev + prod), the `/v1` auth model (session vs
 `x-api-key`), remote access, and whether canvas should hold a service key, see
@@ -51,10 +53,12 @@ Run everything from canvas — there is no standalone dev server:
 2. `cp web-poc/.dev.vars.example web-poc/.dev.vars` — local env: `VOYAGE_API_KEY`
    (else a hash fallback), `BETTER_AUTH_SECRET`, optional `ABLY_API_KEY` /
    `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. (`TURSO_URL` is left unset in dev so the
-   bridge uses the local libSQL file.)
-3. `cd packages/canvas && bun run dev` — vite (:4510) + bridge (:4511); web-poc
-   mounts in-process, migrations run on boot.
-4. Optional LLM agent jobs: `cd packages/canvas/web-poc && bun scripts/worker.ts`
+   platform data layer is the local D1.)
+3. `cd packages/canvas && bun run webpoc:db:migrate:local` — apply
+   `lib/db/migrations` to the local D1 (idempotent; re-run after a new migration).
+4. `cd packages/canvas && bun run dev` — vite (:4510) + bridge (:4511) + edge
+   Worker (:4513), which serves `/v1/*` + `/api/auth/*` off the local D1.
+5. Optional LLM agent jobs: `cd packages/canvas/web-poc && bun scripts/worker.ts`
    (not needed for embed/search — see "Async jobs (optional)" below).
 
 ## Schema / migrations

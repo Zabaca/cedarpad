@@ -49,13 +49,15 @@ You run web-poc **through canvas** — there is no standalone dev server anymore
 bun install                           # from the cedarpad repo root
 cp packages/canvas/web-poc/.dev.vars.example packages/canvas/web-poc/.dev.vars
                                       # fill VOYAGE_API_KEY (else a local hash fallback)
-cd packages/canvas && bun run dev     # vite (:4510) + bridge (:4511); web-poc mounts in-process
+cd packages/canvas && bun run webpoc:db:migrate:local   # apply migrations to the local D1
+cd packages/canvas && bun run dev     # vite (:4510) + bridge (:4511) + edge Worker (:4513)
 ```
 
-Open `localhost:4510` and click the 3rd left-rail button. In dev the bridge uses a
-local libSQL **file** (`packages/canvas/.web-poc-dev.db`) and runs
-`web-poc/lib/db/migrations` on boot — **no `turso` CLI / daemon needed** (the node
-`@libsql/client` speaks both file and remote). Tooling scripts are namespaced on
+Open `localhost:4510` and click the 3rd left-rail button. In dev the platform data
+layer is **miniflare's local D1**, bound to the edge Worker (ADR-0018) — **no `turso`
+CLI / daemon needed**. Nothing migrates on boot: `bun run webpoc:db:migrate:local`
+applies `web-poc/lib/db/migrations` to it (idempotent), and the bridge opens the same
+database file. Tooling scripts are namespaced on
 the canvas package: `bun run webpoc:db:generate`, `webpoc:db:migrate`,
 `webpoc:seed`, `webpoc:openapi:emit`, `webpoc:gen:api`, `webpoc:typecheck`,
 `webpoc:test`.
@@ -71,11 +73,12 @@ package, no `exports` map) at three seams:
 | `../web-poc/worker/index.ts` (`buildApp`) | `packages/canvas/server/bridge.ts` | the Hono app (`/v1` + Better Auth `/api/auth`), run inside the bridge process |
 | `../web-poc/lib/db/index.ts` (`makeDb`) | `packages/canvas/server/bridge.ts` | the libSQL db the bridge builds once and injects into `buildApp` |
 
-- **Frontend**: the canvas Vite build lazy-loads `WebPocApp`; `/v1` and `/api`
-  are proxied to the bridge (`packages/canvas/vite.config.ts`).
-- **Backend (dev)**: the bridge builds one `@libsql/client` (node) — a local
-  `.web-poc-dev.db` file — runs `web-poc/lib/db/migrations` on boot, reads
-  `web-poc/.dev.vars`, and serves `buildApp` for `/v1/*` + `/api/auth/*`.
+- **Frontend**: the canvas Vite build lazy-loads `WebPocApp`; `/v1` and `/api/auth`
+  are proxied to the **edge Worker**, the rest of `/api` to the bridge
+  (`packages/canvas/vite.config.ts`).
+- **Backend (dev)**: the edge Worker serves `/v1/*` + `/api/auth/*` against its local
+  D1, exactly as in production (ADR-0018). The bridge opens that same D1 file with
+  `@libsql/client` (node) and reads `web-poc/.dev.vars` for its own env.
 - **Backend (prod)**: the canvas container bakes `packages/canvas` (web-poc
   included); the canvas worker forwards web-poc's env (`TURSO_*`, `VOYAGE_API_KEY`,
   `BETTER_AUTH_*`, `WEB_ORIGIN`) into the container, pointing at remote Turso. See the canvas

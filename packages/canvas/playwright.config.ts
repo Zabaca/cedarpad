@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// PORT / CANVAS_BRIDGE_PORT / CANVAS_DEV_DB are already in the environment: the
+// PORT / CANVAS_BRIDGE_PORT / CANVAS_D1_STATE are already in the environment: the
 // `test:e2e` script runs Playwright through with-worktree-port.sh +
 // with-worktree-db.sh, so the webServer below inherits the derived values and
 // the dev stack comes up on the same port Playwright targets.
@@ -22,8 +22,8 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    // The canvas dev stack (vite + bun bridge). Inherits PORT / CANVAS_BRIDGE_PORT
-    // / CANVAS_DEV_DB from the wrappers the `test:e2e` script already applied.
+    // The canvas dev stack (vite + bun bridge + edge Worker). Inherits PORT / CANVAS_BRIDGE_PORT
+    // / CANVAS_D1_STATE from the wrappers the `test:e2e` script already applied.
     command: 'bun run scripts/dev.ts',
     url: baseURL,
     reuseExistingServer: !process.env.CI,
