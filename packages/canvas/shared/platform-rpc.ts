@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { serviceToken, verifyServiceToken } from './service-token.ts';
+
 /**
  * The platform RPC (ADR-0018) — the container's ONLY path back into the **platform data
  * layer**, and the single contract both ends parse against (CLAUDE.md §7).
@@ -30,8 +32,6 @@ export const PLATFORM_RPC_PATH = '/api/platform-rpc';
  * than being it, so this credential can never be replayed as anything else. */
 const TOKEN_LABEL = 'platform-rpc/v1';
 
-const b64url = (bytes: ArrayBuffer): string =>
-  btoa(String.fromCharCode(...new Uint8Array(bytes))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 
 /**
  * The bearer both sides derive from the shared trust root — `HMAC-SHA256(BETTER_AUTH_SECRET,
@@ -51,26 +51,11 @@ const b64url = (bytes: ArrayBuffer): string =>
  */
 export const LOCAL_DEV_PLATFORM_SECRET = 'local-dev-platform-secret-not-for-production-use';
 
-const hmacKey = (secret: string, usages: KeyUsage[]) =>
-  crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, usages);
+export const platformRpcToken = (secret: string): Promise<string> => serviceToken(secret, TOKEN_LABEL);
 
-export async function platformRpcToken(secret: string): Promise<string> {
-  const sig = await crypto.subtle.sign('HMAC', await hmacKey(secret, ['sign']), new TextEncoder().encode(TOKEN_LABEL));
-  return b64url(sig);
-}
-
-/** Verify a presented bearer. Goes through `crypto.subtle.verify` rather than comparing
- * strings, so a wrong token cannot be walked out one character at a time by timing. */
-export async function verifyPlatformRpcToken(secret: string, presented: string): Promise<boolean> {
-  const padded = presented.replaceAll('-', '+').replaceAll('_', '/').padEnd(Math.ceil(presented.length / 4) * 4, '=');
-  let sig: Uint8Array<ArrayBuffer>;
-  try {
-    sig = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
-  } catch {
-    return false;
-  }
-  return crypto.subtle.verify('HMAC', await hmacKey(secret, ['verify']), sig, new TextEncoder().encode(TOKEN_LABEL));
-}
+/** Verify a presented bearer. Constant-time by construction — see `shared/service-token.ts`. */
+export const verifyPlatformRpcToken = (secret: string, presented: string): Promise<boolean> =>
+  verifyServiceToken(secret, TOKEN_LABEL, presented);
 
 /**
  * Operation 1 — "find or create the Conversation for this session". The fields are exactly

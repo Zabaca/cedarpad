@@ -12,7 +12,23 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { readFileSync, rmSync } from 'node:fs';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { chatHub, handleRequest, indexSessionStart, prepareDevAgentTurn, setChatTurnDispatcher, turnFlavor } from './bridge.ts';
+import { chatHub, handleRequest, indexSessionStart, prepareDevAgentTurn, setCanvasRoomOpener, setChatTurnDispatcher, turnFlavor } from './bridge.ts';
+import { createStore } from '../src/store.ts';
+import type { RemoteCanvasStore } from '../src/remote-store.ts';
+
+// #305: canvas writes go to the canvas's Durable-Object-hosted room, so a test that drives
+// a canvas route needs a room to drive it against. This is an in-memory stand-in for one —
+// per-canvas, persisting for the file's lifetime, exactly as the real room does per canvas.
+const fakeRooms = new Map<string, RemoteCanvasStore>();
+setCanvasRoomOpener(async (canvasId) => {
+  let store = fakeRooms.get(canvasId);
+  if (!store) {
+    const inner = createStore([]);
+    store = { ...inner, flush: async () => {} };
+    fakeRooms.set(canvasId, store);
+  }
+  return store;
+});
 import type { PlatformRpc } from './platform-rpc-client.ts';
 import type { ConversationStartInput } from '../shared/platform-rpc.ts';
 import { DEV_AGENT_KIND } from './dev-agent-workflow.ts';

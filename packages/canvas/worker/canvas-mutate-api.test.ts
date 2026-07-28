@@ -2,16 +2,20 @@ import { describe, expect, test } from 'bun:test';
 
 import type { Env } from './index.ts';
 import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.ts';
+import { canvasMutateToken, CONTAINER_PRINCIPAL } from '../shared/canvas-mutation.ts';
 import { SYNC_USER_HEADER } from './sync-api.ts';
 
-const post = (body: unknown) =>
-  new Request('https://app.test/api/canvas-sync/c1/mutate', { method: 'POST', body: JSON.stringify(body) });
+const SECRET = 'test-secret';
+
+const post = (body: unknown, headers: Record<string, string> = {}) =>
+  new Request('https://app.test/api/canvas-sync/c1/mutate', { method: 'POST', body: JSON.stringify(body), headers });
 
 /** A DO namespace that records what reached the stub, so the gate can be tested without
  *  a Durable Object (the same seam `handleSyncUpgrade`'s tests use). */
 function fakeNamespace() {
   const seen: Request[] = [];
   const env = {
+    BETTER_AUTH_SECRET: SECRET,
     CANVAS_SYNC: {
       idFromName: (n: string) => n,
       get: () => ({
@@ -52,6 +56,28 @@ describe('handleCanvasMutate', () => {
     const res = await handleCanvasMutate(post({ op: 'read' }), env, 'c1', { id: 'u1' } as never, async () => true);
     expect(res.status).toBe(200);
     expect(seen[0]?.headers.get(SYNC_USER_HEADER)).toBe('u1');
+  });
+
+  // #305: the bridge is a server with no Better Auth session. It presents the container
+  // service bearer instead, and is admitted as its own principal.
+  test('admits the container service bearer with no user session', async () => {
+    const { env, seen } = fakeNamespace();
+    const res = await handleCanvasMutate(
+      post({ op: 'read' }, { authorization: `Bearer ${await canvasMutateToken(SECRET)}` }),
+      env,
+      'c1',
+      null,
+      async () => false, // no user ⇒ the per-user reachability check must not decide this
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0]?.headers.get(SYNC_USER_HEADER)).toBe(CONTAINER_PRINCIPAL);
+  });
+
+  test('a wrong bearer with no session is still 401', async () => {
+    const { env, seen } = fakeNamespace();
+    const res = await handleCanvasMutate(post({ op: 'read' }, { authorization: 'Bearer nope' }), env, 'c1', null, async () => true);
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(0);
   });
 
   test('a malformed payload is a 400 that never reaches the room', async () => {
