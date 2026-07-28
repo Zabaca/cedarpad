@@ -174,7 +174,9 @@ export class CanvasSyncRoom {
       sessionId,
       meta: { userId: identity },
       interactOnly,
-      ...(guestCaps ? { linkId: request.headers.get(SYNC_GUEST_LINK_HEADER) ?? undefined } : {}),
+      // `||`, not `??`: an empty header is not a link id, and storing `''` would attach a
+      // connection no revocation could ever name.
+      ...(guestCaps ? { linkId: request.headers.get(SYNC_GUEST_LINK_HEADER) || undefined } : {}),
     });
     this.room.handleSocketConnect({ sessionId, socket: server, isReadonly: readonly, meta: { userId: identity } });
     return new Response(null, { status: 101, webSocket: client });

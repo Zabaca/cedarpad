@@ -22,10 +22,13 @@ import { currentUserSnapshot, subscribeIdentity, type CurrentUser } from './iden
  * link is a manual judgement call, so a member has to notice an outsider is editing first. */
 export function tlUserFor(u: CurrentUser | null, isGuest = false): TLUser | null {
   if (!u) return null;
+  // `||`, NOT `??`: a whitespace-only name trims to `''`, which is nullish-coalescing's
+  // blind spot — it would render a blank, UNMARKED cursor, which is the exact case the
+  // mark exists for. Every empty value falls back to the marked "Guest".
   const name = u.name?.trim();
   return UserRecordType.create({
     id: createUserId(u.id),
-    name: isGuest && name ? `${name} (Guest)` : (name ?? 'Guest'),
+    name: name ? (isGuest ? `${name} (Guest)` : name) : 'Guest',
     color: u.color,
   });
 }

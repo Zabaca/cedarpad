@@ -37,6 +37,14 @@ describe('tlUserFor', () => {
     expect(tlUserFor({ id: 'g1', color: 'red', kind: 'guest' }, true)?.name).toBe('Guest');
   });
 
+  // The nullish-coalescing blind spot: `'' ?? 'Guest'` is `''`, so a whitespace-only name
+  // would have rendered a blank AND unmarked cursor — an unidentified outsider editing a
+  // member's canvas, which is precisely what the mark is for.
+  test('a whitespace-only name is no name: still marked, never blank', () => {
+    expect(tlUserFor({ id: 'g1', name: '   ', color: 'red', kind: 'guest' }, true)?.name).toBe('Guest');
+    expect(tlUserFor({ id: 'u1', name: '   ', color: 'red', kind: 'user' }, false)?.name).toBe('Guest');
+  });
+
   test('a member is not marked, whatever the browser thinks it is', () => {
     // `kind: 'guest'` only means "no Better Auth session resolved" (local bridge-only dev
     // reads that way); the marking follows the share-link scope, which is the edge's answer.
