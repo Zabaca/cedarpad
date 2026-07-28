@@ -9,10 +9,15 @@ import { describe, expect, test } from 'bun:test';
 import type { ChatEvent } from './agent.ts';
 import { type TurnDeps, type TurnInput, runTurnAsync } from './turn.ts';
 
-// A minimal fake CanvasSession — the fake runChat ignores the store, so a marker object suffices.
-const fakeSession = { store: {}, requestScreenshot: () => {}, canvasId: 'default' } as unknown as Awaited<
-  ReturnType<TurnDeps['getSession']>
->;
+// The room store the turn opens. The fake runChat ignores it, so a marker object suffices.
+const fakeRoomStore = () =>
+  ({
+    getState: () => ({ version: 0, shapes: [] }),
+    upsert: () => 0,
+    remove: () => 0,
+    clear: () => 0,
+    flush: async () => {},
+  }) as unknown as Awaited<ReturnType<TurnDeps['openCanvasRoom']>>;
 
 /** A recording deps bag: every collaborator pushes its name to `calls` so we can assert order. */
 function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; calls: string[] } {
@@ -20,9 +25,10 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
   const deps: TurnDeps = {
     aborters: new Map(),
     flavor: () => ({ workspaceId: 'default', kind: 'chat' as const, skills: ['impeccable', 'tdd'] }),
-    getSession: async () => {
-      calls.push('getSession');
-      return fakeSession;
+    requestScreenshot: () => async () => null,
+    openCanvasRoom: async () => {
+      calls.push('openCanvasRoom');
+      return fakeRoomStore();
     },
     defaultCanvasId: 'default',
     prepareDevAgent: async () => {
@@ -35,7 +41,6 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
       yield { kind: 'init', sessionId: 'sess_1' } satisfies ChatEvent;
       yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
     }) as unknown as TurnDeps['runChat'],
-    bumpSharedModuleAcrossCanvases: () => 0,
     broadcast: (_chatId, ev) => calls.push(`broadcast:${ev.kind}`),
     inbox: { rpc: null, userId: 'u', notify: () => {} },
     indexSession: async () => {
@@ -72,7 +77,7 @@ describe('runTurnAsync: the turn phase order', () => {
     await runTurnAsync(input(), deps);
 
     expect(calls).toEqual([
-      'getSession',
+      'openCanvasRoom',
       'prepareDevAgent',
       'runChat',
       'indexSession', // row-at-start, on the init event
@@ -163,18 +168,11 @@ describe('runTurnAsync: the race fix (settle awaits the row-at-start index)', ()
 // (which no browser has read since #290). The turn opens a room-backed store and hands THAT to
 // runChat; the tool layer settles it after every tool call.
 describe('runTurnAsync: the agent draws into the room (#310)', () => {
-  const fakeRoomStore = () => ({
-    getState: () => ({ version: 0, shapes: [] }),
-    upsert: () => 0,
-    remove: () => 0,
-    clear: () => 0,
-    flush: async () => {},
-  });
-
-  test('runChat gets a room-backed store with settle points, not the session store', async () => {
+  test('runChat gets a room-backed store with settle points, not the raw room store', async () => {
     let handed: unknown = null;
+    const raw = fakeRoomStore();
     const { deps } = recordingDeps({
-      openCanvasRoom: (async () => fakeRoomStore()) as unknown as TurnDeps['openCanvasRoom'],
+      openCanvasRoom: async () => raw,
       runChat: (async function* (store: unknown) {
         handed = store;
         yield { kind: 'done', sessionId: null, costUsd: 0 } satisfies ChatEvent;
@@ -183,34 +181,37 @@ describe('runTurnAsync: the agent draws into the room (#310)', () => {
 
     await runTurnAsync(input(), deps);
 
-    expect(handed).not.toBe(fakeSession.store);
+    expect(handed).not.toBe(raw);
     expect(typeof (handed as { commit?: unknown }).commit).toBe('function');
   });
 
   test('the room is opened for the turn\'s OWN canvas', async () => {
     const opened: string[] = [];
     const { deps } = recordingDeps({
-      openCanvasRoom: (async (id: string) => {
+      openCanvasRoom: async (id: string) => {
         opened.push(id);
         return fakeRoomStore();
-      }) as unknown as TurnDeps['openCanvasRoom'],
+      },
     });
 
     await runTurnAsync(input({ canvasId: 'canvas_42' }), deps);
     expect(opened).toEqual(['canvas_42']);
   });
 
-  test('without an opener (tests, non-edge contexts) the session store is used, unchanged', async () => {
-    let handed: unknown = null;
+  // #297 removed the fallback that used to stand behind an absent opener (the in-memory
+  // session store). A room that cannot be opened now fails the turn, loudly.
+  test('a room that will not open fails the turn instead of drawing nowhere', async () => {
+    const broadcasts: ChatEvent[] = [];
     const { deps } = recordingDeps({
-      runChat: (async function* (store: unknown) {
-        handed = store;
-        yield { kind: 'done', sessionId: null, costUsd: 0 } satisfies ChatEvent;
-      }) as unknown as TurnDeps['runChat'],
+      openCanvasRoom: async () => {
+        throw new Error('room unreachable');
+      },
+      broadcast: (_chatId, ev) => broadcasts.push(ev),
     });
 
     await runTurnAsync(input(), deps);
-    expect(handed).toBe(fakeSession.store);
+
+    expect(broadcasts.find((e) => e.kind === 'done' && e.error)).toMatchObject({ error: 'room unreachable' });
   });
 });
 
@@ -260,9 +261,9 @@ describe('the request canvas: routing vs edge claim', () => {
     const routed: string[] = [];
     const claimed: Array<string | undefined> = [];
     const { deps } = recordingDeps({
-      getSession: async (id) => {
+      openCanvasRoom: async (id) => {
         routed.push(id);
-        return fakeSession;
+        return fakeRoomStore();
       },
       indexSession: async (_c, _s, _m, _w, canvasId) => void claimed.push(canvasId),
       settleConversation: async (i) => void claimed.push(i.canvasId),
@@ -276,9 +277,9 @@ describe('the request canvas: routing vs edge claim', () => {
     const routed: string[] = [];
     const claimed: Array<string | undefined> = [];
     const { deps } = recordingDeps({
-      getSession: async (id) => {
+      openCanvasRoom: async (id) => {
         routed.push(id);
-        return fakeSession;
+        return fakeRoomStore();
       },
       indexSession: async (_c, _s, _m, _w, canvasId) => void claimed.push(canvasId),
       settleConversation: async (i) => void claimed.push(i.canvasId),

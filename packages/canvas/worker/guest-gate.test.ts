@@ -34,18 +34,39 @@ describe('decideGuestGate — Shell + pad surface', () => {
 });
 
 describe('decideGuestGate — canvas API, scoped by the x-canvas-id the client stamps', () => {
-  test("canvas read/sync/write ops are allowed when addressed to the guest's canvas", () => {
-    expect(allow('/api/canvas', 'GET', 'cv_g')).toBe(true);
-    expect(allow('/api/canvas/stream', 'GET', 'cv_g')).toBe(true);
-    expect(allow('/api/canvas/shapes', 'POST', 'cv_g')).toBe(true);
-    expect(allow('/api/canvas/shapes/create', 'POST', 'cv_g')).toBe(true);
-    expect(allow('/api/canvas/shapes/update', 'POST', 'cv_g')).toBe(true);
-    expect(allow('/api/canvas/delete', 'POST', 'cv_g')).toBe(true);
+  test("the component library READS are allowed when addressed to the guest's canvas", () => {
     expect(allow('/api/components', 'GET', 'cv_g')).toBe(true);
     expect(allow('/api/components/MyCard', 'GET', 'cv_g')).toBe(true);
-    expect(allow('/api/components/MyCard', 'PUT', 'cv_g')).toBe(true);
-    expect(allow('/api/components/data/MyCard', 'PUT', 'cv_g')).toBe(true);
-    expect(allow('/api/components/place', 'POST', 'cv_g')).toBe(true);
+    expect(allow('/api/components/data/MyCard', 'GET', 'cv_g')).toBe(true);
+  });
+
+  // ADR-0019 / #297. The two guest doors used to disagree: #294 made the guest's sync
+  // WebSocket read-only at the protocol level, while these bridge routes stayed allowlisted
+  // and — since #305 — wrote to the room under the CONTAINER's service credential. Retiring
+  // the routes and de-allowlisting them had to happen together, or the allowlist would
+  // authorize a guest to reach a 404 (the mistake #293 avoided for presence).
+  test('every canvas WRITE on the old wire is denied, addressed or not', () => {
+    for (const [p, m] of [
+      ['/api/canvas/shapes', 'POST'],
+      ['/api/canvas/shapes/create', 'POST'],
+      ['/api/canvas/shapes/update', 'POST'],
+      ['/api/canvas/delete', 'POST'],
+      ['/api/components/place', 'POST'],
+      // Executable component source that hot-reloads into MEMBERS' browsers. Not part of the
+      // old sync plane, closed deliberately: it would otherwise be the one accidental guest
+      // write path left standing. #320 owns whether guests get it back.
+      ['/api/components/MyCard', 'PUT'],
+      ['/api/components/data/MyCard', 'PUT'],
+    ] as const) {
+      expect(allow(p, m, 'cv_g')).toBe(false);
+    }
+  });
+
+  // The document reaches a guest over the read-only room connection now (#294), and guest
+  // mart authorization reads the room too (#289). Nothing is left for these to serve.
+  test('the retired canvas reads on the old wire are no longer allowlisted', () => {
+    expect(allow('/api/canvas', 'GET', 'cv_g')).toBe(false);
+    expect(allow('/api/canvas/stream', 'GET', 'cv_g')).toBe(false);
   });
 
   // #293: presence moved onto the sync protocol, so the bridge no longer serves a
@@ -61,10 +82,10 @@ describe('decideGuestGate — canvas API, scoped by the x-canvas-id the client s
   });
 
   test('the SAME ops addressed to another canvas — or with NO canvas at all — are denied (no default-canvas fallback for guests)', () => {
-    expect(allow('/api/canvas', 'GET', 'cv_other')).toBe(false);
-    expect(allow('/api/canvas', 'GET')).toBe(false);
-    expect(allow('/api/canvas/shapes', 'POST', 'cv_other')).toBe(false);
-    expect(allow('/api/components/MyCard', 'PUT')).toBe(false);
+    expect(allow('/api/components', 'GET', 'cv_other')).toBe(false);
+    expect(allow('/api/components', 'GET')).toBe(false);
+    expect(allow('/api/components/MyCard', 'GET', 'cv_other')).toBe(false);
+    expect(allow('/api/components/MyCard', 'GET')).toBe(false);
   });
 
   test('cross-canvas blast radius is denied even correctly addressed: promote/adopt (shared tier), clear (destructive)', () => {
@@ -124,19 +145,20 @@ describe('decideGuestGate — chat (#220 slice 6)', () => {
 });
 
 // PRD #221: a component-scoped link (shapeId set) shares an artifact, not a conversation.
-// The canvas API + module surface is unchanged (the accepted v1 confinement gap, ADR-0015
+// The module READ surface is unchanged (the accepted v1 confinement gap, ADR-0015
 // amendment); the ENTIRE chat surface is denied.
 describe('decideGuestGate — component-scoped links (#221)', () => {
   const compGuest: GuestSession = { ...guest, guestChat: true, shapeId: 'shape:abc' };
   const compAllow = (pathname: string, method = 'GET', canvas?: string) =>
     decideGuestGate({ pathname, method, canvas: canvas ?? null }, compGuest).decision === 'allow';
 
-  test('keeps the canvas read/write + module surface', () => {
-    expect(compAllow('/api/canvas', 'GET', 'cv_g')).toBe(true);
-    expect(compAllow('/api/canvas/stream', 'GET', 'cv_g')).toBe(true);
-    expect(compAllow('/api/canvas/shapes/update', 'POST', 'cv_g')).toBe(true);
+  test('keeps the module READ surface, and writes nothing (#297)', () => {
+    expect(compAllow('/api/components', 'GET', 'cv_g')).toBe(true);
+    expect(compAllow('/api/components/MyCard', 'GET', 'cv_g')).toBe(true);
     expect(compAllow('/src/App.tsx')).toBe(true);
     expect(compAllow('/api/alive', 'POST')).toBe(true);
+    expect(compAllow('/api/canvas/shapes/update', 'POST', 'cv_g')).toBe(false);
+    expect(compAllow('/api/components/MyCard', 'PUT', 'cv_g')).toBe(false);
   });
 
   test('denies the whole chat surface — even with guestChat set on the row', () => {

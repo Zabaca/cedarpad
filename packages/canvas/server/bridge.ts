@@ -1,21 +1,22 @@
-// The bridge: a single Bun process that owns the canvas store, syncs it to the
-// browser over SSE, and runs the agent. Browser draws -> POST -> store; agent
-// draws -> tool -> same store -> SSE -> browser. One source of truth.
+// The bridge: a single Bun process that runs the agent, serves the component library and
+// the chat plane, and writes into canvas ROOMS. Since ADR-0019 the canvas document is not
+// here at all: it lives in the canvas's Durable-Object-hosted TLSocketRoom, browsers read
+// and write it over the sync WebSocket, and this process opens a short-lived store on the
+// room for the duration of one write (`inRoom`). One source of truth — the room.
 
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type { CanvasState } from '../src/shapes.ts';
-import { normalizeIncomingShape } from '../src/normalize.ts';
-import { bumpAllComponents, bumpSharedModule, createShapesOp, nextComponentRev, placeComponentOp, updateShapesOp } from '../src/canvas-ops.ts';
+import { bumpAllComponents, createShapesOp, nextComponentRev, placeComponentOp, updateShapesOp } from '../src/canvas-ops.ts';
 import type { OpResult } from '../src/canvas-ops.ts';
 import { canvasRoomOpener } from './canvas-room.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
 import { BlobStore, selectBackend } from './blob-store.ts';
-import { type CanvasSession, createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
+import { type ScreenshotChannel, createScreenshotChannels } from './screenshot-channel.ts';
 import { createChatHub } from './chat-hub.ts';
-import { sseComment, sseData } from './sse.ts';
+import { sseComment } from './sse.ts';
 import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
@@ -73,6 +74,10 @@ const BUILD_REV =
 
 const PORT = Number(process.env.CANVAS_BRIDGE_PORT ?? 4511);
 
+/** Process start, for /api/status `uptimeMs` — it used to ride on the canvas save-health
+ *  record, which went with the sync plane (#297). */
+const BOOT_AT = Date.now();
+
 // --- platform env ----------------------------------------------------------
 // The platform data layer's env — since ADR-0018 / #266 that means just the two values the
 // PLATFORM RPC needs (its edge origin and the shared trust root the bearer derives from). The
@@ -129,10 +134,10 @@ const notify: Notify = async (conversationId, question) => {
 };
 
 
-// Canvas persistence: local disk in dev, R2 in the container (selected by env).
-// A workspace hosts N canvases (ADR-0007); each canvas is a CanvasSession keyed by
-// canvasId in the registry below. Sessions are built lazily on first access; the
-// data-loss guard refuses to overwrite a saved canvas with empty if its read failed.
+// Workspace blob storage: local disk in dev, R2 in the container (selected by env). It no
+// longer holds canvas state — ADR-0019 / #297 deleted that writer, and the retained
+// `canvas-state.json` blobs are read only by the cutover script (#295). What is left here
+// is the component/skill/session tarballs, chat meta, transcripts and marts.
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
 const DEFAULT_CANVAS_ID = process.env.CANVAS_ID ?? 'default';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
@@ -141,28 +146,18 @@ const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root,
 const blobBackend = selectBackend(`${PKG_ROOT}.persist`);
 const blobStore = new BlobStore(blobBackend);
 
-// Per-canvas sessions, keyed by canvasId. The default canvas runs the exact same
-// factory as every other, so its single-store behavior is unchanged (it is just the
-// first registry entry). The browser selects a canvas via the `x-canvas-id` header
-// (or `?canvas=`); absent → the default, so today's un-namespaced /api/canvas/* calls
-// resolve to the default canvas exactly as before.
+// Per-canvas screenshot channels, keyed by canvasId — the only thing left of the old
+// per-canvas session (ADR-0019 / #297). The store, its R2 persistence and the full-state
+// SSE broadcast are gone; a canvas's document lives in its room. The browser still selects
+// a canvas via the `x-canvas-id` header (or `?canvas=`); absent → the default.
 // (The lazy canvas-edge backfill that used to run here went with the container's database in
 // ADR-0018 / #266. It was a one-time migration for chats born before edge capture existed, it
 // has long since run everywhere, and the live path — `findOrCreateConversation`'s first-wins
 // canvas edge, at the edge — still fills a null edge on the chat's next turn.)
-const canvasSessions = createSessionRegistry(async (id) => createCanvasSession(blobStore, WORKSPACE, id));
+const screenshotChannels = createScreenshotChannels();
 function canvasIdFrom(req: Request, url: URL): string {
   return req.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas') ?? DEFAULT_CANVAS_ID;
 }
-// Build the default session at boot so it restores from R2 before the first request —
-// preserving today's boot-time load. Chats (multiplexed, not yet per-canvas) run
-// against the default canvas's store, as they always have.
-const defaultSession: CanvasSession = await canvasSessions.get(DEFAULT_CANVAS_ID);
-
-// Cross-canvas rev-bump for a shared-library change (#55): fan a promote / shared-edit out
-// to every already-built canvas that placed the module, so each open canvas re-imports the
-// one shared source. The pure target computation + per-store bump live in canvas-ops.
-const bumpSharedModuleAcrossCanvases = (module: string): number => bumpSharedModule(canvasSessions.built(), module);
 
 // Per-chat durable state (ADR 0004): server-owned { sessionId, model, effort, forkNext },
 // the single home that replaces browser localStorage. Persisted via blobStore (local disk
@@ -231,11 +226,6 @@ async function onTurnComplete(): Promise<void> {
   await flushIfDirty('skills', SKILLS_DIR);
 }
 
-// The per-canvas store, persistence, save-health, SSE subscriber set, and screenshot
-// round-trip now live in CanvasSession (server/canvas-sessions.ts). `defaultSession`
-// (built at boot above) is the default canvas; the chat path uses it, exactly as the
-// single global store did before.
-
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -250,8 +240,11 @@ async function readBody(req: Request): Promise<Record<string, unknown>> {
   }
 }
 
-function canvasStream(session: CanvasSession): Response {
-  const clients = session.clients;
+/** The canvas SSE stream, reduced to the screenshot round-trip (#297): the document travels
+ *  over the sync WebSocket now, so this carries `screenshot` frames and nothing else. It
+ *  opens with a comment frame rather than a state prime — there is no state here to prime. */
+function canvasStream(channel: ScreenshotChannel): Response {
+  const clients = channel.clients;
   let self: ReadableStreamDefaultController;
   const stream = new ReadableStream({
     start(controller) {
@@ -259,11 +252,11 @@ function canvasStream(session: CanvasSession): Response {
       clients.add(controller);
       markAlive();
       ensureReaper();
-      controller.enqueue(sseData(session.store.getState())); // prime with current state
+      controller.enqueue(sseComment('subscribed')); // opens + flushes the stream
     },
     cancel() {
       clients.delete(self);
-      console.log(`[clients] canvas ${session.canvasId} stream cancel -> canvas=${clients.size} chat=${chatHub.subscriberCount()}`);
+      console.log(`[clients] canvas ${channel.canvasId} stream cancel -> canvas=${clients.size} chat=${chatHub.subscriberCount()}`);
     },
   });
   return new Response(stream, {
@@ -309,9 +302,8 @@ function ensureReaper(): void {
     // our side doesn't settle the forward either (proven — the DO's inflight hold
     // sticks, so it never idles). The one lever we have is to exit: dev.ts and
     // container-start exit with us, CF stops the container, and the next request
-    // cold-boots and restores from R2. Flush canvas state first so nothing is lost
-    // (idle already means no in-flight edits, but be safe), with a hard bail so a
-    // stuck write can't keep us alive.
+    // cold-boots. Nothing is flushed on the way out any more (#297): canvas state lives in
+    // the room, which the Durable Object persists, so an exit here loses nothing.
     if (reaper) {
       clearInterval(reaper);
       reaper = null;
@@ -319,18 +311,8 @@ function ensureReaper(): void {
     // Only self-exit inside the CF container (where it maps to container sleep). In
     // local dev there is nothing to sleep, so never kill the developer's dev server.
     if (!process.env.IS_SANDBOX) return;
-    console.log(`[idle] no client heartbeat for ${STALE_MS}ms -> flush + exit so the container can sleep`);
-    const bail = setTimeout(() => process.exit(0), 3000);
-    // Flush every canvas session built this run (not just the default) so no canvas
-    // loses in-flight edits when the container sleeps.
-    void Promise.allSettled(
-      canvasSessions.resolved().map((p) => p.then((s) => s.persist.save(s.store.getState()))),
-    )
-      .catch(() => {})
-      .finally(() => {
-        clearTimeout(bail);
-        process.exit(0);
-      });
+    console.log(`[idle] no client heartbeat for ${STALE_MS}ms -> exit so the container can sleep`);
+    process.exit(0);
   }, 10_000);
 }
 
@@ -364,14 +346,14 @@ function chatStream(guestCanvas?: string): Response {
         } catch {
           clearInterval(ping);
           chatHub.unsubscribe(controller);
-          console.log(`[clients] chat ping dead-controller -> chat=${chatHub.subscriberCount()} canvas(default)=${defaultSession.clients.size}`);
+          console.log(`[clients] chat ping dead-controller -> chat=${chatHub.subscriberCount()} canvas(default)=${screenshotChannels.get(DEFAULT_CANVAS_ID).clients.size}`);
         }
       }, 15000);
     },
     cancel() {
       clearInterval(ping);
       chatHub.unsubscribe(self);
-      console.log(`[clients] chat stream cancel -> chat=${chatHub.subscriberCount()} canvas(default)=${defaultSession.clients.size}`);
+      console.log(`[clients] chat stream cancel -> chat=${chatHub.subscriberCount()} canvas(default)=${screenshotChannels.get(DEFAULT_CANVAS_ID).clients.size}`);
     },
   });
   return new Response(stream, {
@@ -542,14 +524,14 @@ async function* e2eRunChat(...args: Parameters<typeof runChat>): AsyncGenerator<
 const turnDeps: TurnDeps = {
   aborters: chatHub.aborters,
   flavor: turnFlavor,
-  getSession: (canvasId) => canvasSessions.get(canvasId),
+  // The agent's view_canvas round-trip, over the canvas's screenshot SSE channel (#297).
+  requestScreenshot: (canvasId) => screenshotChannels.get(canvasId).requestScreenshot,
   // #310: the chat agent draws into the room, like every other canvas write since #305.
   // Indirected through the mutable `openCanvasRoom` so `setCanvasRoomOpener` swaps it in tests.
   openCanvasRoom: (canvasId) => openCanvasRoom(canvasId),
   defaultCanvasId: DEFAULT_CANVAS_ID,
   prepareDevAgent: (token, repo, chatId, sessionId) => prepareDevAgentTurn(token, repo, chatId, sessionId),
   runChat: E2E_MODE ? e2eRunChat : runChat,
-  bumpSharedModuleAcrossCanvases,
   broadcast: broadcastChat,
   inbox: { rpc: platformRpcClient, userId: INBOX_USER, notify },
   indexSession: indexSessionStart,
@@ -802,11 +784,10 @@ export async function handleRequest(req: Request): Promise<Response> {
     // container's database in ADR-0018 / #266. Both are EDGE routes — the Notebook API since
     // ADR-0007 / #56, and local dev since #263 runs the edge Worker, where vite proxies them.)
 
-    // --- canvas sync ---
-    // Every canvas route resolves its CanvasSession from the request's canvasId
-    // (x-canvas-id header / ?canvas=, default 'default'), so N canvases share one
-    // bridge with per-canvas stores. Un-namespaced calls resolve to the default
-    // canvas, so today's single-canvas frontend is unchanged.
+    // --- canvas ---
+    // Every canvas route resolves its canvasId from the request (x-canvas-id header /
+    // ?canvas=, default 'default') and opens the ROOM for it. Since #297 there is no
+    // per-canvas state in this process at all — only the screenshot SSE channel.
     if (path === BRIDGE_ROUTES.canvas && req.method === 'GET') {
       // Reads come from the ROOM too (#305): reading the session store would answer with
       // this process's stale copy while every browser looks at a different canvas.
@@ -819,97 +800,82 @@ export async function handleRequest(req: Request): Promise<Response> {
     }
     // Public build stamp (#74): the SHA baked into this container image, and NOTHING
     // else. deploy.sh polls this at the edge WITHOUT a session to confirm a rollout is
-    // live. Kept separate from /api/status (which exposes persistence health + client
+    // live. Kept separate from /api/status (which exposes the turn-artifact health + client
     // counts and stays edge-gated) so the public surface is exactly one non-sensitive
     // field — the "minor info disclosure" rated acceptable in SECURITY-cs_gate.
     if (path === '/api/buildrev' && req.method === 'GET') {
       return json({ buildRev: BUILD_REV });
     }
-    // Persistence health in one read: is the backend R2 or fs, are we degraded, and
-    // is what's in memory actually reaching R2? `unsavedVersions` > 0 and rising =
-    // edits aren't being persisted (the exact failure that was invisible before).
+    // Container health in one read. The canvas-persistence half of this (degraded, live
+    // version/shape counts, save-health, unsavedVersions) went with the sync plane in #297:
+    // the room persists the document, so there is no local save to be silently failing.
     if (path === '/api/status' && req.method === 'GET') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
-      const { store, persist, saveHealth } = session;
-      const s = store.getState();
-      const savedV = saveHealth.savedVersion < 0 ? 0 : saveHealth.savedVersion;
-      const canvasClients = session.clients;
+      const canvasClients = screenshotChannels.get(canvasIdFrom(req, url)).clients;
       return json({
         buildRev: BUILD_REV,
         backend: process.env.R2_BUCKET ? 'r2' : 'fs',
         bucket: process.env.R2_BUCKET ?? null,
-        degraded: persist.isDegraded,
-        live: { version: s.version, shapes: s.shapes.length },
-        save: saveHealth,
-        // ADR 0003: the three turn-completion artifacts (sessions/components/custom) now
-        // report health too, so a silent save failure is visible for all four.
+        // ADR 0003: the turn-completion artifacts (sessions/components/custom/skills) report
+        // health here, so a silent save failure is visible.
         artifacts: sink.healthSnapshot(),
-        unsavedVersions: Math.max(0, saveHealth.liveVersion - savedV),
         // Split client counts: the chat hub's subscribers are the warmth driver (their 15s
         // ping pins the container), canvasClients is pingless. Both must reach 0 for the
         // container to idle-sleep. Chat subscribers self-clean (ping enqueue throws on a dead
-        // controller); canvasClients only shrinks on cancel() or the next broadcast, so it can lag.
+        // controller); canvasClients only shrinks on cancel(), so it can lag.
         clients: canvasClients.size,
         chatClients: chatHub.subscriberCount(),
         canvasClients: canvasClients.size,
-        uptimeMs: Date.now() - saveHealth.bootAt,
+        uptimeMs: Date.now() - BOOT_AT,
         at: Date.now(),
       });
     }
-    if (path === BRIDGE_ROUTES.canvasStream && req.method === 'GET') {
-      return canvasStream(await canvasSessions.get(canvasIdFrom(req, url)));
-    }
-    if (path === BRIDGE_ROUTES.shapes && req.method === 'POST') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
-      const body = await readBody(req);
-      const raw = Array.isArray(body.shapes) ? body.shapes : [];
-      try {
-        const shapes = raw.map((s) => normalizeIncomingShape(s as Record<string, unknown>));
-        const version = session.store.upsert(shapes);
-        return json({ version, count: shapes.length });
-      } catch (e) {
-        return json({ error: (e as Error).message }, 400);
-      }
+    // The screenshot channel (#297): `GET /api/canvas/stream` is no longer part of the sync
+    // plane — it carries the agent's view_canvas ask and nothing else.
+    if (path === '/api/canvas/stream' && req.method === 'GET') {
+      return canvasStream(screenshotChannels.get(canvasIdFrom(req, url)));
     }
     if (path === BRIDGE_ROUTES.deleteShapes && req.method === 'POST') {
       const parsed = DeleteShapesBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
       return inRoom(canvasIdFrom(req, url), (store) => ({ version: store.remove(parsed.data.ids) }));
     }
-    if (path === '/api/canvas/clear' && req.method === 'POST') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
-      return json({ version: session.store.clear() });
-    }
+    // (POST /api/canvas/clear went with the sync plane in #297. It cleared the in-process
+    // store, which nothing has read since #290. The agent's clear_canvas tool clears the
+    // room through the same seam as every other write.)
     if (path === '/api/canvas/screenshot' && req.method === 'POST') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
       const body = await readBody(req);
       const id = typeof body.id === 'string' ? body.id : '';
       const screenurl = typeof body.url === 'string' ? body.url : null;
-      session.resolveScreenshot(id, screenurl);
+      screenshotChannels.get(canvasIdFrom(req, url)).resolveScreenshot(id, screenurl);
       return json({ ok: true });
     }
 
     // --- shared component library (#55): the UI action for promote / adopt. Mirrors the
-    // agent tools; each resolves the caller's canvas from the same x-canvas-id selection. ---
+    // agent tools; each resolves the caller's canvas from the same x-canvas-id selection.
+    // The hot-reload rev-bump lands in the ROOM, like every other canvas write.
+    //
+    // #297: the CROSS-canvas half of the shared-library fan-out is gone with the session
+    // registry it fanned over. It bumped the in-memory stores of other canvases, which no
+    // browser has read since #290 — so this only makes the code honest about what already
+    // happened. A canvas other than the caller's re-imports a changed shared module on its
+    // next load. Restoring a live cross-canvas bump needs a room-based fan-out (#320-adjacent).
     if (path === '/api/components/promote' && req.method === 'POST') {
       const canvasId = canvasIdFrom(req, url);
       const body = await readBody(req);
       const module = typeof body.module === 'string' ? body.module : '';
-      try {
-        return json({ ok: true, reloaded: promoteToShared(canvasId, module, () => bumpSharedModuleAcrossCanvases(module)) });
-      } catch (e) {
-        return json({ error: (e as Error).message }, 400);
-      }
+      return inRoom(canvasId, (store) => ({
+        ok: true,
+        reloaded: promoteToShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store))),
+      }));
     }
     if (path === '/api/components/adopt' && req.method === 'POST') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const canvasId = canvasIdFrom(req, url);
       const body = await readBody(req);
       const module = typeof body.module === 'string' ? body.module : '';
-      try {
-        return json({ ok: true, reloaded: adoptFromShared(session.canvasId, module, () => bumpAllComponents(session.store, nextComponentRev(session.store))) });
-      } catch (e) {
-        return json({ error: (e as Error).message }, 400);
-      }
+      return inRoom(canvasId, (store) => ({
+        ok: true,
+        reloaded: adoptFromShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store))),
+      }));
     }
 
     // Direct canvas mutation over the wire (MCP full access): the same ops the in-canvas
@@ -946,18 +912,19 @@ export async function handleRequest(req: Request): Promise<Response> {
     // Same write + blunt-bump + sink-flush contract as the module PUT below.
     const dataRoute = /^\/api\/components\/data\/([^/]+)$/.exec(path);
     if (dataRoute && req.method === 'PUT') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const canvasId = canvasIdFrom(req, url);
       const name = decodeURIComponent(dataRoute[1] as string);
       const parsed = WriteDataBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
+      // The file lands (and persists) first; the hot-reload bump then goes to the ROOM, so an
+      // unreachable room costs the reload, never the authored source.
       try {
-        writeDataFile(name, parsed.data.source, session.canvasId);
-        const reloaded = bumpAllComponents(session.store, nextComponentRev(session.store));
-        await flushComponentTrees();
-        return json({ ok: true, name, reloaded });
+        writeDataFile(name, parsed.data.source, canvasId);
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
+      await flushComponentTrees();
+      return inRoom(canvasId, (store) => ({ ok: true, name, reloaded: bumpAllComponents(store, nextComponentRev(store)) }));
     }
     const componentRoute = /^\/api\/components\/([^/]+)$/.exec(path);
     if (componentRoute && req.method === 'GET') {
@@ -969,20 +936,19 @@ export async function handleRequest(req: Request): Promise<Response> {
       }
     }
     if (componentRoute && req.method === 'PUT') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
+      const canvasId = canvasIdFrom(req, url);
       const module = decodeURIComponent(componentRoute[1] as string);
       const parsed = WriteComponentBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
       try {
-        writeComponent(module, parsed.data.source, session.canvasId);
-        const reloaded = isShared(module)
-          ? bumpSharedModuleAcrossCanvases(module)
-          : bumpAllComponents(session.store, nextComponentRev(session.store));
-        await flushComponentTrees();
-        return json({ ok: true, module, reloaded });
+        writeComponent(module, parsed.data.source, canvasId);
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
+      await flushComponentTrees();
+      // A shared module used to bump every open canvas; that fan-out went with the session
+      // registry (#297, see promote above). The caller's canvas reloads either way.
+      return inRoom(canvasId, (store) => ({ ok: true, module, reloaded: bumpAllComponents(store, nextComponentRev(store)) }));
     }
 
     // --- agent chat (multiplexed pub/sub) ---
@@ -1284,7 +1250,8 @@ export async function handleRequest(req: Request): Promise<Response> {
     // and it was the last route on this bridge that read a Conversation from a database.
     // ADR-0018 / #266 removed that database, and with it the unreachable route.)
 
-    if (path === '/api/health') return json({ ok: true, shapes: defaultSession.store.getState().shapes.length });
+    // #297: the shape count went with the in-process store. Liveness is what this answers.
+    if (path === '/api/health') return json({ ok: true });
 
     // Avatar-capture handoff: persist a recorded clip to disk so the next pipeline
     // step can read it. Browser sends FormData { file, session, shot, mime, duration }.

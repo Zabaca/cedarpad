@@ -28,7 +28,7 @@ export type Notify = (conversationId: string, question: string) => void | Promis
 export { findOrCreateConversation };
 
 /** The seam card placement needs from a canvas session: current shapes (for free-space
- * placement) and an upsert (to place the card). The bridge adapts its CanvasSession registry to
+ * placement) and an upsert (to place the card). The bridge adapts a room store to
  * this. No database: ADR-0018 / #264 left the row work at the edge. */
 export interface PlaceChatCardDeps {
   getSession: (canvasId: string) => Promise<{

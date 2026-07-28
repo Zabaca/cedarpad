@@ -139,7 +139,7 @@ DESIGN.md owns the look.
  browser (tldraw + chat)            bun bridge (:4511)               Claude Agent SDK
  ───────────────────────            ──────────────────               ────────────────
   human draws ──POST /shapes──▶  ┌────────────────────┐
-  SSE /canvas/stream ◀──push───  │  CanvasStore        │ ◀─tool calls─ create/update/
+  WS → Durable Object room ◀─▶   │  CanvasStore        │ ◀─tool calls─ create/update/
   chat ──POST /chat (SSE)────▶   │  (id→shape, version)│   delete/clear/align/read
                                  └────────────────────┘
                                    the agent's tools mutate the SAME store,
@@ -273,21 +273,23 @@ A `CanvasShape` is one of:
   clear-when-empty are no-ops and do **not** bump). `version` is what drives
   client reconciliation, so this is load-bearing.
 - `getState()` returns shapes **sorted by id** (deterministic reads + diffing).
-- An optional `onChange(state)` fires once per real mutation → the bridge
-  broadcasts to SSE subscribers.
+- An optional `onChange(state)` fires once per real mutation. Since ADR-0019 / #297 the
+  bridge no longer subscribes to it: the in-memory `createStore` is the **test double**
+  behind the agent-tool suite, and production writes go through `RemoteCanvasStore` against
+  the canvas's room, which is what every browser reads.
 
 ## Bridge protocol (`/api`)
 
 | route                     | method | purpose |
 |---------------------------|--------|---------|
-| `/api/canvas`             | GET    | current `{version, shapes}` |
-| `/api/canvas/stream`      | GET    | SSE; primes with state, pushes on every change |
-| `/api/canvas/shapes`      | POST   | `{shapes}` upsert (browser → store; accepts `draw` + `image`) |
-| `/api/canvas/delete`      | POST   | `{ids}` delete |
-| `/api/canvas/clear`       | POST   | clear all shapes |
+| `/api/canvas`             | GET    | current `{version, shapes}`, read from the canvas's room |
+| `/api/canvas/stream`      | GET    | SSE; carries the agent's `screenshot` ask and nothing else (#297) |
+| `/api/canvas/shapes/create` | POST | `{shapes}` create, into the room |
+| `/api/canvas/shapes/update` | POST | `{shapes}` patch, into the room |
+| `/api/canvas/delete`      | POST   | `{ids}` delete, from the room |
 | `/api/chat/stream`        | GET    | SSE; **one stream for ALL chats**, each frame tagged with `chatId` |
 | `/api/chat/:id/send`      | POST   | `{message, sessionId?, images?}` → 202; events **broadcast** (tagged) to subscribers; **425** when no chat stream is subscribed |
-| `/api/health`             | GET    | `{ok, shapes}` |
+| `/api/health`             | GET    | `{ok}` (liveness; the shape count went with the in-process store, #297) |
 
 Chat is **multi-session pub/sub over one multiplexed stream**. A chat `:id` is one
 conversation; on the canvas each `chat` shape is one session, with the **shape id
@@ -390,8 +392,11 @@ The round-trip:
   (`componentUrls`, ADR-0014) — so promote
   is a pure file *move* (`server/components.ts` `promoteComponent`), instances stay stable,
   and another canvas placing the same bare name gets the one shared source. Editing a shared
-  module fans the rev-bump out to **every canvas that placed it** (`bumpSharedModule` over the
-  session registry's `built()`), not just the current store. `adopt_shared_component` copies a
+  module bumps the rev on the **caller's** canvas. (The cross-canvas fan-out over the
+  bridge's in-memory session registry went with the old sync plane in #297 — it bumped
+  stores no browser had read since #290. Other canvases re-import a changed shared module on
+  their next load. `bumpSharedModule`/`sessionsPlacingModule` remain in `canvas-ops.ts`,
+  unwired, awaiting a room-based fan-out.) `adopt_shared_component` copies a
   shared module back into a canvas's own dir (own-dir then shadows shared) so it can diverge.
   Reads (`list_components`/`read_component`) span own dir + `@shared` + base. UI mirror: right-click a
   component shape → Promote / Copy to this canvas (`src/component-library.ts`, `App.tsx`).

@@ -1,7 +1,7 @@
-// The chat plane's runtime state, in one place. Sibling of server/canvas-sessions.ts: that
-// module made the canvas plane a per-canvas session (store + persistence + SSE clients +
-// presence) behind one interface; this one does the same for the chat plane, which until now
-// lived as loose module-level singletons in server/bridge.ts.
+// The chat plane's runtime state, in one place. It exists for the same reason
+// server/screenshot-channel.ts does: what used to be loose module-level singletons in
+// server/bridge.ts becomes one keyed, testable module. (Its canvas-plane counterpart shrank
+// to just the screenshot channel when ADR-0019 / #297 moved canvas state into the room.)
 //
 // It owns three things and nothing else:
 //   - the ONE multiplexed SSE subscriber set (all chats share one stream per client) plus

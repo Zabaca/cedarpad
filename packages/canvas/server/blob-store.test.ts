@@ -39,10 +39,14 @@ describe('blob keys', () => {
 });
 
 describe('BlobStore', () => {
-  test('B3 canvas state round-trips', async () => {
-    const store = new BlobStore(memBackend());
+  // #297 deleted the WRITER — nothing persists canvas-state.json any more. The reader
+  // stays because the retained blobs are what the cutover (#295) imports and what a
+  // rollback re-imports, so it is exercised against bytes put through the backend.
+  test('B3 a retained canvas-state blob still reads back', async () => {
+    const backend = memBackend();
+    const store = new BlobStore(backend);
     const state = sampleState();
-    await store.saveCanvasState('ws1', 'c1', state);
+    await backend.put(canvasStateKey('ws1', 'c1'), new TextEncoder().encode(JSON.stringify(state)));
     expect(await store.loadCanvasState('ws1', 'c1')).toEqual(state);
   });
 
@@ -118,12 +122,13 @@ describe('BlobStore', () => {
     }
   });
 
-  test('B7 fsBackend round-trips canvas state through nested key dirs', async () => {
+  test('B7 fsBackend reads canvas state back through nested key dirs', async () => {
     const root = join(tmpdir(), `Tmp_BlobStoreTest_${process.pid}`);
     try {
-      const store = new BlobStore(fsBackend(root));
+      const backend = fsBackend(root);
+      const store = new BlobStore(backend);
       const state = sampleState();
-      await store.saveCanvasState('ws1', 'c1', state);
+      await backend.put(canvasStateKey('ws1', 'c1'), new TextEncoder().encode(JSON.stringify(state)));
       expect(await store.loadCanvasState('ws1', 'c1')).toEqual(state);
       expect(await store.loadCanvasState('ws1', 'absent')).toBeNull();
     } finally {

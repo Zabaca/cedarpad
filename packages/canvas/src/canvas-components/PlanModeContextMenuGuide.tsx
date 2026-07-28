@@ -24,12 +24,12 @@ const uiOverrides: TldrawUiOverrides = {
             const xMin  = Math.min(...boxes.map(b => b.x))
             const yMax  = Math.max(...boxes.map(b => b.y + b.h))
 
-            // POST a PlanMode component near the selected shapes
-            await fetch('/api/canvas/shapes', {
+            // Place a PlanMode component near the selected shapes (the write lands in the
+            // canvas's sync room — ADR-0019)
+            await fetch('/api/components/place', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                type: 'component',
                 module: 'PlanMode',
                 x: xMin,
                 y: yMax + 24,

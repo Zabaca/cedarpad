@@ -1,5 +1,5 @@
 // The one SSE frame encoder. Both planes emit the same wire forms — the chat multiplexer
-// (server/bridge.ts) and each canvas session (server/canvas-sessions.ts) — so the encoding
+// (server/bridge.ts) and each canvas's screenshot channel (server/screenshot-channel.ts) — so the encoding
 // lives here once instead of being re-declared per module.
 
 const enc = new TextEncoder();

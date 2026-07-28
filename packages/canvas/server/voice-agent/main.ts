@@ -101,7 +101,9 @@ const tools = {
     parameters: z.object({
       shapes: z.array(z.object({ type: z.enum(['note', 'text']), x: z.number(), y: z.number(), text: z.string() })),
     }),
-    execute: async (args) => bridge('/api/canvas/shapes', { method: 'POST', body: JSON.stringify(args) }),
+    // #297 retired `POST /api/canvas/shapes` (the old whole-shape upsert into the bridge's
+    // in-memory store). `/shapes/create` is the room write the agent's own tool uses.
+    execute: async (args) => bridge('/api/canvas/shapes/create', { method: 'POST', body: JSON.stringify(args) }),
   }),
 };
 

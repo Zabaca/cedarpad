@@ -338,9 +338,11 @@ describe('guest session gate (#220)', () => {
     shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
     const spa = await guestFetch('/');
     expect(await spa.text()).toBe('asset');
-    const api = await guestFetch('/api/canvas', { headers: { 'x-canvas-id': 'cv_g' } });
+    // #297: `/api/canvas` went with the old wire. The library READ is the surviving
+    // canvas-addressed bridge op a guest may proxy.
+    const api = await guestFetch('/api/components', { headers: { 'x-canvas-id': 'cv_g' } });
     expect(await api.text()).toBe('pad-html');
-    const wrong = await guestFetch('/api/canvas', { headers: { 'x-canvas-id': 'cv_other' } });
+    const wrong = await guestFetch('/api/components', { headers: { 'x-canvas-id': 'cv_other' } });
     expect(wrong.headers.get('content-type') ?? '').toContain('text/html'); // login page
   });
 
