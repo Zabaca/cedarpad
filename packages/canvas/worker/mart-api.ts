@@ -11,8 +11,9 @@ import { parquetReadObjects } from 'hyparquet/src/index.js';
 
 import { BlobStore, type BlobBackend } from '../server/blob-store.ts';
 import { coerceMartRow, MartName, MartSidecarSchema, type MartSidecar } from '../shared/mart-contract.ts';
-import { martsReferencedBy } from '../shared/mart-scope.ts';
-import type { CanvasState } from '../src/shapes.ts';
+import { martsInRoomSnapshot } from '../shared/mart-scope.ts';
+import { SYNC_USER_HEADER } from './sync-api.ts';
+import { syncRoomName } from './sync-room.ts';
 
 /** Path this route answers: `/api/workspaces/:ws/marts/:name`. */
 export const MART_ROUTE = /^\/api\/workspaces\/([^/]+)\/marts\/([^/]+)$/;
@@ -56,8 +57,8 @@ function toAsyncBuffer(bytes: Uint8Array): { byteLength: number; slice(start: nu
 /**
  * The guest-scoping decision — the part of this slice that matters most. Marts ARE
  * guest-readable (a shared canvas has to render), but the gate resolves the marts the
- * shared canvas's OWN component instances actually reference (`martsReferencedBy`) and
- * allows ONLY those. Gating on "does this guest have access to some canvas" would make
+ * shared canvas's OWN component instances actually reference (`martsForGuestCanvas`, off
+ * the room) and allows ONLY those. Gating on "does this guest have access to some canvas" would make
  * the entire mart namespace enumerable by anyone holding a share link pasted into Slack —
  * default-deny, same principle as `worker/guest-gate.ts`, one level down.
  *
@@ -65,13 +66,14 @@ function toAsyncBuffer(bytes: Uint8Array): { byteLength: number; slice(start: nu
  * before `{ kind: 'member' }` ever reaches here — a member may then read any mart in that
  * already-authorized workspace.
  */
-export function decideMartAccess(
-  name: string,
-  requester: { kind: 'member' } | { kind: 'guest'; canvasState: CanvasState },
-): boolean {
+export function decideMartAccess(name: string, requester: MartRequester): boolean {
   if (requester.kind === 'member') return true;
-  return martsReferencedBy(requester.canvasState).has(name);
+  return requester.marts.has(name);
 }
+
+/** Who is asking. A guest carries the marts their canvas actually references, resolved by
+ *  `martsForGuestCanvas` from the ROOM — never a name the client supplied. */
+export type MartRequester = { kind: 'member' } | { kind: 'guest'; marts: Set<string> };
 
 /** Read one mart's rows + sidecar from R2, coerced JSON-safe (ADR-0017 consequences:
  * INT64 arrives as BigInt, TIMESTAMP as Date — neither survives JSON.stringify raw).
@@ -91,14 +93,42 @@ export async function readMart(
   return { sidecar, rows };
 }
 
-/** Read a canvas's current state straight off R2 (never the container/bridge) — the guest
- * branch's input to `martsReferencedBy`. Canvas state's source of truth is R2 (the
- * container is a cache that saves back to it), so this is safe to read cold, same as the
- * mart itself; it's what makes "browsing never wakes the container" hold for the guest
- * path too. `null` if the canvas has no persisted state yet. */
-export async function loadCanvasStateFromBucket(bucket: MartBucket, ws: string, canvasId: string): Promise<CanvasState | null> {
-  const store = new BlobStore(r2Backend(bucket));
-  return store.loadCanvasState(ws, canvasId);
+/** Minimal structural shape of the `CANVAS_SYNC` Durable Object binding — same §2 narrowing
+ *  as `MartBucket`: only `idFromName` + `get().fetch`, so a test can pass a plain object. */
+export interface CanvasSyncNamespace<Id = unknown> {
+  idFromName(name: string): Id;
+  get(id: Id): { fetch(request: Request): Promise<Response> };
+}
+
+/**
+ * The guest branch's input to `decideMartAccess`: which marts THIS canvas references,
+ * read from its sync room (ADR-0019, #289).
+ *
+ * This used to read `canvas-state.json` off R2 on the premise that R2 was canvas state's
+ * source of truth. The Durable Object room is now that source, so the blob is stale and
+ * authorizing against it would keep serving a mart whose shape has been deleted from the
+ * canvas — a security-relevant staleness. Having the DO write an R2 snapshot for cold
+ * readers instead was rejected in ADR-0019: two representations of one fact.
+ *
+ * `readerId` is stamped into `SYNC_USER_HEADER` AFTER the caller has authorized the guest
+ * against the live share link, exactly as every other door onto a room does it — the room
+ * requires an identity and the client can never supply one.
+ *
+ * Fails closed: a room that does not answer grants no marts.
+ */
+export async function martsForGuestCanvas(
+  sync: CanvasSyncNamespace,
+  canvasId: string,
+  readerId: string,
+): Promise<Set<string>> {
+  const stub = sync.get(sync.idFromName(syncRoomName(canvasId)));
+  const res = await stub.fetch(
+    new Request(`https://canvas-sync/api/canvas-sync/${canvasId}/snapshot`, {
+      headers: { [SYNC_USER_HEADER]: readerId },
+    }),
+  );
+  if (!res.ok) return new Set();
+  return martsInRoomSnapshot((await res.json()) as { documents: { state: unknown }[] });
 }
 
 const NOT_FOUND = () => Response.json({ error: 'not found' }, { status: 404 });
@@ -116,7 +146,7 @@ export async function handleMartApi(
   bucket: MartBucket,
   ws: string,
   name: string,
-  requester: { kind: 'member' } | { kind: 'guest'; canvasState: CanvasState },
+  requester: MartRequester,
 ): Promise<Response> {
   if (!MartName.safeParse(name).success) return NOT_FOUND();
   if (!decideMartAccess(name, requester)) return NOT_FOUND();

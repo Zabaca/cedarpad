@@ -41,7 +41,7 @@ export type MartSidecar = z.infer<typeof MartSidecarSchema>;
 /** How a component instance names the mart it renders (ADR-0017: "a component names a
  * mart, not a URL" — closes #219's arbitrary-fetch question, since the mart namespace IS
  * the boundary). Minimal on purpose: THIS slice (#238) only declares the field + shape so
- * the guest-scoping resolver (`martsReferencedBy`) has something to read; placement and
+ * the guest-scoping resolver (`martsInRoomSnapshot`) has something to read; placement and
  * rendering are #239's job, not this one's. */
 export const DataSourceSchema = z.object({
   kind: z.literal('mart'),

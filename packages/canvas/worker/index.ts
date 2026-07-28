@@ -34,7 +34,7 @@ import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.t
 import { handleCanvasSnapshot, parseCanvasSnapshotPath } from './canvas-snapshot-api.ts';
 import { handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
 import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
-import { handleMartApi, loadCanvasStateFromBucket, MART_ROUTE } from './mart-api.ts';
+import { handleMartApi, martsForGuestCanvas, MART_ROUTE } from './mart-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
 import { IS_CHAT_SEND, effectiveMcpTokens, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
@@ -433,14 +433,15 @@ export default {
               });
             }
             if (guestMartMatch) {
-              // ADR-0017 guest scoping: resolve THIS canvas's own referenced marts fresh,
-              // off R2, every request — never cached, never trusted from the client.
+              // ADR-0017 guest scoping: resolve THIS canvas's own referenced marts fresh
+              // every request — never cached, never trusted from the client. The source is
+              // the canvas's sync ROOM (ADR-0019, #289), not `canvas-state.json`: the blob
+              // is stale once the DO owns the document, so a mart removed from the canvas
+              // would still be served. The reader identity is the link, stamped only after
+              // the live share-link re-check above.
               const name = guestMartMatch[2] as string;
-              const canvasState = await loadCanvasStateFromBucket(env.MART_BUCKET, guest.workspaceId, guest.canvasId);
-              return handleMartApi(env.MART_BUCKET, guest.workspaceId, name, {
-                kind: 'guest',
-                canvasState: canvasState ?? { version: 0, shapes: [] },
-              });
+              const marts = await martsForGuestCanvas(env.CANVAS_SYNC, guest.canvasId, `guest:${guest.linkId}`);
+              return handleMartApi(env.MART_BUCKET, guest.workspaceId, name, { kind: 'guest', marts });
             }
             if (guestHuddleMatch) {
               if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
