@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { normalizeIncomingShape, normalizeShape, parseParentId } from './normalize';
+import { mintId, normalizeIncomingShape, normalizeShape, parseParentId } from './normalize';
 
 // parentId parsing was previously inlined identically in three places
 // (normalizeShape, and the image/embed branches of normalizeIncomingShape).
@@ -72,5 +72,38 @@ describe('normalizeShape: component dataSource', () => {
     expect(() =>
       normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: {}, rev: 1, dataSource: { kind: 'mart', name: 'Not-Valid!' } }),
     ).toThrow();
+  });
+});
+
+// #327: minted ids must be unique WITHOUT coordination between writers.
+//
+// #324 primed a container-global counter from room state, which closed the cold-container
+// case but not concurrent minting: two containers priming from the same snapshot both mint
+// max+1, and whoever flushes second upserts over the first — no error, the agent reports
+// success, a shape is gone.
+//
+// The `?writer=` query gives each block a SEPARATE module instance, which is what a second
+// container process is: its own module state, no shared counter. That is the whole point of
+// the test — with a sequential counter both instances mint `shape:agent_1` and collide.
+describe('mintId: two independent writers never mint the same id (#327)', () => {
+  const freshMinter = (tag: string) => import(`./normalize.ts?writer=${tag}`) as Promise<typeof import('./normalize')>;
+
+  test('two separate container processes minting from scratch produce different ids', async () => {
+    const [a, b] = await Promise.all([freshMinter('a'), freshMinter('b')]);
+    expect(a.mintId()).not.toBe(b.mintId());
+  });
+
+  test('a batch of mints is collision-free within one process too', () => {
+    const ids = Array.from({ length: 1000 }, () => mintId());
+    expect(new Set(ids).size).toBe(1000);
+  });
+
+  test('the id stays a valid, provenance-carrying tldraw shape id', () => {
+    expect(mintId()).toMatch(/^shape:agent_[A-Za-z0-9]+$/);
+    expect(mintId('cmp')).toMatch(/^shape:cmp_[A-Za-z0-9]+$/);
+  });
+
+  test('an id supplied by the caller is still preserved (existing canvases are not rewritten)', () => {
+    expect(normalizeShape({ id: 'shape:agent_217', type: 'note', x: 0, y: 0, text: 'old' }).id).toBe('shape:agent_217');
   });
 });

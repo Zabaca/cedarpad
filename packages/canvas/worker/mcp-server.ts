@@ -260,7 +260,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'create_shapes',
       {
         description:
-          'Create primitive shapes on a canvas (types: rectangle, ellipse, text, note, arrow; page coordinates, visible area roughly x 0..1000 y 0..700). Fields per shape: type (required), x, y, w, h, text, color; arrows take x1/y1/x2/y2 or startShapeId/endShapeId to bind to shapes. Call read_canvas first to see what exists and where the free space is.',
+          'Create primitive shapes on a canvas (types: rectangle, ellipse, text, note, arrow; page coordinates, visible area roughly x 0..1000 y 0..700). Fields per shape: type (required), x, y, w, h, text, color; arrows take x1/y1/x2/y2 or startShapeId/endShapeId to bind to shapes. Call read_canvas first to see what exists and where the free space is. Returns the id of every shape it created — ids are opaque and unguessable, so KEEP them if you intend to update, delete, or bind an arrow to these shapes later.',
         inputSchema: CreateShapesInput.shape,
       },
       async (input) => text(await tools.createShapes(input)),
@@ -283,7 +283,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'place_component',
       {
         description:
-          'Render an instance of a component module on a canvas at (x, y), sized w×h (default 360×260), with `data` passed to it as props. Pass an existing component shape id to move/retarget/re-data that instance instead.',
+          'Render an instance of a component module on a canvas at (x, y), sized w×h (default 360×260), with `data` passed to it as props. Returns the id of the instance it placed — ids are opaque and unguessable, so KEEP it if you intend to move or re-data that instance later. Pass an existing component shape id to move/retarget/re-data that instance instead.',
         inputSchema: PlaceComponentInput.shape,
       },
       async (input) => text(await tools.placeComponent(input)),

@@ -56,7 +56,7 @@ const tools = {
     execute: async () => bridge('/api/components'),
   }),
   place_component: llm.tool({
-    description: 'Place a library component on the shared canvas at (x, y).',
+    description: 'Place a library component on the shared canvas at (x, y). Returns the id of the instance it placed — ids are opaque and unguessable, so keep it if you want to touch that instance again.',
     parameters: z.object({
       module: z.string().describe('component module name from list_components'),
       x: z.number(),
@@ -97,7 +97,7 @@ const tools = {
     },
   }),
   create_shapes: llm.tool({
-    description: 'Create simple shapes/notes on the canvas. Each shape: {type: "note"|"text", x, y, text}.',
+    description: 'Create simple shapes/notes on the canvas. Each shape: {type: "note"|"text", x, y, text}. Returns the id of every shape it created — ids are opaque and unguessable, so keep them if you want to touch those shapes again.',
     parameters: z.object({
       shapes: z.array(z.object({ type: z.enum(['note', 'text']), x: z.number(), y: z.number(), text: z.string() })),
     }),
