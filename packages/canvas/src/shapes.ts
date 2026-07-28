@@ -126,8 +126,8 @@ export interface ComponentShape extends BaseShape {
   /**
    * The mart this instance renders (ADR-0017 / #219: a component names a mart, not a
    * URL). Field + shape only in this slice (#238) — placement/rendering wiring is #239.
-   * Also the guest-scoping input: `martsReferencedBy` (shared/mart-scope.ts) reads this
-   * across a canvas's shapes to resolve which marts a shared canvas may read.
+   * Also the guest-scoping input: `martsInRoomSnapshot` (shared/mart-scope.ts) reads the
+   * same field off the room's records to resolve which marts a shared canvas may read.
    */
   dataSource?: DataSource;
 }
