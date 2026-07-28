@@ -16,6 +16,7 @@
 // tool call wide.
 
 import { CanvasMutation, CanvasMutationResult, type CanvasMutationResult as Result } from '../shared/canvas-mutation';
+import { primeIdCounter } from './normalize';
 import type { CanvasShape, CanvasState } from './shapes';
 import { createStore, type CanvasStore } from './store';
 
@@ -52,6 +53,15 @@ export async function openRemoteCanvasStore(
   headers: Record<string, string> = {},
 ): Promise<RemoteCanvasStore> {
   let state = await send(endpoint, fetchImpl, { op: 'read' }, headers);
+  // #324: the mint counter is a container-process global that starts at 0, but the ROOM is
+  // authoritative now — on a canvas the agent has drawn on before, `shape:agent_1` is
+  // already taken and an upsert-by-id would overwrite it and report success. Prime here
+  // because this is the one place the room's ids are already in hand: the snapshot has
+  // been fetched and parsed regardless, so priming adds no round trip, only an O(shapes)
+  // regex pass (~189 ids on the largest canvas today — microseconds, against a network
+  // read). Doing it on every open rather than once is what keeps #310's per-tool-call
+  // reopen correct as the room grows under another writer.
+  primeIdCounter(state.shapes.map((s) => s.id));
   let mirror = createStore(state.shapes);
   let queue: CanvasMutation[] = [];
   let poison: RemoteStoreError | null = null;

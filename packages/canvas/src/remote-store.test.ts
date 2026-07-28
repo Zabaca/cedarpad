@@ -87,3 +87,37 @@ describe('openRemoteCanvasStore', () => {
     expect((store as Error).message).toContain('bad id');
   });
 });
+
+// #324: a COLD container on a WARM room. The mint counter lives in the container process
+// and starts at 0, so without priming the first create mints `shape:agent_1` — which on a
+// canvas the agent has drawn on before already exists. Upsert-by-id then overwrites a real
+// shape and reports success: silent data loss, worst on the canvases with the most history.
+describe('the id counter is primed from the room (#324)', () => {
+  const agentNote = (n: number, text: string): CanvasShape => ({
+    id: `shape:agent_${n}`,
+    type: 'note',
+    x: 0,
+    y: 0,
+    color: 'black',
+    text,
+  });
+
+  // The assertion is on the MINTED NUMBER, not on an exact collision: the counter is a
+  // module global, so which id an unprimed store happens to mint depends on what other
+  // tests in this process minted first. "greater than every agent id the room already
+  // holds" is the property that actually rules out the overwrite, whatever the start.
+  test('creating on a room that already holds shape:agent_N never overwrites one of them', async () => {
+    const seeded = [agentNote(216, 'keep me'), agentNote(217, 'me too')];
+    const room = fakeRoom(seeded);
+    const store = await openRemoteCanvasStore('/api/canvas-sync/c1/mutate', room.post);
+
+    expect(createShapesOp(store, [{ type: 'note', x: 5, y: 6, text: 'new' }]).isError).toBeFalsy();
+    await store.flush();
+
+    const after = store.getState().shapes;
+    expect(after).toHaveLength(3);
+    for (const s of seeded) expect(after.find((a) => a.id === s.id)).toEqual(s);
+    const minted = after.find((s) => !seeded.some((k) => k.id === s.id))!;
+    expect(Number(/_(\d+)$/.exec(minted.id)![1])).toBeGreaterThan(217);
+  });
+});
