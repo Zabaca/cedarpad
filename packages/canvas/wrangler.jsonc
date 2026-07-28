@@ -48,11 +48,17 @@
     // writes TURSO_* exactly as before. Flipping it back to "false" and redeploying IS the
     // rollback — Turso stays live and untouched (#268 retires it, deliberately later).
     //
-    // It must not reach production before the rows do. Order is: import (scripts/
-    // migrate-platform-data.ts) THEN deploy. deploy.sh enforces that — with this "true" it
-    // refuses to roll out onto a D1 with no rows in `user`, so a cutover onto an empty
-    // database is not a thing a deploy can do by accident.
-    "PLATFORM_DB_ENABLED": "true",
+    // IT STAYS "false" ON main. The flip is a human step performed at cutover time, AFTER
+    // the rows are in D1 and `migrate-platform-data.ts verify` has passed — see the #267
+    // runbook. Committing "true" would make every commit on main a deploy away from
+    // repointing production at whatever D1 holds at that moment; with it "false", main is
+    // safe to deploy at any commit.
+    //
+    // deploy.sh has a backstop (with this "true" it refuses to roll out onto a D1 with no
+    // `user` rows), but it is only a backstop: `bunx @zabaca/zbc apply production canvas`
+    // deploys without going through deploy.sh at all, so the guard does not run. This
+    // default is the primary control.
+    "PLATFORM_DB_ENABLED": "false",
     // The GitHub App's public slug (github.com/apps/<slug>) for the workspace connect
     // flow (#193, ADR-0015). Not a secret; unset hides "Connect GitHub" in Settings.
     "GITHUB_APP_SLUG": "cedarpad",

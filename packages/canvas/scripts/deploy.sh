@@ -144,6 +144,11 @@ echo "→ migrating the platform data layer on D1 (wrangler, idempotent)"
 # So: with the flag on, refuse to roll out onto a D1 whose `user` table is empty. With the
 # flag off — today, and after a rollback — this check does not run at all.
 #
+# This is a BACKSTOP, not the control. `bunx @zabaca/zbc apply production canvas` deploys
+# without going through this script, so the guard simply does not run on that path. The
+# actual control is that PLATFORM_DB_ENABLED stays "false" on main and is flipped by hand
+# at cutover time, after the import has been verified.
+#
 # Read the flag by grep, not by parsing the .jsonc: stripping `//` comments with a regex
 # also eats the `https://` inside the URL vars. -m1 takes the FIRST occurrence, which is
 # the top-level (production) block — preview's redeclaration comes later in the file.
