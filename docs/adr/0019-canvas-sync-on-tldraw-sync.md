@@ -46,7 +46,13 @@ conflict merge, and reconnect/resume come from the protocol rather than from us.
   link has nowhere to live as an arrow record, and "what references this mart?" must be a query,
   not a scan of every canvas document.
 - **Referential integrity is ours.** Sync-core contains zero binding logic. If a shape with a bound
-  arrow is deleted, the write path cleans up the binding itself.
+  arrow is deleted, the write path cleans up the binding itself. **The arrow survives, unbound —
+  it is not cascade-deleted** (#292). The deciding argument is that tldraw's own editor does
+  exactly this: `ArrowBindingUtil.arrowDidUpdate` calls `updateArrowTerminal({ unbind: true })`
+  when a bound shape is gone. A human and an agent write the *same room*, so the server path must
+  not answer the same event differently from the client. Secondarily: the arrow carries its own
+  label, so cascading would delete authored text as a side effect, and unbinding is recoverable
+  where a delete is not.
 - **Cut over all canvases at once.** No production users, no feature flag, no phased rollout. Old
   blobs are retained, so rollback is re-import, not restore. (The migration itself turned out to be
   a rebuild rather than a reshape — see the correction below.)
@@ -150,10 +156,22 @@ Two things cannot survive the rebuild, because the information is not in the blo
 - **Freehand `draw` shapes.** The blob keeps flattened `points`; tldraw needs `segments` with
   per-point pressure. `src/tldraw-conventions.ts:144` has always returned `null` for them, with the
   comment *"Freehand is authored only by the local human; never recreated from the model."*
-- **Arrows with a dangling binding.** A bound terminal stores `{0,0}` placeholders, so a migrated
-  arrow whose target is missing collapses to zero length at the origin, or becomes a stray line
-  from the origin to a real point. It never had geometry — only a relationship, and the
+- **Arrows with a dangling binding.** In the *blob*, a bound terminal stores `{0,0}` placeholders,
+  so a migrated arrow whose target is missing collapses to zero length at the origin, or becomes a
+  stray line from the origin to a real point. It never had geometry — only a relationship, and the
   relationship is gone. There is nothing to preserve, so such arrows are **dropped whole**.
+
+  Measured across all 20 production blobs: **96 bound arrows, 93 of them with all-zero
+  coordinates**, and one with a bound start (`0,0`) plus a free end at real coordinates — exactly
+  the stray-line case.
+
+  **This is a property of the blob, not of arrows in general — do not generalise it.** On the
+  *mutation* path the opposite holds: `buildShapeRecord` persists the authored terminal coordinates
+  into `props.start`/`props.end` even while a binding overrides them, so dropping a binding there
+  *restores* real geometry. #292 verified this against a live room (`x1:220,y1:140,x2:400,y2:140`
+  after both bindings were swept). The `{0,0}` in `src/shapes.ts`'s `ArrowShape` is a **read-side
+  convention of the simplified model**, which is why the two paths differ. Migration reads the
+  blob and has nothing to recover; the write path holds the real values.
 
 Both are **hard failures** requiring an explicit `--accept-loss` flag, not silent drops. The
 retained blob is the only copy, and drop-and-report protects only an operator who reads the output.
