@@ -812,6 +812,10 @@ function SharePanel({ canvasId }: { canvasId: string }) {
   type ShareLink = { id: string; guestChat: boolean; revokedAt: string | number | null };
   const [links, setLinks] = useState<ShareLink[]>([]);
   const [guestChat, setGuestChat] = useState(false);
+  // #320: what this link will let a guest DO, decided here at mint time. Using a component
+  // is on by default (a link exists to show someone something); the two editing grants are
+  // deliberate opt-ins, because a link already handed out must never gain them later.
+  const [caps, setCaps] = useState({ guestInteract: true, guestEdit: false, guestEditSource: false });
   const base = `/api/canvases/${encodeURIComponent(canvasId)}/share-links`;
 
   const load = useCallback(async () => {
@@ -827,7 +831,7 @@ function SharePanel({ canvasId }: { canvasId: string }) {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ guestChat }),
+      body: JSON.stringify({ guestChat, ...caps }),
     }).catch(() => {});
     void load();
   };
@@ -864,6 +868,25 @@ function SharePanel({ canvasId }: { canvasId: string }) {
         <input type="checkbox" checked={guestChat} onChange={(e) => setGuestChat(e.target.checked)} />
         guests can start a chat
       </label>
+      {/* Phrased as what a guest can DO — a member minting a link is deciding about
+          people, not about columns. */}
+      {(
+        [
+          ['guestInteract', 'guests can use components (click buttons, submit forms)'],
+          ['guestEdit', 'guests can edit the canvas (add, move, delete cards)'],
+          ['guestEditSource', 'guests can edit component code on this canvas'],
+        ] as const
+      ).map(([key, label]) => (
+        <label key={key} className="share-chat-toggle">
+          <input
+            type="checkbox"
+            name={key}
+            checked={caps[key]}
+            onChange={(e) => setCaps((prev) => ({ ...prev, [key]: e.target.checked }))}
+          />
+          {label}
+        </label>
+      ))}
       <button type="button" className="share-new" onClick={() => void mint()}>
         New share link
       </button>

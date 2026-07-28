@@ -96,6 +96,21 @@ describe('share-links API — mint/list/revoke, member-checked via the canvas', 
     expect(await getActiveShareLink(db, id)).toBeNull();
   });
 
+  // #320 §5: the tombstone only stops the NEXT connection, and a guest's capabilities are
+  // established at the handshake — so revoke has to reach the socket that is open right now.
+  test('DELETE evicts the link\'s live sockets, and only for a link it actually revoked', async () => {
+    const evicted: string[] = [];
+    const evict = async (id: string) => void evicted.push(id);
+    const minted = await handleShareLinksApi(req('POST', {}), database, MEMBER, canvasId);
+    const { id } = (await minted.json()) as { id: string };
+    await handleShareLinksApi(req('DELETE'), database, MEMBER, canvasId, id, evict);
+    expect(evicted).toEqual([id]);
+
+    // Revoking again is a no-op on a link that is already dead: nothing to evict.
+    await handleShareLinksApi(req('DELETE'), database, MEMBER, canvasId, id, evict);
+    expect(evicted).toEqual([id]);
+  });
+
   test("DELETE with another canvas's link id is 404 and does NOT revoke it", async () => {
     const otherCanvas = await createCanvas(db, { workspaceId, name: 'other' });
     const minted = await handleShareLinksApi(req('POST', {}), database, MEMBER, otherCanvas.id);
@@ -103,6 +118,27 @@ describe('share-links API — mint/list/revoke, member-checked via the canvas', 
     const res = await handleShareLinksApi(req('DELETE'), database, MEMBER, canvasId, id);
     expect(res.status).toBe(404);
     expect(await getActiveShareLink(db, id)).not.toBeNull();
+  });
+
+  // #320: the three capability booleans are chosen AT MINT TIME, not found later in a
+  // settings screen — a link's grants are fixed at the moment it is handed out.
+  test('mint carries the #320 capabilities: interact on by default, both edits opt-in', async () => {
+    const res = await handleShareLinksApi(req('POST', {}), database, MEMBER, canvasId);
+    const link = (await res.json()) as { guestInteract: boolean; guestEdit: boolean; guestEditSource: boolean };
+    expect(link).toMatchObject({ guestInteract: true, guestEdit: false, guestEditSource: false });
+  });
+
+  test('a member may grant editing, and may withhold interaction', async () => {
+    const granted = await handleShareLinksApi(
+      req('POST', { guestInteract: false, guestEdit: true, guestEditSource: true }),
+      database,
+      MEMBER,
+      canvasId,
+    );
+    const link = (await granted.json()) as { id: string; guestInteract: boolean; guestEdit: boolean; guestEditSource: boolean };
+    expect(link).toMatchObject({ guestInteract: false, guestEdit: true, guestEditSource: true });
+    // The ROW is what every door re-reads, so the grant has to be there, not just echoed.
+    expect(await getActiveShareLink(db, link.id)).toMatchObject({ guestEdit: true, guestEditSource: true });
   });
 
   test('invalid mint body (guestChat not a boolean) is 400', async () => {
