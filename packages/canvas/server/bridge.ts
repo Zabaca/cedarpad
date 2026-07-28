@@ -26,7 +26,7 @@ import { PersistSink } from './persistable.ts';
 import { maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
 import { makeAssignmentPushNotify, webPushSender } from './push-notify.ts';
-import { type Notify, attachConversationToCanvas, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, resumeConversation } from './inbox.ts';
+import { type Notify, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, placeChatCard, resumeConversation } from './inbox.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
   BRIDGE_ROUTES,
@@ -40,6 +40,7 @@ import {
   HUDDLE_AGENT_TOKEN_HEADER,
   HUDDLE_CANVAS_HEADER,
   INBOX_CONVERSATION_HEADER,
+  INBOX_PAIRING_HEADER,
   LIVEKIT_API_KEY_HEADER,
   LIVEKIT_API_SECRET_HEADER,
   LIVEKIT_URL_HEADER,
@@ -48,6 +49,7 @@ import {
   WriteComponentBody,
   WriteDataBody,
   decodeForwardedConversation,
+  decodeForwardedPairing,
   wireError,
 } from '../shared/bridge-wire.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
@@ -1180,18 +1182,20 @@ export async function handleRequest(req: Request): Promise<Response> {
       return json({ chatId });
     }
 
-    // POST /api/inbox/:id/attach-canvas — canvas pairing (slice 3): link a canvas-less
-    // Conversation to a canvas and place a live chat card on it. `{canvasId}` attaches to
-    // that existing canvas (same-workspace only); an empty body creates one in the
-    // Conversation's workspace, named from the chat summary. The Inbox third pane calls this
-    // through the edge chat proxy.
+    // POST /api/inbox/:id/attach-canvas — canvas pairing (slice 3), container half. ADR-0018 /
+    // #264: the edge already did the row work — picked the canvas (same-workspace only) or
+    // created one in the Conversation's workspace, and wrote the Conversation→canvas edge — and
+    // forwards the result on x-inbox-canvas-pairing. All that is left here is the part that
+    // genuinely needs the container: mutating the live canvas session to place the chat card.
     const attachRoute = /^\/api\/inbox\/([^/]+)\/attach-canvas$/.exec(path);
     if (attachRoute && req.method === 'POST') {
       const id = decodeURIComponent(attachRoute[1] as string);
-      const body = await readBody(req);
-      const result = await attachConversationToCanvas(
+      // Parsed, never trusted — an absent, malformed, or mismatched payload is a 404, exactly as
+      // an unresolvable Conversation was before the split.
+      const pairing = decodeForwardedPairing(req.headers.get(INBOX_PAIRING_HEADER));
+      if (!pairing || pairing.id !== id) return json({ error: 'not_found' }, 404);
+      await placeChatCard(
         {
-          db: webPocDb,
           getSession: async (cid) => {
             const session = await canvasSessions.get(cid);
             return {
@@ -1201,14 +1205,9 @@ export async function handleRequest(req: Request): Promise<Response> {
           },
           chatIdForSession: (sid: string) => chatIdForSession(sid) ?? null,
         },
-        id,
-        { canvasId: typeof body.canvasId === 'string' && body.canvasId ? body.canvasId : undefined },
+        pairing,
       );
-      if (!result.ok) {
-        const status = result.error === 'not_found' ? 404 : result.error === 'already_linked' ? 409 : 400;
-        return json({ error: result.error }, status);
-      }
-      return json(result);
+      return json({ ok: true, canvasId: pairing.canvasId });
     }
 
     // POST /api/inbox/:id/reply — the human answers an ask_human item (#61). Restore the session's
