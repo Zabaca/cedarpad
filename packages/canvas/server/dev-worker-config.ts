@@ -5,6 +5,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LOCAL_DEV_PLATFORM_SECRET } from '../shared/platform-rpc.ts';
 
 /** Binding name for the platform data layer (root CONTEXT.md vocabulary). */
 export const PLATFORM_DB_BINDING = 'PLATFORM_DB';
@@ -70,6 +71,11 @@ export function devWorkerConfig(base: Config, packageDir: string, origin: string
       BETTER_AUTH_URL: origin,
       // Signup is open in dev (prod is James-only); scheduled work never runs locally.
       DEV_AGENT_ENABLED: 'false',
+      // The platform RPC's trust root (ADR-0018 / #266): the container half of the dev stack
+      // is the bun bridge, which derives its bearer from the same value. A real
+      // `web-poc/.dev.vars` overrides this — wrangler gives `.dev.vars` precedence over
+      // `vars` — so a configured worktree keeps its own secret and both ends still agree.
+      BETTER_AUTH_SECRET: LOCAL_DEV_PLATFORM_SECRET,
     },
     main: join(packageDir, String(base.main)),
     ...(assets ? { assets: { ...assets, directory: join(packageDir, assets.directory) } } : {}),

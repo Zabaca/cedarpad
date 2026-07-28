@@ -37,7 +37,7 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
     }) as unknown as TurnDeps['runChat'],
     bumpSharedModuleAcrossCanvases: () => 0,
     broadcast: (_chatId, ev) => calls.push(`broadcast:${ev.kind}`),
-    inbox: { db: {} as never, userId: 'u', notify: () => {} },
+    inbox: { rpc: null, userId: 'u', notify: () => {} },
     indexSession: async () => {
       calls.push('indexSession');
     },

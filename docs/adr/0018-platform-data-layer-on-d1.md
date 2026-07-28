@@ -46,12 +46,16 @@ That leaves only two genuinely container-initiated writes.
   `TURSO_URL`/`TURSO_KEY`; deleting those two lines *is* this decision.
 - **Reads and edge-initiated flows push down**: the edge forwards already-fetched rows through the
   proxy, extending the pattern at `inbox-bridge.ts:118`.
-- **Two operations go back over a typed RPC** — "find-or-create the conversation for this session"
-  (`indexSessionStart`) and "send a push notification". Both are already documented best-effort
-  (`bridge.ts:447`: *"an index failure never fails the turn"*), so a failed hop degrades exactly as
-  a failed Turso write does today. One zod contract at the boundary (guideline 7). It is a
-  **behavioural** surface, deliberately not a data-access layer or a SQL tunnel, so it cannot
-  quietly grow into one.
+- **The container-initiated writes go back over a typed RPC.** This design named two —
+  "find-or-create the conversation for this session" (`indexSessionStart`) and "send a push
+  notification". Implementation (#266) closed the surface at **four**: `conversation.start`,
+  `conversation.settle` (the settle-time backstop), `turn.end` (the `end_turn` declaration), and
+  `notify`. The extra two are the same kind of thing — chat-lifecycle, best-effort, no row
+  returned — and they were simply the call sites that still had a local client when this was
+  written. All are already documented best-effort (`bridge.ts`: *"an index failure never fails the
+  turn"*), so a failed hop degrades exactly as a failed Turso write does today. One zod contract
+  at the boundary (guideline 7). It is a **behavioural** surface, deliberately not a data-access
+  layer or a SQL tunnel, so it cannot quietly grow into one.
 - **`Database` widens to the shared Drizzle SQLite base type** (`lib/db/client.ts:6` is currently
   `ReturnType<typeof makeDb>`, i.e. libSQL-specific), so the 10 query modules stay driver-agnostic
   and compile untouched.

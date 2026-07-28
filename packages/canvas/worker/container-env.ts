@@ -33,14 +33,13 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
   // Per-workspace R2 isolation (#46): the resolver derives this — `'default'` for the
   // legacy/prod container (preserving `workspaces/default/`), the workspace id otherwise.
   CANVAS_WORKSPACE: coords.canvasWorkspace,
-  // web-poc mounted in the bridge: a real remote TURSO_URL makes it use Turso (not
-  // the dev libSQL file); the origins line Better Auth up with poc.cedarpad.com.
-  TURSO_URL: env.TURSO_URL ?? '',
-  TURSO_KEY: env.TURSO_KEY ?? '',
-  VOYAGE_API_KEY: env.VOYAGE_API_KEY ?? '',
+  // ADR-0018 / #266 — the decision, and it is what is NOT here: no `TURSO_URL`, no `TURSO_KEY`.
+  // The container holds no platform-data-layer client, so it is handed no connection string and
+  // no credential; deleting those two lines IS this ADR. (`VOYAGE_API_KEY`, `BETTER_AUTH_URL`
+  // and `WEB_ORIGIN` went with them — all three existed for the in-process web-poc mount that
+  // the same slice removed. The Notebook and Better Auth are edge routes.) What remains below is
+  // the platform RPC's bearer root, which is a credential for talking to US, not to a database.
   BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET ?? '',
-  BETTER_AUTH_URL: env.BETTER_AUTH_URL ?? '',
-  WEB_ORIGIN: env.WEB_ORIGIN ?? '',
   // The bridge's INBOX_USER (server/bridge.ts: `process.env.CANVAS_USER ?? 'default'`) —
   // without this, `ask_human` files every Conversation under the literal string
   // 'default', which never matches the Inbox UI's query by the real Better Auth user.id,

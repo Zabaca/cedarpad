@@ -74,6 +74,13 @@ legacy directory name, **not** a statement of ownership. The Notebook's own tabl
 (`observations`, `problems`, `solutions`) are a small minority of the schema.
 _Avoid_: calling this "the web-poc database" or "the Notebook's DB" — the name misleads. Disabling
 an App does not remove the platform's dependency on this layer.
+**Only the edge reaches it.** Since [ADR-0018](./docs/adr/0018-platform-data-layer-on-d1.md) the
+workspace **container holds no database client at all**: the reads it needs are pushed down through
+the edge proxy as forwarded rows, and the writes that originate inside it go back to the edge over
+the **platform RPC** (`packages/canvas/shared/platform-rpc.ts`) — four named chat-lifecycle verbs,
+deliberately a behavioural surface and not a SQL tunnel. The container is handed no connection
+string and no credential, so "which side may touch the store" is a structural fact, not a
+convention.
 
 **Shell**: the **persistent edge app frame** — the only chrome, an edge-served SPA (the
 Worker's static ASSETS) that owns the rail, the workspace switcher, and stage selection;

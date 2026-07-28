@@ -6,13 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-import { migrate } from 'drizzle-orm/libsql/migrator';
-import { buildApp } from '../web-poc/worker/index.ts';
-import { conversations, makeDb } from '../web-poc/lib/db/index.ts';
-import { localDevDbUrl } from './local-d1.ts';
-
 import type { CanvasState } from '../src/shapes.ts';
 import { normalizeIncomingShape } from '../src/normalize.ts';
 import { bumpAllComponents, bumpSharedModule, createShapesOp, nextComponentRev, placeComponentOp, updateShapesOp } from '../src/canvas-ops.ts';
@@ -27,7 +20,8 @@ import { PersistSink } from './persistable.ts';
 import { maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
 import { type PlatformRpc, platformRpc } from './platform-rpc-client.ts';
-import { type Notify, backfillCanvasEdges, dedupeLegacyConversations, findOrCreateConversation, openConversation, placeChatCard, resumeConversation } from './inbox.ts';
+import { LOCAL_DEV_PLATFORM_SECRET } from '../shared/platform-rpc.ts';
+import { type Notify, openConversation, placeChatCard } from './inbox.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
   BRIDGE_ROUTES,
@@ -78,15 +72,16 @@ const BUILD_REV =
 
 const PORT = Number(process.env.CANVAS_BRIDGE_PORT ?? 4511);
 
-// --- web-poc mount ---------------------------------------------------------
-// web-poc lives in-tree at ./web-poc (imported by relative path, not a workspace
-// package). Its Hono app (/v1 + Better Auth /api/auth) runs IN this bun process,
-// so the whole repo deploys as one Cloudflare instance. Its env comes from
-// web-poc/.dev.vars in dev and from real process.env in the container. Better Auth is
-// origin-sensitive, so we point baseURL + trustedOrigins at the canvas serving
-// origin (both apps share one origin once mounted); real env wins in the container.
-const WEBPOC_ORIGIN = process.env.WEBPOC_ORIGIN ?? 'http://localhost:4510';
-
+// --- platform env ----------------------------------------------------------
+// The platform data layer's env — since ADR-0018 / #266 that means just the two values the
+// PLATFORM RPC needs (its edge origin and the shared trust root the bearer derives from). The
+// container gets them as real process.env; local dev reads them from web-poc/.dev.vars, the
+// same file `wrangler dev` loads for the edge Worker, so both ends of the hop agree.
+//
+// web-poc's own Hono app is NOT mounted here any more. The Notebook has been served at the
+// EDGE since ADR-0007 / #56; this mount was reachable only when something talked to the bridge
+// directly, i.e. local dev — and #263 put the edge Worker into the dev loop, which is where
+// `/v1/*` and `/api/auth/*` are served from now.
 function loadWebPocEnv(): Record<string, string> {
   const vars: Record<string, string> = {};
   try {
@@ -98,66 +93,39 @@ function loadWebPocEnv(): Record<string, string> {
   } catch {
     // No .dev.vars (container/prod): the container supplies these as real env.
   }
-  const env = { ...vars, ...process.env } as Record<string, string>;
-  if (!process.env.BETTER_AUTH_URL) env.BETTER_AUTH_URL = WEBPOC_ORIGIN;
-  if (!process.env.WEB_ORIGIN) env.WEB_ORIGIN = WEBPOC_ORIGIN;
-  return env;
+  return { ...vars, ...process.env } as Record<string, string>;
 }
 
 const webPocEnv = loadWebPocEnv();
 
-// DB: the container/prod uses the real remote Turso from its env. LOCAL DEV reads the
-// SAME database the edge Worker serves the platform data layer from — miniflare's local
-// D1 (ADR-0018, #263) — by opening its SQLite file directly; `@libsql/client` (node)
-// speaks both, so the bridge builds ONE db and injects it into web-poc's app (buildApp
-// then bypasses its workerd path). Nothing migrates on boot any more: local D1 is
-// migrated by the explicit `bun run webpoc:db:migrate:local`, remote Turso by the deploy.
-const webPocRemoteTurso =
-  !!webPocEnv.TURSO_URL && !/(^file:|127\.0\.0\.1|localhost)/.test(webPocEnv.TURSO_URL);
-// Unit tests run without a dev stack (and so without a local D1 state dir): they get a
-// private in-memory copy of the schema, migrated just below.
-const IS_UNIT_TEST = process.env.NODE_ENV === 'test';
-const webPocDbUrl = webPocRemoteTurso
-  ? webPocEnv.TURSO_URL!
-  : IS_UNIT_TEST
-    ? 'file::memory:'
-    : localDevDbUrl();
-const webPocClient = createClient(
-  webPocRemoteTurso && webPocEnv.TURSO_KEY
-    ? { url: webPocDbUrl, authToken: webPocEnv.TURSO_KEY }
-    : { url: webPocDbUrl },
-);
-if (IS_UNIT_TEST && !webPocRemoteTurso) {
-  await migrate(drizzle(webPocClient), {
-    migrationsFolder: fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url)),
-  });
-}
-// Exported as a test seam: the reply-routing test seeds a Conversation here to drive
-// POST /api/inbox/:id/reply through handleRequest (bridge.test.ts).
-export const webPocDb = makeDb(webPocClient);
-const webPocApp = buildApp({ db: webPocDb });
-
-// Inbox (#61): the promote protocol runs against the same web-poc Turso db. The bridge is a
-// single-user localhost surface, so the inbox owner + platform workspace come from env (the
-// authenticated-user wiring is a platform/#62 concern). notify is a best-effort stub this slice.
+// Inbox (#61): the bridge is a single-user localhost surface, so the inbox owner + platform
+// workspace come from env (the authenticated-user wiring is a platform/#62 concern).
 const INBOX_USER = process.env.CANVAS_USER ?? 'default';
-// The platform RPC (ADR-0018): the container's only path back into the platform data layer, for
-// the two writes that originate HERE. Null when unconfigured — a bridge with no edge in front of
-// it (local dev: vite + bridge) keeps its direct client, which slice #266 removes for good.
-const platformRpcClient = platformRpc({ origin: webPocEnv.PLATFORM_RPC_ORIGIN, secret: webPocEnv.BETTER_AUTH_SECRET });
+// The platform RPC (ADR-0018 / #266): the container's ONLY path back into the platform data
+// layer. There is no local client behind it any more — this bridge constructs no database
+// client, holds no connection string, and is handed no credentials (worker/container-env.ts).
+// Null when unconfigured, which is now a DEGRADED bridge rather than one with a fallback: the
+// chat-lifecycle writes are best-effort by contract, so a turn still runs, streams, persists to
+// R2 and answers the human; it just does not file its Inbox row.
+//
+// The local-dev fallback secret applies ONLY to a localhost edge: a fresh worktree has no
+// `web-poc/.dev.vars`, and without a shared trust root the dev loop would 401 silently rather
+// than obviously. A real `.dev.vars` (and the container's real env) always wins.
+const IS_LOCALHOST_EDGE = /^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/.test(webPocEnv.PLATFORM_RPC_ORIGIN ?? '');
+const platformRpcClient = platformRpc({
+  origin: webPocEnv.PLATFORM_RPC_ORIGIN,
+  secret: webPocEnv.BETTER_AUTH_SECRET || (IS_LOCALHOST_EDGE ? LOCAL_DEV_PLATFORM_SECRET : undefined),
+});
+if (!platformRpcClient) console.warn('[inbox] no platform RPC configured — Inbox rows will not be filed for this bridge');
 // #87: the real attention signal. Web push (shell/src/push.ts → worker/push.ts →
 // push_subscriptions), logged either way. Delivery itself now runs at the EDGE (it reads the
 // subscription rows and prunes dead endpoints), so the container asks for it by name and never
 // learns who is subscribed. #231: recipients follow the Conversation's assignment — the assignee
 // alone, or the whole workspace roster when nobody has claimed it — resolved edge-side.
-const notify: Notify = async (conv, question) => {
-  console.log(`[inbox] waiting_on:human conv=${conv.id} session=${conv.sessionId} q=${question.slice(0, 80)}`);
-  await platformRpcClient?.notify({ conversationId: conv.id, question });
+const notify: Notify = async (conversationId, question) => {
+  console.log(`[inbox] waiting_on:human conv=${conversationId} q=${question.slice(0, 80)}`);
+  await platformRpcClient?.notify({ conversationId, question });
 };
-// One-time cleanup of the pre-ownerRef duplicate rows (one per turn); idempotent per boot.
-void dedupeLegacyConversations(webPocDb, INBOX_USER)
-  .then((n) => n && console.log(`[inbox] deduped ${n} legacy conversation row(s)`))
-  .catch((err) => console.error('[inbox] legacy dedupe failed:', err));
 
 
 // Canvas persistence: local disk in dev, R2 in the container (selected by env).
@@ -177,17 +145,11 @@ const blobStore = new BlobStore(blobBackend);
 // first registry entry). The browser selects a canvas via the `x-canvas-id` header
 // (or `?canvas=`); absent → the default, so today's un-namespaced /api/canvas/* calls
 // resolve to the default canvas exactly as before.
-const canvasSessions = createSessionRegistry(async (id) => {
-  const session = await createCanvasSession(blobStore, WORKSPACE, id);
-  // Lazy backfill (canvas pairing): the chat card shapes ARE the ground truth for where a
-  // chat lives, so link pre-capture chats to this canvas when it builds. Idempotent
-  // (first-wins per row) and fire-and-forget — an edge failure never blocks a canvas boot.
-  const chatIds = session.store.getState().shapes.filter((s) => s.type === 'chat').map((s) => s.id);
-  if (chatIds.length > 0) {
-    void backfillCanvasEdges(webPocDb, id, chatIds).catch((err) => console.error('[inbox] canvas-edge backfill failed:', err));
-  }
-  return session;
-});
+// (The lazy canvas-edge backfill that used to run here went with the container's database in
+// ADR-0018 / #266. It was a one-time migration for chats born before edge capture existed, it
+// has long since run everywhere, and the live path — `findOrCreateConversation`'s first-wins
+// canvas edge, at the edge — still fills a null edge on the chat's next turn.)
+const canvasSessions = createSessionRegistry(async (id) => createCanvasSession(blobStore, WORKSPACE, id));
 function canvasIdFrom(req: Request, url: URL): string {
   return req.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas') ?? DEFAULT_CANVAS_ID;
 }
@@ -445,10 +407,10 @@ export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId:
  * Idempotent (find-or-create by chat, rebinding the newest sessionId) and
  * best-effort — an index failure never fails the turn.
  *
- * ADR-0018: this is one of the two writes that ORIGINATE in the container, so with an edge in
- * front of it the row is filed over the platform RPC's `conversation.start` operation instead
- * of through a local client. The best-effort contract is unchanged either way — the hop can
- * fail exactly as the write could, and the turn continues. */
+ * ADR-0018: this write ORIGINATES in the container, so the row is filed over the platform
+ * RPC's `conversation.start` operation. Since #266 there is no local client behind it. The
+ * best-effort contract is unchanged — the hop can fail exactly as the write could, and the
+ * turn continues. */
 export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string, assignTo?: string, deps: { rpc: PlatformRpc | null } = { rpc: platformRpcClient }): Promise<void> {
   if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
   if (canvasId) chatHub.bindCanvas(chatId, canvasId); // #220: the guest stream filter's binding
@@ -463,7 +425,7 @@ export async function indexSessionStart(chatId: string, sessionId: string, messa
     summary: message.slice(0, 200),
     assignTo,
   };
-  await (deps.rpc ? deps.rpc.conversationStart(input) : findOrCreateConversation(webPocDb, input)).catch((err) =>
+  await (deps.rpc?.conversationStart(input) ?? Promise.resolve()).catch((err) =>
     console.error('[inbox] session-start row upsert failed:', err),
   );
 }
@@ -517,20 +479,24 @@ export async function prepareDevAgentTurn(
  * end_turn gate was bypassed (ungated stop, error turn). Idempotent by CHAT (ownerRef; resume
  * mints a new sessionId per turn, so the chat is the identity and the row is re-pointed at the
  * newest session). The turn awaits the row-at-start index first (see TurnDeps.indexSession), so
- * this find-or-create finds the one row instead of racing it into a duplicate. Best-effort. */
+ * this find-or-create finds the one row instead of racing it into a duplicate. Best-effort.
+ *
+ * ADR-0018 / #266: the find-or-create-and-mark-active pair is ONE named operation at the edge
+ * (`conversation.settle`) — the container has no client to make it with, and splitting it into
+ * two hops would let a turn land a row it then failed to mark. */
 async function settleConversation(input: { chatId: string; sessionId: string; message: string; workspaceId: string; canvasId?: string; kind?: 'chat' | 'dev-agent'; repo?: string }): Promise<void> {
-  await findOrCreateConversation(webPocDb, {
-    sessionId: input.sessionId,
-    userId: INBOX_USER,
-    workspaceId: input.workspaceId,
-    kind: input.kind,
-    ownerRef: input.chatId,
-    canvasId: input.canvasId,
-    repo: input.repo,
-    summary: input.message.slice(0, 200),
-  })
-    .then((conv) => conversations.markActivity(webPocDb, conv.id))
-    .catch((err) => console.error('[inbox] session-row upsert failed:', err));
+  await (
+    platformRpcClient?.conversationSettle({
+      sessionId: input.sessionId,
+      userId: INBOX_USER,
+      workspaceId: input.workspaceId,
+      kind: input.kind,
+      ownerRef: input.chatId,
+      canvasId: input.canvasId,
+      repo: input.repo,
+      summary: input.message.slice(0, 200),
+    }) ?? Promise.resolve()
+  ).catch((err) => console.error('[inbox] session-row upsert failed:', err));
 }
 
 /**
@@ -559,7 +525,7 @@ const turnDeps: TurnDeps = {
   runChat: E2E_MODE ? e2eRunChat : runChat,
   bumpSharedModuleAcrossCanvases,
   broadcast: broadcastChat,
-  inbox: { db: webPocDb, userId: INBOX_USER, notify },
+  inbox: { rpc: platformRpcClient, userId: INBOX_USER, notify },
   indexSession: indexSessionStart,
   stampSession: (chatId, sessionId) => chatMeta.set(chatId, { sessionId }),
   onTurnComplete,
@@ -752,12 +718,9 @@ export async function handleRequest(req: Request): Promise<Response> {
       return json({ ok: true, joined });
     }
 
-    // web-poc mounted in-process: its data API (/v1/*) and Better Auth (/api/auth/*)
-    // are served by web-poc's Hono app. This MUST precede the canvas's own /api/*
-    // routes below, since /api/auth/* lives under the same /api namespace.
-    if (path.startsWith('/v1/') || path === '/v1' || path.startsWith('/api/auth/')) {
-      return webPocApp.fetch(req, webPocEnv as never);
-    }
+    // (The in-process web-poc mount that served `/v1/*` and `/api/auth/*` here went with the
+    // container's database in ADR-0018 / #266. Both are EDGE routes — the Notebook API since
+    // ADR-0007 / #56, and local dev since #263 runs the edge Worker, where vite proxies them.)
 
     // --- canvas sync ---
     // Every canvas route resolves its CanvasSession from the request's canvasId
@@ -1232,46 +1195,10 @@ export async function handleRequest(req: Request): Promise<Response> {
       return json({ ok: true, canvasId: pairing.canvasId });
     }
 
-    // POST /api/inbox/:id/reply — the human answers an ask_human item (#61). Restore the session's
-    // transcript from R2, resume the SDK Session with the reply, and flip waiting_on:agent. The
-    // Inbox UI (#62) calls this. Auth is deferred to the platform Shell that fronts the bridge
-    // (single-user localhost today); resumeConversation itself is runner-agnostic.
-    const inboxReplyRoute = /^\/api\/inbox\/([^/]+)\/reply$/.exec(path);
-    if (inboxReplyRoute && req.method === 'POST') {
-      const id = decodeURIComponent(inboxReplyRoute[1] as string);
-      const body = await readBody(req);
-      const message = typeof body.message === 'string' ? body.message.trim() : '';
-      if (!message) return json({ error: 'message required' }, 400);
-      // A reply carries pasted images exactly like a canvas /send (one reply/send contract,
-      // ADR-0009 / #123) — SAME parse, threaded through resumeConversation to the resumed turn.
-      const images = parseCanvasImages(body);
-      const conv = await conversations.get(webPocDb, id);
-      if (!conv) return json({ error: `conversation not found: ${id}` }, 404);
-
-      // Under "one chat system" (ADR-0009) EVERY reply — dev-agent included — resumes the
-      // session as a chat turn on its owning bridge. There is no dev-agent approval special-
-      // case: a dev-agent Conversation is grilled in-thread like any other, and it opens its
-      // PR via the `open_pr` tool (wired into runChatTurn on the dev-agent bridge) when the
-      // agent decides to, not as the hardcoded outcome of this reply (#126).
-      const updated = await resumeConversation(
-        {
-          db: webPocDb,
-          getter: blobBackend,
-          projectsDir: SESSIONS_DIR,
-          cwd: CANVAS_CWD,
-          // Reuse the chat-turn machinery: resume streams + persists + backs up like any turn.
-          runTurn: (sessionId, msg, imgs) => {
-            // Resume on the conversation's OWN canvas store (when linked) so a reply from the
-            // Inbox has the agent reading/drawing the same canvas the chat lives on.
-            dispatchChatTurn(chatIdForSession(sessionId) ?? conv.id, msg, sessionId, imgs, undefined, undefined, undefined, conv.canvasId ?? undefined);
-          },
-        },
-        conv,
-        message,
-        images,
-      );
-      return json({ ok: true, conversation: updated });
-    }
+    // (POST /api/inbox/:id/reply is gone. It was retired by ADR-0009 / #124 — a reply is a
+    // chat SEND through the edge proxy now (worker/inbox-bridge.ts flips waiting_on there) —
+    // and it was the last route on this bridge that read a Conversation from a database.
+    // ADR-0018 / #266 removed that database, and with it the unreachable route.)
 
     if (path === '/api/health') return json({ ok: true, shapes: defaultSession.store.getState().shapes.length });
 
