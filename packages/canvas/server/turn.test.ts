@@ -159,6 +159,61 @@ describe('runTurnAsync: the race fix (settle awaits the row-at-start index)', ()
   });
 });
 
+// #310: the agent's writes must land in the canvas's ROOM, not in the in-memory session store
+// (which no browser has read since #290). The turn opens a room-backed store and hands THAT to
+// runChat; the tool layer settles it after every tool call.
+describe('runTurnAsync: the agent draws into the room (#310)', () => {
+  const fakeRoomStore = () => ({
+    getState: () => ({ version: 0, shapes: [] }),
+    upsert: () => 0,
+    remove: () => 0,
+    clear: () => 0,
+    flush: async () => {},
+  });
+
+  test('runChat gets a room-backed store with settle points, not the session store', async () => {
+    let handed: unknown = null;
+    const { deps } = recordingDeps({
+      openCanvasRoom: (async () => fakeRoomStore()) as unknown as TurnDeps['openCanvasRoom'],
+      runChat: (async function* (store: unknown) {
+        handed = store;
+        yield { kind: 'done', sessionId: null, costUsd: 0 } satisfies ChatEvent;
+      }) as unknown as TurnDeps['runChat'],
+    });
+
+    await runTurnAsync(input(), deps);
+
+    expect(handed).not.toBe(fakeSession.store);
+    expect(typeof (handed as { commit?: unknown }).commit).toBe('function');
+  });
+
+  test('the room is opened for the turn\'s OWN canvas', async () => {
+    const opened: string[] = [];
+    const { deps } = recordingDeps({
+      openCanvasRoom: (async (id: string) => {
+        opened.push(id);
+        return fakeRoomStore();
+      }) as unknown as TurnDeps['openCanvasRoom'],
+    });
+
+    await runTurnAsync(input({ canvasId: 'canvas_42' }), deps);
+    expect(opened).toEqual(['canvas_42']);
+  });
+
+  test('without an opener (tests, non-edge contexts) the session store is used, unchanged', async () => {
+    let handed: unknown = null;
+    const { deps } = recordingDeps({
+      runChat: (async function* (store: unknown) {
+        handed = store;
+        yield { kind: 'done', sessionId: null, costUsd: 0 } satisfies ChatEvent;
+      }) as unknown as TurnDeps['runChat'],
+    });
+
+    await runTurnAsync(input(), deps);
+    expect(handed).toBe(fakeSession.store);
+  });
+});
+
 describe('runTurnAsync: the error path', () => {
   test('runChat throwing broadcasts a done-error frame and still runs onTurnComplete', async () => {
     const runChat = (async function* () {

@@ -31,6 +31,7 @@ import { type EndTurnDeps, type EndTurnInput, endTurn } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
 import { type McpRegistryEntry, MCP_REGISTRY } from './mcp-registry.ts';
 import { reposPromptAppend } from './repo-checkout.ts';
+import type { TurnCanvasStore } from './turn-canvas-store.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 
 const MODEL = process.env.CANVAS_MODEL ?? 'sonnet';
@@ -155,7 +156,63 @@ export function endTurnSummaryLine(summary: string | undefined, question: string
   return 'Turn complete.';
 }
 
+/** True for the room-backed store a chat turn runs on (#310); a plain `CanvasStore` (tests,
+ *  single-process contexts) has no settle points and the wrapper below is a no-op. */
+const isTurnStore = (s: CanvasStore): s is TurnCanvasStore => typeof (s as TurnCanvasStore).commit === 'function';
+
+/**
+ * The canvas tools, with each handler settled against the room (#310).
+ *
+ * THIS is the await point the chat agent was missing. `CanvasStore` is synchronous by design
+ * (ADR-0019: it is the seam that keeps `src/canvas-ops.ts` untouched), so there is nowhere
+ * INSIDE an op to flush — but the MCP tool handler wrapping the op is already `async`, one
+ * level above the seam. Committing here leaves canvas-ops.ts entirely alone and still puts an
+ * `await` between every pair of tool calls, so shapes reach the room as the agent draws them.
+ *
+ * A commit failure becomes the tool's OWN error result: the agent is told, in the room's own
+ * words, that what it just drew did not land. It is never swallowed — "I drew it" over an
+ * unchanged canvas is the expensive failure mode (`src/remote-store.ts`).
+ *
+ * A refused op discards instead of committing, mirroring `bridge.ts`'s `inRoom`: nothing a
+ * rejected tool queued should reach the room.
+ *
+ * EVERY tool settles, not only the mutating ones. A settle also reopens the store, so the read
+ * tools are what most need it: the next `read_canvas` then answers from a mirror taken after the
+ * previous tool call, which is how a human's mid-turn edit becomes visible to the agent.
+ */
+export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts) {
+  const settle = <T extends { handler: (args: never, extra: never) => Promise<{ isError?: boolean }> }>(def: T): T => {
+    if (!isTurnStore(store)) return def;
+    const inner = def.handler;
+    return {
+      ...def,
+      handler: async (args: never, extra: never) => {
+        const r = await inner(args, extra);
+        if (r.isError) {
+          await store.discard();
+          return r;
+        }
+        try {
+          await store.commit();
+        } catch (e) {
+          return { content: [{ type: 'text' as const, text: `Error: the canvas did not accept that — ${(e as Error).message}. Read the canvas before assuming your change is there.` }], isError: true };
+        }
+        return r;
+      },
+    };
+  };
+  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts).map(settle);
+}
+
 export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts) {
+  return createSdkMcpServer({
+    name: 'canvas',
+    version: '0.1.0',
+    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts),
+  });
+}
+
+function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts) {
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -163,10 +220,7 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
     if (bumpShared && isShared(module)) return bumpShared(module);
     return bumpAllComponents(store, nextComponentRev(store));
   };
-  return createSdkMcpServer({
-    name: 'canvas',
-    version: '0.1.0',
-    tools: [
+  return [
       tool(
         'read_canvas',
         'Read every shape on the canvas, including the ones the human drew. Returns id, type, geometry, text, and color for each. Call this before editing so you know what exists and where the free space is.',
@@ -457,8 +511,7 @@ export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureV
             ),
           ]
         : []),
-    ],
-  });
+    ];
 }
 
 // The typed chat event stream is owned by the shared wire module (one place the
