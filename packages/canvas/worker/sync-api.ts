@@ -19,7 +19,7 @@ export function parseSyncPath(pathname: string): string | null {
 
 /** May this user reach this canvas? `resolveCanvasWorkspace` is the existing composition
  *  seam (worker/access.ts): workspace membership AND ADR-0016 visibility, failing closed. */
-async function canReachCanvas(env: Env, canvasId: string, userId: string): Promise<boolean> {
+export async function canReachCanvas(env: Env, canvasId: string, userId: string): Promise<boolean> {
   const db = createDbForWorker(env as unknown as Bindings);
   return !!(await resolveCanvasWorkspace(db, canvasId, userId));
 }

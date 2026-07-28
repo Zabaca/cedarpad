@@ -30,6 +30,7 @@ import { MCP_REGISTRY } from '../server/mcp-registry.ts';
 import { handleShareLinksApi } from './share-links-api.ts';
 import { handleShareAccept, readGuestSession } from './guest-session.ts';
 import { decideGuestGate } from './guest-gate.ts';
+import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.ts';
 import { handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
 import { handleMartApi, loadCanvasStateFromBucket, MART_ROUTE } from './mart-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
@@ -330,6 +331,13 @@ export default {
     const syncCanvasId = parseSyncPath(url.pathname);
     if (syncCanvasId) {
       return handleSyncUpgrade(request, env, syncCanvasId, session?.user ?? null);
+    }
+
+    // The agent write path onto the same room (ADR-0019, #291). Self-gating for the same
+    // reason as the upgrade above: an agent client needs a status code, not login HTML.
+    const mutateCanvasId = parseCanvasMutatePath(url.pathname);
+    if (mutateCanvasId) {
+      return handleCanvasMutate(request, env, mutateCanvasId, session?.user ?? null);
     }
 
     // #179: the invite accept flow — reachable WITHOUT a session (the email-bound,

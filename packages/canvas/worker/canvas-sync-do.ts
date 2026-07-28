@@ -6,6 +6,8 @@ import {
 } from '@tldraw/sync-core';
 import type { TLRecord } from '@tldraw/tlschema';
 
+import { CanvasMutation, mutationError } from '../shared/canvas-mutation.ts';
+import { applyMutation, MutationRejected } from './canvas-mutate.ts';
 import type { Env } from './index.ts';
 import { SYNC_USER_HEADER } from './sync-api.ts';
 import { createCanvasSyncRoom, type SyncSessionMeta } from './sync-room.ts';
@@ -88,6 +90,12 @@ export class CanvasSyncRoom {
     const userId = request.headers.get(SYNC_USER_HEADER);
     if (!userId) return new Response('unauthorized', { status: 401 });
 
+    // The agent write path (#291). Matched on the suffix rather than by importing
+    // `parseCanvasMutatePath`, which would close a runtime import cycle back through
+    // worker/index.ts (where this class is re-exported for wrangler). The authoritative
+    // route match already happened in the Worker; this only picks the branch.
+    if (new URL(request.url).pathname.endsWith('/mutate')) return this.mutate(request);
+
     const sessionId = new URL(request.url).searchParams.get('sessionId') ?? crypto.randomUUID();
     const pair = new WebSocketPair();
     const client = pair[0];
@@ -96,6 +104,34 @@ export class CanvasSyncRoom {
     this.attach(server, { sessionId, meta: { userId } });
     this.room.handleSocketConnect({ sessionId, socket: server, meta: { userId } });
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * Apply one agent mutation to the live room. The contract is parsed AGAIN here, on the
+   * receiving side of the boundary (CLAUDE.md §7) — the Worker parsed it before choosing
+   * this DO, but the room must not trust a payload just because it arrived over a
+   * trusted hop. `applyMutation` writes through `room.updateStore()`, so tldraw validates
+   * every record before it is persisted (ADR-0019, "The write API").
+   */
+  private async mutate(request: Request): Promise<Response> {
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'body must be JSON' }, 400);
+    }
+    const parsed = CanvasMutation.safeParse(body);
+    if (!parsed.success) return json({ error: mutationError(parsed.error) }, 400);
+    try {
+      return json(await applyMutation(this.room, parsed.data));
+    } catch (e) {
+      // A refused write, not a broken room: `updateStore` is transactional, so nothing
+      // was persisted. 400 so the agent gets the reason back and can correct its intent.
+      if (e instanceof MutationRejected) return json({ error: e.message }, 400);
+      throw e;
+    }
   }
 
   // Hibernation delivers socket events as class methods, not listeners — the room is
