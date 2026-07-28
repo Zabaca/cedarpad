@@ -57,7 +57,15 @@ export function parseJsonc(text: string): unknown {
  * is reached through the deployed worker, not this one), and `env` (named environments
  * are deploy targets).
  */
-export function devWorkerConfig(base: Config, packageDir: string, origin: string): Config {
+export function devWorkerConfig(
+  base: Config,
+  packageDir: string,
+  origin: string,
+  /** E2E ONLY (#276): the bridge's origin, so the edge can proxy a workspace request to it —
+   *  local dev drops `containers` below, so there is nothing else to proxy INTO. Omitted (a
+   *  plain `bun run dev`) ⇒ neither var is emitted, so `localBridgeOrigin` stays null. */
+  localBridge?: string | null,
+): Config {
   const { routes, triggers, containers, env, ...rest } = base;
   const assets = base.assets as { directory: string } | undefined;
   const { AUTH_DISABLE_SIGNUP, ...vars } = (base.vars ?? {}) as Record<string, string>;
@@ -76,6 +84,7 @@ export function devWorkerConfig(base: Config, packageDir: string, origin: string
       // `web-poc/.dev.vars` overrides this — wrangler gives `.dev.vars` precedence over
       // `vars` — so a configured worktree keeps its own secret and both ends still agree.
       BETTER_AUTH_SECRET: LOCAL_DEV_PLATFORM_SECRET,
+      ...(localBridge ? { E2E_MODE: '1', LOCAL_BRIDGE_ORIGIN: localBridge } : {}),
     },
     main: join(packageDir, String(base.main)),
     ...(assets ? { assets: { ...assets, directory: join(packageDir, assets.directory) } } : {}),
@@ -101,10 +110,14 @@ const PACKAGE_DIR = fileURLToPath(new URL('..', import.meta.url));
  * path, ready for `wrangler dev -c` / `wrangler d1 migrations apply -c`. It lives beside
  * the state it describes, so two worktrees never share one.
  */
-export async function writeDevWorkerConfig(stateDir: string, origin: string): Promise<string> {
+export async function writeDevWorkerConfig(
+  stateDir: string,
+  origin: string,
+  localBridge?: string | null,
+): Promise<string> {
   // `wrangler.jsonc` stays the single source for both configs.
   const base = parseJsonc(readFileSync(join(PACKAGE_DIR, 'wrangler.jsonc'), 'utf8')) as Config;
-  const config = devWorkerConfig(base, PACKAGE_DIR, origin);
+  const config = devWorkerConfig(base, PACKAGE_DIR, origin, localBridge);
   // The assets directory must exist for wrangler to boot, even before a `bun run build`.
   mkdirSync((config.assets as { directory: string }).directory, { recursive: true });
   mkdirSync(stateDir, { recursive: true });

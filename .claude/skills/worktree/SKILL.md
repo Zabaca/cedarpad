@@ -168,13 +168,64 @@ if (process.env.NODE_ENV !== 'production' && process.env.E2E_MODE === '1') {
 `with-worktree-port.sh` already exports `E2E_MODE=1`, so any spec run through
 `test:e2e` gets it for free.
 
+### The shims that exist today
+
+| Shim | Where | Why |
+| --- | --- | --- |
+| Stubbed Claude SDK turn | `server/bridge.ts` (`E2E_MODE`) | a real turn needs an OAuth token + a model round-trip |
+| Container stand-in | `worker/sandbox-resolver.ts` (`localBridgeOrigin`) → `worker/sandbox-runtime.ts` | **local dev runs no container at all** |
+
+The container stand-in (#276) is the one to understand before writing an authenticated
+spec. `server/dev-worker-config.ts` drops `containers` from the generated local config,
+so proxying into the Sandbox DO throws *"Containers have not been enabled"* — yet the
+bridge is right there as a plain process on `CANVAS_BRIDGE_PORT`. So under e2e the
+generated config carries `E2E_MODE=1` + `LOCAL_BRIDGE_ORIGIN`, and `serveWorkspace`
+proxies to that origin instead of the container. Two belts guard it: the flag, and a
+loopback-only origin check — and **neither var exists in `wrangler.jsonc`**, so nothing
+deployed can reach it. It sits at the START of `serveWorkspace`, which is downstream of
+the session gate, the ownership check, and the header stamping — so it replaces the
+transport into the container and papers over no check.
+
+Without it, every edge-gated path stops at a 500 and only the *deny* half of an
+authorization test is observable.
+
+---
+
+## The authenticated fixtures (`e2e/fixtures/test.ts`)
+
+Since #276 the project-local `test` is an EXTENSION of Playwright's, not a re-export.
+Three fixtures, all addressed at the **edge Worker's own origin**:
+
+| Fixture | What it gives you |
+| --- | --- |
+| `signIn()` | a fresh Better Auth account, signed in — returns `{ id, email, request }` |
+| `joinBridgeWorkspace(user)` | membership of the workspace the bridge files Conversations into |
+| `edgeRequest` | an anonymous request context at the edge — the deny side of a gate assertion |
+
+**Auth is NOT shimmed.** `signIn()` posts to the edge's real `/api/auth/sign-up/email`
+(local dev leaves signup open — `dev-worker-config.ts` drops `AUTH_DISABLE_SIGNUP`), and
+the session it returns is verified by the same `worker/auth-gate.ts` production runs.
+Call it twice for two users, which is how an authorization boundary gets proven.
+
+**Talk to the edge port, not vite's.** In production the edge is in front of everything;
+locally it sits BESIDE vite, which proxies only `/api/auth/*` and `/v1/*` to it. So
+`http://localhost:$PORT/api/workspaces` hits the *bridge* and 404s, while the same path on
+`$CANVAS_EDGE_PORT` is the real gate answering. The fixtures bind their request contexts to
+`EDGE_BASE_URL` (derived from `CANVAS_EDGE_PORT`) for exactly this reason.
+
+**`joinBridgeWorkspace` is the one raw-SQL seam.** The container files its Conversations
+into the legacy `default` workspace, and no API creates that row (production seeded it by
+hand — `scripts/seed-default-workspace.ts`), so the fixture writes the workspace +
+membership rows straight into this worktree's local D1. It is idempotent and retries
+`SQLITE_BUSY`, because miniflare and the parallel workers write the same file.
+
 ---
 
 ## Authoring a new e2e spec
 
 Specs live in `packages/canvas/e2e/specs/*.spec.ts` and import `test` / `expect`
-from `../fixtures/test.ts` (never `@playwright/test` directly) so future
-fixtures (auth cookie, seeded workspace) land in one place.
+from `../fixtures/test.ts` (never `@playwright/test` directly) — that is where the
+authenticated fixtures documented above live.
 
 ### The loop
 
@@ -200,13 +251,13 @@ fixtures (auth cookie, seeded workspace) land in one place.
 - `e2e/specs/smoke.spec.ts` — proves the harness round-trips: the wrappers
   derive a port + DB, Playwright launches the canvas dev stack on that port, and
   the app shell (`<title>Agent Canvas</title>`, `#root`) renders. No auth.
-
-### Deferred follow-up
-
-The fuller **Shell flow** for #46 (dev signup → sign in → Shell → create/switch
-workspace → open canvas → sign-out) is not yet implemented as a spec. It needs
-an `E2E_MODE` shim to bypass `cs_gate` and/or seed a test session. Track it as a
-follow-up to #71.
+- `e2e/specs/open-conversation.spec.ts` — the bridge's half of the forwarded-row seam
+  (#261), driven directly with the header stamped by hand.
+- `e2e/specs/chat-turn-conversation.spec.ts` — a chat turn files its Conversation via the
+  platform RPC (#262, #266), driven at the bridge.
+- `e2e/specs/authed-edge.spec.ts` — the gated paths (#276): the session gate, **a user
+  cannot open a Conversation they do not own**, and a chat turn driven through the edge
+  over the real container→edge RPC hop.
 
 ---
 
