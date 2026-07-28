@@ -46,6 +46,14 @@ export default defineConfig({
       '/api/canvas-sync': { target: EDGE, changeOrigin: true, ws: true },
       '/api/canvas-assets': { target: EDGE, changeOrigin: true },
       '/v1': { target: EDGE, changeOrigin: true },
+      // The guest door (#220) and its probe are EDGE-answered too — the share cookie is
+      // minted and read by the Worker, and nothing downstream knows about it. Without
+      // these two, guest mode is unreachable in local dev (the bridge 404s the probe, so
+      // every guest reads as a member) and #294's read path cannot be exercised at all.
+      // Regex, not a prefix: a plain '/share' key also swallows '/shared/…', which is the
+      // pad app's second import root — proxying it to the edge 404s the module graph.
+      '^/share/[^/]+$': { target: EDGE, changeOrigin: true },
+      '/api/guest-session': { target: EDGE, changeOrigin: true },
       // Everything else under /api/* → canvas bridge (canvas sync + chat).
       '/api': { target: BRIDGE, changeOrigin: true },
     },

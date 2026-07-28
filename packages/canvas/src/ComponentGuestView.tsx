@@ -1,64 +1,98 @@
 // Component-guest mode (PRD #221): a share link scoped to ONE placed component renders
-// that shape's component fullscreen — no tldraw, no other shapes' UI, no chat. Interactive:
-// setData persists to the shape over the same bridge writes the canvas uses, so members see
-// guest edits live and vice versa (the SSE stream updates this view).
+// that shape's component fullscreen — no tldraw, no other shapes' UI, no chat.
 //
-// There is no tldraw Editor here; a tiny adapter satisfies the slice of the Editor surface
-// ComponentHost actually touches (getShape / updateShape / store.listen), backed by the
-// bridge's simplified canvas model instead of a tldraw store.
+// Since ADR-0019 / #294 the state arrives over a READ-ONLY connection to the canvas's
+// TLSocketRoom, the same room members edit — so a member's change appears here live. The
+// old SSE stream and the `POST /api/canvas/shapes` write-back are both gone with the old
+// wire. Read-only is enforced at the Durable Object (`worker/sync-api.ts` stamps it,
+// sync-core drops a read-only session's document diffs); this file never had, and now
+// cannot have, a write path to the room.
+//
+// CONSEQUENCE, deliberate: a guest's `setData` is LOCAL to their tab. Under the old wire
+// it POSTed the whole shape back and members saw guest edits. A share link is a
+// capability to read one canvas, so that write-back does not survive the migration —
+// interactive components still respond to a guest's clicks, they just don't persist.
+//
+// There is no tldraw Editor here; a tiny adapter satisfies the slice of the Editor
+// surface ComponentHost actually touches (getShape / updateShape / store.listen).
 
+import { useSync } from '@tldraw/sync';
 import * as React from 'react';
 
-import { withCanvasHeader, withCanvasParam } from './active-canvas';
+import { createCanvasAssetStore, syncUri } from './canvas-sync';
 import { ComponentHost } from './ComponentShape';
-import type { ComponentShape } from './shapes';
+import { createCanvasTLSchema } from './tl-schema';
+
+/** The slice of tldraw's `TLStore` this view reads — narrower than the real type on
+ *  purpose (CLAUDE.md §2), so the adapter is testable against a plain object and so the
+ *  absence of any mutating call is visible in the type itself. */
+export interface GuestRoomStore {
+  get(id: string): ComponentRecord | undefined;
+  listen(cb: () => void, opts?: unknown): () => void;
+}
+
+/** The one record this whole surface is about: the shared component shape. */
+interface ComponentRecord {
+  id: string;
+  type: string;
+  props: { module: string; data: Record<string, unknown>; rev: number; dataSource?: unknown };
+}
+
+type EditorShape = { id: string; type: string; props: Record<string, unknown>; meta: Record<string, unknown> };
 
 interface GuestShapeStore {
   editor: {
-    getShape(id: never): { id: string; type: string; props: Record<string, unknown>; meta: Record<string, unknown> } | undefined;
+    getShape(id: never): EditorShape | undefined;
     updateShape(p: { id: string; props?: { data?: Record<string, unknown> }; meta?: Record<string, unknown> }): void;
     store: { listen(cb: () => void, opts?: unknown): () => void };
   };
-  setModel(next: ComponentShape | null): void;
-  getModel(): ComponentShape | null;
+  getShape(): EditorShape | undefined;
 }
 
-/** The Editor-shaped adapter over one model shape. Data writes POST the full shape back
- * to the bridge (the same upsert route the member pad's sync uses); meta (status) writes
- * stay local — a guest's load lifecycle is nobody else's business. */
-export function createGuestShapeStore(initial: ComponentShape): GuestShapeStore {
-  let model: ComponentShape | null = initial;
+/**
+ * The Editor-shaped adapter over the ONE shape a component-scoped link shares.
+ *
+ * Reads come from the room record and are re-read on every room change, so the room stays
+ * authoritative — a member's edit overwrites whatever the guest's own `setData` put there.
+ * Writes go nowhere but this tab: `data` is held as a local overlay (dropped the moment
+ * the room speaks again) and `meta` (load status) is purely local, as it always was.
+ */
+export function createGuestShapeStore(room: GuestRoomStore, shapeId: string): GuestShapeStore {
   let meta: Record<string, unknown> = {};
+  let localData: Record<string, unknown> | null = null;
   const listeners = new Set<() => void>();
   const notify = () => {
     for (const cb of listeners) cb();
   };
-  // Reference-stable snapshot for useSyncExternalStore: rebuild only on change.
-  let snapshot: { id: string; type: string; props: Record<string, unknown>; meta: Record<string, unknown> } | undefined;
+
+  // Reference-stable snapshot for useSyncExternalStore: rebuilt only when something
+  // actually changed, never on read.
+  let snapshot: EditorShape | undefined;
   const rebuild = () => {
-    snapshot = model
-      ? {
-          id: model.id,
-          type: 'component',
-          props: { w: model.w, h: model.h, module: model.module, data: model.data, rev: model.rev, dataSource: model.dataSource ?? null },
-          meta,
-        }
-      : undefined;
+    const rec = room.get(shapeId);
+    snapshot =
+      rec && rec.type === 'component'
+        ? {
+            id: rec.id,
+            type: 'component',
+            props: { ...rec.props, data: localData ?? rec.props.data },
+            meta,
+          }
+        : undefined;
   };
   rebuild();
+  // A room change is the authority speaking: drop the local overlay and re-read.
+  room.listen(() => {
+    localData = null;
+    rebuild();
+    notify();
+  }, { scope: 'document' });
+
   return {
     editor: {
       getShape: () => snapshot,
       updateShape: (p) => {
-        if (!model) return;
-        if (p.props?.data) {
-          model = { ...model, data: p.props.data };
-          void fetch(withCanvasParam('/api/canvas/shapes'), {
-            method: 'POST',
-            headers: withCanvasHeader({ 'content-type': 'application/json' }),
-            body: JSON.stringify({ shapes: [model] }),
-          }).catch(() => {});
-        }
+        if (p.props?.data) localData = p.props.data;
         if (p.meta) meta = p.meta;
         rebuild();
         notify();
@@ -70,85 +104,54 @@ export function createGuestShapeStore(initial: ComponentShape): GuestShapeStore 
         },
       },
     },
-    setModel: (next) => {
-      model = next;
-      rebuild();
-      notify();
-    },
-    getModel: () => model,
+    getShape: () => snapshot,
   };
 }
 
-const findComponent = (state: unknown, shapeId: string): ComponentShape | null => {
-  const shapes = (state as { shapes?: Array<{ id: string; type: string }> })?.shapes;
-  const hit = shapes?.find((s) => s.id === shapeId && s.type === 'component');
-  return (hit as ComponentShape | undefined) ?? null;
-};
-
-export function ComponentGuestView({ shapeId }: { shapeId: string }) {
-  const [store, setStore] = React.useState<GuestShapeStore | null>(null);
-  const [state, setState] = React.useState<'loading' | 'gone' | 'ready'>('loading');
-
-  React.useEffect(() => {
-    let alive = true;
-    let es: EventSource | null = null;
-    let s: GuestShapeStore | null = null;
-    void fetch(withCanvasParam('/api/canvas'), { headers: withCanvasHeader() })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((doc) => {
-        if (!alive) return;
-        const model = doc ? findComponent(doc, shapeId) : null;
-        if (!model) {
-          setState('gone');
-          return;
-        }
-        s = createGuestShapeStore(model);
-        setStore(s);
-        setState('ready');
-        // Live updates: the same full-state SSE frames the canvas syncs from, narrowed
-        // to this one shape. An echo of our own write is idempotent.
-        es = new EventSource(withCanvasParam('/api/canvas/stream'));
-        es.onmessage = (e) => {
-          try {
-            const next = findComponent(JSON.parse((e as MessageEvent).data as string), shapeId);
-            if (!next) {
-              setState('gone'); // deleted by a member while the guest was viewing
-              return;
-            }
-            const cur = s?.getModel();
-            if (JSON.stringify(next) !== JSON.stringify(cur)) s?.setModel(next);
-          } catch {
-            /* malformed frame: skip */
-          }
-        };
-      })
-      .catch(() => alive && setState('gone'));
-    return () => {
-      alive = false;
-      es?.close();
-    };
-  }, [shapeId]);
-
-  if (state === 'loading') return <div className="component-guest-empty">loading…</div>;
-  if (state === 'gone' || !store) return <div className="component-guest-empty">This component is no longer available.</div>;
-  return <GuestHost store={store} shapeId={shapeId} />;
+/**
+ * The guest's connection to the canvas: the same `useSync` room the pad uses, on the same
+ * schema, opened with the guest cookie. The Worker refuses the upgrade unless the cookie's
+ * share link is live for THIS canvas, and marks the session read-only before the Durable
+ * Object is addressed (`worker/sync-api.ts`).
+ */
+export function ComponentGuestView({ shapeId, canvasId }: { shapeId: string; canvasId: string }) {
+  const store = useSync({
+    uri: React.useMemo(() => syncUri(window.location.origin, canvasId), [canvasId]),
+    assets: React.useMemo(() => createCanvasAssetStore(canvasId), [canvasId]),
+    schema: React.useMemo(() => createCanvasTLSchema(), []),
+  });
+  if (store.status !== 'synced-remote') {
+    return <div className="component-guest-empty">{store.status === 'error' ? 'This component is no longer available.' : 'loading…'}</div>;
+  }
+  // The one cast in this file: tldraw's `TLStore` is structurally what `GuestRoomStore`
+  // describes, but its `get` is generic over branded record ids.
+  return <GuestComponent store={store.store as unknown as GuestRoomStore} shapeId={shapeId} />;
 }
 
-// Subscribed to the adapter store so remote frames (a member editing the data) re-render
-// the fullscreen component with fresh props. getModel is reference-stable until a change.
-function GuestHost({ store, shapeId }: { store: GuestShapeStore; shapeId: string }) {
-  const model = React.useSyncExternalStore(
-    React.useCallback((cb) => store.editor.store.listen(cb), [store]),
-    () => store.getModel(),
+// Subscribed to the adapter so a member's edit re-renders the fullscreen component with
+// fresh props. `getShape` is reference-stable until something changes.
+export function GuestComponent({ store, shapeId }: { store: GuestRoomStore; shapeId: string }) {
+  const adapter = React.useMemo(() => createGuestShapeStore(store, shapeId), [store, shapeId]);
+  const shape = React.useSyncExternalStore(
+    React.useCallback((cb) => adapter.editor.store.listen(cb), [adapter]),
+    () => adapter.getShape(),
   );
-  if (!model) return <div className="component-guest-empty">This component is no longer available.</div>;
+  if (!shape) return <div className="component-guest-empty">This component is no longer available.</div>;
+  const props = shape.props as unknown as ComponentRecord['props'];
   return (
     <div className="component-fullscreen component-guest">
       <div className="component-fullscreen-head">
-        <span className="component-fullscreen-title">{model.module}</span>
+        <span className="component-fullscreen-title">{props.module}</span>
       </div>
       <div className="component-fullscreen-body">
-        <ComponentHost shapeId={shapeId} editor={store.editor as never} module={model.module} data={model.data} rev={model.rev} dataSource={model.dataSource} />
+        <ComponentHost
+          shapeId={shapeId}
+          editor={adapter.editor as never}
+          module={props.module}
+          data={props.data}
+          rev={props.rev}
+          dataSource={props.dataSource as never}
+        />
       </div>
     </div>
   );

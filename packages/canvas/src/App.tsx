@@ -191,7 +191,7 @@ export default function App() {
   // Component-scoped guest (PRD #221)? Resolve BEFORE mounting tldraw: that guest renders
   // one component fullscreen and nothing else. undefined = probe in flight (render nothing
   // for a beat); null/canvas-guest/member = the normal canvas below.
-  const [scope, setScope] = useState<{ shapeId?: string } | null | undefined>(undefined);
+  const [scope, setScope] = useState<{ shapeId?: string; canvasId: string } | null | undefined>(undefined);
   useEffect(() => {
     let alive = true;
     void loadGuestScope().then((s) => alive && setScope(s));
@@ -200,7 +200,9 @@ export default function App() {
     };
   }, []);
   if (scope === undefined) return null;
-  if (scope?.shapeId) return <ComponentGuestView shapeId={scope.shapeId} />;
+  // The canvas comes from the LINK's scope, not the URL: the guest view opens the room
+  // by canvas id (#294), and the link is the only thing that says which canvas that is.
+  if (scope?.shapeId) return <ComponentGuestView shapeId={scope.shapeId} canvasId={scope.canvasId} />;
   return <CanvasApp />;
 }
 

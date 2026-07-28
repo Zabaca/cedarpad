@@ -10,7 +10,7 @@ import { CanvasMutation, mutationError } from '../shared/canvas-mutation.ts';
 import { applyMutation, MutationRejected } from './canvas-mutate.ts';
 import type { Env } from './index.ts';
 import { handleSnapshotRequest } from './snapshot-io.ts';
-import { SYNC_USER_HEADER } from './sync-api.ts';
+import { isReadonlyRequest, SYNC_USER_HEADER } from './sync-api.ts';
 import { createCanvasSyncRoom, type SyncSessionMeta } from './sync-room.ts';
 
 // The Durable Object that hosts a canvas's `TLSocketRoom` (ADR-0019). Shape follows
@@ -102,13 +102,19 @@ export class CanvasSyncRoom {
     // admin gate already ran in the Worker (`handleCanvasSnapshot`); this only routes.
     if (url.pathname.endsWith('/snapshot')) return handleSnapshotRequest(this.room, request);
 
+    // The read-only decision arrives the same way identity does — stamped by
+    // `handleSyncUpgrade`, never client-supplied (#294). A guest holds a capability to
+    // READ one canvas, and sync-core drops a read-only session's document diffs inside
+    // the room, so the confinement is the server's, not the browser's. Nothing else
+    // about the session differs: it still receives every member edit.
+    const readonly = isReadonlyRequest(request);
     const sessionId = url.searchParams.get('sessionId') ?? crypto.randomUUID();
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server);
     this.attach(server, { sessionId, meta: { userId } });
-    this.room.handleSocketConnect({ sessionId, socket: server, meta: { userId } });
+    this.room.handleSocketConnect({ sessionId, socket: server, isReadonly: readonly, meta: { userId } });
     return new Response(null, { status: 101, webSocket: client });
   }
 
