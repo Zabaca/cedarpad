@@ -59,9 +59,20 @@ That leaves only two genuinely container-initiated writes.
 - **`Database` widens to the shared Drizzle SQLite base type** (`lib/db/client.ts:6` is currently
   `ReturnType<typeof makeDb>`, i.e. libSQL-specific), so the 10 query modules stay driver-agnostic
   and compile untouched.
-- **Cutover is a verbatim dump** — schema and data including `__drizzle_migrations` — so the
-  migration ledger stays consistent and existing sessions survive (no forced logout). **Turso stays
-  live and untouched** afterwards; rollback is a binding change, not a restore.
+- **Cutover imports data only.** This design originally said "a verbatim dump — schema and data
+  including `__drizzle_migrations`", which assumed drizzle-kit would own D1's migrations.
+  Implementation (#265) made **wrangler** the schema authority instead: `deploy.sh` runs
+  `wrangler d1 migrations apply`, whose ledger is `d1_migrations` (already populated with all 26).
+  Restoring Turso's `__drizzle_migrations` on top would leave two competing ledgers in one
+  database. So the schema comes from wrangler and **only table rows** are imported — skipping both
+  ledgers. Existing sessions still survive (they are ordinary rows), so there is still no forced
+  logout. **Turso stays live and untouched** afterwards; rollback is flipping `PLATFORM_DB_ENABLED`
+  back to `"false"` and redeploying — not a restore.
+- **The cutover is an explicit flag, not a binding.** #265 found that treating the *presence* of a
+  `PLATFORM_DB` binding as the switch would make merely deploying a binding repoint production at
+  an empty database — a cutover performed by accident. `createDbForWorker` now requires
+  `PLATFORM_DB_ENABLED === "true"` as well, so the binding can ship inert and the cutover is one
+  deliberate, revertible act.
 - **Local dev runs the edge Worker** with miniflare's local D1, so dev stops simulating the
   datastore. Per-worktree isolation (guideline 6 / ADR-0003) moves from `CANVAS_DEV_DB` to a
   per-worktree `.wrangler/state`; `with-worktree-db.sh` is rewritten, not repointed.
