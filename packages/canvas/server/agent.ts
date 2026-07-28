@@ -280,7 +280,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
       ),
       tool(
         'create_shapes',
-        'Create one or more shapes in a single batch. Lay them out with sensible spacing; the visible area is roughly x 0..1000, y 0..700.',
+        'Create one or more shapes in a single batch. Lay them out with sensible spacing; the visible area is roughly x 0..1000, y 0..700. Returns the id of every shape it created — ids are opaque and unguessable, so KEEP them if you intend to update, delete, align, or point an arrow at these shapes later (otherwise you have to read_canvas again to find them).',
         { shapes: z.array(shapeInput).min(1) },
         async ({ shapes }) => result(createShapesOp(store, shapes, originChatId)),
       ),
@@ -402,7 +402,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
       ),
       tool(
         'place_component',
-        'Put an instance of a component module on the canvas at (x, y), sized w×h, with `data` passed to it as props. YOUR (x, y) IS HONORED (not auto-moved), so when placing several related components lay them out as a deliberate layout near your chat card — e.g. a row at the same y, stepping x by w+20. Place them in/near the visible area (x 0..1000, y 0..700) or, for a chat far from the origin, call read_connected first to get your chat\'s position and lay them out beside it. Each new instance is auto-linked back to your chat with an arrow. Pass an existing id to move/retarget/re-data that instance. If this canvas\'s workspace has a materialized mart backing what you\'re about to show (an operational number, a KPI, a table of current records), pass `data_source` instead of a static `data` snapshot — the component then renders LIVE mart rows with no further tool calls needed to stay current, and its freshness ("as of") is shown automatically.',
+        'Put an instance of a component module on the canvas at (x, y), sized w×h, with `data` passed to it as props. YOUR (x, y) IS HONORED (not auto-moved), so when placing several related components lay them out as a deliberate layout near your chat card — e.g. a row at the same y, stepping x by w+20. Place them in/near the visible area (x 0..1000, y 0..700) or, for a chat far from the origin, call read_connected first to get your chat\'s position and lay them out beside it. Each new instance is auto-linked back to your chat with an arrow. Returns the id of the instance it placed — ids are opaque and unguessable, so KEEP it if you intend to move it, re-data it (set_component_data), or delete it later. Pass an existing id to move/retarget/re-data that instance. If this canvas\'s workspace has a materialized mart backing what you\'re about to show (an operational number, a KPI, a table of current records), pass `data_source` instead of a static `data` snapshot — the component then renders LIVE mart rows with no further tool calls needed to stay current, and its freshness ("as of") is shown automatically.',
         {
           id: z.string().optional().describe('Existing component shape id to update; omit to create a new instance.'),
           module: z.string().describe('Component name to render, e.g. "Dashboard".'),

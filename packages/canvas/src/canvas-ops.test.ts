@@ -483,3 +483,42 @@ describe('canvas ops (the agent tool logic)', () => {
     });
   });
 });
+
+// #327 step 1 — minted ids must be OBSERVABLE before they stop being guessable.
+//
+// Sequential ids (`shape:agent_217`) let an agent name the shape it just drew without
+// reading anything back. Random ids remove that affordance, so any create/place tool
+// that answered with only a count or a success flag would turn a working agent flow into
+// a silently broken one. These pin the return contract for every op that mints,
+// deliberately BEFORE the id format changes.
+describe('every op that mints a shape id hands it back (#327)', () => {
+  const idsIn = (text: string) => text.match(/shape:[A-Za-z0-9_-]+/g) ?? [];
+
+  test('createShapesOp names the id of every shape in the batch', () => {
+    const s = createStore();
+    const r = createShapesOp(s, [
+      { type: 'note', x: 0, y: 0, text: 'a' },
+      { type: 'note', x: 50, y: 0, text: 'b' },
+      { type: 'rectangle', x: 100, y: 0 },
+    ]);
+    expect(r.isError).toBeFalsy();
+    const named = idsIn(r.text);
+    for (const sh of s.getState().shapes) expect(named).toContain(sh.id);
+  });
+
+  test('createShapesOp still names them when the batch is chat-attached (the arrows do not hide them)', () => {
+    const s = createStore();
+    s.upsert([normalizeShape({ id: 'shape:chat', type: 'chat', color: 'black', x: 900, y: 100, w: 380, h: 460, title: 'Chat' })]);
+    const r = createShapesOp(s, [{ type: 'note', x: 0, y: 0, text: 'a' }], 'shape:chat');
+    const made = s.getState().shapes.filter((sh) => sh.type === 'note');
+    expect(made).toHaveLength(1);
+    expect(idsIn(r.text)).toContain(made[0]!.id);
+  });
+
+  test('placeComponentOp names the instance id it minted', () => {
+    const s = createStore();
+    const r = placeComponentOp(s, { module: 'KpiCard', x: 10, y: 20, w: 360, h: 260, rev: 1 });
+    const placed = s.getState().shapes.find((sh) => sh.type === 'component')!;
+    expect(idsIn(r.text)).toContain(placed.id);
+  });
+});

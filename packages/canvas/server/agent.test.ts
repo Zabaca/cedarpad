@@ -129,3 +129,25 @@ describe('formatMartListing: what the agent sees when it asks what marts exist',
     expect(text).toContain('data');
   });
 });
+
+// #327 step 1: the ids come back in the result, and the tool DESCRIPTION has to say so.
+// While ids were sequential an agent could guess the id of a shape it had just drawn.
+// Random ids (step 2) remove that, so the only way an agent keeps a handle on its own
+// work is to read the ids out of the result — which it will only do if told to.
+import { createCanvasTools } from './agent.ts';
+
+describe('the minting tools tell the agent to keep the ids they return (#327)', () => {
+  const describeTool = (name: string): string => {
+    const def = (createCanvasTools(createStore([])) as Array<{ name: string; description: string }>).find((t) => t.name === name);
+    if (!def) throw new Error(`no such canvas tool: ${name}`);
+    return def.description;
+  };
+
+  test('create_shapes', () => {
+    expect(describeTool('create_shapes')).toMatch(/returns the ids? .*keep/is);
+  });
+
+  test('place_component', () => {
+    expect(describeTool('place_component')).toMatch(/returns the ids? .*keep/is);
+  });
+});
