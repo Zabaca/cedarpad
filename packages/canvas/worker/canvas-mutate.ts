@@ -100,6 +100,25 @@ export async function applyMutation(room: Room, mutation: CanvasMutation): Promi
           for (const id of doomed) ctx.delete(id as never);
           // ...and the bindings that referenced them, from either end. A dangling binding
           // is what breaks a client on load, and sync-core will not clean it up for us.
+          //
+          // WHEN BOTH ENDS GO, THE ARROW SURVIVES — unbound, not deleted. This is a
+          // decision, not an accident (#292). The alternative was cascading the delete
+          // onto the now-unattached arrow, and we rejected it:
+          //   - tldraw's own editor does exactly this. `ArrowBindingUtil.arrowDidUpdate`
+          //     calls `updateArrowTerminal({ ..., unbind: true })` when a bound shape is
+          //     gone; the arrow stays. A human and an agent write the same room, so the
+          //     server path must not answer the same event differently from the client.
+          //   - the arrow is a shape the agent never asked us to remove, and it carries
+          //     content of its own (its label). Cascading would delete authored text as a
+          //     side effect of an unrelated delete.
+          //   - unbinding is recoverable (re-upsert the arrow with terminals); a delete is
+          //     not.
+          // The unbound arrow is not a stub: `buildShapeRecord` stores the terminal
+          // coordinates the agent authored in `props.start`/`props.end` even while a
+          // binding overrides them, so dropping the binding restores those coordinates.
+          // (The `{0,0}` in `arrowTerminal`, src/tldraw-conventions.ts, is a READ-side
+          // convention for a bound terminal, not what is persisted.) Verified end to end
+          // in e2e/specs/canvas-binding-cleanup.spec.ts.
           for (const r of all) {
             if (r.typeName !== 'binding') continue;
             if (gone.has(String(r.fromId)) || gone.has(String(r.toId))) ctx.delete(String(r.id) as never);

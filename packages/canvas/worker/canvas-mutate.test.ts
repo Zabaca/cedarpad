@@ -37,6 +37,37 @@ describe('applyMutation', () => {
     // sync-core has no binding logic, so this cascade is ours.
     expect(r.getCurrentSnapshot().documents.some((d) => (d.state as { typeName: string }).typeName === 'binding')).toBe(false);
   });
+
+  test('deleting BOTH ends leaves the arrow alive and fully unbound', async () => {
+    const r = room();
+    const other: CanvasShape = { ...rect, id: 'shape:s', x: 100, y: 100 };
+    const arrow: CanvasShape = { id: 'shape:a', type: 'arrow', x1: 31, y1: 42, x2: 100, y2: 100, color: 'black', text: 'both', startShapeId: 'shape:r', endShapeId: 'shape:s' };
+    await applyMutation(r, { op: 'upsert', shapes: [rect, other, arrow] });
+    expect((await applyMutation(r, { op: 'read' })).shapes.find((s) => s.id === 'shape:a')).toMatchObject({ startShapeId: 'shape:r', endShapeId: 'shape:s' });
+
+    const after = await applyMutation(r, { op: 'remove', ids: ['shape:r', 'shape:s'] });
+
+    // The decision (see canvas-mutate.ts): the arrow SURVIVES, unbound. We do not
+    // cascade the delete onto it — that matches what tldraw's own editor does.
+    const survivor = after.shapes.find((s) => s.id === 'shape:a');
+    expect(survivor).toBeDefined();
+    expect(survivor).not.toHaveProperty('startShapeId');
+    expect(survivor).not.toHaveProperty('endShapeId');
+    // ...and it is not a stub: the authored terminal coordinates were persisted underneath
+    // the bindings, so unbinding restores them rather than collapsing the arrow.
+    expect(survivor).toMatchObject({ text: 'both', x1: 31, y1: 42, x2: 100, y2: 100 });
+    expect(r.getCurrentSnapshot().documents.some((d) => (d.state as { typeName: string }).typeName === 'binding')).toBe(false);
+  });
+
+  test('clear sweeps bound arrows and their bindings together', async () => {
+    const r = room();
+    const arrow: CanvasShape = { id: 'shape:a', type: 'arrow', x1: 0, y1: 0, x2: 5, y2: 5, color: 'black', text: '', endShapeId: 'shape:r' };
+    await applyMutation(r, { op: 'upsert', shapes: [rect, arrow] });
+    expect((await applyMutation(r, { op: 'clear' })).shapes).toEqual([]);
+    // `clear` doooms every shape, so both ends of every binding are gone — no binding
+    // record may outlive the sweep, or the next client to load the room chokes on it.
+    expect(r.getCurrentSnapshot().documents.some((d) => (d.state as { typeName: string }).typeName === 'binding')).toBe(false);
+  });
 });
 
 describe('the contract', () => {
