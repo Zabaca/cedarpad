@@ -25,6 +25,13 @@
 
 import { eq } from 'drizzle-orm';
 
+import {
+  CANVAS_SNAPSHOT_LABEL,
+  OPERATOR_PRINCIPAL,
+  operatorRejection,
+  presentedBearer,
+  verifyCanvasOperatorToken,
+} from '../shared/canvas-operator-token.ts';
 import { user as userTable } from '../web-poc/lib/db/schema.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
@@ -65,13 +72,54 @@ export async function handleCanvasSnapshot(
   isAdmin: (env: Env, userId: string) => Promise<boolean> = isAdminUser,
 ): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
-  if (!user) return json({ error: 'unauthorized' }, 401);
-  if (!(await isAdmin(env, user.id))) return json({ error: 'forbidden' }, 403);
+
+  // TWO principals (#329). The admin session is the human's; the operator token is the
+  // migration script's, so `load --target <origin>` no longer needs a session cookie
+  // pasted out of devtools. Neither implies `?force=1` — the room's non-empty guard
+  // (worker/snapshot-io.ts) is untouched by who is calling.
+  const principal = await authorize(request, env, canvasId, user, isAdmin);
+  if (typeof principal !== 'string') return principal;
+
+  // Overwriting a canvas is an operator action, so it is attributable: which principal,
+  // which canvas, and whether they asked to replace a non-empty room.
+  if (request.method === 'POST') {
+    const force = new URL(request.url).searchParams.get('force') === '1';
+    console.log(`[snapshot] replace canvas=${canvasId} principal=${principal} force=${force}`);
+  }
 
   const id = env.CANVAS_SYNC.idFromName(syncRoomName(canvasId));
   // Identity is stamped after authorization and can never be client-supplied, matching
   // how `handleSyncUpgrade` and `handleCanvasMutate` establish it.
   const forwarded = new Request(request);
-  forwarded.headers.set(SYNC_USER_HEADER, user.id);
+  forwarded.headers.set(SYNC_USER_HEADER, principal);
   return env.CANVAS_SYNC.get(id).fetch(forwarded);
+}
+
+/**
+ * The identity to stamp on the hop to the room, or the Response that refuses the caller.
+ *
+ * An operator token is checked FIRST and only when one is presented, so the admin-session
+ * path is byte-for-byte what it was: a browser sends no bearer here.
+ */
+async function authorize(
+  request: Request,
+  env: Env,
+  canvasId: string,
+  user: GateUser | null,
+  isAdmin: (env: Env, userId: string) => Promise<boolean>,
+): Promise<string | Response> {
+  const presented = presentedBearer(request);
+  if (presented) {
+    // No secret configured means no operator principal exists — never a pass.
+    const secret = env.BETTER_AUTH_SECRET;
+    if (!secret) return json({ error: 'unauthorized' }, 401);
+    const result = await verifyCanvasOperatorToken(secret, CANVAS_SNAPSHOT_LABEL, canvasId, presented);
+    // The token is bound to THIS canvas and THIS label and expires on its own, so a leaked
+    // one dies without rotating BETTER_AUTH_SECRET (which would log out every session).
+    return result.ok ? OPERATOR_PRINCIPAL : json({ error: operatorRejection(result.reason) }, 401);
+  }
+
+  if (!user) return json({ error: 'unauthorized' }, 401);
+  if (!(await isAdmin(env, user.id))) return json({ error: 'forbidden' }, 403);
+  return user.id;
 }

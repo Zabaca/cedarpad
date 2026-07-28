@@ -21,11 +21,12 @@
  */
 import { spawn } from 'node:child_process';
 import { createServer, request as httpRequest, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { LOCAL_DEV_PLATFORM_SECRET } from '../../shared/platform-rpc.ts';
 import { EDGE_BASE_URL, OWNER_STATE, expect, test } from '../fixtures/test.ts';
 
 const PACKAGE_DIR = fileURLToPath(new URL('../..', import.meta.url));
@@ -35,10 +36,18 @@ const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAcAAAAFCAIAAAAG+GGPAAAAEklEQVR4nGP4z8CAibAIUUUUAKEvIt57lX2fAAAAAElFTkSuQmCC';
 const PNG_BYTES = Buffer.from(PNG_BASE64, 'base64');
 
-/** The migration takes a cookie string; the owner's session lives in the saved storage state. */
-function ownerCookie(): string {
-  const state = JSON.parse(readFileSync(OWNER_STATE, 'utf8')) as { cookies: Array<{ name: string; value: string }> };
-  return state.cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+/**
+ * The migration authenticates from BETTER_AUTH_SECRET now (#329) — no cookie anywhere.
+ * Local dev's secret follows the same precedence the generated wrangler config uses:
+ * `web-poc/.dev.vars` if this worktree has one, otherwise the checked-in local default.
+ */
+function operatorSecret(): string {
+  const devVars = join(PACKAGE_DIR, 'web-poc', '.dev.vars');
+  if (existsSync(devVars)) {
+    const m = /^BETTER_AUTH_SECRET\s*=\s*"?([^"\n]+)"?/m.exec(readFileSync(devVars, 'utf8'));
+    if (m?.[1]) return m[1];
+  }
+  return LOCAL_DEV_PLATFORM_SECRET;
 }
 
 /** A local stand-in for the blob bucket `dump` reads: one canvas holding one image shape. */
@@ -76,7 +85,11 @@ function writeBlobRoot(canvasId: string, shapeId: string): string {
  */
 function migrate(args: string[]): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    const proc = spawn('bun', ['run', 'scripts/migrate-canvas-rooms.ts', ...args], { cwd: PACKAGE_DIR });
+    const proc = spawn('bun', ['run', 'scripts/migrate-canvas-rooms.ts', ...args], {
+      cwd: PACKAGE_DIR,
+      // The credential rides in the ENVIRONMENT, never on the command line (#329).
+      env: { ...process.env, BETTER_AUTH_SECRET: operatorSecret() },
+    });
     let out = '';
     proc.stdout.on('data', (d) => (out += d));
     proc.stderr.on('data', (d) => (out += d));
@@ -157,7 +170,7 @@ test('an image survives blob → dump → load → room, and the browser decodes
   const shapeId = `shape:${crypto.randomUUID()}`;
   const { dumpDir, key } = await dumpCanvas(canvasId, shapeId);
 
-  const loaded = await migrate(['load', '--dump', dumpDir, '--target', EDGE_BASE_URL, '--cookie', ownerCookie()]);
+  const loaded = await migrate(['load', '--dump', dumpDir, '--target', EDGE_BASE_URL]);
   console.log('LOAD', loaded.out);
   expect(loaded.code).toBe(0);
 
@@ -174,7 +187,7 @@ test('an image survives blob → dump → load → room, and the browser decodes
   const asset = documents.find((d) => d.state.typeName === 'asset');
   expect((asset?.state.props as { src: string }).src).toBe(`/api/canvas-assets/${canvasId}/${key}`);
 
-  const verified = await migrate(['verify', '--dump', dumpDir, '--target', EDGE_BASE_URL, '--cookie', ownerCookie()]);
+  const verified = await migrate(['verify', '--dump', dumpDir, '--target', EDGE_BASE_URL]);
   console.log('VERIFY', verified.out);
   expect(verified.code).toBe(0);
 
@@ -202,7 +215,7 @@ test('the asset is PUT before the snapshot that names it', async ({ owner }) => 
   const { dumpDir, key } = await dumpCanvas(canvasId, `shape:${crypto.randomUUID()}`);
   const proxy = await recordingProxy();
   try {
-    const loaded = await migrate(['load', '--dump', dumpDir, '--target', proxy.origin, '--cookie', ownerCookie()]);
+    const loaded = await migrate(['load', '--dump', dumpDir, '--target', proxy.origin]);
     expect(loaded.code).toBe(0);
     console.log('WIRE', JSON.stringify(proxy.log));
     const put = proxy.log.indexOf(`PUT /api/canvas-assets/${canvasId}/${key}`);
@@ -228,10 +241,10 @@ test('re-running the import reuses the same object key — no orphaned duplicate
 
   const proxy = await recordingProxy();
   try {
-    const one = await migrate(['load', '--dump', first.dumpDir, '--target', proxy.origin, '--cookie', ownerCookie()]);
+    const one = await migrate(['load', '--dump', first.dumpDir, '--target', proxy.origin]);
     expect(one.code).toBe(0);
     // --force: the room now has shapes, and the room's 409 guard is the thing being got past.
-    const two = await migrate(['load', '--dump', second.dumpDir, '--target', proxy.origin, '--cookie', ownerCookie(), '--force']);
+    const two = await migrate(['load', '--dump', second.dumpDir, '--target', proxy.origin, '--force']);
     console.log('SECOND LOAD', two.out);
     expect(two.code).toBe(0);
 
@@ -256,7 +269,7 @@ test('a failed asset PUT fails the canvas instead of loading a document with no 
   const { dumpDir, key } = await dumpCanvas(canvasId, `shape:${crypto.randomUUID()}`);
   const proxy = await recordingProxy({ failAssetPut: true });
   try {
-    const loaded = await migrate(['load', '--dump', dumpDir, '--target', proxy.origin, '--cookie', ownerCookie()]);
+    const loaded = await migrate(['load', '--dump', dumpDir, '--target', proxy.origin]);
     console.log('FAILED LOAD', loaded.out);
     expect(loaded.code).toBe(1);
     expect(loaded.out).toContain(`${canvasId}/${key}: asset upload failed 500`);
