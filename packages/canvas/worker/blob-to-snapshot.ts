@@ -34,6 +34,7 @@ import {
 import type { RoomSnapshot } from '@tldraw/sync-core';
 
 import type { CanvasShape, CanvasState } from '../src/shapes.ts';
+import { assetUrl } from '../src/canvas-sync.ts';
 import { fromTldrawShape, imageAssetId, toTldrawPartial } from '../src/tldraw-conventions.ts';
 import { createCanvasTLSchema } from '../src/tl-schema.ts';
 
@@ -181,14 +182,19 @@ const DEFAULT_PROPS: Record<string, () => Record<string, unknown>> = {
  *     so migrating such an arrow draws a line to the origin. That is visibly wrong and
  *     reads as a rendering bug; a missing arrow at least reads as missing.
  */
-export function canvasRecords(state: CanvasState): {
+export function canvasRecords(
+  state: CanvasState,
+  canvasId: string,
+): {
   records: TLRecord[];
   dropped: CanvasShape[];
   dangling: Array<{ arrowId: string; terminal: 'start' | 'end'; toId: string }>;
+  assets: CanvasAssetUpload[];
 } {
   const records: TLRecord[] = baseRecords();
   const dropped: CanvasShape[] = [];
   const dangling: Array<{ arrowId: string; terminal: 'start' | 'end'; toId: string }> = [];
+  const assets: CanvasAssetUpload[] = [];
   // Blob order IS z-order (the bridge appends), so indices follow it.
   const indices = getIndices(state.shapes.length);
   const ids = new Set(state.shapes.map((s) => s.id));
@@ -227,7 +233,11 @@ export function canvasRecords(state: CanvasState): {
       props,
     } as unknown as TLRecord);
 
-    if (shape.type === 'image') records.push(imageAsset(shape));
+    if (shape.type === 'image') {
+      const upload = assetUploadFor(shape);
+      if (upload) assets.push(upload);
+      records.push(imageAsset(shape, canvasId));
+    }
     if (shape.type === 'arrow') {
       // Every binding here resolves — `danglingTerminals` already refused the arrow if not.
       if (shape.startShapeId) records.push(arrowBinding(shape.id, 'start', shape.startShapeId));
@@ -235,7 +245,44 @@ export function canvasRecords(state: CanvasState): {
     }
   });
 
-  return { records, dropped, dangling };
+  return { records, dropped, dangling, assets };
+}
+
+/** Bytes lifted out of a blob's data URL, ready to PUT at `/api/canvas-assets/:canvas/:key`. */
+export interface CanvasAssetUpload {
+  key: string;
+  contentType: string;
+  /** The data URL's payload, unchanged — decoded only at upload, so this module stays pure. */
+  base64: string;
+}
+
+const DATA_URL = /^data:([^;,]+)?(;base64)?,(.*)$/s;
+
+const EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/svg+xml': 'svg',
+  'image/avif': 'avif',
+};
+
+/**
+ * The object key for an image shape's pixels. DETERMINISTIC (derived from the shape id),
+ * unlike the client's uuid-per-upload: re-running the import is the rollback story, so a
+ * random key would orphan a new object in R2 on every attempt.
+ */
+function assetKeyFor(shape: { id: string; src: string }): string {
+  const mime = DATA_URL.exec(shape.src)?.[1] ?? 'image/png';
+  return `${shape.id.replace(/^shape:/, '')}.${EXT[mime] ?? 'bin'}`;
+}
+
+/** Null when `src` is not a data URL — an image already on the R2 plane (#290) keeps the
+ *  url it has, and there is nothing to upload. */
+function assetUploadFor(shape: { id: string; src: string }): CanvasAssetUpload | null {
+  const m = DATA_URL.exec(shape.src);
+  if (!m || !m[2]) return null; // not a data URL, or not base64-encoded
+  return { key: assetKeyFor(shape), contentType: m[1] ?? 'application/octet-stream', base64: m[3] ?? '' };
 }
 
 /**
@@ -269,7 +316,7 @@ function danglingTerminals(
  * counted and named rather than showing up as anonymous mismatches — and any OTHER
  * difference stays a hard failure.
  */
-export function expectedShapes(state: CanvasState): CanvasShape[] {
+export function expectedShapes(state: CanvasState, canvasId: string): CanvasShape[] {
   const ids = new Set(state.shapes.map((s) => s.id));
   const out: CanvasShape[] = [];
   for (const shape of state.shapes) {
@@ -277,7 +324,16 @@ export function expectedShapes(state: CanvasState): CanvasShape[] {
     if (danglingTerminals(shape, ids).length > 0) continue;
     // A frame parent that isn't on the canvas is NOT a loss: the shape survives, merely
     // reparented to the page (see `canvasRecords`), so the expectation drops the field.
-    out.push(shape.parentId && !ids.has(shape.parentId) ? stripKey(shape, 'parentId') : shape);
+    const kept = shape.parentId && !ids.has(shape.parentId) ? stripKey(shape, 'parentId') : shape;
+    // An image's `src` becomes the R2 asset url (see `imageAsset`), so that — not the
+    // blob's data URL — is what the room should read back. Compared exactly: the url has
+    // to be right, it is just not the same string as the source.
+    if (kept.type === 'image') {
+      const upload = assetUploadFor(kept);
+      out.push(upload ? { ...kept, src: assetUrl(canvasId, upload.key) } : kept);
+      continue;
+    }
+    out.push(kept);
   }
   return out;
 }
@@ -290,20 +346,32 @@ function stripKey<T extends object>(v: T, key: keyof T): T {
 /**
  * The pixels live in their own asset record; the shape only names it (`imageAssetId`).
  *
+ * `src` is the R2 ASSET URL, never the blob's base64 data URL. #290 moved canvas bytes out
+ * of the record for exactly this reason: an inlined data URL is persisted into DO SQLite
+ * and shipped to every client that opens the room. Re-inlining it here would undo that on
+ * the migration path itself.
+ *
  * `fileSize` is OMITTED rather than set to a sentinel: it is `T.nonZeroNumber.optional()`,
  * so tldraw's usual "unknown" value of -1 is rejected outright. The round-trip tests could
  * not see this — `fromTldrawShape` reads only `props.src` — which is exactly why
  * `invalidRecords` exists. The asset's `w`/`h` mirror the shape's box; the true pixel
- * dimensions are not in the blob, and nothing reads them for a data-URL asset.
+ * dimensions are not in the blob, and nothing reads them for a URL asset.
  */
-function imageAsset(shape: { id: string; src: string; w: number; h: number }): TLRecord {
-  const mimeType = /^data:([^;,]+)/.exec(shape.src)?.[1] ?? null;
+function imageAsset(shape: { id: string; src: string; w: number; h: number }, canvasId: string): TLRecord {
+  const upload = assetUploadFor(shape);
   return {
     id: imageAssetId(shape.id),
     typeName: 'asset',
     type: 'image',
     meta: {},
-    props: { w: shape.w, h: shape.h, name: '', isAnimated: false, mimeType, src: shape.src },
+    props: {
+      w: shape.w,
+      h: shape.h,
+      name: '',
+      isAnimated: false,
+      mimeType: upload?.contentType ?? null,
+      src: upload ? assetUrl(canvasId, upload.key) : shape.src,
+    },
   } as unknown as TLRecord;
 }
 
@@ -330,8 +398,8 @@ function arrowBinding(arrowId: string, terminal: 'start' | 'end', toId: string):
  * every incoming document to the room's schema, so stamping the current version says
  * "these records need no migration", which is true: they were built from it moments ago.
  */
-export function blobToRoomSnapshot(state: CanvasState): RoomSnapshot {
-  const { records } = canvasRecords(state);
+export function blobToRoomSnapshot(state: CanvasState, canvasId: string): RoomSnapshot {
+  const { records } = canvasRecords(state, canvasId);
   return {
     clock: 0,
     documentClock: 0,

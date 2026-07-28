@@ -21,8 +21,8 @@ function throughRoom(snapshot: RoomSnapshot): RoomSnapshot {
 const state = (shapes: CanvasShape[]): CanvasState => ({ version: 7, shapes });
 
 /** blob -> snapshot -> real room -> blob. What `verify` compares. */
-const roundTrip = (shapes: CanvasShape[]): CanvasShape[] =>
-  snapshotToShapes(throughRoom(blobToRoomSnapshot(state(shapes))));
+const roundTrip = (shapes: CanvasShape[], canvasId = 'cv_test'): CanvasShape[] =>
+  snapshotToShapes(throughRoom(blobToRoomSnapshot(state(shapes), canvasId)));
 
 describe('blobToRoomSnapshot', () => {
   // The load-bearing test. `TLSocketRoom.loadSnapshot()` does NOT validate records — it
@@ -42,11 +42,11 @@ describe('blobToRoomSnapshot', () => {
       { id: 'shape:h', type: 'chat', x: 0, y: 0, w: 1, h: 1, title: 'h', color: 'black' },
       { id: 'shape:a', type: 'arrow', x1: 0, y1: 0, x2: 1, y2: 1, color: 'black', text: 'a', startShapeId: 'shape:r' },
     ];
-    expect(invalidRecords(blobToRoomSnapshot(state(shapes)))).toEqual([]);
+    expect(invalidRecords(blobToRoomSnapshot(state(shapes), 'cv_test'))).toEqual([]);
   });
 
   test('invalidRecords NAMES a bad record rather than passing it through', () => {
-    const snapshot = blobToRoomSnapshot(state([{ id: 'shape:n', type: 'note', x: 0, y: 0, color: 'black', text: 'n' }]));
+    const snapshot = blobToRoomSnapshot(state([{ id: 'shape:n', type: 'note', x: 0, y: 0, color: 'black', text: 'n' }]), 'cv_test');
     const shape = snapshot.documents.find((d) => d.state.typeName === 'shape');
     (shape as { state: { type: string } }).state.type = 'no-such-shape-type';
     expect(invalidRecords(snapshot)).toHaveLength(1);
@@ -54,7 +54,7 @@ describe('blobToRoomSnapshot', () => {
   });
 
   test('an empty canvas becomes a loadable room with a document and one page', () => {
-    const out = throughRoom(blobToRoomSnapshot(state([])));
+    const out = throughRoom(blobToRoomSnapshot(state([]), 'cv_test'));
     const types = out.documents.map((d) => d.state.typeName).sort();
     expect(types).toEqual(['document', 'page']);
     expect(snapshotToShapes(out)).toEqual([]);
@@ -143,13 +143,13 @@ describe('blobToRoomSnapshot', () => {
       { id: 'shape:x', type: 'arrow', x1: 0, y1: 0, x2: 9, y2: 9, color: 'black', text: '', endShapeId: 'shape:gone' },
     ];
 
-    expect(canvasRecords(state(shapes)).dangling).toEqual([
+    expect(canvasRecords(state(shapes), 'cv_test').dangling).toEqual([
       { arrowId: 'shape:x', terminal: 'end', toId: 'shape:gone' },
     ]);
     expect(roundTrip(shapes)).toEqual([shapes[0] as CanvasShape]);
     // `verify` diffs against this, so the known loss is named at dump time, not reported
     // as an anonymous mismatch later.
-    expect(expectedShapes(state(shapes))).toEqual([shapes[0]]);
+    expect(expectedShapes(state(shapes), 'cv_test')).toEqual([shapes[0]]);
   });
 
   test('an arrow whose bindings all resolve is kept, even alongside a dangling one', () => {
@@ -169,7 +169,7 @@ describe('blobToRoomSnapshot', () => {
       { id: 'shape:f', type: 'frame', x: 0, y: 0, w: 10, h: 10, name: 'f', color: 'black' },
       { id: 'shape:c', type: 'note', x: 1, y: 1, color: 'blue', text: 'child', parentId: 'shape:f' },
     ];
-    expect(expectedShapes(state(shapes))).toEqual([
+    expect(expectedShapes(state(shapes), 'cv_test')).toEqual([
       { id: 'shape:n', type: 'note', x: 0, y: 0, color: 'blue', text: 'kept' },
       { id: 'shape:f', type: 'frame', x: 0, y: 0, w: 10, h: 10, name: 'f', color: 'black' },
       { id: 'shape:c', type: 'note', x: 1, y: 1, color: 'blue', text: 'child', parentId: 'shape:f' },
@@ -188,12 +188,41 @@ describe('blobToRoomSnapshot', () => {
     expect(out[2]).toEqual({ id: 'shape:orphan', type: 'note', x: 1, y: 1, color: 'blue', text: 'orphan' });
   });
 
-  test('an image keeps its pixels, via an asset record', () => {
+  // #290 moved canvas image bytes OUT of the record and into R2, because a base64 data
+  // URL in a record is persisted to DO SQLite and shipped to every client on load — "the
+  // exact cost the migration exists to remove" (worker/canvas-assets.ts). A migration that
+  // re-inlined them would undo that on day one, so the blob's data URL is externalised.
+  test('an image is EXTERNALISED to R2, not inlined as a data URL', () => {
     const src = 'data:image/png;base64,iVBORw0KGgo=';
     const shapes: CanvasShape[] = [
       { id: 'shape:i1', type: 'image', x: 3, y: 4, w: 200, h: 150, src, alt: 'a screenshot', color: 'black' },
     ];
-    expect(roundTrip(shapes)).toEqual(shapes);
+
+    const { assets, records } = canvasRecords(state(shapes), 'cv_1');
+
+    expect(assets).toEqual([{ key: 'i1.png', contentType: 'image/png', base64: 'iVBORw0KGgo=' }]);
+    const asset = records.find((r) => r.typeName === 'asset') as unknown as { props: { src: string } };
+    expect(asset.props.src).toBe('/api/canvas-assets/cv_1/i1.png');
+    // Nothing base64 survives into the document.
+    expect(JSON.stringify(records)).not.toContain('iVBORw0KGgo=');
+  });
+
+  test('the externalised url is what verify expects back, so images stay strictly checked', () => {
+    const shapes: CanvasShape[] = [
+      { id: 'shape:i1', type: 'image', x: 3, y: 4, w: 200, h: 150, src: 'data:image/png;base64,AA==', alt: 'a', color: 'black' },
+    ];
+    const url = '/api/canvas-assets/cv_1/i1.png';
+    expect(roundTrip(shapes, 'cv_1')).toEqual([{ ...shapes[0], src: url } as CanvasShape]);
+    expect(expectedShapes(state(shapes), 'cv_1')).toEqual([{ ...shapes[0], src: url } as CanvasShape]);
+  });
+
+  test('an image already on the R2 plane is passed through, not re-uploaded', () => {
+    const src = '/api/canvas-assets/cv_1/abc-shot.png';
+    const shapes: CanvasShape[] = [
+      { id: 'shape:i1', type: 'image', x: 0, y: 0, w: 10, h: 10, src, alt: '', color: 'black' },
+    ];
+    expect(canvasRecords(state(shapes), 'cv_1').assets).toEqual([]);
+    expect(roundTrip(shapes, 'cv_1')).toEqual(shapes);
   });
 
   test('an embed round-trips', () => {
@@ -206,7 +235,7 @@ describe('blobToRoomSnapshot', () => {
   test('freehand `draw` shapes are DROPPED, and reported — never silently lost', () => {
     const drawn: CanvasShape = { id: 'shape:d1', type: 'draw', color: 'black', points: [[0, 0], [1, 1]] };
     const kept: CanvasShape = { id: 'shape:k', type: 'note', x: 0, y: 0, color: 'black', text: 'k' };
-    const { dropped } = canvasRecords(state([drawn, kept]));
+    const { dropped } = canvasRecords(state([drawn, kept]), 'cv_test');
     expect(dropped).toEqual([drawn]);
     expect(roundTrip([drawn, kept])).toEqual([kept]);
   });

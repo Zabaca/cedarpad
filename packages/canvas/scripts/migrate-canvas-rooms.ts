@@ -36,8 +36,10 @@ import type { TLRecord } from '@tldraw/tlschema';
 
 import { canvasStateKey, s3Backend, fsBackend, type BlobBackend } from '../server/blob-store.ts';
 import type { CanvasShape, CanvasState } from '../src/shapes.ts';
+import { assetUrl } from '../src/canvas-sync.ts';
 import {
   blobToRoomSnapshot,
+  type CanvasAssetUpload,
   canvasRecords,
   expectedShapes,
   invalidRecords,
@@ -46,7 +48,11 @@ import {
 import { handleSnapshotRequest } from '../worker/snapshot-io.ts';
 import { createCanvasSyncRoom } from '../worker/sync-room.ts';
 
-type Entry = { workspace: string; canvas: string; shapes: number; draw: number; danglingArrows: number };
+/** What `load` needs to place one object: its key and its content type. The bytes live in
+ *  a file beside the dump, not in the manifest. */
+type AssetRef = Omit<CanvasAssetUpload, 'base64'>;
+
+type Entry = { workspace: string; canvas: string; shapes: number; draw: number; danglingArrows: number; assets: number };
 type Manifest = { dumpedAt: string; canvases: Entry[] };
 
 // ---------------------------------------------------------------------------
@@ -84,8 +90,8 @@ async function dump(outDir: string, from: string | undefined) {
     const bytes = await backend.get(canvasStateKey(workspace, canvas));
     if (!bytes) continue;
     const state = JSON.parse(new TextDecoder().decode(bytes)) as CanvasState;
-    const { dropped, dangling } = canvasRecords(state);
-    const snapshot = blobToRoomSnapshot(state);
+    const { dropped, dangling, assets } = canvasRecords(state, canvas);
+    const snapshot = blobToRoomSnapshot(state, canvas);
 
     // Validate HERE, at dump time, against the app's real schema. `loadSnapshot` does not
     // validate (see `invalidRecords`), so without this a bad record would be discovered
@@ -99,12 +105,22 @@ async function dump(outDir: string, from: string | undefined) {
 
     writeFileSync(join(outDir, 'blobs', `${workspace}__${canvas}.json`), JSON.stringify(state));
     writeFileSync(join(outDir, 'snapshots', `${workspace}__${canvas}.json`), JSON.stringify(snapshot));
+    // Image bytes ride BESIDE the snapshot, one file per object, because #290 put them in
+    // R2 rather than in the record. `load` PUTs them before the snapshot that names them.
+    if (assets.length > 0) {
+      mkdirSync(join(outDir, 'assets', canvas), { recursive: true });
+      writeFileSync(join(outDir, 'assets', canvas, 'index.json'), JSON.stringify(assets.map(({ base64: _b, ...m }) => m)));
+      for (const a of assets) {
+        writeFileSync(join(outDir, 'assets', canvas, a.key), Buffer.from(a.base64, 'base64'));
+      }
+    }
     canvases.push({
       workspace,
       canvas,
       shapes: state.shapes.length,
       draw: dropped.filter((s) => s.type === 'draw').length,
       danglingArrows: dropped.filter((s) => s.type === 'arrow').length,
+      assets: assets.length,
     });
     for (const d of dangling) {
       console.warn(`   ! ${canvas}: ${d.arrowId} ${d.terminal} was bound to ${d.toId}, which is not on this canvas`);
@@ -132,21 +148,22 @@ async function listFromR2(backend: BlobBackend): Promise<Array<{ workspace: stri
 
 function report(canvases: Entry[]) {
   console.log(
-    `\n${'workspace / canvas'.padEnd(58)} ${'shapes'.padStart(7)} ${'draw'.padStart(6)} ${'badArrow'.padStart(9)}`,
+    `\n${'workspace / canvas'.padEnd(58)} ${'shapes'.padStart(7)} ${'assets'.padStart(7)} ${'draw'.padStart(6)} ${'badArrow'.padStart(9)}`,
   );
-  console.log('-'.repeat(84));
+  console.log('-'.repeat(92));
   for (const c of canvases) {
     const name = `${c.workspace} / ${c.canvas}`;
     console.log(
-      `${name.padEnd(58)} ${String(c.shapes).padStart(7)} ${String(c.draw).padStart(6)} ${String(c.danglingArrows).padStart(9)}`,
+      `${name.padEnd(58)} ${String(c.shapes).padStart(7)} ${String(c.assets).padStart(7)} ${String(c.draw).padStart(6)} ${String(c.danglingArrows).padStart(9)}`,
     );
   }
-  console.log('-'.repeat(84));
+  console.log('-'.repeat(92));
   const shapes = canvases.reduce((a, c) => a + c.shapes, 0);
   const dropped = canvases.reduce((a, c) => a + c.draw, 0);
   const dangling = canvases.reduce((a, c) => a + c.danglingArrows, 0);
+  const assets = canvases.reduce((a, c) => a + c.assets, 0);
   console.log(
-    `${'TOTAL'.padEnd(58)} ${String(shapes).padStart(7)} ${String(dropped).padStart(6)} ${String(dangling).padStart(9)}`,
+    `${'TOTAL'.padEnd(58)} ${String(shapes).padStart(7)} ${String(assets).padStart(7)} ${String(dropped).padStart(6)} ${String(dangling).padStart(9)}`,
   );
   if (dropped > 0) {
     console.log(
@@ -176,6 +193,9 @@ function report(canvases: Entry[]) {
 interface Destination {
   put(canvas: string, snapshot: RoomSnapshot, force: boolean): Promise<Response>;
   get(canvas: string): Promise<Response>;
+  /** PUT one image object to `/api/canvas-assets/:canvas/:key`, before the snapshot that
+   *  names it. Null = this target has no bucket (the in-process dry run). */
+  putAsset(canvas: string, upload: AssetRef, bytes: Uint8Array): Promise<Response> | null;
 }
 
 function httpDestination(origin: string, cookie: string): Destination {
@@ -188,6 +208,12 @@ function httpDestination(origin: string, cookie: string): Destination {
         body: JSON.stringify(snapshot),
       }),
     get: (canvas) => fetch(url(canvas), { headers: { cookie } }),
+    putAsset: (canvas, upload, bytes) =>
+      fetch(`${origin}${assetUrl(canvas, upload.key)}`, {
+        method: 'PUT',
+        headers: { cookie, 'content-type': upload.contentType },
+        body: bytes as unknown as BodyInit,
+      }),
   };
 }
 
@@ -212,6 +238,9 @@ function memoryDestination(): Destination {
         req(canvas, { method: 'POST', body: JSON.stringify(snapshot) }, force ? '?force=1' : ''),
       ),
     get: (canvas) => handleSnapshotRequest(roomFor(canvas), req(canvas)),
+    // No bucket in-process. The snapshot still carries the real asset URLs, so the dry
+    // run proves the DOCUMENT is right; only the bytes have nowhere to go.
+    putAsset: () => null,
   };
 }
 
@@ -241,6 +270,24 @@ async function load(dest: Destination, dumpDir: string, force: boolean, acceptLo
   let bad = 0;
   for (const c of manifest.canvases) {
     const snapshot = readJson<RoomSnapshot>(join(dumpDir, 'snapshots', `${c.workspace}__${c.canvas}.json`));
+
+    // Bytes BEFORE the document that names them: a shape pointing at an object that isn't
+    // there yet is a broken box on every client until it lands.
+    let assetsBad = false;
+    for (const upload of readAssets(dumpDir, c)) {
+      const pending = dest.putAsset(c.canvas, upload, readFileSync(join(dumpDir, 'assets', c.canvas, upload.key)));
+      if (!pending) continue; // no bucket on this target (the in-process dry run)
+      const res = await pending;
+      if (!res.ok) {
+        assetsBad = true;
+        console.error(`✗ ${c.canvas}/${upload.key}: asset upload failed ${res.status}`);
+      }
+    }
+    if (assetsBad) {
+      bad++;
+      continue;
+    }
+
     const res = await dest.put(c.canvas, snapshot, force);
     const body = await res.text();
     if (res.ok) {
@@ -287,7 +334,7 @@ async function verify(dest: Destination, dumpDir: string): Promise<number> {
     // The two known-unmigratable cases (`draw`, and bindings to shapes that aren't on the
     // canvas) are normalized out by `expectedShapes` — they were counted and NAMED at dump
     // time. Everything else must match exactly, field for field.
-    const expected = expectedShapes(state);
+    const expected = expectedShapes(state, c.canvas);
     const inRoom = new Map(roomShapes.map((s) => [s.id, s]));
     const problems: string[] = [];
     for (const want of expected) {
@@ -321,6 +368,12 @@ async function verify(dest: Destination, dumpDir: string): Promise<number> {
 // ---------------------------------------------------------------------------
 
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, 'utf8')) as T;
+
+/** The asset manifest written beside a canvas's snapshot; empty when it has no images. */
+function readAssets(dumpDir: string, c: Entry): AssetRef[] {
+  if (c.assets === 0) return [];
+  return readJson<AssetRef[]>(join(dumpDir, 'assets', c.canvas, 'index.json'));
+}
 const readManifest = (dir: string): Manifest => readJson<Manifest>(join(dir, 'manifest.json'));
 
 function flag(name: string): string | undefined {
