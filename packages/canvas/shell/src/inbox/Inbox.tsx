@@ -203,6 +203,27 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
     document.addEventListener('pointerup', onUp);
   };
 
+  // Start a draft chat: a client-minted chatId, no row and no request. The first send births the
+  // Conversation on the active workspace's bridge; loadList promotes it (see draft promotion).
+  // Pressing it again while a draft is already open REUSES it — a second press must never discard
+  // a half-typed message by remounting <ChatView> on a fresh id.
+  const startDraft = useCallback(() => {
+    setCurrent(null);
+    setDraft((d) => d ?? `chat_${crypto.randomUUID()}`);
+  }, []);
+
+  // ⌘N / Ctrl+N starts a draft from anywhere in the stage. Ignored when the browser's own
+  // modifier combo is in play (Alt) so we never shadow a native shortcut.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'n' || e.altKey || !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      startDraft();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [startDraft]);
+
   const toggleCanvas = () => {
     setCanvasHidden((hidden) => {
       const next = !hidden;
@@ -225,6 +246,11 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
         </div>
       ) : (
       <div className="inbox-list" style={{ width: paneWidths.list, flex: 'none' }}>
+        <div className="inbox-newrow">
+          <button type="button" className="inbox-new-chat" title="Start a new chat" onClick={startDraft}>
+            + New chat
+          </button>
+        </div>
         <div className="inbox-filters">
           <button type="button" className="panel-collapse" title="Hide conversations (full thread)" onClick={() => setListCollapsed(true)}>
             «
@@ -234,17 +260,6 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
             <option value="all">All sessions</option>
             <option value="closed">Closed</option>
           </select>
-          <button
-            type="button"
-            className="inbox-new-chat"
-            title="Start a new chat"
-            onClick={() => {
-              setCurrent(null);
-              setDraft(`chat_${crypto.randomUUID()}`);
-            }}
-          >
-            + New
-          </button>
           <select
             aria-label="Assignee filter"
             value={assigned ?? ''}
@@ -264,21 +279,35 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
             <div className="inbox-empty">Failed to load.</div>
           ) : state === 'loading' ? (
             <div className="inbox-empty">Loading…</div>
-          ) : items.length === 0 ? (
+          ) : items.length === 0 && !draft ? (
             <div className="inbox-empty">No conversations.</div>
           ) : (
-            items.map((it) => (
-              <ItemRow
-                key={it.id}
-                item={it}
-                assigneeName={members.find((m) => m.userId === it.assignedTo)?.name}
-                selected={current?.id === it.id}
-                onOpen={() => {
-                  setDraft(null);
-                  setCurrent(it);
-                }}
-              />
-            ))
+            <>
+              {/* Row zero: the draft, pinned above every real Conversation and badged so it reads
+                  as not-yet-saved. It survives filter changes and a list refetch that has not
+                  borne it yet; the promotion in loadList is what clears it. */}
+              {draft && (
+                <div className="inbox-item draft sel">
+                  <div className="inbox-item-top">
+                    <b>New chat</b>
+                    <span className="inbox-badge">draft</span>
+                  </div>
+                  <small>Not saved until you send.</small>
+                </div>
+              )}
+              {items.map((it) => (
+                <ItemRow
+                  key={it.id}
+                  item={it}
+                  assigneeName={members.find((m) => m.userId === it.assignedTo)?.name}
+                  selected={current?.id === it.id}
+                  onOpen={() => {
+                    setDraft(null);
+                    setCurrent(it);
+                  }}
+                />
+              ))}
+            </>
           )}
         </div>
       </div>
