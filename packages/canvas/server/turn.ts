@@ -12,6 +12,7 @@
 // room-backed canvas store (#310) is part of the phase order, not a collaborator that varies.
 
 import type { CanvasImage, CaptureView, ChatEvent, ListMarts, OpenPr, SendToChat, runChat } from './agent.ts';
+import type { FetchAsset } from '../src/canvas-ops.ts';
 import type { EndTurnDeps } from './inbox.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
 import { openTurnCanvasStore } from './turn-canvas-store.ts';
@@ -107,6 +108,10 @@ export interface TurnDeps {
   /** Mart discovery seam (the bridge holds the workspace's BlobStore): the agent's
    *  `list_marts` tool. Optional — absent in tests ⇒ the tool is omitted. */
   listMarts?: ListMarts;
+  /** Asset-fetch seam (the bridge holds the edge origin + service secret): how `read_image`
+   *  gets at pixels that live behind the edge's asset route since #290. Optional — absent in
+   *  tests ⇒ only legacy inline data URLs are readable. */
+  fetchAsset?: FetchAsset;
 }
 
 /**
@@ -172,6 +177,8 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // Mart discovery is a CANVAS capability — chat turns only (a dev-agent turn places no
       // components, so it has nothing to point at a mart).
       flavor.kind === 'chat' ? deps.listMarts : undefined,
+      // Reading a pasted screenshot is a CANVAS capability — chat turns only.
+      flavor.kind === 'chat' ? deps.fetchAsset : undefined,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
       // Row-at-start: index the session the moment its id lands (the init event). Tracked (not

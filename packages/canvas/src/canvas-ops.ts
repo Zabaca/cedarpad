@@ -130,13 +130,17 @@ function linkRootsToChat(made: CanvasShape[], chatId: string): CanvasShape[] {
     .map((s) => normalizeShape({ type: 'arrow', color: 'grey', startShapeId: chatId, endShapeId: s.id }));
 }
 
-// An image's `src` is a (potentially huge) data URL; never dump it into the
-// agent's context. Replace it with a marker pointing at read_image, leaving the
-// rest of the image's state (geometry, alt) intact. All other shapes pass through.
+// An image's `src` is either a (potentially huge) data URL or, since #290, the asset URL
+// its pixels live behind; never dump either into the agent's context. Replace it with a
+// marker pointing at read_image, leaving the rest of the image's state (geometry, alt)
+// intact. All other shapes pass through.
 function redactForRead(s: CanvasShape): CanvasShape | Record<string, unknown> {
   if (s.type !== 'image') return s;
   const { src, ...rest } = s;
-  return { ...rest, src: `<image data (~${Math.round(src.length / 1024)}KB); call read_image("${s.id}") to view>` };
+  // The size is only meaningful when the pixels ARE the src — for an asset URL, `src.length`
+  // measures the URL, and claiming it as the image's size would just be wrong.
+  const size = src.startsWith('data:') ? ` (~${Math.round(src.length / 1024)}KB)` : '';
+  return { ...rest, src: `<image data${size}; call read_image("${s.id}") to view>` };
 }
 
 export function readOp(store: CanvasStore): OpResult {
@@ -145,10 +149,49 @@ export function readOp(store: CanvasStore): OpResult {
   return { text: `${shapes.length} shape(s):\n${JSON.stringify(shapes.map(redactForRead), null, 2)}` };
 }
 
-/** The data URL of an image shape, or null if not an image / not found / no pixels. */
+/** The `src` of an image shape, or null if not an image / not found / no pixels. Since
+ *  #290 that is usually an `/api/canvas-assets/...` URL, not a data URL — see
+ *  {@link readImageOp}, which is what the tool actually calls. */
 export function imageSrcOf(store: CanvasStore, id: string): string | null {
   const s = store.getState().shapes.find((x) => x.id === id);
   return s && s.type === 'image' && s.src ? s.src : null;
+}
+
+/** Base64 pixels plus their media type — what an MCP `image` content block carries. */
+export interface ImageBytes {
+  data: string;
+  mimeType: string;
+}
+
+/** Fetch an asset URL (`/api/canvas-assets/<canvas>/<key>`) and hand back its bytes.
+ *  Injected because only the container half knows the edge origin and holds the service
+ *  credential; `server/canvas-room.ts` binds the production one. */
+export type FetchAsset = (src: string) => Promise<ImageBytes>;
+
+export type ImageOpResult = OpResult | { image: ImageBytes; text: string };
+
+const DATA_URL = /^data:(image\/[a-z+]+);base64,(.+)$/s;
+
+/**
+ * The `read_image` tool body: the pixels of one image shape, ready to hand to the model.
+ *
+ * TWO `src` shapes are live at once (#340). Older canvases carry an inline data URL, from
+ * before #290 moved the pixels to R2; everything since carries the asset ROUTE, whose
+ * bytes only the edge can serve and only to an authenticated caller — hence `fetchAsset`.
+ */
+export async function readImageOp(store: CanvasStore, id: string, fetchAsset?: FetchAsset): Promise<ImageOpResult> {
+  const src = imageSrcOf(store, id);
+  if (!src) return { text: `No image data for "${id}" (not an image shape, not found, or its pixels have not synced yet).`, isError: true };
+  const m = DATA_URL.exec(src);
+  if (m) return { image: { data: m[2] as string, mimeType: m[1] as string }, text: `Image shape ${id}.` };
+  if (!fetchAsset) {
+    return { text: `Image "${id}" lives at "${src.slice(0, 48)}" and this process cannot fetch canvas assets.`, isError: true };
+  }
+  try {
+    return { image: await fetchAsset(src), text: `Image shape ${id}.` };
+  } catch (e) {
+    return { text: `Could not read the pixels of "${id}": ${(e as Error).message}`, isError: true };
+  }
 }
 
 /** How a freshly attached batch is positioned: tuck it, or honor the agent's coords. */
