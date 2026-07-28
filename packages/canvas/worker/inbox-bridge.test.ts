@@ -26,6 +26,8 @@ let servedMcpTokenHeaders: Array<string | null> = [];
 let servedConversations: Array<string | null> = [];
 let replyCalls: string[] = [];
 let markReadCalls: string[] = [];
+let attachCanvasCalls: Array<[string, string]> = [];
+let servedPairings: Array<string | null> = [];
 let mintCalls = 0;
 let mintResult: string | null = 'ghs_minted';
 let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
@@ -47,6 +49,7 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     servedAssigns.push(req.headers.get('x-inbox-assign'));
     servedConversations.push(req.headers.get('x-inbox-conversation'));
+    servedPairings.push(req.headers.get('x-inbox-canvas-pairing'));
     return new Response('proxied');
   },
   sandboxFor: () => ({}),
@@ -74,13 +77,26 @@ afterAll(() => {
 let linkedCanvas: { visibility: 'workspace' | 'private'; createdBy: string | null } | null = null;
 const realCanvases = await import('../web-poc/lib/db/queries/canvases.ts');
 const realGetCanvas = realCanvases.get;
-let getCanvasImpl: typeof realGetCanvas = (() => Promise.resolve(linkedCanvas as never)) as never;
+// #264 canvas pairing: the registry rows the edge now reads/writes itself, keyed by id so a
+// pairing test can pose a same- vs other-workspace target while `linkedCanvas` keeps serving
+// the visibility gate above.
+let canvasesById: Record<string, { id: string; workspaceId: string }> = {};
+let createdCanvases: Array<{ workspaceId: string; name: string }> = [];
+let getCanvasImpl: typeof realGetCanvas = ((_db: unknown, canvasId: string) =>
+  Promise.resolve((canvasesById[canvasId] ?? linkedCanvas) as never)) as never;
+const realCreateCanvas = realCanvases.create;
+let createCanvasImpl: typeof realCreateCanvas = ((_db: unknown, input: { workspaceId: string; name: string }) => {
+  createdCanvases.push(input);
+  return Promise.resolve({ id: `cv_new_${createdCanvases.length}`, ...input } as never);
+}) as never;
 mock.module('../web-poc/lib/db/queries/canvases.ts', () => ({
   ...realCanvases,
   get: (...args: Parameters<typeof realGetCanvas>) => getCanvasImpl(...args),
+  create: (...args: Parameters<typeof realCreateCanvas>) => createCanvasImpl(...args),
 }));
 afterAll(() => {
   getCanvasImpl = realGetCanvas;
+  createCanvasImpl = realCreateCanvas;
 });
 mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
   get: () => Promise.resolve(conv),
@@ -90,6 +106,10 @@ mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
   },
   markRead: (_db: unknown, id: string) => {
     markReadCalls.push(id);
+    return Promise.resolve(conv);
+  },
+  attachCanvas: (_db: unknown, id: string, canvasId: string) => {
+    attachCanvasCalls.push([id, canvasId]);
     return Promise.resolve(conv);
   },
 }));
@@ -159,6 +179,10 @@ beforeEach(() => {
   servedConversations = [];
   replyCalls = [];
   markReadCalls = [];
+  attachCanvasCalls = [];
+  servedPairings = [];
+  canvasesById = {};
+  createdCanvases = [];
   mintCalls = 0;
   mintResult = 'ghs_minted';
   mcpTokensByWorkspace = {};
@@ -264,6 +288,101 @@ describe('handleInboxBridge: the open-conversation GET forwards the resolved Con
     await settle();
 
     expect(markReadCalls).toEqual(['conv_1']);
+  });
+});
+
+// Canvas pairing split (ADR-0018 / #264): the ROW half of attach-canvas is the edge's now —
+// same-workspace enforcement, creating the canvas for an empty body, and writing the
+// conversation→canvas edge. The container is left only the card placement, which it learns
+// from the forwarded pairing header.
+describe('handleInboxBridge: attach-canvas — the edge owns the rows (#264)', () => {
+  const attach = (body: Record<string, unknown>, convId = 'conv_1') => {
+    const subPath = `/api/inbox/${convId}/attach-canvas`;
+    return handleInboxBridge(
+      new Request(`https://poc.cedarpad.com/inbox/${convId}/bridge${subPath}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+      {} as never,
+      user,
+      convId,
+      subPath,
+      mint,
+      async () => null,
+    );
+  };
+
+  test('an existing same-workspace canvas: the edge writes the edge and forwards the pairing', async () => {
+    conv = row({ id: 'conv_1', sessionId: 'sess_9', ownerRef: 'chat_owner', workspaceId: 'ws_a', summary: 'Pricing' });
+    canvasesById = { cv_board: { id: 'cv_board', workspaceId: 'ws_a' } };
+
+    const res = await attach({ canvasId: 'cv_board' });
+
+    expect(res.status).toBe(200); // proxied to the container, which places the card
+    expect(attachCanvasCalls).toEqual([['conv_1', 'cv_board']]);
+    expect(servedPairings).toEqual([
+      JSON.stringify({ id: 'conv_1', sessionId: 'sess_9', ownerRef: 'chat_owner', canvasId: 'cv_board', summary: 'Pricing' }),
+    ]);
+  });
+
+  test('a canvas in ANOTHER workspace is still rejected — 400, no edge written, no wake', async () => {
+    conv = row({ id: 'conv_1', workspaceId: 'ws_a' });
+    canvasesById = { cv_foreign: { id: 'cv_foreign', workspaceId: 'ws_OTHER' } };
+
+    const res = await attach({ canvasId: 'cv_foreign' });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'wrong_workspace' });
+    expect(attachCanvasCalls).toEqual([]);
+    expect(served).toEqual([]);
+  });
+
+  test('an empty body creates the canvas in the conversation’s workspace, named from the summary', async () => {
+    conv = row({ id: 'conv_1', workspaceId: 'ws_a', summary: 'Explore the pricing model options' });
+
+    const res = await attach({});
+
+    expect(res.status).toBe(200);
+    expect(createdCanvases).toEqual([{ workspaceId: 'ws_a', name: 'Explore the pricing model options' }]);
+    expect(attachCanvasCalls).toEqual([['conv_1', 'cv_new_1']]);
+  });
+
+  test('an already-linked conversation is refused at the edge (409, first-wins) — the runner never wakes', async () => {
+    conv = row({ id: 'conv_1', canvasId: 'cv_already' });
+
+    const res = await attach({ canvasId: 'cv_board' });
+
+    expect(res.status).toBe(409);
+    expect(attachCanvasCalls).toEqual([]);
+    expect(served).toEqual([]);
+  });
+
+  test('a client-sent pairing header never survives — the edge overwrites it, and strips it elsewhere', async () => {
+    conv = row({ id: 'conv_1', workspaceId: 'ws_a' });
+    canvasesById = { cv_board: { id: 'cv_board', workspaceId: 'ws_a' } };
+    const forged = JSON.stringify({ id: 'conv_1', sessionId: 's', ownerRef: null, canvasId: 'cv_elsewhere', summary: null });
+    const subPath = '/api/inbox/conv_1/attach-canvas';
+    const res = await handleInboxBridge(
+      new Request(`https://poc.cedarpad.com/inbox/conv_1/bridge${subPath}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-inbox-canvas-pairing': forged },
+        body: JSON.stringify({ canvasId: 'cv_board' }),
+      }),
+      {} as never,
+      user,
+      'conv_1',
+      subPath,
+      mint,
+      async () => null,
+    );
+    await proxy('GET', '/api/chat/chat_1/transcript');
+
+    expect(res.status).toBe(200);
+    expect(servedPairings).toEqual([
+      JSON.stringify({ id: 'conv_1', sessionId: 's', ownerRef: null, canvasId: 'cv_board', summary: null }),
+      null,
+    ]);
   });
 });
 

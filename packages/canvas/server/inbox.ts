@@ -9,9 +9,9 @@
 // notify seam, and a `runTurn` that actually drives `query({ resume })`.
 
 import { conversations } from '../web-poc/lib/db/index.ts';
-import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
+import type { ForwardedPairing } from '../shared/bridge-wire.ts';
 import type { CanvasImage } from './agent.ts';
 import { type BlobGetter, readRawTranscript, restore as restoreTranscript } from './transcript-r2.ts';
 
@@ -92,10 +92,10 @@ export async function backfillCanvasEdges(db: Database, canvasId: string, chatId
   }
 }
 
-/** The seam attach needs from a canvas session: current shapes (for free-space placement)
- * and an upsert (to place the card). The bridge adapts its CanvasSession registry to this. */
-export interface AttachDeps {
-  db: Database;
+/** The seam card placement needs from a canvas session: current shapes (for free-space
+ * placement) and an upsert (to place the card). The bridge adapts its CanvasSession registry to
+ * this. No database: ADR-0018 / #264 left the row work at the edge. */
+export interface PlaceChatCardDeps {
   getSession: (canvasId: string) => Promise<{
     // ReadonlyArray<unknown>: the real store yields the CanvasShape union, whose arrow member
     // has no x/y/w at all — placement coerces per-shape instead of demanding a common shape.
@@ -106,53 +106,22 @@ export interface AttachDeps {
   chatIdForSession: (sessionId: string) => string | null;
 }
 
-export type AttachResult =
-  | { ok: true; canvasId: string }
-  | { ok: false; error: 'not_found' | 'already_linked' | 'wrong_workspace' };
-
-/** Mirrors src/active-canvas DEFAULT_CANVAS_ID: the legacy canvas every workspace always
- * offers, registry-row-less by design (worker/shell.ts lists it unconditionally). */
-const DEFAULT_CANVAS_ID = 'default';
-
 /**
- * Attach (canvas pairing, slice 3): link a canvas-less Conversation to a canvas and place a
- * live `chat` card shape on it, so the pairing is visible from both sides. `canvasId` given →
- * attach to that existing canvas (same-workspace only); omitted → create one in the
- * Conversation's workspace, named from the chat summary. First-wins: an already-linked
- * Conversation is refused (no detach in v1). The card fronts the EXISTING chat via its
- * `chatId` prop (the shape id must be a fresh `shape:` id — tldraw owns that namespace).
+ * Canvas pairing, container half (slice 3, split in ADR-0018 / #264): place a live `chat` card
+ * shape on the canvas the EDGE already paired this Conversation with, so the pairing is visible
+ * from both sides. Everything row-shaped — picking or creating the canvas, the same-workspace
+ * check, writing the Conversation→canvas edge — happens at the edge now and arrives here as the
+ * forwarded `pairing`. The card fronts the EXISTING chat via its `chatId` prop (the shape id must
+ * be a fresh `shape:` id — tldraw owns that namespace).
  */
-export async function attachConversationToCanvas(
-  deps: AttachDeps,
-  conversationId: string,
-  input: { canvasId?: string },
-): Promise<AttachResult> {
-  const conv = await conversations.get(deps.db, conversationId);
-  if (!conv) return { ok: false, error: 'not_found' };
-  if (conv.canvasId) return { ok: false, error: 'already_linked' };
-
-  let canvasId = input.canvasId;
-  if (canvasId) {
-    // The legacy default canvas has no registry row but belongs to every workspace.
-    if (canvasId !== DEFAULT_CANVAS_ID) {
-      const target = await canvasRegistry.get(deps.db, canvasId);
-      if (!target) return { ok: false, error: 'not_found' };
-      if (target.workspaceId !== conv.workspaceId) return { ok: false, error: 'wrong_workspace' };
-    }
-  } else {
-    const name = (conv.summary ?? '').trim().slice(0, 60) || 'Canvas';
-    canvasId = (await canvasRegistry.create(deps.db, { workspaceId: conv.workspaceId, name })).id;
-  }
-
-  await conversations.attachCanvas(deps.db, conv.id, canvasId);
-
+export async function placeChatCard(deps: PlaceChatCardDeps, pairing: ForwardedPairing): Promise<void> {
   // Place the card in free space: right of everything, level with the top of the layout.
-  const session = await deps.getSession(canvasId);
+  const session = await deps.getSession(pairing.canvasId);
   const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
   const shapes = session.shapes().map((s) => s as { x?: unknown; y?: unknown; w?: unknown });
   const x = shapes.length ? Math.max(...shapes.map((s) => num(s.x) + num(s.w))) + 80 : 120;
   const y = shapes.length ? Math.min(...shapes.map((s) => num(s.y))) : 120;
-  const chatId = deps.chatIdForSession(conv.sessionId) ?? conv.ownerRef ?? conv.id;
+  const chatId = deps.chatIdForSession(pairing.sessionId) ?? pairing.ownerRef ?? pairing.id;
   session.upsert([
     {
       id: `shape:pair-${crypto.randomUUID()}`,
@@ -161,11 +130,10 @@ export async function attachConversationToCanvas(
       y,
       w: 380,
       h: 460,
-      title: (conv.summary ?? '').trim().slice(0, 40) || 'Chat',
+      title: (pairing.summary ?? '').trim().slice(0, 40) || 'Chat',
       chatId,
     },
   ]);
-  return { ok: true, canvasId };
 }
 
 /**

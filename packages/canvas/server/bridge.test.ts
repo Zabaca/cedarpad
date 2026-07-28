@@ -781,51 +781,49 @@ describe('POST /api/inbox/:id/reply routes the resumed turn to the conversation�
   });
 });
 
-// Canvas pairing slice 3: POST /api/inbox/:id/attach-canvas links a canvas-less Conversation
-// to a canvas (creating one when none is named) and places a live chat card on it. The route
-// wires the REAL attach core (inbox.ts) to the bridge's canvas-session registry + registry db.
+// Canvas pairing slice 3, container half (ADR-0018 / #264): POST /api/inbox/:id/attach-canvas
+// places a live chat card on the canvas the EDGE already paired and wrote the row edge for,
+// reading that pairing off x-inbox-canvas-pairing. The route makes NO database write — it wires
+// the placement core (inbox.ts) to the bridge's canvas-session registry.
 describe('POST /api/inbox/:id/attach-canvas', () => {
-  const attachReq = (id: string, body: Record<string, unknown> = {}): Request =>
+  const attachReq = (id: string, pairing?: Record<string, unknown>): Request =>
     new Request(`http://localhost/api/inbox/${encodeURIComponent(id)}/attach-canvas`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      headers: {
+        'content-type': 'application/json',
+        ...(pairing ? { 'x-inbox-canvas-pairing': JSON.stringify(pairing) } : {}),
+      },
+      body: JSON.stringify({}),
     });
 
-  test('create-and-attach: 200, a new canvas in the conversation’s workspace, edge written', async () => {
-    const conv = await conversations.create(webPocDb, {
-      sessionId: `sess_attach_${crypto.randomUUID()}`,
-      userId: 'default',
-      workspaceId: 'ws_attach_test',
-      ownerRef: `chat_attach_${crypto.randomUUID()}`,
-      summary: 'Pick a pricing model',
-    });
+  test('the forwarded pairing places the chat card on that canvas, and 200s with it', async () => {
+    const canvasId = `cv_pair_${crypto.randomUUID().slice(0, 8)}`;
+    const ownerRef = `chat_attach_${crypto.randomUUID()}`;
 
-    const res = await handleRequest(attachReq(conv.id));
+    const res = await handleRequest(
+      attachReq('conv_paired', { id: 'conv_paired', sessionId: 'sess_paired', ownerRef, canvasId, summary: 'Pick a pricing model' }),
+    );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; canvasId: string };
-    expect(body.ok).toBe(true);
-    expect(body.canvasId).toStartWith('cv_');
-    expect((await conversations.get(webPocDb, conv.id))?.canvasId).toBe(body.canvasId);
+    expect(await res.json()).toEqual({ ok: true, canvasId });
+    const read = await handleRequest(new Request(`http://localhost/api/canvas?canvas=${canvasId}`));
+    const { shapes } = (await read.json()) as { shapes: Array<Record<string, unknown>> };
+    const card = shapes.find((s) => s.type === 'chat');
+    expect(card?.chatId).toBe(ownerRef);
   });
 
-  test('an already-linked conversation is refused with 409 (first-wins, no detach)', async () => {
-    const conv = await conversations.create(webPocDb, {
-      sessionId: `sess_linked_${crypto.randomUUID()}`,
-      userId: 'default',
-      workspaceId: 'ws_attach_test',
-      canvasId: 'cv_already',
-      summary: 'linked',
-    });
+  test('a missing or id-mismatched pairing header → 404, and no card is placed', async () => {
+    const canvasId = `cv_nopair_${crypto.randomUUID().slice(0, 8)}`;
 
-    const res = await handleRequest(attachReq(conv.id));
-    expect(res.status).toBe(409);
-  });
+    expect((await handleRequest(attachReq('conv_paired'))).status).toBe(404);
+    const mismatched = await handleRequest(
+      attachReq('conv_paired', { id: 'conv_OTHER', sessionId: 's', ownerRef: null, canvasId, summary: null }),
+    );
+    expect(mismatched.status).toBe(404);
 
-  test('unknown conversation → 404', async () => {
-    const res = await handleRequest(attachReq('conv_ghost'));
-    expect(res.status).toBe(404);
+    const read = await handleRequest(new Request(`http://localhost/api/canvas?canvas=${canvasId}`));
+    const { shapes } = (await read.json()) as { shapes: Array<Record<string, unknown>> };
+    expect(shapes.filter((s) => s.type === 'chat')).toHaveLength(0);
   });
 });
 

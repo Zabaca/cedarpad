@@ -35,6 +35,9 @@ export const DEV_AGENT_REPO_HEADER = 'x-dev-agent-repo';
 /** The Conversation the edge already resolved + ownership-checked, forwarded on the
  * open-conversation GET so the container never re-reads the row (ADR-0018 / #261). */
 export const INBOX_CONVERSATION_HEADER = 'x-inbox-conversation';
+/** The canvas pairing the edge already resolved AND wrote (link/create + same-workspace check),
+ * forwarded on attach-canvas so the container only places the chat card (ADR-0018 / #264). */
+export const INBOX_PAIRING_HEADER = 'x-inbox-canvas-pairing';
 /** Huddles (ADR-0017): the canvas whose voice room the agent worker should join. */
 export const HUDDLE_CANVAS_HEADER = 'x-huddle-canvas';
 /** The agent's edge-minted LiveKit room token (signing keys never enter the container). */
@@ -106,6 +109,30 @@ export function decodeForwardedConversation(header: string | null): ForwardedCon
   if (!header) return null;
   try {
     return ForwardedConversation.parse(JSON.parse(header));
+  } catch {
+    return null;
+  }
+}
+
+// --- forwarded canvas pairing (INBOX_PAIRING_HEADER) ----------------------------
+
+/** #264: the same forwarded row as above, plus the canvas the edge picked (or created) and
+ * linked — everything the container needs to place the chat card, and nothing more. Same
+ * discipline: the edge stamps it, the bridge PARSES it and cross-checks `id` against the path. */
+export const ForwardedPairing = ForwardedConversation.extend({
+  canvasId: z.string().min(1),
+  summary: z.string().nullable(),
+});
+export type ForwardedPairing = z.infer<typeof ForwardedPairing>;
+
+export const encodeForwardedPairing = (pairing: ForwardedPairing): string =>
+  JSON.stringify(ForwardedPairing.parse(pairing));
+
+/** Parse a forwarded pairing header; `null` for absent, non-JSON, or off-contract. */
+export function decodeForwardedPairing(header: string | null): ForwardedPairing | null {
+  if (!header) return null;
+  try {
+    return ForwardedPairing.parse(JSON.parse(header));
   } catch {
     return null;
   }

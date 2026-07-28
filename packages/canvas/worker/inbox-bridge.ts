@@ -12,14 +12,19 @@ import { resolveDevAgentRepo } from './github-connection.ts';
 import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolver.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
-import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 import {
   CANVAS_ID_HEADER,
   DEV_AGENT_GIT_TOKEN_HEADER,
   DEV_AGENT_REPO_HEADER,
   INBOX_CONVERSATION_HEADER,
+  INBOX_PAIRING_HEADER,
   encodeForwardedConversation,
+  encodeForwardedPairing,
 } from '../shared/bridge-wire.ts';
+import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
+import type { Database } from '../web-poc/lib/db/index.ts';
+import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 
 // The edge chat proxy (ADR-0009, PRD #119 slice #122). Under "one chat system" every chat
 // surface is a LIVE VIEW of its session's runner bridge; a Shell-mounted <ChatView> points
@@ -59,6 +64,43 @@ const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
 // The open-conversation GET (`GET /api/inbox/:convId/chat`) — the Shell resolving a thread to
 // its chatId. ADR-0018 / #261: the edge already holds the row, so it forwards it here.
 const IS_OPEN_CONVERSATION = /^\/api\/inbox\/[^/]+\/chat$/;
+// Canvas pairing (`POST /api/inbox/:convId/attach-canvas`). ADR-0018 / #264: the ROW half runs
+// here; the container keeps only the card placement.
+const IS_ATTACH_CANVAS = /^\/api\/inbox\/[^/]+\/attach-canvas$/;
+
+export type PairingResult =
+  | { ok: true; canvasId: string }
+  | { ok: false; error: 'not_found' | 'already_linked' | 'wrong_workspace' };
+
+/**
+ * The row half of canvas pairing (#264, was `attachConversationToCanvas`'s first half): pick the
+ * canvas and write the Conversation→canvas edge. `canvasId` given → that existing canvas,
+ * SAME-WORKSPACE ONLY (the legacy `default` canvas has no registry row but belongs to every
+ * workspace); omitted → create one in the Conversation's workspace, named from the chat summary.
+ * First-wins: an already-linked Conversation is refused (no detach in v1).
+ */
+export async function pairConversationWithCanvas(
+  database: Database,
+  conv: ConversationRow,
+  requestedCanvasId: string | undefined,
+): Promise<PairingResult> {
+  if (conv.canvasId) return { ok: false, error: 'already_linked' };
+
+  let canvasId = requestedCanvasId;
+  if (canvasId) {
+    if (canvasId !== DEFAULT_CANVAS_ID) {
+      const target = await canvasRegistry.get(database, canvasId);
+      if (!target) return { ok: false, error: 'not_found' };
+      if (target.workspaceId !== conv.workspaceId) return { ok: false, error: 'wrong_workspace' };
+    }
+  } else {
+    const name = (conv.summary ?? '').trim().slice(0, 60) || 'Canvas';
+    canvasId = (await canvasRegistry.create(database, { workspaceId: conv.workspaceId, name })).id;
+  }
+
+  await conversations.attachCanvas(database, conv.id, canvasId);
+  return { ok: true, canvasId };
+}
 
 export async function handleInboxBridge(
   request: Request,
@@ -82,6 +124,10 @@ export async function handleInboxBridge(
 
   const isChatSend = request.method === 'POST' && IS_CHAT_SEND.test(subPath);
   const isOpenConversation = request.method === 'GET' && IS_OPEN_CONVERSATION.test(subPath);
+  const isAttachCanvas = request.method === 'POST' && IS_ATTACH_CANVAS.test(subPath);
+  // #264: attach-canvas is the one proxied path the edge READS the body of (to learn which
+  // canvas was asked for), so it is buffered here and re-attached to the proxied request.
+  const attachBody = isAttachCanvas ? await request.text() : null;
 
   // Inbox triage side-effect (ADR-0009 / #124): a reply is a chat SEND now (not the retired
   // /api/inbox/:id/reply), so flip the Conversation waiting_on:human → agent here — the same
@@ -98,7 +144,10 @@ export async function handleInboxBridge(
   // method, headers, and the (streaming) body through unbuffered.
   const target = new URL(request.url);
   target.pathname = subPath;
-  const proxied = new Request(target, request);
+  const proxied =
+    attachBody === null
+      ? new Request(target, request)
+      : new Request(target, { method: request.method, headers: request.headers, body: attachBody });
 
   // ADR-0010 → ADR-0015: a dev-agent Conversation's SEND — and only a send — carries a
   // freshly-minted, ~1h git token scoped to the conversation's OWN repo (`conv.repo`, the
@@ -138,6 +187,37 @@ export async function handleInboxBridge(
     proxied.headers.set(
       INBOX_CONVERSATION_HEADER,
       encodeForwardedConversation({ id: conv.id, sessionId: conv.sessionId, ownerRef: conv.ownerRef }),
+    );
+  }
+
+  // ADR-0018 / #264: canvas pairing's row work happens HERE — link the Conversation to the
+  // requested canvas (same-workspace only) or create one in its workspace — and the result rides
+  // to the container, which only places the chat card. A refusal never wakes the runner. Same
+  // set-or-DELETE discipline as above: a client-sent header must never survive.
+  proxied.headers.delete(INBOX_PAIRING_HEADER);
+  if (isAttachCanvas) {
+    const body = ((): { canvasId?: unknown } => {
+      try {
+        return JSON.parse(attachBody || '{}') as { canvasId?: unknown };
+      } catch {
+        return {};
+      }
+    })();
+    const requested = typeof body.canvasId === 'string' && body.canvasId ? body.canvasId : undefined;
+    const pairing = await pairConversationWithCanvas(database, conv, requested);
+    if (!pairing.ok) {
+      const status = pairing.error === 'not_found' ? 404 : pairing.error === 'already_linked' ? 409 : 400;
+      return Response.json({ error: pairing.error }, { status });
+    }
+    proxied.headers.set(
+      INBOX_PAIRING_HEADER,
+      encodeForwardedPairing({
+        id: conv.id,
+        sessionId: conv.sessionId,
+        ownerRef: conv.ownerRef,
+        canvasId: pairing.canvasId,
+        summary: conv.summary,
+      }),
     );
   }
 
