@@ -20,7 +20,13 @@ export default defineConfig({
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    // #276: one signed-in user owns the workspace the bridge files Conversations into, and
+    // seeding that membership writes the live D1 — which the edge Worker holds open. So it
+    // happens exactly once, before anything else runs, rather than per test.
+    { name: 'setup', testMatch: /.*\.setup\.ts/ },
+    { name: 'chromium', testIgnore: /.*\.setup\.ts/, dependencies: ['setup'], use: { ...devices['Desktop Chrome'] } },
+  ],
   webServer: {
     // The canvas dev stack (vite + bun bridge + edge Worker). Inherits PORT / CANVAS_BRIDGE_PORT
     // / CANVAS_D1_STATE from the wrappers the `test:e2e` script already applied.

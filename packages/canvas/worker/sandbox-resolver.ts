@@ -74,6 +74,28 @@ export function wantsEventStream(accept: string | null): boolean {
   return accept?.includes('text/event-stream') ?? false;
 }
 
+/**
+ * E2E ONLY (#276, and the `E2E_MODE` shim convention in `.claude/skills/worktree/SKILL.md`):
+ * the origin to proxy a workspace request to INSTEAD of its container.
+ *
+ * Local dev has no container — `server/dev-worker-config.ts` drops `containers` from the
+ * generated config, so a Sandbox DO proxy throws "Containers have not been enabled" — but it
+ * does have the bridge, running as a plain process on a port. That gap is what kept e2e from
+ * driving anything through the edge's own gate. Returns null (⇒ the real container path)
+ * unless BOTH belts hold: `E2E_MODE` is on, and the target is loopback. Neither var exists in
+ * `wrangler.jsonc`, so nothing deployed can reach this; the loopback check is the second belt
+ * in case one ever does.
+ *
+ * Placed at the START of `serveWorkspace`, which is downstream of every auth and ownership
+ * check — so an unauthenticated or non-owning request is refused before this is consulted
+ * (shim rule 2: never paper over a gate).
+ */
+export function localBridgeOrigin(env: { E2E_MODE?: string; LOCAL_BRIDGE_ORIGIN?: string }): string | null {
+  if (env.E2E_MODE !== '1') return null;
+  const origin = env.LOCAL_BRIDGE_ORIGIN ?? '';
+  return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ? origin : null;
+}
+
 /** The retryable stand-in for a stream response during a failed/incomplete cold boot. */
 export function sseRetryResponse(): Response {
   return new Response('retry: 2000\n\n', {

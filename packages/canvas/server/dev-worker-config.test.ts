@@ -58,6 +58,16 @@ describe('devWorkerConfig: the edge Worker as local dev runs it', () => {
     });
   });
 
+  test('no bridge origin ⇒ no e2e container stand-in in the config at all', () => {
+    expect(dev.vars).not.toHaveProperty('E2E_MODE');
+    expect(dev.vars).not.toHaveProperty('LOCAL_BRIDGE_ORIGIN');
+  });
+
+  test('under e2e the edge is told where the bridge is, since local dev has no container (#276)', () => {
+    const e2e = devWorkerConfig(base, '/wt/packages/canvas', 'http://localhost:4520', 'http://localhost:4521');
+    expect(e2e.vars).toMatchObject({ E2E_MODE: '1', LOCAL_BRIDGE_ORIGIN: 'http://localhost:4521' });
+  });
+
   test('binds the platform data layer to a local D1 alongside the waitlist D1', () => {
     expect(dev.d1_databases).toEqual([
       { binding: 'WAITLIST', database_name: 'cedarpad-waitlist', database_id: 'w-1' },

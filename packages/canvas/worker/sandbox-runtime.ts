@@ -5,7 +5,7 @@ import { resolveConnectorEnv } from './connector-secrets.ts';
 import type { Env } from './index.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv, warehouseContainerEnv } from './container-env.ts';
 import { singleFlight } from './single-flight.ts';
-import { type SandboxCoords, decideWarm, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
+import { type SandboxCoords, decideWarm, localBridgeOrigin, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 
 // The Sandbox resolver's runtime half: the wake/expose/proxy orchestration that used
 // to be inline in the Worker's fetch handler keyed by the constant `'canvas'`. The
@@ -136,6 +136,14 @@ function proxy(sandbox: SandboxStub, request: Request, sandboxId: string): Promi
 export async function serveWorkspace(request: Request, env: Env, coords: SandboxCoords): Promise<Response> {
   const { sandboxId } = coords;
   const url = new URL(request.url);
+  // E2E ONLY (#276): no container exists locally, so the workspace IS the bridge process on a
+  // loopback port. Reached only AFTER the gate and the ownership check upstream, so it bypasses
+  // nothing that guards a request — it only replaces the transport into the container.
+  const localBridge = localBridgeOrigin(env);
+  if (localBridge) {
+    const target = new URL(url.pathname + url.search, localBridge);
+    return fetch(new Request(target, request));
+  }
   const sandbox = sandboxFor(env, sandboxId);
   // Warm fast path: the container's been up since a prior request, so the port
   // is still exposed — just proxy (1 round-trip). The handshake (setEnvVars,

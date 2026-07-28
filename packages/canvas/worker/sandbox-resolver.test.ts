@@ -5,6 +5,7 @@ import {
   LEGACY_R2_PREFIX,
   LEGACY_SANDBOX_ID,
   decideWarm,
+  localBridgeOrigin,
   resolve,
   sseRetryResponse,
   wantsEventStream,
@@ -87,5 +88,33 @@ describe('SSE cold-boot fallback — keep the browser reconnecting', () => {
     expect(res.headers.get('content-type')).toBe('text/event-stream');
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(await res.text()).toBe('retry: 2000\n\n');
+  });
+});
+
+describe('localBridgeOrigin — the e2e stand-in for a container (#276)', () => {
+  // Local dev runs no container: `containers` is dropped from the generated config
+  // (server/dev-worker-config.ts), so proxying into the Sandbox DO throws "Containers have
+  // not been enabled". The bridge is just a process on a port there, so e2e points the edge
+  // straight at it. BOTH belts must hold or there is no stand-in.
+
+  test('a localhost bridge under E2E_MODE is the proxy target', () => {
+    expect(localBridgeOrigin({ E2E_MODE: '1', LOCAL_BRIDGE_ORIGIN: 'http://localhost:4693' })).toBe(
+      'http://localhost:4693',
+    );
+    expect(localBridgeOrigin({ E2E_MODE: '1', LOCAL_BRIDGE_ORIGIN: 'http://127.0.0.1:4693' })).toBe(
+      'http://127.0.0.1:4693',
+    );
+  });
+
+  test('without E2E_MODE there is no stand-in, whatever the origin says', () => {
+    expect(localBridgeOrigin({ LOCAL_BRIDGE_ORIGIN: 'http://localhost:4693' })).toBeNull();
+    expect(localBridgeOrigin({ E2E_MODE: '0', LOCAL_BRIDGE_ORIGIN: 'http://localhost:4693' })).toBeNull();
+  });
+
+  test('a non-localhost origin is refused even under E2E_MODE — the shim can never reach a real host', () => {
+    for (const origin of ['https://app.cedarpad.com', 'http://localhost.evil.com', 'http://10.0.0.1:4693', '']) {
+      expect(localBridgeOrigin({ E2E_MODE: '1', LOCAL_BRIDGE_ORIGIN: origin })).toBeNull();
+    }
+    expect(localBridgeOrigin({ E2E_MODE: '1' })).toBeNull();
   });
 });
