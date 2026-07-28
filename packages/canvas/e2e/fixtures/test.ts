@@ -20,6 +20,8 @@
  * See `.claude/skills/worktree/SKILL.md` for the full picture, including the one `E2E_MODE`
  * shim this leans on (local dev has no container, so the edge proxies to the bridge).
  */
+import { fileURLToPath } from 'node:url';
+
 import { createClient } from '@libsql/client';
 import { type APIRequestContext, test as base, expect, request as apiRequest } from '@playwright/test';
 
@@ -39,11 +41,21 @@ export interface E2eUser {
   request: APIRequestContext;
 }
 
+/**
+ * Where the `setup` project parks the owning user's session (see e2e/specs/auth.setup.ts).
+ * Under this worktree's own `test-results/`, so parallel worktrees never share one.
+ */
+export const OWNER_STATE = fileURLToPath(new URL('../../test-results/.auth/owner.json', import.meta.url));
+
 export interface AuthFixtures {
-  /** Create a fresh account and return it signed in. Call it twice for two users. */
+  /** Create a fresh account and return it signed in. No workspace, so it owns nothing. */
   signIn: () => Promise<E2eUser>;
-  /** Make `user` a member of the bridge's workspace — an owner of what it files there. */
+  /** Make `user` a member of the bridge's workspace — an owner of what it files there.
+   *  ONE writer only: the `setup` project. See the warning on `OWNER_STATE`'s neighbour below. */
   joinBridgeWorkspace: (user: E2eUser) => Promise<void>;
+  /** The signed-in user who OWNS what the bridge files — seeded once by the `setup` project.
+   *  Request context only: no test needs its id, and not re-signing-in per test is the point. */
+  owner: APIRequestContext;
   /** An anonymous request context at the edge origin — the deny side of a gate assertion. */
   edgeRequest: APIRequestContext;
 }
@@ -66,40 +78,40 @@ export const test = base.extend<AuthFixtures>({
     for (const context of contexts) await context.dispose();
   },
 
+  /**
+   * WRITES THE LIVE D1 — call it ONLY from the `setup` project.
+   *
+   * The edge Worker holds the same SQLite file open, and D1's write lock admits one writer:
+   * an external write landing mid-request makes MINIFLARE's write fail, which surfaces as a
+   * sign-up 422 or a `conversation.start failed: 500` in an unrelated parallel test. Measured,
+   * not theorized — seeding per test made ~25% of a 4-worker run fail that way. Serialized
+   * into the one-shot `setup` project, where nothing else is in flight, it is stable.
+   */
   joinBridgeWorkspace: async ({}, use) => {
     await use(async (user) => {
       const db = createClient({ url: `file:${requireLocalD1File()}` });
-      // The edge (and a parallel worker's seed) writes the same file, so a write can land on
-      // SQLITE_BUSY. Retry rather than fail: the seed is idempotent, so a repeat is free.
-      const write = async (sql: string, args: unknown[]) => {
-        for (let attempt = 0; ; attempt++) {
-          try {
-            await db.execute({ sql, args: args as never });
-            return;
-          } catch (err) {
-            if (attempt >= 20 || !/SQLITE_BUSY|database is locked/.test(String(err))) throw err;
-            await new Promise((r) => setTimeout(r, 100));
-          }
-        }
-      };
       try {
         // The workspace row itself: `default` is the legacy id the container still files under,
         // and it has no creating API (#179 seeded it in production by hand). The first run
-        // creates it, later runs join the existing one — so this is idempotent across runs and
-        // across the workers sharing this worktree's D1.
-        await write('insert into workspaces (id, name, owner_user_id) values (?, ?, ?) on conflict do nothing', [
-          BRIDGE_WORKSPACE,
-          'E2E',
-          user.id,
-        ]);
-        await write(
-          'insert into workspace_members (id, workspace_id, user_id, role) values (?, ?, ?, ?) on conflict do nothing',
-          [`wm_e2e_${user.id}`, BRIDGE_WORKSPACE, user.id, 'member'],
-        );
+        // creates it, later runs join the existing one — so this is idempotent across runs.
+        await db.execute({
+          sql: 'insert into workspaces (id, name, owner_user_id) values (?, ?, ?) on conflict do nothing',
+          args: [BRIDGE_WORKSPACE, 'E2E', user.id],
+        });
+        await db.execute({
+          sql: 'insert into workspace_members (id, workspace_id, user_id, role) values (?, ?, ?, ?) on conflict do nothing',
+          args: [`wm_e2e_${user.id}`, BRIDGE_WORKSPACE, user.id, 'member'],
+        });
       } finally {
         db.close();
       }
     });
+  },
+
+  owner: async ({}, use) => {
+    const request = await apiRequest.newContext({ baseURL: EDGE_BASE_URL, storageState: OWNER_STATE });
+    await use(request);
+    await request.dispose();
   },
 
   edgeRequest: async ({}, use) => {

@@ -1,7 +1,9 @@
 import { createClient } from '@libsql/client';
 
 import { requireLocalD1File } from '../../server/local-d1.ts';
-import { type E2eUser, expect, test } from '../fixtures/test.ts';
+import type { APIRequestContext } from '@playwright/test';
+
+import { expect, test } from '../fixtures/test.ts';
 
 /**
  * The paths that only exist BEHIND the edge's gate (ADR-0018 / #276).
@@ -32,11 +34,11 @@ const platformDb = () => createClient({ url: `file:${requireLocalD1File()}` });
  * spec can start a turn; the Claude SDK turn itself is the one stubbed thing (`E2E_MODE`, see
  * server/bridge.ts) because it needs a real OAuth token and a model round-trip.
  */
-async function startConversation(user: E2eUser): Promise<{ id: string; chatId: string; message: string }> {
+async function startConversation(user: APIRequestContext): Promise<{ id: string; chatId: string; message: string }> {
   const chatId = `e2e-authed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const message = `first message ${chatId}`;
 
-  const res = await user.request.post(`/api/chat/${chatId}/send`, {
+  const res = await user.post(`/api/chat/${chatId}/send`, {
     headers: { 'x-headless-send': '1' },
     data: { message },
   });
@@ -82,25 +84,17 @@ test('the edge gate admits a signed-in user and refuses an anonymous one', async
   expect(await res.json()).toHaveProperty('workspaces');
 });
 
-test('a chat turn driven through the edge files its Conversation over the real RPC hop', async ({
-  signIn,
-  joinBridgeWorkspace,
-}) => {
-  const user = await signIn();
-  await joinBridgeWorkspace(user);
-
-  const conv = await startConversation(user);
+test('a chat turn driven through the edge files its Conversation over the real RPC hop', async ({ owner }) => {
+  const conv = await startConversation(owner);
 
   // Filed, and visible to its owner through the edge's OWN Inbox read — the same row, read
   // back through the gate rather than out of the file the spec just polled.
-  const inbox = await user.request.get('/api/inbox');
+  const inbox = await owner.get('/api/inbox');
   const items = ((await inbox.json()) as { items: Array<{ id: string; summary: string }> }).items;
   expect(items.find((i) => i.id === conv.id)?.summary).toBe(conv.message);
 });
 
-test('a user cannot open a Conversation they do not own', async ({ signIn, joinBridgeWorkspace }) => {
-  const owner = await signIn();
-  await joinBridgeWorkspace(owner);
+test('a user cannot open a Conversation they do not own', async ({ owner, signIn }) => {
   const conv = await startConversation(owner);
 
   // A second real account, signed in, with no membership of the Conversation's workspace.
@@ -114,7 +108,7 @@ test('a user cannot open a Conversation they do not own', async ({ signIn, joinB
   // the container: the edge answered.
   expect(denied.status()).toBe(404);
 
-  const allowed = await owner.request.get(path);
+  const allowed = await owner.get(path);
   expect(allowed.status()).toBe(200);
   // The edge resolved the row, ownership-checked it, and forwarded it on `x-inbox-conversation`
   // for the bridge to answer from — the seam open-conversation.spec.ts can only stamp by hand.

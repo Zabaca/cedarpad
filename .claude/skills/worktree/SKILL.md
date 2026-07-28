@@ -198,8 +198,9 @@ Three fixtures, all addressed at the **edge Worker's own origin**:
 
 | Fixture | What it gives you |
 | --- | --- |
-| `signIn()` | a fresh Better Auth account, signed in — returns `{ id, email, request }` |
-| `joinBridgeWorkspace(user)` | membership of the workspace the bridge files Conversations into |
+| `owner` | the signed-in user who OWNS what the bridge files — **use this one** |
+| `signIn()` | a fresh Better Auth account, signed in, owning nothing — the stranger side |
+| `joinBridgeWorkspace(user)` | membership of the bridge's workspace — `setup` project ONLY (see below) |
 | `edgeRequest` | an anonymous request context at the edge — the deny side of a gate assertion |
 
 **Auth is NOT shimmed.** `signIn()` posts to the edge's real `/api/auth/sign-up/email`
@@ -213,11 +214,21 @@ locally it sits BESIDE vite, which proxies only `/api/auth/*` and `/v1/*` to it.
 `$CANVAS_EDGE_PORT` is the real gate answering. The fixtures bind their request contexts to
 `EDGE_BASE_URL` (derived from `CANVAS_EDGE_PORT`) for exactly this reason.
 
-**`joinBridgeWorkspace` is the one raw-SQL seam.** The container files its Conversations
-into the legacy `default` workspace, and no API creates that row (production seeded it by
-hand — `scripts/seed-default-workspace.ts`), so the fixture writes the workspace +
-membership rows straight into this worktree's local D1. It is idempotent and retries
-`SQLITE_BUSY`, because miniflare and the parallel workers write the same file.
+**Never write the live D1 from a test.** `joinBridgeWorkspace` is the one raw-SQL seam —
+the container files its Conversations into the legacy `default` workspace, and no API
+creates that row (production seeded it by hand, `scripts/seed-default-workspace.ts`). But
+the edge Worker holds that SQLite file open, and D1's write lock admits ONE writer: an
+external write landing mid-request makes *miniflare's* write fail, and it surfaces
+somewhere else entirely — a sign-up `422 FAILED_TO_CREATE_USER`, or
+`[platform-rpc] conversation.start failed: 500` in an unrelated parallel test. Seeding per
+test made ~25% of a 4-worker run fail that way.
+
+So the seed runs exactly once, in the **`setup` project** (`e2e/specs/auth.setup.ts`, which
+every other project `dependencies`-on), where nothing else is in flight. It parks the
+session in `test-results/.auth/owner.json`, and the `owner` fixture picks it up. **Reads
+are fine** — WAL readers don't block writers, which is why the specs can poll the D1 as a
+witness. If you need new seeded state, extend the setup project; don't add a write to a
+test.
 
 ---
 
