@@ -6,6 +6,7 @@
 //
 // Never touches production: the generated config carries no routes, no crons, and a
 // local-only D1 binding.
+import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { writeDevWorkerConfig } from '../server/dev-worker-config.ts';
@@ -16,7 +17,10 @@ const WRANGLER = fileURLToPath(new URL('../node_modules/.bin/wrangler', import.m
 /** The origin the browser uses — the vite dev server (with-worktree-port.sh sets PORT). */
 export const webOrigin = () => `http://localhost:${process.env.PORT ?? 4510}`;
 
-/** Spawn wrangler with this worktree's dev config and state dir bolted on. */
+/** Spawn wrangler with this worktree's dev config and state dir bolted on.
+ *
+ * `node:child_process`, not `Bun.spawn`: Playwright's globalSetup imports this under
+ * NODE, where `Bun` is undefined. */
 export async function spawnWrangler(args: string[]) {
   const stateDir = localD1StateDir();
   const config = await writeDevWorkerConfig(stateDir, webOrigin());
@@ -24,13 +28,17 @@ export async function spawnWrangler(args: string[]) {
   // state dir, so point it at the package's real one (the bridge reads the same file).
   const devVars = fileURLToPath(new URL('../web-poc/.dev.vars', import.meta.url));
   const envFile = existsSync(devVars) ? ['--env-file', devVars] : [];
-  return Bun.spawn(
-    [WRANGLER, ...args, ...envFile, '--config', config, '--persist-to', stateDir],
-    { stdio: ['inherit', 'inherit', 'inherit'] },
-  );
+  return spawn(WRANGLER, [...args, ...envFile, '--config', config, '--persist-to', stateDir], {
+    stdio: 'inherit',
+  });
+}
+
+/** Spawn wrangler and wait for it — the one-shot form (migrations). */
+export async function runWrangler(args: string[]): Promise<number> {
+  const proc = await spawnWrangler(args);
+  return new Promise((resolve) => proc.on('exit', (code) => resolve(code ?? 1)));
 }
 
 if (import.meta.main) {
-  const proc = await spawnWrangler(process.argv.slice(2));
-  process.exit(await proc.exited);
+  process.exit(await runWrangler(process.argv.slice(2)));
 }

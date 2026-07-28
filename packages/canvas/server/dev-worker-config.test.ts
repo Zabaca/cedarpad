@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { devWorkerConfig } from './dev-worker-config.ts';
+import { readFileSync } from 'node:fs';
+import { devWorkerConfig, parseJsonc } from './dev-worker-config.ts';
 
 const base = {
   name: 'agent-canvas',
@@ -18,6 +19,27 @@ const base = {
   },
   env: { preview: { name: 'agent-canvas-preview' } },
 };
+
+describe('parseJsonc: read wrangler.jsonc without depending on the runtime’s loader', () => {
+  test('drops comments but never touches comment-like text inside strings', () => {
+    const text = `{
+      // the deployed worker
+      "name": "agent-canvas", /* inline */
+      "url": "https://app.cedarpad.com", // trailing
+      "path": "a/*not a comment*/b"
+    }`;
+    expect(parseJsonc(text)).toEqual({
+      name: 'agent-canvas',
+      url: 'https://app.cedarpad.com',
+      path: 'a/*not a comment*/b',
+    });
+  });
+
+  test('parses the real wrangler.jsonc', () => {
+    const text = readFileSync(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
+    expect((parseJsonc(text) as { name: string }).name).toBe('agent-canvas');
+  });
+});
 
 describe('devWorkerConfig: the edge Worker as local dev runs it', () => {
   const dev = devWorkerConfig(base, '/wt/packages/canvas', 'http://localhost:4520');

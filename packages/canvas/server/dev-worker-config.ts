@@ -2,7 +2,7 @@
 // deployed `wrangler.jsonc` so the two can't drift. Generated, never committed: the
 // production config stays free of the local D1 binding, so nothing here can reach a
 // deploy.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +10,41 @@ import { fileURLToPath } from 'node:url';
 export const PLATFORM_DB_BINDING = 'PLATFORM_DB';
 
 type Config = Record<string, unknown>;
+
+/**
+ * Parse JSONC (JSON + `//` and `/* *\/` comments) — what `wrangler.jsonc` is written in.
+ *
+ * Deliberately not `await import('…jsonc')`: Bun's loader handles that, but Playwright's
+ * globalSetup runs this module through its own transform, which does not. A string scan
+ * works under every runtime that loads this file.
+ */
+export function parseJsonc(text: string): unknown {
+  let out = '';
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (inString) {
+      out += c;
+      if (c === '\\') out += text[++i] ?? '';
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      out += c;
+    } else if (c === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += '\n';
+    } else if (c === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i++;
+    } else {
+      out += c;
+    }
+  }
+  return JSON.parse(out);
+}
 
 /**
  * `base` is the parsed `wrangler.jsonc`; `packageDir` is the absolute
@@ -61,8 +96,8 @@ const PACKAGE_DIR = fileURLToPath(new URL('..', import.meta.url));
  * the state it describes, so two worktrees never share one.
  */
 export async function writeDevWorkerConfig(stateDir: string, origin: string): Promise<string> {
-  // Bun parses JSONC natively; `wrangler.jsonc` stays the single source for both configs.
-  const base = (await import(join(PACKAGE_DIR, 'wrangler.jsonc'))).default as Config;
+  // `wrangler.jsonc` stays the single source for both configs.
+  const base = parseJsonc(readFileSync(join(PACKAGE_DIR, 'wrangler.jsonc'), 'utf8')) as Config;
   const config = devWorkerConfig(base, PACKAGE_DIR, origin);
   // The assets directory must exist for wrangler to boot, even before a `bun run build`.
   mkdirSync((config.assets as { directory: string }).directory, { recursive: true });
