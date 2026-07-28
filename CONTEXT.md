@@ -46,9 +46,12 @@ so we **never build RCE-agent sandboxing** — the deployment is the boundary. R
 multi-tenant plane (`tenant_id` scoping + RBAC), which would force sandboxing the RCE agent against
 untrusted members — the biggest, most safety-critical build, catastrophic if wrong.
 
-**Data is per-workspace (per Turso DB) in the target.** Because a Workspace = a deployment, its
-data lives in its **own Turso DB** (idiomatic for Turso — db-per-tenant), so cross-workspace
-`workspace_id` scoping (#57) largely **dissolves**: the DB *is* the workspace.
+**Data is per-workspace (its own database) in the target.** Because a Workspace = a deployment, its
+data lives in its **own database**, so cross-workspace `workspace_id` scoping (#57) largely
+**dissolves**: the DB *is* the workspace. The **vendor is downstream of this** — the store moves
+from Turso to **D1** ([ADR-0018](./docs/adr/0018-platform-data-layer-on-d1.md)), one static binding
+per Workspace deployment, without changing the tenancy model. Turso mentions elsewhere in this
+document describe **today's** runtime and stay accurate until that cutover lands.
 
 - **Today (single-deployment approximation)**: one edge Worker + per-workspace *containers* + R2,
   but **one shared Turso DB with `workspace_id` scoping** — what the 20 shipped slices built. It's
@@ -60,6 +63,17 @@ data lives in its **own Turso DB** (idiomatic for Turso — db-per-tenant), so c
 
 _Avoid_: reintroducing a "Team" concept separate from Workspace, or treating the platform Workspace
 as a *sub*-thing inside a bigger tenant — the Workspace **is** the tenant/deployment.
+
+**Platform data layer**: the Workspace's relational store — its schema, query modules, and
+migrations. It holds the **platform's** rows (`workspaces`, `canvases`, `conversations`,
+`workspace_members`/`_connectors`/`_repos`, `agent_jobs`/`_runs`, `share_links`,
+`push_subscriptions`) **and every Better Auth table** (the org plugin's `workspace`/`member`/
+`invitation`, plus `user`/`session`/`account`/`apikey`). Each **App** is a *consumer* of it; none
+owns it. It lives under `packages/canvas/web-poc/lib/db/` for historical reasons — that path is a
+legacy directory name, **not** a statement of ownership. The Notebook's own tables
+(`observations`, `problems`, `solutions`) are a small minority of the schema.
+_Avoid_: calling this "the web-poc database" or "the Notebook's DB" — the name misleads. Disabling
+an App does not remove the platform's dependency on this layer.
 
 **Shell**: the **persistent edge app frame** — the only chrome, an edge-served SPA (the
 Worker's static ASSETS) that owns the rail, the workspace switcher, and stage selection;
