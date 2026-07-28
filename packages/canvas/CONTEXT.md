@@ -481,7 +481,8 @@ and reconnect/resume are the sync protocol's job now, not ours. What remains our
 
 - **Share Link** — a member-minted, revocable capability row (`share_links`, D1) granting
   outsiders access to exactly one canvas, with per-link permissions
-  `{collaboration, guestChat}`. No default expiry; lives until revoked.
+  `{guestChat, guestHuddle, guestInteract, guestEdit, guestEditSource}` (see Guest
+  Capabilities below). No default expiry; lives until revoked.
 - **Guest Session** — a real session minted at `/share/<linkId>`, carrying
   `{linkId, canvasId, permissions}`. Flows through the same sole edge gate as members; the
   gate confines it to an explicit per-canvas path allowlist. Distinct from the per-browser
@@ -495,10 +496,29 @@ and reconnect/resume are the sync protocol's job now, not ours. What remains our
   component-guest mode (no tldraw, chat fully denied). Interactive: `setData` persists and
   syncs. Accepted v1 gap: the API grant reuses the canvas allowlist (canvas-wide reads),
   only the UI narrows. Minted from the ⛶ fullscreen header's Share panel.
+- **Guest Capabilities** (#320) — what a link permits, as three per-link booleans beside
+  `guest_chat`/`guest_huddle`: **`guest_interact`** (use a live component: click the button,
+  submit the form — defaults ON, backfilled ON), **`guest_edit`** (edit the canvas document:
+  create/move/delete shapes — opt-in), **`guest_edit_source`** (`PUT /api/components/:module`,
+  **own/canvas-scoped tier only** — opt-in). Three separate grants, never one ordered level:
+  they are different kinds of risk. `promote`/`adopt` stay denied under every flag (they reach
+  the workspace-shared tier, outside the invite). `shared/guest-capabilities.ts` is the ONE
+  place a link row becomes a decision — three doors derive from it, and #297 exists because
+  they used to each decide for themselves.
+- **Guest writer identity** — a guest writes as `guest:<sessionId>`, minted per WebSocket
+  connection in the Durable Object, so two guests on one link are two authors. Guests are
+  first-class writers on the SAME socket members use, with the capability set established at
+  the HANDSHAKE (a live guest holds what they had at connect time). There is no HTTP mutate
+  door for guests: those wrote to the room under the container's service credential, which
+  was the #297 bug.
 - Enforcement layers: `worker/guest-gate.ts` (pure default-deny path allowlist at the edge,
-  per-request revocation recheck) + the bridge's `x-guest-canvas` confinement (SSE frame
-  filter, member-conversation view-only rule, guest turns are plain chat turns). Member
-  surface: the Share panel in the canvas picker (`SharePanel`, Shell.tsx).
+  per-request revocation recheck, capability-driven since #320) + the sync handshake
+  (`worker/sync-api.ts` → read-only unless the link grants interact or edit; per-message
+  narrowing for interact-only sessions in `worker/guest-socket-policy.ts`, because tldraw
+  sync's only per-session knob is read-only) + the bridge's `x-guest-canvas` / `x-guest-caps`
+  confinement (SSE frame filter, member-conversation view-only rule, the own-tier check on
+  component source, guest turns are plain chat turns). Member surface: the Share panel in the
+  canvas picker (`SharePanel`, Shell.tsx).
 - Known v1 gaps: the bridge's chat→canvas / guest-owned-chat maps are in-memory (a recycle
   locks guests out of their pre-recycle chats, fails closed); `guestChat` links carry no
   turn budget (revocation is the only cost brake).

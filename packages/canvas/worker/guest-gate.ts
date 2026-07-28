@@ -1,4 +1,5 @@
 import { BRIDGE_ROUTES } from '../shared/bridge-wire.ts';
+import type { GuestCapabilities } from '../shared/guest-capabilities.ts';
 import type { GuestSession } from './guest-session.ts';
 
 // The guest confinement boundary (canvas ADR-0015, PRD #220 slice 4). PURE — unit-tested
@@ -42,19 +43,26 @@ const VITE_PREFIXES = ['/src/', '/shared/', '/@vite/', '/@fs/', '/@id/', '/node_
  *    WebSocket, and since #305 they wrote to the room under the CONTAINER's service
  *    credential — a guest's write, authorized as the container. Closed here.
  *
- * What is left is exactly a read: list the library. #320 owns what guests SHOULD be
- * allowed to do; this list is only what makes the two doors say the same thing. */
+ * What is left is exactly a read: list the library. What a guest SHOULD be allowed to do
+ * is answered by `shared/guest-capabilities.ts` (#320); this list is only what makes the
+ * doors say the same thing. */
 const CANVAS_API = new Set([`GET ${BRIDGE_ROUTES.components}`]);
 
-/** Per-module component READS (own-dir source + data for THAT canvas). PUT went with the
- * writes above (#297): `PUT /api/components/:module` writes executable component source
- * that hot-reloads into members' browsers, and it would otherwise have been left as the
- * single accidental guest write path. Promote/adopt were already absent — they mutate the
- * workspace-shared tier. */
+/** Per-module component READS (own-dir source + data for THAT canvas). */
 const COMPONENT_MODULE = /^\/api\/components\/(?:data\/)?([^/]+)$/;
+/** Just the OWN-tier module path — no `data/` sibling. `guest_edit_source` re-opens PUT
+ * here and nowhere else (#320): the data-file route is authoring with no grant behind it,
+ * and promote/adopt reach the workspace-shared tier, outside the invite under every flag. */
+const COMPONENT_SOURCE = /^\/api\/components\/([^/]+)$/;
 const COMPONENT_DENY = new Set(['promote', 'adopt', 'place']);
 
-export function decideGuestGate(req: GuestRequest, guest: GuestSession): GuestGate {
+/**
+ * @param caps What this link permits, from `guestCapabilities(liveLinkRow)` — the ONE
+ * derivation (#320). The gate never re-reads the row's booleans: its job is which ROUTES
+ * a capability reaches, not which capabilities exist. Default-deny is unaffected — an
+ * unlisted route is denied for every possible `caps`.
+ */
+export function decideGuestGate(req: GuestRequest, guest: GuestSession, caps: GuestCapabilities): GuestGate {
   const { pathname, method } = req;
   const allow: GuestGate = { decision: 'allow' };
   const deny: GuestGate = { decision: 'deny' };
@@ -85,7 +93,7 @@ export function decideGuestGate(req: GuestRequest, guest: GuestSession): GuestGa
   if (chatOp) {
     if (componentScoped) return deny;
     if (chatOp[1] === 'transcript' && method === 'GET') return allow;
-    if (guest.guestChat && method === 'POST' && req.canvas === guest.canvasId) return allow;
+    if (caps.chat && method === 'POST' && req.canvas === guest.canvasId) return allow;
     return deny;
   }
 
@@ -98,6 +106,11 @@ export function decideGuestGate(req: GuestRequest, guest: GuestSession): GuestGa
   if (CANVAS_API.has(`${method} ${pathname}`)) return allow;
   const mod = COMPONENT_MODULE.exec(pathname);
   if (mod && !COMPONENT_DENY.has(mod[1] as string) && method === 'GET') return allow;
+  // #320: the ONE write this door re-opens. The tier check is the bridge's (it owns the
+  // filesystem and knows whether the module is shared); this only makes the route
+  // unreachable without the grant.
+  const src = COMPONENT_SOURCE.exec(pathname);
+  if (caps.editSource && src && !COMPONENT_DENY.has(src[1] as string) && method === 'PUT') return allow;
 
   return deny;
 }

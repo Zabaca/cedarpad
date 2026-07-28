@@ -33,6 +33,7 @@ import {
   DEV_AGENT_REPO_HEADER,
   DeleteShapesBody,
   GUEST_CANVAS_HEADER,
+  GUEST_CAPS_HEADER,
   HEADLESS_SEND_HEADER,
   HUDDLE_AGENT_TOKEN_HEADER,
   HUDDLE_CANVAS_HEADER,
@@ -57,6 +58,7 @@ import { type CanvasImage, type ChatEvent, type OpenPr, createCanvasTools, parse
 import { MCP_TOKENS_HEADER, McpSelectionSchema, applyMcpSelection, decodeMcpTokens, mcpDisallowedTools } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { isShared, listComponentDetails, listComponents, readComponent, writeComponent, writeDataFile } from './components.ts';
+import { readGuestCapabilities, type GuestCapabilities } from '../shared/guest-capabilities.ts';
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
@@ -157,6 +159,32 @@ const blobStore = new BlobStore(blobBackend);
 const screenshotChannels = createScreenshotChannels();
 function canvasIdFrom(req: Request, url: URL): string {
   return req.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas') ?? DEFAULT_CANVAS_ID;
+}
+
+/**
+ * The bridge's view of a guest (#320): the capabilities the EDGE decided, from the one
+ * derivation both doors share (`shared/guest-capabilities.ts`). Null = a member's request.
+ *
+ * `x-guest-canvas` is what makes a request a guest's — it is stamped on every proxied
+ * guest request and cannot be spoofed upward. The capabilities are parsed here on the
+ * receiving side of the boundary (CLAUDE.md §7), and anything that does not parse is NO
+ * capabilities: a guest request whose grants are unreadable can do nothing, which is the
+ * same answer as a link that grants nothing.
+ */
+function guestCapsOf(req: Request): GuestCapabilities | null {
+  if (!req.headers.get(GUEST_CANVAS_HEADER)) return null;
+  return readGuestCapabilities(req.headers.get(GUEST_CAPS_HEADER));
+}
+
+/** Guest write routes on this door, and the capability each needs. Anything not listed is
+ *  denied to a guest outright — the same default-deny shape as `worker/guest-gate.ts`, so
+ *  the two doors cannot drift into authorizing different things again (#297). The canvas
+ *  DOCUMENT is absent on purpose: a guest edits it on the sync socket, as themselves,
+ *  never through a route this process would author on their behalf. */
+function guestMayWrite(caps: GuestCapabilities, path: string, method: string): boolean {
+  const source = /^\/api\/components\/([^/]+)$/.exec(path);
+  if (method === 'PUT' && source && !['promote', 'adopt', 'place'].includes(source[1] as string)) return caps.editSource;
+  return false;
 }
 
 // Per-chat durable state (ADR 0004): server-owned { sessionId, model, effort, forkNext },
@@ -762,6 +790,22 @@ export async function handleRequest(req: Request): Promise<Response> {
       return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*' } });
     }
 
+    // #320: the bridge's own guest check for the canvas + component surface, derived from
+    // the SAME capabilities the edge gate used. Default-deny (`guestMayWrite` lists the
+    // writes, nothing else), and deliberately redundant with the gate: these handlers write
+    // to the room under the container's service credential, which is precisely what made a
+    // guest's write authorize as the container in #297. Chat is not in scope here — it has
+    // its own confinement below, keyed on the same header.
+    const guestCaps = guestCapsOf(req);
+    if (
+      guestCaps &&
+      req.method !== 'GET' &&
+      (path.startsWith('/api/canvas/') || path.startsWith('/api/components')) &&
+      !guestMayWrite(guestCaps, path, req.method)
+    ) {
+      return json({ error: 'guest_not_permitted' }, 403);
+    }
+
     // Huddles (ADR-0017): the edge join flow pokes here to ensure the agent worker for a
     // canvas's voice room. The agent's room token arrives edge-minted in a header (signing
     // keys never enter the container); single-flight per canvas via the supervisor.
@@ -938,6 +982,12 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (componentRoute && req.method === 'PUT') {
       const canvasId = canvasIdFrom(req, url);
       const module = decodeURIComponent(componentRoute[1] as string);
+      // #320: `guest_edit_source` is the OWN (canvas-scoped) tier ONLY. The accepted risk
+      // is arbitrary JS in a member's browser BOUNDED TO THE INVITED CANVAS; a shared
+      // module is the workspace's one source, imported by canvases the guest was never
+      // invited to. The tier is filesystem state, so only this process can check it — the
+      // edge gate authorized the route, not the target.
+      if (guestCaps && isShared(module)) return json({ error: 'guest_not_permitted' }, 403);
       const parsed = WriteComponentBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
       try {

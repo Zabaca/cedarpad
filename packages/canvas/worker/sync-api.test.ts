@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { mintGuestCookie, GUEST_COOKIE } from './guest-session.ts';
-import { handleSyncUpgrade, parseSyncPath, resolveSyncGuest, SYNC_READONLY_HEADER, SYNC_USER_HEADER } from './sync-api.ts';
+import {
+  handleSyncUpgrade,
+  parseSyncPath,
+  resolveSyncGuest,
+  SYNC_GUEST_CAPS_HEADER,
+  SYNC_READONLY_HEADER,
+  SYNC_USER_HEADER,
+} from './sync-api.ts';
+import { guestCapabilities, readGuestCapabilities } from '../shared/guest-capabilities.ts';
 import { syncRoomName } from './sync-room.ts';
 
 // The sync upgrade is the ONE door into a canvas's room, so its gate is the whole security
@@ -39,7 +47,12 @@ const env = {
 
 /** The guest branch's injected resolver: only this canvas's live link resolves. */
 const resolveGuest = async (_req: Request, _env: unknown, canvasId: string) =>
-  canvasId === 'canvas_x' ? 'guest:sl_1' : null;
+  canvasId === 'canvas_x' ? { linkId: 'sl_1', caps: guestCapabilities({}) } : null;
+/** …the same, for a link that grants a capability. */
+const resolveGuestWith = (grants: Parameters<typeof guestCapabilities>[0]) => async () => ({
+  linkId: 'sl_1',
+  caps: guestCapabilities(grants),
+});
 const noGuest = async () => null;
 
 const upgrade = (path: string) =>
@@ -93,6 +106,9 @@ describe('handleSyncUpgrade', () => {
     await handleSyncUpgrade(upgrade('/api/canvas-sync/canvas_x/connect'), env, 'canvas_x', { id: 'u_1' }, canReach, noGuest);
     expect(forwarded?.headers.get(SYNC_USER_HEADER)).toBe('u_1');
     expect(forwarded?.headers.get(SYNC_READONLY_HEADER)).toBeNull();
+    // A member is not a guest: the capability header is DELETED, not merely unset, so a
+    // member's own connection can never be interpreted as a capability-bounded one.
+    expect(forwarded?.headers.get(SYNC_GUEST_CAPS_HEADER)).toBeNull();
   });
 });
 
@@ -100,7 +116,7 @@ describe('handleSyncUpgrade', () => {
 // same room, identified as the link and marked read-only, and the mark is what the DO
 // turns into a session that cannot write.
 describe('handleSyncUpgrade — guests', () => {
-  test('a guest of this canvas connects, as the link and read-only', async () => {
+  test('a guest with no grants connects read-only, and with NO user identity stamped', async () => {
     const res = await handleSyncUpgrade(
       upgrade('/api/canvas-sync/canvas_x/connect'),
       env,
@@ -111,8 +127,61 @@ describe('handleSyncUpgrade — guests', () => {
     );
     expect(res.status).toBe(101);
     expect(resolvedNames).toEqual([syncRoomName('canvas_x')]);
-    // Identity is the LINK, never a user — the same convention the guest mart path uses.
-    expect(forwarded?.headers.get(SYNC_USER_HEADER)).toBe('guest:sl_1');
+    // #320: identity is per SESSION (`guest:<sessionId>`), and only the Durable Object
+    // knows the sessionId, so the Worker stamps none. Two guests on one link must be
+    // distinguishable in presence and history; the LINK identity could not do that.
+    expect(forwarded?.headers.get(SYNC_USER_HEADER)).toBeNull();
+    expect(forwarded?.headers.get(SYNC_READONLY_HEADER)).toBe('1');
+    expect(readGuestCapabilities(forwarded?.headers.get(SYNC_GUEST_CAPS_HEADER) ?? null)).toEqual(guestCapabilities({}));
+  });
+
+  // The capability set rides the HANDSHAKE (#320 §4): the connection, not a later HTTP
+  // call under the container's credential, is the writer. So the socket's writability is
+  // decided here, once, from the live link row.
+  test('guest_edit makes the socket WRITABLE; the capabilities ride along', async () => {
+    await handleSyncUpgrade(
+      upgrade('/api/canvas-sync/canvas_x/connect'),
+      env,
+      'canvas_x',
+      null,
+      canReach,
+      resolveGuestWith({ guestEdit: true }),
+    );
+    expect(forwarded?.headers.get(SYNC_READONLY_HEADER)).toBeNull();
+    expect(readGuestCapabilities(forwarded?.headers.get(SYNC_GUEST_CAPS_HEADER) ?? null)).toMatchObject({
+      editCanvas: true,
+      interact: false,
+    });
+  });
+
+  test('guest_interact alone also lifts read-only — the room narrows it, not the handshake', async () => {
+    await handleSyncUpgrade(
+      upgrade('/api/canvas-sync/canvas_x/connect'),
+      env,
+      'canvas_x',
+      null,
+      canReach,
+      resolveGuestWith({ guestInteract: true }),
+    );
+    // Read-only is the protocol's only binary. An interact-only guest must be able to push
+    // SOMETHING, so the narrowing to "component data and nothing else" happens per message
+    // inside the Durable Object (worker/guest-socket-policy.ts), not here.
+    expect(forwarded?.headers.get(SYNC_READONLY_HEADER)).toBeNull();
+    expect(readGuestCapabilities(forwarded?.headers.get(SYNC_GUEST_CAPS_HEADER) ?? null)).toMatchObject({
+      interact: true,
+      editCanvas: false,
+    });
+  });
+
+  test('a link granting only chat/huddle/source stays read-only on the socket', async () => {
+    await handleSyncUpgrade(
+      upgrade('/api/canvas-sync/canvas_x/connect'),
+      env,
+      'canvas_x',
+      null,
+      canReach,
+      resolveGuestWith({ guestChat: true, guestHuddle: true, guestEditSource: true }),
+    );
     expect(forwarded?.headers.get(SYNC_READONLY_HEADER)).toBe('1');
   });
 
@@ -129,13 +198,19 @@ describe('handleSyncUpgrade — guests', () => {
     expect(resolvedNames).toEqual([]);
   });
 
-  test('a client cannot claim read-only status — or shed it — by sending the header', async () => {
+  test('a client cannot claim read-only status — or shed it, or its identity, or its capabilities', async () => {
     const spoof = new Request('https://app.cedarpad.com/api/canvas-sync/canvas_x/connect', {
-      headers: { upgrade: 'websocket', [SYNC_READONLY_HEADER]: '0', [SYNC_USER_HEADER]: 'u_admin' },
+      headers: {
+        upgrade: 'websocket',
+        [SYNC_READONLY_HEADER]: '0',
+        [SYNC_USER_HEADER]: 'u_admin',
+        [SYNC_GUEST_CAPS_HEADER]: JSON.stringify(guestCapabilities({ guestEdit: true })),
+      },
     });
     await handleSyncUpgrade(spoof, env, 'canvas_x', null, canReach, resolveGuest);
     expect(forwarded?.headers.get(SYNC_READONLY_HEADER)).toBe('1');
-    expect(forwarded?.headers.get(SYNC_USER_HEADER)).toBe('guest:sl_1');
+    expect(forwarded?.headers.get(SYNC_USER_HEADER)).toBeNull();
+    expect(readGuestCapabilities(forwarded?.headers.get(SYNC_GUEST_CAPS_HEADER) ?? null).editCanvas).toBe(false);
   });
 });
 
@@ -149,16 +224,27 @@ describe('resolveSyncGuest', () => {
     `${GUEST_COOKIE}=${await mintGuestCookie(SECRET, { workspaceId: 'ws_1', guestChat: false, ...payload })}`;
   const req = (cookie: string) =>
     new Request('https://app.cedarpad.com/api/canvas-sync/canvas_x/connect', { headers: { cookie } });
-  const liveLink = async (id: string) => (id === 'sl_1' ? { canvasId: 'canvas_x' } : null);
+  const liveLink = async (id: string) => (id === 'sl_1' ? { canvasId: 'canvas_x', guestInteract: true } : null);
 
-  test('a live link for this canvas resolves to the link identity', async () => {
+  test('a live link for this canvas resolves to the link and the capabilities IT grants', async () => {
     const cookie = await cookieFor({ linkId: 'sl_1', canvasId: 'canvas_x' });
-    expect(await resolveSyncGuest(req(cookie), guestEnv, 'canvas_x', liveLink)).toBe('guest:sl_1');
+    expect(await resolveSyncGuest(req(cookie), guestEnv, 'canvas_x', liveLink)).toEqual({
+      linkId: 'sl_1',
+      caps: guestCapabilities({ guestInteract: true }),
+    });
+  });
+
+  // The LIVE row is the source, not the cookie: a cookie minted before a downgrade must
+  // not keep the capability it was minted with. (Revocation already worked this way.)
+  test('capabilities come from the live row, not from the cookie that carried them', async () => {
+    const cookie = await cookieFor({ linkId: 'sl_1', canvasId: 'canvas_x' });
+    const downgraded = async () => ({ canvasId: 'canvas_x', guestInteract: false, guestEdit: false });
+    expect((await resolveSyncGuest(req(cookie), guestEnv, 'canvas_x', downgraded))?.caps.interact).toBe(false);
   });
 
   test('a component-scoped link (#221) resolves the same way — the narrowing is the shape, not the room', async () => {
     const cookie = await cookieFor({ linkId: 'sl_1', canvasId: 'canvas_x', shapeId: 'shape:c1' });
-    expect(await resolveSyncGuest(req(cookie), guestEnv, 'canvas_x', liveLink)).toBe('guest:sl_1');
+    expect((await resolveSyncGuest(req(cookie), guestEnv, 'canvas_x', liveLink))?.linkId).toBe('sl_1');
   });
 
   test('a REVOKED link resolves to nothing, even with a validly signed cookie', async () => {

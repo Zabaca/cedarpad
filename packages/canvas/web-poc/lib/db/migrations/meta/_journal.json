@@ -183,6 +183,13 @@
       "when": 1785119941087,
       "tag": "0025_groovy_nico_minoru",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1785270156691,
+      "tag": "0026_far_sumo",
+      "breakpoints": true
     }
   ]
 }

@@ -362,7 +362,15 @@ describe('guest session gate (#220)', () => {
     shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
     served = [];
     const guestRes = await guestFetch('/api/guest-session');
-    expect(await guestRes.json()).toEqual({ canvasId: 'cv_g', workspaceId: 'ws_g', guestChat: false });
+    // #320: the probe answers the capabilities the gate itself decided from, so the pad
+    // can only ever hide affordances the server would refuse — never grant one.
+    expect(await guestRes.json()).toEqual({
+      canvasId: 'cv_g',
+      workspaceId: 'ws_g',
+      guestChat: false,
+      guestHuddle: false,
+      capabilities: { interact: false, editCanvas: false, editSource: false, chat: false, huddle: false },
+    });
     session = { user: { id: 'u_1' } };
     const memberRes = await GET('/api/guest-session');
     expect(await memberRes.json()).toBeNull();

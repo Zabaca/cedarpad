@@ -1,5 +1,6 @@
 import {
   DurableObjectSqliteSyncWrapper,
+  JsonChunkAssembler,
   SQLiteSyncStorage,
   type SessionStateSnapshot,
   type TLSocketRoom,
@@ -7,10 +8,12 @@ import {
 import type { TLRecord } from '@tldraw/tlschema';
 
 import { CanvasMutation, mutationError } from '../shared/canvas-mutation.ts';
+import { readGuestCapabilities } from '../shared/guest-capabilities.ts';
 import { applyMutation, MutationRejected } from './canvas-mutate.ts';
+import { isInteractOnly, narrowInteractPush } from './guest-socket-policy.ts';
 import type { Env } from './index.ts';
 import { handleSnapshotRequest } from './snapshot-io.ts';
-import { isReadonlyRequest, SYNC_USER_HEADER } from './sync-api.ts';
+import { isReadonlyRequest, SYNC_GUEST_CAPS_HEADER, SYNC_USER_HEADER } from './sync-api.ts';
 import { createCanvasSyncRoom, type SyncSessionMeta } from './sync-room.ts';
 
 // The Durable Object that hosts a canvas's `TLSocketRoom` (ADR-0019). Shape follows
@@ -34,6 +37,10 @@ import { createCanvasSyncRoom, type SyncSessionMeta } from './sync-room.ts';
 interface SocketAttachment {
   sessionId: string;
   meta: SyncSessionMeta;
+  /** #320: this connection may write component data and nothing else. It rides in the
+   *  attachment because it is a property of the CONNECTION — established at the handshake
+   *  from the link's capabilities — and it has to survive hibernation with the socket. */
+  interactOnly?: boolean;
   snapshot?: SessionStateSnapshot;
 }
 
@@ -45,6 +52,9 @@ interface SocketAttachment {
 export class CanvasSyncRoom {
   private readonly room: TLSocketRoom<TLRecord, SyncSessionMeta>;
   protected readonly ctx: DurableObjectState;
+  /** Chunk reassembly for the sessions whose messages we have to READ before forwarding
+   *  (interact-only guests, #320). Members' messages are forwarded untouched. */
+  private readonly assemblers = new Map<string, JsonChunkAssembler>();
 
   constructor(ctx: DurableObjectState, _env: Env) {
     this.ctx = ctx;
@@ -85,22 +95,38 @@ export class CanvasSyncRoom {
   }
 
   async fetch(request: Request): Promise<Response> {
-    // Identity arrives ONLY as the header `handleSyncUpgrade` stamps after authorizing.
-    // The DO is unreachable except through that handler, so an absent header is a bug,
-    // not an anonymous user — fail closed rather than host a session with no owner.
+    // Identity arrives ONLY as the headers `handleSyncUpgrade` stamps after authorizing.
+    // The DO is unreachable except through that handler, so their absence is a bug, not an
+    // anonymous user — fail closed rather than host a session with no owner.
+    //
+    // A connection is a MEMBER's (user header) or a GUEST's (capability header), never
+    // both: the Worker always writes one and deletes the other. The guest's capabilities
+    // are parsed here on the receiving side of the boundary (CLAUDE.md §7) — a trusted hop
+    // is not a reason to trust a payload — and anything that fails to parse is no
+    // capabilities at all (#320).
     const userId = request.headers.get(SYNC_USER_HEADER);
-    if (!userId) return new Response('unauthorized', { status: 401 });
+    const guestCaps = request.headers.has(SYNC_GUEST_CAPS_HEADER)
+      ? readGuestCapabilities(request.headers.get(SYNC_GUEST_CAPS_HEADER))
+      : null;
+    if (!userId && !guestCaps) return new Response('unauthorized', { status: 401 });
 
     // The agent write path (#291). Matched on the suffix rather than by importing
     // `parseCanvasMutatePath`, which would close a runtime import cycle back through
     // worker/index.ts (where this class is re-exported for wrangler). The authoritative
     // route match already happened in the Worker; this only picks the branch.
     const url = new URL(request.url);
-    if (url.pathname.endsWith('/mutate')) return this.mutate(request);
+    // Both doors below are the container's and the admin's, reached with a member/service
+    // credential. A guest connection has no business on either — and re-opening one for a
+    // guest is exactly the #297 shape (a guest's write authored as the container).
+    if (url.pathname.endsWith('/mutate')) {
+      return userId ? this.mutate(request) : new Response('unauthorized', { status: 401 });
+    }
 
     // The migration door (#295), matched the same way and for the same reason. The
     // admin gate already ran in the Worker (`handleCanvasSnapshot`); this only routes.
-    if (url.pathname.endsWith('/snapshot')) return handleSnapshotRequest(this.room, request);
+    if (url.pathname.endsWith('/snapshot')) {
+      return userId ? handleSnapshotRequest(this.room, request) : new Response('unauthorized', { status: 401 });
+    }
 
     // The read-only decision arrives the same way identity does — stamped by
     // `handleSyncUpgrade`, never client-supplied (#294). A guest holds a capability to
@@ -109,12 +135,19 @@ export class CanvasSyncRoom {
     // about the session differs: it still receives every member edit.
     const readonly = isReadonlyRequest(request);
     const sessionId = url.searchParams.get('sessionId') ?? crypto.randomUUID();
+    // #320: a guest writes as `guest:<sessionId>`, minted HERE because the sessionId is a
+    // property of this connection and nothing upstream knows it. Two guests holding one
+    // link are therefore distinguishable in presence and history — which the old
+    // `guest:<linkId>` identity could not do, and which is what makes the manual "notice
+    // then revoke" enforcement possible at all.
+    const identity = userId ?? `guest:${sessionId}`;
+    const interactOnly = !!guestCaps && isInteractOnly(guestCaps);
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
     this.ctx.acceptWebSocket(server);
-    this.attach(server, { sessionId, meta: { userId } });
-    this.room.handleSocketConnect({ sessionId, socket: server, isReadonly: readonly, meta: { userId } });
+    this.attach(server, { sessionId, meta: { userId: identity }, interactOnly });
+    this.room.handleSocketConnect({ sessionId, socket: server, isReadonly: readonly, meta: { userId: identity } });
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -150,16 +183,37 @@ export class CanvasSyncRoom {
   // driven from here rather than from the `addEventListener` path it would use elsewhere.
   webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
     const a = this.attachmentOf(ws);
-    if (a) this.room.handleSocketMessage(a.sessionId, message);
+    if (!a) return;
+    if (!a.interactOnly) return this.room.handleSocketMessage(a.sessionId, message);
+    // An interact-only guest's pushes are narrowed per message (#320). We have to assemble
+    // chunks before we can read one, so this session gets its own assembler — same
+    // lifetime as the room's own (both in-memory, both rebuilt on a wake), so it adds no
+    // failure mode a hibernation did not already have.
+    const raw = typeof message === 'string' ? message : new TextDecoder().decode(message);
+    const res = this.assemblerFor(a.sessionId).handleMessage(raw);
+    if (!res) return; // more chunks to come
+    // Unassemblable: hand it on untouched so the room's own error handling runs.
+    if (!('data' in res)) return this.room.handleSocketMessage(a.sessionId, raw);
+    this.room.handleSocketMessage(a.sessionId, JSON.stringify(narrowInteractPush(res.data)));
+  }
+
+  private assemblerFor(sessionId: string): JsonChunkAssembler {
+    let assembler = this.assemblers.get(sessionId);
+    if (!assembler) this.assemblers.set(sessionId, (assembler = new JsonChunkAssembler()));
+    return assembler;
   }
 
   webSocketClose(ws: WebSocket) {
     const a = this.attachmentOf(ws);
-    if (a) this.room.handleSocketClose(a.sessionId);
+    if (!a) return;
+    this.assemblers.delete(a.sessionId);
+    this.room.handleSocketClose(a.sessionId);
   }
 
   webSocketError(ws: WebSocket) {
     const a = this.attachmentOf(ws);
-    if (a) this.room.handleSocketClose(a.sessionId);
+    if (!a) return;
+    this.assemblers.delete(a.sessionId);
+    this.room.handleSocketClose(a.sessionId);
   }
 }

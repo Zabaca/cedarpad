@@ -30,6 +30,7 @@ import { MCP_REGISTRY } from '../server/mcp-registry.ts';
 import { handleShareLinksApi } from './share-links-api.ts';
 import { handleShareAccept, readGuestSession } from './guest-session.ts';
 import { decideGuestGate } from './guest-gate.ts';
+import { guestCapabilities } from '../shared/guest-capabilities.ts';
 import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.ts';
 import { handleCanvasSnapshot, parseCanvasSnapshotPath } from './canvas-snapshot-api.ts';
 import { handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
@@ -50,7 +51,7 @@ import {
   parseWorkspaceRoute,
   readWorkspaceCookie,
 } from './shell-routing.ts';
-import { CANVAS_ID_HEADER, GUEST_CANVAS_HEADER } from '../shared/bridge-wire.ts';
+import { CANVAS_ID_HEADER, GUEST_CANVAS_HEADER, GUEST_CAPS_HEADER } from '../shared/bridge-wire.ts';
 
 // One container = one workspace = one canvas (v1). The Worker is the proxy into the
 // in-container vite dev server, which serves the app and forwards /api/* to the bridge.
@@ -418,16 +419,23 @@ export default {
         // :ws segment is ignored for guests; only the LINK's workspace is ever read, so a
         // guest can't slide a foreign workspace id into the path.
         const guestMartMatch = MART_ROUTE.exec(url.pathname);
-        const guestGate = decideGuestGate({ pathname: url.pathname, method: request.method, canvas }, guest);
-        if (isGuestProbe || guestHuddleMatch || guestMartMatch || guestGate.decision === 'allow') {
-          const live = await getActiveShareLink(createDbForWorker(env as unknown as Bindings), guest.linkId);
-          if (live && live.canvasId === guest.canvasId) {
+        // #320: the LIVE row is read BEFORE the gate decides, because it is the source of
+        // the capabilities as well as of liveness. The cookie carries a snapshot of the
+        // grants at mint time; a link that has since been downgraded must not keep what it
+        // was minted with, exactly as a revoked one does not. One derivation
+        // (`guestCapabilities`) feeds this door, the sync handshake and the bridge.
+        const live = await getActiveShareLink(createDbForWorker(env as unknown as Bindings), guest.linkId);
+        if (live && live.canvasId === guest.canvasId) {
+          const caps = guestCapabilities({ ...live, shapeId: live.shapeId ?? guest.shapeId });
+          const guestGate = decideGuestGate({ pathname: url.pathname, method: request.method, canvas }, guest, caps);
+          if (isGuestProbe || guestHuddleMatch || guestMartMatch || guestGate.decision === 'allow') {
             if (isGuestProbe) {
               return Response.json({
                 canvasId: guest.canvasId,
                 workspaceId: guest.workspaceId,
-                guestChat: guest.guestChat,
-                guestHuddle: live.guestHuddle,
+                guestChat: caps.chat,
+                guestHuddle: caps.huddle,
+                capabilities: caps,
                 // Component-scoped link (PRD #221): the Shell/pad narrow to this shape.
                 ...(guest.shapeId ? { shapeId: guest.shapeId } : {}),
               });
@@ -450,7 +458,7 @@ export default {
               const lk = { LIVEKIT_URL: env.LIVEKIT_URL, LIVEKIT_API_KEY: env.LIVEKIT_API_KEY, LIVEKIT_API_SECRET: env.LIVEKIT_API_SECRET };
               const res = await handleGuestHuddleJoin(
                 request,
-                { ...guest, guestHuddle: live.guestHuddle },
+                { ...guest, guestHuddle: caps.huddle },
                 guestHuddleMatch[1] as string,
                 lk,
               );
@@ -468,8 +476,14 @@ export default {
             // x-guest-canvas is the bridge's confinement signal (#220 slice 6: chat stream
             // filtering, view-only member conversations) — stamped HERE, overwriting
             // anything the client sent, so it can never be spoofed upward.
+            // x-guest-caps carries the SAME capabilities this gate just decided from
+            // (#320), stamped the same way and for the same reason — so the bridge's own
+            // guest checks derive from one answer instead of inventing a second one. The
+            // gate says which routes are reachable; the bridge holds facts the edge cannot
+            // see (a module's tier), and needs the capabilities to judge them.
             const guestProxied = new Request(request);
             guestProxied.headers.set(GUEST_CANVAS_HEADER, guest.canvasId);
+            guestProxied.headers.set(GUEST_CAPS_HEADER, JSON.stringify(caps));
             return serveWorkspace(guestProxied, env, coordsForWorkspace(guest.workspaceId));
           }
         }

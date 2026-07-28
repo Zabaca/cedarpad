@@ -26,6 +26,10 @@ import { DataSourceSchema } from './mart-contract';
 export const CANVAS_ID_HEADER = 'x-canvas-id';
 /** Stamped by the edge on a guest-session proxy: confines the chat SSE fan-out to this canvas. */
 export const GUEST_CANVAS_HEADER = 'x-guest-canvas';
+/** The guest's capabilities (#320), JSON per `shared/guest-capabilities.ts`, stamped by the
+ *  edge next to `x-guest-canvas` and parsed by the bridge with `readGuestCapabilities`.
+ *  Present ⟺ the request is a guest's; the edge always writes it, so a client cannot. */
+export const GUEST_CAPS_HEADER = 'x-guest-caps';
 /** A send with no subscriber by design (MCP / inbox), bypassing the subscribe-before-send guard. */
 export const HEADLESS_SEND_HEADER = 'x-headless-send';
 /** Edge-minted GitHub installation token for a dev-agent turn — per-request custody, never persisted. */
