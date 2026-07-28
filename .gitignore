@@ -19,3 +19,9 @@ graphify-out/
 packages/canvas/.claude/
 # Fredrin per-ticket wrapper — carries a scoped API token, never commit.
 .fredrin/
+
+# Local dev databases — never committed (swept in by a stray `git add -A`, 2026-07-28)
+*.turso-local.db
+*.turso-local.db-shm
+*.turso-local.db-wal
+.web-poc-dev.db
