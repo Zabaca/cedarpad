@@ -16,11 +16,14 @@ let cached: { key: string; db: Database } | null = null;
 
 /** Build (or reuse) a Workers-compatible Drizzle db from env bindings.
  *
- * A bound `PLATFORM_DB` (D1) wins over Turso — that is how local dev runs the platform
- * data layer on miniflare's D1 (ADR-0018, #263). Production has no such binding yet, so
- * it keeps taking the Turso path below. */
+ * D1 (ADR-0018) wins over Turso only when BOTH the `PLATFORM_DB` binding is present AND
+ * `PLATFORM_DB_ENABLED` is "true". The flag exists because the binding's mere presence
+ * used to be the switch: deploying a binding would then have been a cutover performed by
+ * accident, silently repointing production at an empty database. With the flag off a bound
+ * D1 is inert and Turso still serves — so the binding can ship ahead of the cutover (#265),
+ * the cutover is one deliberate var flip (#267), and rollback is the same flip back. */
 export function createDbForWorker(env: Bindings): Database {
-  if (env.PLATFORM_DB) return drizzleD1(env.PLATFORM_DB, { schema });
+  if (env.PLATFORM_DB && env.PLATFORM_DB_ENABLED === "true") return drizzleD1(env.PLATFORM_DB, { schema });
   const url = tursoHttpUrl(env.TURSO_URL);
   const key = `${url}\n${env.TURSO_KEY ?? ""}`;
   if (cached?.key === key) return cached.db;

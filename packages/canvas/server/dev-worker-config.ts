@@ -68,7 +68,10 @@ export function devWorkerConfig(
 ): Config {
   const { routes, triggers, containers, env, ...rest } = base;
   const assets = base.assets as { directory: string } | undefined;
-  const { AUTH_DISABLE_SIGNUP, ...vars } = (base.vars ?? {}) as Record<string, string>;
+  const { AUTH_DISABLE_SIGNUP, PLATFORM_DB_ENABLED, ...vars } = (base.vars ?? {}) as Record<
+    string,
+    string
+  >;
   return {
     ...rest,
     vars: {
@@ -79,6 +82,9 @@ export function devWorkerConfig(
       BETTER_AUTH_URL: origin,
       // Signup is open in dev (prod is James-only); scheduled work never runs locally.
       DEV_AGENT_ENABLED: 'false',
+      // Local dev IS the D1 deployment (#263). Production ships the same binding INERT
+      // until the cutover (#265/#267), so its "false" is dropped rather than inherited.
+      PLATFORM_DB_ENABLED: 'true',
       // The platform RPC's trust root (ADR-0018 / #266): the container half of the dev stack
       // is the bun bridge, which derives its bearer from the same value. A real
       // `web-poc/.dev.vars` overrides this — wrangler gives `.dev.vars` precedence over
@@ -89,7 +95,11 @@ export function devWorkerConfig(
     main: join(packageDir, String(base.main)),
     ...(assets ? { assets: { ...assets, directory: join(packageDir, assets.directory) } } : {}),
     d1_databases: [
-      ...((base.d1_databases as Config[] | undefined) ?? []),
+      // Drop production's PLATFORM_DB (#265) and REPLACE it below: two bindings of one name
+      // is a wrangler error, and local dev must never carry the remote database's id.
+      ...(((base.d1_databases as Config[] | undefined) ?? []).filter(
+        (d) => d.binding !== PLATFORM_DB_BINDING,
+      )),
       {
         binding: PLATFORM_DB_BINDING,
         database_name: 'cedarpad-platform',

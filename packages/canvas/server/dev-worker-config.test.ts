@@ -10,12 +10,16 @@ const base = {
   triggers: { crons: ['0 9 * * *'] },
   assets: { directory: './shell/dist', binding: 'ASSETS', run_worker_first: true },
   containers: [{ class_name: 'Sandbox', image: './Dockerfile' }],
-  d1_databases: [{ binding: 'WAITLIST', database_name: 'cedarpad-waitlist', database_id: 'w-1' }],
+  d1_databases: [
+    { binding: 'WAITLIST', database_name: 'cedarpad-waitlist', database_id: 'w-1' },
+    { binding: 'PLATFORM_DB', database_name: 'cedarpad-platform', database_id: 'remote-1' },
+  ],
   vars: {
     WEB_ORIGIN: 'https://app.cedarpad.com',
     BETTER_AUTH_URL: 'https://app.cedarpad.com',
     AUTH_DISABLE_SIGNUP: 'true',
     DEV_AGENT_ENABLED: 'true',
+    PLATFORM_DB_ENABLED: 'false',
     CANVAS_USER: 'usr_1',
   },
   env: { preview: { name: 'agent-canvas-preview' } },
@@ -50,6 +54,8 @@ describe('devWorkerConfig: the edge Worker as local dev runs it', () => {
       WEB_ORIGIN: 'http://localhost:4520',
       BETTER_AUTH_URL: 'http://localhost:4520',
       DEV_AGENT_ENABLED: 'false',
+      // Local dev IS on D1 (#263) — production's inert-until-#267 "false" must not leak in.
+      PLATFORM_DB_ENABLED: 'true',
       CANVAS_USER: 'usr_1',
       // ADR-0018 / #266: the bridge has no database, so it reaches the platform data layer
       // over the RPC — which needs both ends to share a trust root even in a worktree with no
@@ -68,6 +74,9 @@ describe('devWorkerConfig: the edge Worker as local dev runs it', () => {
     expect(e2e.vars).toMatchObject({ E2E_MODE: '1', LOCAL_BRIDGE_ORIGIN: 'http://localhost:4521' });
   });
 
+  // Since #265 wrangler.jsonc declares a PRODUCTION PLATFORM_DB. Local dev must replace it,
+  // not append to it: two bindings of one name is a wrangler error, and the surviving id
+  // must never be the remote database's.
   test('binds the platform data layer to a local D1 alongside the waitlist D1', () => {
     expect(dev.d1_databases).toEqual([
       { binding: 'WAITLIST', database_name: 'cedarpad-waitlist', database_id: 'w-1' },
@@ -93,7 +102,7 @@ describe('devWorkerConfig: the edge Worker as local dev runs it', () => {
   });
 
   test('leaves the base config object untouched', () => {
-    expect(base.d1_databases).toHaveLength(1);
+    expect(base.d1_databases).toHaveLength(2);
     expect(base.main).toBe('worker/index.ts');
   });
 });
