@@ -56,6 +56,9 @@ export interface AuthFixtures {
   /** The signed-in user who OWNS what the bridge files — seeded once by the `setup` project.
    *  Request context only: no test needs its id, and not re-signing-in per test is the point. */
   owner: APIRequestContext;
+  /** Give `user` Better Auth's `admin` role. Same one-writer rule as `joinBridgeWorkspace`:
+   *  the `setup` project only. */
+  promoteToAdmin: (user: E2eUser) => Promise<void>;
   /** An anonymous request context at the edge origin — the deny side of a gate assertion. */
   edgeRequest: APIRequestContext;
 }
@@ -102,6 +105,25 @@ export const test = base.extend<AuthFixtures>({
           sql: 'insert into workspace_members (id, workspace_id, user_id, role) values (?, ?, ?, ?) on conflict do nothing',
           args: [`wm_e2e_${user.id}`, BRIDGE_WORKSPACE, user.id, 'member'],
         });
+      } finally {
+        db.close();
+      }
+    });
+  },
+
+  /**
+   * WRITES THE LIVE D1 — `setup` project only, for the reason on `joinBridgeWorkspace`.
+   *
+   * The snapshot door the migration loads through is ADMIN-gated, not member-gated
+   * (worker/canvas-snapshot-api.ts: replacing a canvas's whole document is an operator
+   * action). No signup path sets the role, so the migration spec (#321) has no way to reach
+   * that door unless the owner — who IS the operator here — carries it.
+   */
+  promoteToAdmin: async ({}, use) => {
+    await use(async (user) => {
+      const db = createClient({ url: `file:${requireLocalD1File()}` });
+      try {
+        await db.execute({ sql: 'update user set role = ? where id = ?', args: ['admin', user.id] });
       } finally {
         db.close();
       }
