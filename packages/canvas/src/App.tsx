@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DefaultContextMenu, DefaultContextMenuContent, DefaultMenuPanel, DefaultNavigationPanel, DefaultPeopleMenu, DefaultSharePanel, DefaultStylePanel, DefaultToolbar, NoteShapeUtil, Tldraw, TldrawUiMenuGroup, TldrawUiMenuItem, type Editor, type TLAnyShapeUtilConstructor, type TLComponents, type TLShapeId, type TLUiContextMenuProps, createBindingId, createShapeId, defaultHandleExternalTextContent, defaultHandleExternalUrlContent, useEditor } from 'tldraw';
+import { useSync } from '@tldraw/sync';
 import 'tldraw/tldraw.css';
 
 import { activeCanvasId } from './active-canvas';
@@ -14,7 +15,9 @@ import { setExpandHandler } from './component-expand';
 import { ComponentFullscreenOverlay } from './ComponentFullscreen';
 import { ComponentGallery } from './ComponentGallery';
 import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './SidePanel';
-import { wireSync } from './sync';
+import { createCanvasAssetStore, syncUri } from './canvas-sync';
+import { wireCanvasStream } from './canvas-stream';
+import { createCanvasTLSchema } from './tl-schema';
 import { startPresenceHeartbeat } from './presence';
 import { detectPaste } from './paste-detect';
 import { placeDetected, wirePasteCapture } from './paste-place';
@@ -223,6 +226,23 @@ function CanvasApp() {
     [],
   );
   const guest = useGuestScope();
+
+  // The canvas document (ADR-0019): a live connection to this canvas's TLSocketRoom in
+  // its Durable Object. The SCHEMA comes from the shared factory — the same call the room
+  // makes (worker/sync-room.ts) — which is what makes the `component`/`chat` shapes
+  // validate identically on both sides (CLAUDE.md §7, #287).
+  //
+  // `getUserPresence: () => null` suppresses tldraw sync's OWN presence channel on
+  // purpose: presence still travels over the bespoke heartbeat + SSE transport today
+  // (src/presence.ts), and running both would give every collaborator two cursors. #293
+  // deletes the bespoke transport and this line together.
+  const canvasId = useMemo(activeCanvasId, []);
+  const store = useSync({
+    uri: useMemo(() => syncUri(window.location.origin, canvasId), [canvasId]),
+    assets: useMemo(() => createCanvasAssetStore(canvasId), [canvasId]),
+    schema: useMemo(() => createCanvasTLSchema(), []),
+    getUserPresence: () => null,
+  });
   const menuSlotRef = useCallback((el: HTMLElement | null) => onSlots({ menu: el }), [onSlots]);
   const togglePanel = useCallback((open: boolean) => {
     setPanelOpen(open);
@@ -301,7 +321,9 @@ function CanvasApp() {
       cleanup.current?.(); // clean a prior mount (StrictMode double-invoke)
       editorRef.current = editor;
       setReady(true);
-      const unsync = wireSync(editor);
+      // The document is `useSync`'s job now (ADR-0019). What still rides the bridge's SSE
+      // stream is the agent screenshot round-trip and the presence leg — see canvas-stream.ts.
+      const unsync = wireCanvasStream(editor);
       // Presence (#212): beat this browser's cursor + camera to the bridge; remote
       // participants arrive over the sync stream as instance_presence records.
       const unbeat = startPresenceHeartbeat(editor);
@@ -404,7 +426,7 @@ function CanvasApp() {
   return (
     <div className="app">
       <div className="tl-stage">
-        <Tldraw shapeUtils={customShapeUtils} components={components} onMount={onMount} />
+        <Tldraw store={store} shapeUtils={customShapeUtils} components={components} onMount={onMount} />
         {/* The menu/actions strip lives on the canvas itself (top-left, independent of
             the panel): tldraw's dropdowns portal into its own overflow-clipped container,
             so a trigger outside it (the panel) opens an invisible, clipped menu. */}

@@ -39,6 +39,12 @@ export default defineConfig({
       // split production runs (worker/index.ts handles them ahead of the container
       // proxy), so dev no longer simulates the datastore.
       '/api/auth': { target: EDGE, changeOrigin: true },
+      // Canvas sync (ADR-0019) and its asset bucket are EDGE routes: the sync room lives
+      // in a Durable Object, not the container. In production the pad is served through
+      // the Worker so these are already same-origin; in dev the origin is vite, so they
+      // proxy. `ws: true` is required — the sync route is a WebSocket upgrade.
+      '/api/canvas-sync': { target: EDGE, changeOrigin: true, ws: true },
+      '/api/canvas-assets': { target: EDGE, changeOrigin: true },
       '/v1': { target: EDGE, changeOrigin: true },
       // Everything else under /api/* → canvas bridge (canvas sync + chat).
       '/api': { target: BRIDGE, changeOrigin: true },
