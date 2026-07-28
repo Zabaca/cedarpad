@@ -9,6 +9,7 @@ import type { TLRecord } from '@tldraw/tlschema';
 import { CanvasMutation, mutationError } from '../shared/canvas-mutation.ts';
 import { applyMutation, MutationRejected } from './canvas-mutate.ts';
 import type { Env } from './index.ts';
+import { handleSnapshotRequest } from './snapshot-io.ts';
 import { SYNC_USER_HEADER } from './sync-api.ts';
 import { createCanvasSyncRoom, type SyncSessionMeta } from './sync-room.ts';
 
@@ -94,9 +95,14 @@ export class CanvasSyncRoom {
     // `parseCanvasMutatePath`, which would close a runtime import cycle back through
     // worker/index.ts (where this class is re-exported for wrangler). The authoritative
     // route match already happened in the Worker; this only picks the branch.
-    if (new URL(request.url).pathname.endsWith('/mutate')) return this.mutate(request);
+    const url = new URL(request.url);
+    if (url.pathname.endsWith('/mutate')) return this.mutate(request);
 
-    const sessionId = new URL(request.url).searchParams.get('sessionId') ?? crypto.randomUUID();
+    // The migration door (#295), matched the same way and for the same reason. The
+    // admin gate already ran in the Worker (`handleCanvasSnapshot`); this only routes.
+    if (url.pathname.endsWith('/snapshot')) return handleSnapshotRequest(this.room, request);
+
+    const sessionId = url.searchParams.get('sessionId') ?? crypto.randomUUID();
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
