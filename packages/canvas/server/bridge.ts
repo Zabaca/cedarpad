@@ -39,6 +39,7 @@ import {
   HEADLESS_SEND_HEADER,
   HUDDLE_AGENT_TOKEN_HEADER,
   HUDDLE_CANVAS_HEADER,
+  INBOX_CONVERSATION_HEADER,
   LIVEKIT_API_KEY_HEADER,
   LIVEKIT_API_SECRET_HEADER,
   LIVEKIT_URL_HEADER,
@@ -46,6 +47,7 @@ import {
   UpdateShapesBody,
   WriteComponentBody,
   WriteDataBody,
+  decodeForwardedConversation,
   wireError,
 } from '../shared/bridge-wire.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
@@ -1150,7 +1152,8 @@ export async function handleRequest(req: Request): Promise<Response> {
 
     // GET /api/inbox/:id/chat — resolve a Conversation to the chatId a Shell-mounted <ChatView>
     // subscribes to (ADR-0009 / #124). Reached ONLY through the edge proxy (/inbox/:id/bridge/*),
-    // which already ownership-checked the Conversation against the gated user. Wakes THIS bridge:
+    // which already ownership-checked the Conversation against the gated user, FORWARDS it on
+    // x-inbox-conversation, and cleared its unread (ADR-0018 / #261). Wakes THIS bridge:
     // restores the session JSONL from R2 if the container cold-booted, resolves
     // `chatIdForSession(sessionId) ?? conv.id` (a double-homed canvas chat shares its id — two live
     // views of one stream), and seeds that chatId's ChatMeta so its transcript + send resume this
@@ -1158,8 +1161,10 @@ export async function handleRequest(req: Request): Promise<Response> {
     const openConvRoute = /^\/api\/inbox\/([^/]+)\/chat$/.exec(path);
     if (openConvRoute && req.method === 'GET') {
       const id = decodeURIComponent(openConvRoute[1] as string);
-      const conv = await conversations.get(webPocDb, id);
-      if (!conv) return json({ error: `conversation not found: ${id}` }, 404);
+      // ADR-0018 / #261: the row rides the edge's header (which also cleared unread). Parsed,
+      // never trusted — an absent, malformed, or mismatched payload is the same 404 as before.
+      const conv = decodeForwardedConversation(req.headers.get(INBOX_CONVERSATION_HEADER));
+      if (!conv || conv.id !== id) return json({ error: `conversation not found: ${id}` }, 404);
       const { chatId } = await openConversation(
         {
           getter: blobBackend,
@@ -1172,9 +1177,6 @@ export async function handleRequest(req: Request): Promise<Response> {
         },
         conv,
       );
-      // Opening a thread is reading it, not activity — clear unread best-effort so a Turso
-      // hiccup never blocks opening the chat.
-      void conversations.markRead(webPocDb, id).catch(() => {});
       return json({ chatId });
     }
 

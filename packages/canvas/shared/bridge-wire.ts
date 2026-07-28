@@ -32,6 +32,9 @@ export const HEADLESS_SEND_HEADER = 'x-headless-send';
 export const DEV_AGENT_GIT_TOKEN_HEADER = 'x-dev-agent-git-token';
 /** The run's target repo (`owner/name`), resolved and stamped by the edge next to the token. */
 export const DEV_AGENT_REPO_HEADER = 'x-dev-agent-repo';
+/** The Conversation the edge already resolved + ownership-checked, forwarded on the
+ * open-conversation GET so the container never re-reads the row (ADR-0018 / #261). */
+export const INBOX_CONVERSATION_HEADER = 'x-inbox-conversation';
 /** Huddles (ADR-0017): the canvas whose voice room the agent worker should join. */
 export const HUDDLE_CANVAS_HEADER = 'x-huddle-canvas';
 /** The agent's edge-minted LiveKit room token (signing keys never enter the container). */
@@ -81,6 +84,31 @@ export const WriteDataBody = z.object({ source: z.string().min(1) });
 /** One human-readable line out of a failed `safeParse`, for the bridge's `{ error }` 400s. */
 export function wireError(err: z.ZodError): string {
   return err.issues.map((i) => (i.path.length ? `${i.path.join('.')}: ${i.message}` : i.message)).join('; ');
+}
+
+// --- forwarded conversation (INBOX_CONVERSATION_HEADER) -------------------------
+
+/** The only fields the bridge's open-conversation route needs off the row: which session to
+ * restore, and the durable owner pointer it resolves the chatId from. The edge stamps it;
+ * the bridge PARSES it (never trusts it) and cross-checks `id` against the path. */
+export const ForwardedConversation = z.object({
+  id: z.string().min(1),
+  sessionId: z.string().min(1),
+  ownerRef: z.string().min(1).nullable(),
+});
+export type ForwardedConversation = z.infer<typeof ForwardedConversation>;
+
+export const encodeForwardedConversation = (conv: ForwardedConversation): string =>
+  JSON.stringify(ForwardedConversation.parse(conv));
+
+/** Parse a forwarded Conversation header; `null` for absent, non-JSON, or off-contract. */
+export function decodeForwardedConversation(header: string | null): ForwardedConversation | null {
+  if (!header) return null;
+  try {
+    return ForwardedConversation.parse(JSON.parse(header));
+  } catch {
+    return null;
+  }
 }
 
 // --- routes ---------------------------------------------------------------------
