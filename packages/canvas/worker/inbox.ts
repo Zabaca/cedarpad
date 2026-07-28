@@ -12,7 +12,7 @@ import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
 
 // The edge Inbox API (ADR-0007, PRD #50 slice #62). The WORKSPACE-SHARED session index,
-// served AT THE EDGE against remote Turso — so listing Conversations and reading their
+// served AT THE EDGE against the platform D1 — so listing Conversations and reading their
 // metadata never wakes a container (the runner can sleep). The transcript is NO LONGER read
 // here: under ADR-0009 / #124 the Inbox thread is a live <ChatView> over the owning bridge
 // (via the /inbox/:id/bridge proxy), so history streams from the runner, not an R2 photograph.
@@ -28,7 +28,7 @@ const AssignInput = z.object({ userId: z.string().min(1).nullable() });
 /** POST /api/inbox/:id/visibility body (ADR-0016): the chat's own flag, creator-only. */
 const VisibilityInput = z.object({ visibility: z.enum(['shared', 'private']) });
 
-/** How often /api/inbox/events re-reads Turso per connected client. */
+/** How often /api/inbox/events re-reads the platform D1 per connected client. */
 export const INBOX_EVENTS_INTERVAL_MS = 10_000;
 
 /** The caller's view of the inbox: rows scoped to the workspace, ADR-0016 visibility
@@ -56,7 +56,7 @@ async function inboxReadAt(database: ReturnType<typeof db>, workspaceId: string,
  *   GET  /api/inbox                 → { items: InboxItem[], me, readAt }  (filters: ?view=, ?assigned=<userId|unassigned>; scoped to the active workspace)
  *   GET  /api/inbox/events          → SSE { count, readAt } (the nav badge, pushed live)
  *   POST /api/inbox/read            → stamp the SHARED read mark (read-for-all)
- *   GET  /api/inbox/:id             → { conversation }  (Turso metadata only — never wakes a runner)
+ *   GET  /api/inbox/:id             → { conversation }  (D1 metadata only — never wakes a runner)
  *   POST /api/inbox/:id/reply       → forwarded to the container bridge (wakes it, #61)
  *   POST /api/inbox/:id/close       → store close
  *   POST /api/inbox/:id/reopen      → store reopen
@@ -92,7 +92,7 @@ export async function handleInboxApi(
 
   // GET /api/inbox/events — SSE: pushes the caller's nav-badge count ({count, readAt})
   // whenever it changes, so every open Shell updates live (no client polling). The edge
-  // watches Turso (writes come from both the edge and container bridges — no pub/sub bus
+  // watches the platform D1 (writes come from both the edge and container bridges — no pub/sub bus
   // yet), so latency is one INBOX_EVENTS_INTERVAL_MS tick. Per-user: visibility-filtered.
   if (id === 'events' && !action) {
     if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
@@ -198,7 +198,7 @@ export async function handleInboxApi(
     return Response.json({ conversation: updated });
   }
 
-  // Detail: the Conversation METADATA only (Turso, no wake). The transcript is served by the
+  // Detail: the Conversation METADATA only (D1, no wake). The transcript is served by the
   // owning bridge via the /inbox/:id/bridge proxy now (ADR-0009 / #124), not read from R2 here.
   if (request.method === 'GET') {
     return Response.json({ conversation: conv });

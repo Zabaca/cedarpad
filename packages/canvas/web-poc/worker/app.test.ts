@@ -32,7 +32,6 @@ function migrationStatements(): string[] {
 const WORKSPACE = "ws_test";
 
 const env = {
-  TURSO_URL: ":memory:",
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long!!",
   BETTER_AUTH_URL: "http://localhost:8787",
   DEV_AUTH_WORKSPACE: WORKSPACE,

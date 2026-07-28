@@ -19,7 +19,6 @@ const base = {
     BETTER_AUTH_URL: 'https://app.cedarpad.com',
     AUTH_DISABLE_SIGNUP: 'true',
     DEV_AGENT_ENABLED: 'true',
-    PLATFORM_DB_ENABLED: 'false',
     CANVAS_USER: 'usr_1',
   },
   env: { preview: { name: 'agent-canvas-preview' } },
@@ -54,8 +53,6 @@ describe('devWorkerConfig: the edge Worker as local dev runs it', () => {
       WEB_ORIGIN: 'http://localhost:4520',
       BETTER_AUTH_URL: 'http://localhost:4520',
       DEV_AGENT_ENABLED: 'false',
-      // Local dev IS on D1 (#263) — production's inert-until-#267 "false" must not leak in.
-      PLATFORM_DB_ENABLED: 'true',
       CANVAS_USER: 'usr_1',
       // ADR-0018 / #266: the bridge has no database, so it reaches the platform data layer
       // over the RPC — which needs both ends to share a trust root even in a worktree with no

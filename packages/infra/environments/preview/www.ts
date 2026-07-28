@@ -5,7 +5,7 @@ import { cloudflareModule } from '../../modules/cloudflare'
  * `cedarpad-www-preview` on a free *.workers.dev URL (wrangler.jsonc
  * env.preview), so it never touches production's cedarpad.com. Shares the
  * production `cedarpad-waitlist` D1 (same database_id), matching how canvas
- * preview shares production's Turso.
+ * preview shares production's platform D1.
  *
  * CLOUDFLARE_ENV=preview on the build is LOAD-BEARING: the Astro adapter flattens
  * wrangler config at build time into dist/server/wrangler.json, and `wrangler

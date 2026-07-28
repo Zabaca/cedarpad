@@ -13,7 +13,7 @@ A directory under `packages/infra/environments/<env>/` holding all **Instance** 
 _Avoid_: stage, target, deployment
 
 **Instance**:
-A **Module** bound to specific config for one **Environment** — e.g. `tursoModule.instance({ name: 'main-db', config: {...} })`. The unit `zbc apply` operates on.
+A **Module** bound to specific config for one **Environment** — e.g. `cloudflareModule.instance({ name: 'canvas', config: {...} })`. The unit `zbc apply` operates on.
 _Avoid_: resource, deployment
 
 ## Relationships

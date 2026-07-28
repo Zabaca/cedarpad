@@ -106,11 +106,10 @@ export interface Env {
   // `canvas-assets/`, which needs the WRITE half `MartBucket` deliberately omits.
   MART_BUCKET: import('./mart-api.ts').MartBucket & import('./canvas-assets.ts').AssetBucket;
   CLAUDE_CODE_OAUTH_TOKEN: string;
-  // web-poc (mounted in the bridge, served in-process): remote Turso + auth +
-  // embeddings. Secrets (TURSO_*, VOYAGE_API_KEY, BETTER_AUTH_SECRET) come from
-  // workerSecrets; the two origins are plain vars in wrangler.jsonc.
-  TURSO_URL?: string;
-  TURSO_KEY?: string;
+  // web-poc (mounted at the edge): the platform data layer on D1 (ADR-0018) + auth +
+  // embeddings. Secrets (VOYAGE_API_KEY, BETTER_AUTH_SECRET) come from workerSecrets;
+  // the two origins are plain vars in wrangler.jsonc.
+  PLATFORM_DB: D1Database;
   VOYAGE_API_KEY?: string;
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
@@ -170,9 +169,9 @@ export interface Env {
 
 // Notebook's Hono API (web-poc's `buildApp`), mounted AT THE EDGE (ADR-0007, #56). No
 // db is injected, so its `dbMiddleware` builds one per request via
-// `createDbForWorker(c.env)` — the workerd-safe `@libsql/client/web` client against
-// remote Turso — so Notebook's `/v1/*` runs here without ever waking a container.
-// Built once per isolate (route setup is pure); the db is per-request.
+// `createDbForWorker(c.env)` — the PLATFORM_DB D1 binding (ADR-0018) — so Notebook's
+// `/v1/*` runs here without ever waking a container. Built once per isolate (route
+// setup is pure); the db is per-request.
 const notebookApi = buildApp();
 
 // The kick's repo resolution (ADR-0015): runs target the default workspace's container, so
@@ -292,19 +291,20 @@ export default {
       return handleAuth(request, env);
     }
 
-    // Notebook API at the edge (ADR-0007, #56). `/v1/*` is served HERE against remote
-    // Turso, so Notebook no longer depends on / wakes the container. It SELF-gates via
-    // web-poc's `authMiddleware` (Better Auth session cookie OR `x-api-key`) against the
-    // SAME `createAuth` + Turso the edge `/api/auth` path uses — one auth system — so we
-    // deliberately route it BEFORE the edge session gate below (which would `renderLogin`
-    // HTML and can't honour agent `x-api-key`). Notebook returns its own JSON 401.
+    // Notebook API at the edge (ADR-0007, #56). `/v1/*` is served HERE against the
+    // platform D1 (ADR-0018), so Notebook no longer depends on / wakes the container. It
+    // SELF-gates via web-poc's `authMiddleware` (Better Auth session cookie OR
+    // `x-api-key`) against the SAME `createAuth` the edge `/api/auth` path uses — one
+    // auth system — so we deliberately route it BEFORE the edge session gate below (which
+    // would `renderLogin` HTML and can't honour agent `x-api-key`). Notebook returns its
+    // own JSON 401.
     if (url.pathname === '/v1' || url.pathname.startsWith('/v1/')) {
       return notebookApi.fetch(request, env as never);
     }
     // Verify the session and decide the gate BEFORE the resolver/proxy below — an
     // unauthenticated request never reaches serveWorkspace, so it never reaches the
-    // container. Notebook's /v1/* verifies the SAME Better Auth session (same Turso,
-    // same secret, same cookie) in-container, so one auth system spans the platform.
+    // container. Notebook's /v1/* verifies the SAME Better Auth session (same D1, same
+    // secret, same cookie), so one auth system spans the platform.
     // #177 inbound MCP: OAuth discovery at the origin root (public — clients fetch these
     // before they hold any token) and the /mcp endpoint itself, which self-gates on its
     // bearer (401 + WWW-Authenticate, never the login page, never the session cookie).
@@ -649,9 +649,10 @@ export default {
       );
     }
 
-    // Edge Inbox API (ADR-0007, PRD #50 slice #62), user-scoped. Served HERE against remote
-    // Turso + R2: list/detail/close/reopen never wake a container (history reads from the R2
-    // transcript while the runner sleeps); only reply forwards into the container (#61).
+    // Edge Inbox API (ADR-0007, PRD #50 slice #62), user-scoped. Served HERE against the
+    // platform D1 + R2: list/detail/close/reopen never wake a container (history reads
+    // from the R2 transcript while the runner sleeps); only reply forwards into the
+    // container (#61).
     const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen|assign|visibility))?)?$/.exec(url.pathname);
     if (inboxApiMatch) {
       return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);

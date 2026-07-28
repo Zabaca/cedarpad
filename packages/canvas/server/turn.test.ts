@@ -152,7 +152,7 @@ describe('runTurnAsync: the race fix (settle awaits the row-at-start index)', ()
   test('a failed index never blocks settle (best-effort — the turn still records activity)', async () => {
     const { deps, calls } = recordingDeps({
       indexSession: async () => {
-        throw new Error('turso hiccup');
+        throw new Error('index hiccup');
       },
     });
 

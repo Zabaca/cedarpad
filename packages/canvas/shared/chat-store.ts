@@ -375,7 +375,7 @@ export function routeChatFrame(raw: string): void {
 
 // The Inbox "list changed" doorbell (grill 2026-07-10): the container's chat stream is the
 // only live channel that observes turn starts/settles, so list consumers subscribe here and
-// refetch the authoritative Turso list when a frame implies a row changed. No list data
+// refetch the authoritative D1 list when a frame implies a row changed. No list data
 // rides the stream — it is purely a signal.
 const frameListeners = new Set<(chatId: string, ev: ChatEvent) => void>();
 export function onChatFrame(cb: (chatId: string, ev: ChatEvent) => void): () => void {

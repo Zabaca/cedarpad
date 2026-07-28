@@ -1,6 +1,6 @@
 // Where local dev's platform data layer lives on disk (ADR-0018, #263): miniflare's local D1,
-// persisted under a per-worktree state directory. Production is untouched — it still runs on
-// Turso, reached only by the edge.
+// persisted under a per-worktree state directory. Production runs on the platform D1
+// (ADR-0018, cutover #267), reached only by the edge.
 //
 // DEV TOOLING ONLY, and structurally so since #266: this module locates a directory and a file.
 // It opens nothing. The bridge used to build a libSQL client from it — that was the temporary

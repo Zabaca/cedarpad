@@ -6,8 +6,8 @@ import type { Env } from './index.ts';
 // The edge auth gate (ADR-0007, slice #45). Better Auth session verification runs
 // at the edge, AHEAD of the resolver/proxy, so an unauthenticated request never
 // reaches a container. It reuses web-poc's Better Auth config (`createAuth`) and the
-// SAME remote Turso (users/sessions) that Notebook's `/v1/*` verifies against — one
-// auth system across the platform. Session lookup (Turso + crypto) is integration-only;
+// SAME platform D1 (users/sessions) that Notebook's `/v1/*` verifies against — one
+// auth system across the platform. Session lookup (D1 + crypto) is integration-only;
 // the PURE gate DECISION (`decideGate`) is split out so it's unit-testable off a DB.
 
 /** A resolved Better Auth user. The gate needs only `id`; the invite accept flow
@@ -57,7 +57,7 @@ export function decideGate(pathname: string, session: ResolvedSession): Gate {
   return session?.user ? { decision: 'allow', user: session.user } : { decision: 'deny' };
 }
 
-/** Build the edge Better Auth instance against remote Turso (the integration seam).
+/** Build the edge Better Auth instance against the platform D1 (the integration seam).
  * Memoized per isolate: the db client is already shared (createDbForWorker caches), and
  * rebuilding the Better Auth wrapper per request was pure waste on the hot gate path. */
 let cachedAuth: { db: unknown; auth: ReturnType<typeof createAuth> } | null = null;
@@ -70,7 +70,7 @@ export function edgeAuth(env: Env) {
 }
 
 /**
- * Verify the request's Better Auth session against remote Turso.
+ * Verify the request's Better Auth session against the platform D1.
  * Returns `{ user }` for a valid session, else null (no cookie / expired / invalid).
  */
 export async function authenticate(request: Request, env: Env): Promise<ResolvedSession> {

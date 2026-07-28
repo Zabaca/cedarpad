@@ -29,7 +29,7 @@ deployment + org/tenant + membership unit (see Tenancy). _Avoid_: "sandbox", "in
 ## Tenancy — a Workspace IS a deployment (control plane)
 
 **The Workspace is the isolation + membership unit.** A Workspace is, all in one:
-- a **deployment** — its own isolated stack (container + Turso DB + R2), provisioned/routed by
+- a **deployment** — its own isolated stack (container + D1 DB + R2), provisioned/routed by
   the **control plane** (the shared edge layer: auth, provisioning, routing);
 - an **org/tenant** — it **is** the Better Auth **organization** (the org plugin's members +
   invitations); you **invite people directly to a Workspace**;
@@ -48,16 +48,15 @@ untrusted members — the biggest, most safety-critical build, catastrophic if w
 
 **Data is per-workspace (its own database) in the target.** Because a Workspace = a deployment, its
 data lives in its **own database**, so cross-workspace `workspace_id` scoping (#57) largely
-**dissolves**: the DB *is* the workspace. The **vendor is downstream of this** — the store moves
-from Turso to **D1** ([ADR-0018](./docs/adr/0018-platform-data-layer-on-d1.md)), one static binding
-per Workspace deployment, without changing the tenancy model. Turso mentions elsewhere in this
-document describe **today's** runtime and stay accurate until that cutover lands.
+**dissolves**: the DB *is* the workspace. The store is **D1** ([ADR-0018](./docs/adr/0018-platform-data-layer-on-d1.md)),
+one static binding per Workspace deployment — that cutover landed (#267); what's still ahead is the
+**target** below (a database per Workspace, not yet one shared D1).
 
 - **Today (single-deployment approximation)**: one edge Worker + per-workspace *containers* + R2,
-  but **one shared Turso DB with `workspace_id` scoping** — what the 20 shipped slices built. It's
+  but **one shared D1 DB with `workspace_id` scoping** — what the 20 shipped slices built. It's
   the one-deployment starting point.
 - **Target (control plane)**: the control plane promotes each Workspace to a real isolated
-  deployment (own Turso DB); `workspace_id` scoping becomes vestigial. **Open public signup** (if
+  deployment (own D1 DB); `workspace_id` scoping becomes vestigial. **Open public signup** (if
   ever) rides the same control plane — auto-provision an isolated workspace-deployment per signup,
   never a shared plane, so RCE isolation always holds.
 
@@ -88,7 +87,7 @@ NOT inside the container. It mounts Canvas, Notebook, and Inbox as **inline stag
 (`?stage=…`), never separate page loads. Always instant; wakes the workspace runtime only
 when the canvas stage mounts the Render Pad iframe (`/w/:ws/canvas/:id/pad`) — browsing the
 rail never does. **Owns login and is the single gate**: the edge Shell
-Worker runs **Better Auth** (against Turso) for the Shell, the container proxy, and
+Worker runs **Better Auth** (against D1) for the Shell, the container proxy, and
 Notebook's `/v1/*` — one auth system. Because the edge serves the login/Shell and only
 proxies to the container *after* auth, the old pre-auth source-disclosure hole closes
 structurally, so **`cs_gate` is removed** (Cloudflare Access becomes optional
@@ -112,7 +111,7 @@ Each app has its own document model, in its own `CONTEXT.md`.
 
 **Scoping across workspaces** (given James has many): **Canvas** and **Notebook** data are
 **per-workspace** — a workspace's canvases and its Observations/Problems belong to that
-workspace (Turso rows carry `workspace_id`). This `workspace_id` is the **platform**
+workspace (D1 rows carry `workspace_id`). This `workspace_id` is the **platform**
 workspace (the `workspaces` registry / the `cs_workspace` cookie the Shell sets; agents pass
 `x-workspace-id`), **not** the Better Auth organization. Notebook records are **isolated per
 platform workspace** — workspace A's list/search never returns B's rows (#57); the original
@@ -190,9 +189,9 @@ canvas is a surface *on* a notebook item or session — an attachment edge, not 
 
 ## Apps — stubs (filled as we design)
 
-**Notebook**: PM ("Problem/Solution intelligence") app. **Edge + Turso, not a container
+**Notebook**: PM ("Problem/Solution intelligence") app. **Edge + D1, not a container
 tenant** — it needs no vite compiler and no agent runtime for its core loop, so its Hono
-API runs on the Worker against remote Turso and its SPA is a static build served under
+API runs on the Worker against the platform D1 and its SPA is a static build served under
 the Shell. Carries over PR #40's crux: the zod-openapi **contract**, Drizzle **schema**,
 and **Voyage embeddings / cosine-similarity** pipeline. Drops PR #40's in-container mount
 + in-app `Gate` (the edge Shell owns login). Domain rollout: **Observation** (capture →
@@ -256,20 +255,20 @@ different environment**, not the session. Consequences: (1) opening a Conversati
 **connects to its runner's bridge — waking it** (cold-boot latency is the honest cost of
 "I'm opening this session," same as opening a canvas); history and live stream come from
 that one source, never half-from-R2. (2) The inbox **list** is *not* a chat interface — it
-is triage metadata (Turso), so it never wakes a runner. (3) One shared chat component backs
+is triage metadata (D1), so it never wakes a runner. (3) One shared chat component backs
 every surface; they differ only in *which bridge* they address, never in data source.
 
-**Storage**: **Turso** holds Conversation metadata (status, waiting-on, unread,
+**Storage**: **D1** holds Conversation metadata (status, waiting-on, unread,
 last-activity, owner edge, `sessionId`, summary, user) + a denormalized last-message
 preview so the inbox **list** is fast. The **transcript is the SDK session JSONL**
 (`~/.claude/projects/<sessionId>/`, the authoritative copy) **backed up live to R2 blobs
 and restored on wake** — same R2-as-runtime-delta pattern as ADR-0001's code overlay /
 canvas-state. R2's **only** consumer is **resume-restore** (R2 → runner FS →
 `query({ resume: sessionId })` on wake); it is the durability substrate, **not** a read
-path for display. The inbox **list** renders from Turso metadata while runners sleep; a
+path for display. The inbox **list** renders from D1 metadata while runners sleep; a
 **chat interface never renders from R2** (see "A chat interface is a live bridge view").
 An open Inbox tab keeps the list live via a **doorbell**: it subscribes to the container's
-chat stream and refetches the Turso list when a frame implies a row changed (turn start,
+chat stream and refetches the D1 list when a frame implies a row changed (turn start,
 settle, `end_turn`) — the stream carries no list data, it is purely the signal. A
 Conversation's **identity is its chat** (`owner_ref` = bridge chatId); `session_id` is just
 the current resume pointer, re-pointed each turn (resume mints a new session id per turn).
@@ -334,7 +333,7 @@ action the agent takes mid-conversation**, not a hardcoded consequence of the re
 (`workspaces/<ws>/warehouse/…`). It is **storage, not a server**: DuckDB is a *stateless
 engine* that queries those files from the container, never a durable file the container
 holds (container disk caps at 20 GB; `ceo`'s warehouse is 22.3 GiB). _Avoid_: "the DuckDB",
-"the database" — Turso is the metadata store and is not part of the warehouse.
+"the database" — D1 is the metadata store and is not part of the warehouse.
 
 **Connector**: a declared source that lands raw data in the warehouse. Slice 1 needs none:
 the workspace's own **Claude session JSONL is already in the same bucket**

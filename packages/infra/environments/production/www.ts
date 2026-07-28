@@ -2,7 +2,7 @@ import { cloudflareModule } from '../../modules/cloudflare'
 
 /**
  * www — the marketing site at cedarpad.com (ADR-0014). An Astro site on its own
- * Worker, fully decoupled from the app worker: no auth, no Turso, no container.
+ * Worker, fully decoupled from the app worker: no auth, no platform D1, no container.
  * The one dynamic piece is the waitlist endpoint writing to the
  * `cedarpad-waitlist` D1 database, declared in the package's wrangler.jsonc.
  *

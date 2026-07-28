@@ -29,7 +29,7 @@ describe('containerEnv — CANVAS_USER forwarding', () => {
 // reachable from it, structurally, not by policy.
 describe('warehouseContainerEnv — R2 creds only', () => {
   // The fake env below carries the R2 creds ALONGSIDE realistic dangerous values
-  // (Claude OAuth token, Turso/auth secrets, the GitHub App private key, VAPID private
+  // (Claude OAuth token, auth secrets, the GitHub App private key, VAPID private
   // key) — every one of them present with a real-looking string, not undefined. A
   // `toEqual` against an object that merely omits the dangerous keys would still pass
   // if a regression forwarded them as `undefined` (`toEqual` ignores undefined-valued
@@ -41,8 +41,6 @@ describe('warehouseContainerEnv — R2 creds only', () => {
     R2_SECRET_ACCESS_KEY: 'sk_456',
     R2_ENDPOINT: 'https://example.r2.cloudflarestorage.com',
     CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-fake',
-    TURSO_URL: 'libsql://prod.turso.io',
-    TURSO_KEY: 'turso_fake_key',
     BETTER_AUTH_SECRET: 'better_auth_fake_secret',
     GITHUB_APP_PRIVATE_KEY: '-----BEGIN RSA PRIVATE KEY-----fake-----END RSA PRIVATE KEY-----',
     VAPID_PRIVATE_KEY: 'vapid_fake_private_key',
@@ -56,7 +54,7 @@ describe('warehouseContainerEnv — R2 creds only', () => {
     expect(result.R2_ENDPOINT).toBe('https://example.r2.cloudflarestorage.com');
   });
 
-  test('never forwards the Claude OAuth token, Turso/auth secrets, or private keys', () => {
+  test('never forwards the Claude OAuth token, auth secrets, or private keys', () => {
     expect(Object.keys(warehouseContainerEnv(leakyEnv)).sort()).toEqual(
       ['R2_ACCESS_KEY_ID', 'R2_BUCKET', 'R2_ENDPOINT', 'R2_SECRET_ACCESS_KEY'].sort()
     );
@@ -74,7 +72,7 @@ describe('warehouseContainerEnv — R2 creds only', () => {
     );
   });
 
-  test('the Claude OAuth token, Turso/auth secrets, and private keys still never leak when connector secrets are present', () => {
+  test('the Claude OAuth token, auth secrets, and private keys still never leak when connector secrets are present', () => {
     const result = warehouseContainerEnv(leakyEnv, { slack: 'xoxb-fake-token' });
     expect(Object.keys(result).sort()).toEqual(
       ['R2_ACCESS_KEY_ID', 'R2_BUCKET', 'R2_ENDPOINT', 'R2_SECRET_ACCESS_KEY', 'slack'].sort()
@@ -152,18 +150,15 @@ describe('containerEnv — connector secrets never reach the chat container (#24
   // re-adds the forwarding lines, so it names the values rather than the variables.
   test('no platform data layer credentials reach the container', () => {
     const env = {
-      TURSO_URL: 'libsql://prod.turso.io',
-      TURSO_KEY: 'turso_fake_key',
+      PLATFORM_DB: 'fake-d1-binding',
       VOYAGE_API_KEY: 'voyage_fake_key',
       CANVAS_USER: 'u',
     } as never;
 
     const result = containerEnv(env, coords);
 
-    expect(Object.keys(result)).not.toContain('TURSO_URL');
-    expect(Object.keys(result)).not.toContain('TURSO_KEY');
-    expect(Object.values(result)).not.toContain('libsql://prod.turso.io');
-    expect(Object.values(result)).not.toContain('turso_fake_key');
+    expect(Object.keys(result)).not.toContain('PLATFORM_DB');
+    expect(Object.values(result)).not.toContain('fake-d1-binding');
     // VOYAGE_API_KEY went with the same mount: embeddings are a Notebook (edge) concern.
     expect(Object.values(result)).not.toContain('voyage_fake_key');
   });

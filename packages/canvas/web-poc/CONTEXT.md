@@ -1,15 +1,14 @@
 # web-poc — Cedarpad Problem/Solution intelligence (in-tree module of canvas)
 
-A React **SPA** + a **Hono** API backed by Turso (libSQL) with Voyage embeddings.
-Migrated from the standalone `apex` monorepo (API Worker + Pages SPA + 5 workspace
-packages) into its own package, then — as of 2026-07-01 — **merged into
+A React **SPA** + a **Hono** API backed by the platform D1 (ADR-0018) with Voyage
+embeddings. Migrated from the standalone `apex` monorepo (API Worker + Pages SPA + 5
+workspace packages) into its own package, then — as of 2026-07-01 — **merged into
 `@cedarpad/canvas`** at `packages/canvas/web-poc/`.
 
-**It is no longer a standalone worker or a package.** Canvas mounts it in-process
-as its 3rd nav view (one React 19 tree, no iframe): the canvas bridge serves the
-Hono app, canvas's Vite serves the SPA, and prod ships as one Cloudflare instance.
-There is no `package.json`/`exports` — canvas imports it by relative path and owns
-its dependencies. See "How canvas mounts it" below.
+**It is no longer a standalone worker or a package.** Canvas's edge Worker serves
+its Hono app directly (ADR-0018), canvas's Vite serves the SPA, and prod ships as
+one Cloudflare instance. There is no `package.json`/`exports` — canvas imports it
+by relative path and owns its dependencies. See "How canvas mounts it" below.
 
 ## Layout
 
@@ -17,29 +16,28 @@ its dependencies. See "How canvas mounts it" below.
   openapi-fetch, Ably). `src/embed.tsx` (`WebPocApp`) is the entry the canvas host
   mounts. (`src/main.tsx` / `index.html` are the old standalone root, now inert.)
 - `worker/` — the Hono + `@hono/zod-openapi` API. `worker/index.ts` exports
-  `buildApp` (run inside the canvas bridge). Routes: `/api/auth/*` (Better Auth),
-  `/v1/*` (the contract), `/health`, `/doc`, `/ui`.
+  `buildApp`, mounted at canvas's edge Worker (ADR-0018). Routes: `/api/auth/*`
+  (Better Auth), `/v1/*` (the contract), `/health`, `/doc`, `/ui`.
 - `lib/` — the former workspace packages, relative-imported:
   `ai` (AI SDK pipeline), `config` (env + tunables), `contract` (zod-openapi
-  schemas shared by SPA + worker), `db` (Drizzle + libSQL/Turso, vectors,
-  `migrations/`), `realtime` (Ably channel contract).
-- `scripts/` — `migrate.ts` (Drizzle migrator), `seed.ts`, `emit-openapi.ts`,
-  `worker.ts` (optional agent-jobs consumer).
+  schemas shared by SPA + worker), `db` (Drizzle, driver-agnostic over D1/libSQL,
+  vectors, `migrations/`), `realtime` (Ably channel contract).
+- `scripts/` — `emit-openapi.ts`.
 
 ## How canvas mounts it
 
 Canvas imports this module by **relative path** (no `@cedarpad/web-poc` package):
 `../web-poc/src/embed` (`WebPocApp`), `../web-poc/worker/index.ts` (`buildApp`),
-`../web-poc/lib/db/index.ts` (`makeDb`). The canvas app lazy-mounts `WebPocApp`
-behind its 3rd left-rail button (`packages/canvas/src/App.tsx`); the canvas
-**bridge** (`packages/canvas/server/bridge.ts`) runs `buildApp` in-process for
-`/v1/*` + `/api/auth/*`, building **one** `@libsql/client` (node) it injects via
-`makeDb` — remote Turso in prod, and in dev the SQLite file behind miniflare's local
-D1, which the edge Worker serves those same routes from (ADR-0018). The node libSQL
-client speaks both file and remote, so **no `turso dev` daemon is needed**; canvas's
-Vite serves the SPA and proxies `/v1` + `/api/auth` to the edge Worker, the rest of
-`/api` to the bridge. Nothing migrates on boot — `bun run webpoc:db:migrate:local`
-applies `lib/db/migrations` to the local D1.
+`../web-poc/worker/runtime.ts` (`createDbForWorker`). The canvas app lazy-mounts
+`WebPocApp` behind its 3rd left-rail button (`packages/canvas/src/App.tsx`); canvas's
+**edge Worker** (`packages/canvas/worker/index.ts`) mounts `buildApp` directly for
+`/v1/*` + `/api/auth/*` (ADR-0018), building the db per request from its `PLATFORM_DB`
+D1 binding — the container/bridge holds no database client at all. In dev that
+binding is the SQLite file behind miniflare's local D1; in prod it's the same D1
+binding, live since the cutover (#267). Canvas's Vite serves the SPA and proxies
+`/v1` + `/api/auth` to the edge Worker, the rest of `/api` to the bridge. Nothing
+migrates on boot — `bun run webpoc:db:migrate:local` applies `lib/db/migrations` to
+the local D1.
 
 For the full request flow (dev + prod), the `/v1` auth model (session vs
 `x-api-key`), remote access, and whether canvas should hold a service key, see
@@ -52,14 +50,12 @@ Run everything from canvas — there is no standalone dev server:
 1. `bun install` (repo root).
 2. `cp web-poc/.dev.vars.example web-poc/.dev.vars` — local env: `VOYAGE_API_KEY`
    (else a hash fallback), `BETTER_AUTH_SECRET`, optional `ABLY_API_KEY` /
-   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. (`TURSO_URL` is left unset in dev so the
-   platform data layer is the local D1.)
+   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`. The platform data layer is always the
+   local D1 — nothing to configure for it.
 3. `cd packages/canvas && bun run webpoc:db:migrate:local` — apply
    `lib/db/migrations` to the local D1 (idempotent; re-run after a new migration).
 4. `cd packages/canvas && bun run dev` — vite (:4510) + bridge (:4511) + edge
    Worker (:4513), which serves `/v1/*` + `/api/auth/*` off the local D1.
-5. Optional LLM agent jobs: `cd packages/canvas/web-poc && bun scripts/worker.ts`
-   (not needed for embed/search — see "Async jobs (optional)" below).
 
 ## Schema / migrations
 
@@ -82,17 +78,17 @@ embed→store→search loop needs **no background worker**.
 ## Async jobs (optional)
 
 The `agent_jobs` table is still used for the **LLM** agent work (classification /
-similarity-linking / synthesis), enqueued behind `runAgent`. It is **inert by
-default** — nothing drains it unless you run the optional consumer
-`bun scripts/worker.ts` (from `web-poc/`). Re-introducing a production consumer
-(Cron `scheduled`, Queues, or Workflows) is documented in `MIGRATION.md` →
+similarity-linking / synthesis), enqueued behind `runAgent`. It is **inert** —
+nothing drains it; the standalone local consumer script was retired with the Turso
+cleanup (#268) since it can't reach D1 outside workerd. Re-introducing a production
+consumer (Cron `scheduled`, Queues, or Workflows) is documented in `MIGRATION.md` →
 "Async agent jobs".
 
 ## Relationships
 
-- **web-poc → Canvas**: it *is* part of canvas — mounted in-process and shipped
-  inside the single `agent-canvas` Cloudflare instance. Its env (`TURSO_*`,
-  `VOYAGE_API_KEY`, `BETTER_AUTH_*`, `WEB_ORIGIN`) rides the canvas worker secrets
+- **web-poc → Canvas**: it *is* part of canvas — mounted at the edge and shipped
+  inside the single `agent-canvas` Cloudflare instance. Its env (`VOYAGE_API_KEY`,
+  `BETTER_AUTH_*`, `WEB_ORIGIN`) rides the canvas worker secrets
   (`packages/infra/environments/production/canvas.ts` `workerSecrets`, all must
   exist in `production/secrets.yaml`, SOPS-encrypted). Deploy is
   `packages/canvas/scripts/deploy.sh` (`zbc apply production canvas`).

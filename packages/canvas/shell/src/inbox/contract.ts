@@ -20,7 +20,7 @@ export type InboxConversation = {
   summary: string | null;
 };
 
-/** `GET /api/inbox/:id` → the Conversation metadata only (Turso; no transcript, no wake). */
+/** `GET /api/inbox/:id` → the Conversation metadata only (D1; no transcript, no wake). */
 export type InboxDetailResponse = { conversation: InboxConversation };
 
 /** `GET /inbox/:id/bridge/api/inbox/:id/chat` (through the edge proxy) → the chatId the Shell

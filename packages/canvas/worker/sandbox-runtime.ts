@@ -82,7 +82,7 @@ async function writeEnvFile(sandbox: SandboxStub, ev: Record<string, string>): P
       .map(([k, v]) => `${k}=${v ?? ''}`)
       .join('\n') + '\n';
   // Written into the canvas package (the bridge's cwd) so bun auto-loads it for the
-  // bridge and every child — including web-poc's mounted app (Turso/auth secrets).
+  // bridge and every child — including web-poc's mounted app (auth secrets).
   await sandbox.writeFile(`${CANVAS_CONTAINER_CWD}/.env`, body).catch(() => {});
 }
 

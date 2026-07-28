@@ -5,7 +5,7 @@
 The public marketing site at **`cedarpad.com`**: an **Astro** site on its own Cloudflare
 Worker (`custom_domain: cedarpad.com`), deployed by its own infra instance
 (`packages/infra/environments/{production,preview}/www.ts`). Fully decoupled from the app
-worker — no auth, no Turso, no container. The homepage is prerendered (static); the one
+worker — no auth, no platform D1, no container. The homepage is prerendered (static); the one
 server route is the waitlist endpoint.
 
 **Waitlist**: the one dynamic piece. Signup to the product is invitation-only, so the

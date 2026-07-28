@@ -6,10 +6,6 @@ import { z } from "zod";
  * source explicitly so the same validator works in both worlds.
  */
 export const envSchema = z.object({
-  // Turso / libSQL
-  TURSO_URL: z.string().min(1),
-  TURSO_KEY: z.string().optional(),
-
   // AI providers (only the active one is required at runtime)
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
