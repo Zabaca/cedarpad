@@ -109,9 +109,11 @@ export interface TurnDeps {
    *  `list_marts` tool. Optional — absent in tests ⇒ the tool is omitted. */
   listMarts?: ListMarts;
   /** Asset-fetch seam (the bridge holds the edge origin + service secret): how `read_image`
-   *  gets at pixels that live behind the edge's asset route since #290. Optional — absent in
-   *  tests ⇒ only legacy inline data URLs are readable. */
-  fetchAsset?: FetchAsset;
+   *  gets at pixels that live behind the edge's asset route since #290. Bound per canvas —
+   *  the container's credential opens ANY canvas's assets, so the turn's canvas is what
+   *  narrows it (#333 made the `src` guest-writable). Optional — absent in tests ⇒ only
+   *  legacy inline data URLs are readable. */
+  fetchAsset?: (canvasId: string) => FetchAsset;
 }
 
 /**
@@ -177,8 +179,9 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // Mart discovery is a CANVAS capability — chat turns only (a dev-agent turn places no
       // components, so it has nothing to point at a mart).
       flavor.kind === 'chat' ? deps.listMarts : undefined,
-      // Reading a pasted screenshot is a CANVAS capability — chat turns only.
-      flavor.kind === 'chat' ? deps.fetchAsset : undefined,
+      // Reading a pasted screenshot is a CANVAS capability — chat turns only, and scoped to
+      // the SAME canvas the store was opened on just above.
+      flavor.kind === 'chat' ? deps.fetchAsset?.(activeCanvasId) : undefined,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
       // Row-at-start: index the session the moment its id lands (the init event). Tracked (not

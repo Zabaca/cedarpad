@@ -557,8 +557,8 @@ const turnDeps: TurnDeps = {
   // #310: the chat agent draws into the room, like every other canvas write since #305.
   // Indirected through the mutable `openCanvasRoom` so `setCanvasRoomOpener` swaps it in tests.
   openCanvasRoom: (canvasId) => openCanvasRoom(canvasId),
-  // Lambda, not the binding: `fetchCanvasAsset` is declared below this object.
-  fetchAsset: (src) => fetchCanvasAsset(src),
+  // Lambda, not the binding: `canvasAssetFetcherFor` is declared below this object.
+  fetchAsset: (canvasId) => canvasAssetFetcherFor(canvasId),
   defaultCanvasId: DEFAULT_CANVAS_ID,
   prepareDevAgent: (token, repo, chatId, sessionId) => prepareDevAgentTurn(token, repo, chatId, sessionId),
   runChat: E2E_MODE ? e2eRunChat : runChat,
@@ -611,8 +611,10 @@ const canvasEdgeConfig = {
 };
 const productionRoomOpener = canvasRoomOpener(canvasEdgeConfig);
 /** How `read_image` reaches the pixels: they live behind the edge's asset route since #290,
- *  and the container has no session, so it presents its own read-only credential (#340). */
-const fetchCanvasAsset = canvasAssetFetcher(canvasEdgeConfig);
+ *  and the container has no session, so it presents its own read-only credential (#340).
+ *  Per-canvas, like the room opener above — the credential is accepted for ANY canvas, so
+ *  the canvas the turn is on is what narrows it. */
+const canvasAssetFetcherFor = canvasAssetFetcher(canvasEdgeConfig);
 let openCanvasRoom = productionRoomOpener;
 
 /** Test seam, as `setTurnRunChat` is: pass null to restore production. */

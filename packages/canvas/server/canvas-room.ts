@@ -41,10 +41,21 @@ export function canvasRoomOpener(config: CanvasRoomConfig): (canvasId: string) =
 }
 
 /** The only `src` this will fetch: the asset route `src/canvas-sync.ts` mints, one flat
- *  key. The shape's `src` comes out of a room ANY member can write, so it is attacker-
- *  influenced input — without this the `read_image` tool would be a credentialed fetch at
- *  a URL of the writer's choosing. Relative-only, so the origin is ours by construction. */
-const ASSET_SRC = /^\/api\/canvas-assets\/[^/]+\/[^/]+$/;
+ *  key. The shape's `src` comes out of a room ANY member — and, since #333, any
+ *  `guest_edit` share-link guest — can write, so it is attacker-CHOSEN input, and the
+ *  credential it is fetched with is the container's. Relative-only, so the origin is ours
+ *  by construction; the canvas segment is then checked against the open canvas below. */
+const ASSET_SRC = /^\/api\/canvas-assets\/([^/]+)\/([^/]+)$/;
+
+/** As the door decodes (`parseAssetPath`). A malformed escape is not a segment we minted,
+ *  so it fails the comparisons above rather than throwing out of the tool. */
+const decode = (segment: string): string => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+};
 
 const BY_EXTENSION: Record<string, string> = {
   png: 'image/png',
@@ -67,24 +78,45 @@ function mimeTypeOf(res: Response, src: string): string {
 }
 
 /**
- * `(src) => the bytes behind it`, for `read_image` (#340).
+ * `(canvasId) => (src) => the bytes behind it`, for `read_image` (#340).
  *
  * Since #290 an image shape's `src` is a URL on the edge's asset route, not an inline data
  * URL, and the container has no session — so the tool cannot just read the record, it has
  * to fetch, presenting the container's own read-only asset credential
  * (shared/canvas-asset-read.ts).
  *
+ * BOUND TO ONE CANVAS, like `canvasRoomOpener` next door, and for a sharper reason than
+ * symmetry: `canvas-asset-read/v1` is a static token the edge accepts for ANY canvas, and
+ * the `src` it is pointed at comes out of a room a `guest_edit` share-link guest can write
+ * (#333). Unbound, that is a confused deputy — the guest chooses the target, the container
+ * supplies the authority, and another canvas's screenshot lands in a conversation the guest
+ * can read. So the path's canvas segment must be the canvas the store is open on, compared
+ * AFTER decoding (the door decodes too, so `%63anvas_y` must not slip past an equality
+ * check that `canvas_y` would fail).
+ *
  * NO SIZE LIMIT, deliberately visible rather than silent: neither the upload door
  * (worker/canvas-assets.ts) nor the browser's asset store caps an object, so an arbitrarily
  * large screenshot base64s straight into the agent's context. Capping here would fail the
  * tool on a legitimate large image, which is a product call, not one to make in a bug fix.
  */
-export function canvasAssetFetcher(config: CanvasRoomConfig): FetchAsset {
+export function canvasAssetFetcher(config: CanvasRoomConfig): (canvasId: string) => FetchAsset {
   const origin = config.origin?.replace(/\/$/, '');
   const doFetch = config.fetchImpl ?? fetch;
-  return async (src: string): Promise<ImageBytes> => {
+  return (canvasId: string) => async (src: string): Promise<ImageBytes> => {
     if (!origin || !config.secret) throw new Error('no edge origin / auth secret is configured for this bridge');
-    if (!ASSET_SRC.test(src)) throw new Error(`"${src.slice(0, 48)}" is not a canvas asset URL`);
+    const parts = ASSET_SRC.exec(src);
+    if (!parts) throw new Error(`"${src.slice(0, 48)}" is not a canvas asset URL`);
+    const [, rawCanvas, rawKey] = parts as unknown as [string, string, string];
+    if (decode(rawCanvas) !== canvasId) {
+      throw new Error(`"${src.slice(0, 48)}" belongs to another canvas — this chat is on ${canvasId}`);
+    }
+    // The regex forbids a literal `/`, but the door percent-DECODES the key before keying
+    // R2 (worker/canvas-assets.ts), so `%2F` would put a separator back into the object
+    // path. Nothing can be addressed outside the `canvas-assets/<canvas>/` prefix that way
+    // — R2 keys are opaque strings, so a `..` is a literal `..`, not a parent — but the
+    // client only ever mints `[A-Za-z0-9._-]` keys (`objectKey`, src/canvas-sync.ts), so a
+    // decoded separator is not a shape we authored and there is no reason to fetch it.
+    if (decode(rawKey).includes('/')) throw new Error(`"${src.slice(0, 48)}" is not a flat asset key`);
     const res = await doFetch(`${origin}${src}`, {
       headers: { authorization: `Bearer ${await canvasAssetReadToken(config.secret)}` },
     });

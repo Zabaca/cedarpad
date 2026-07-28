@@ -24,6 +24,9 @@ const ORIGIN = 'https://edge.test';
 const CANVAS = 'canvas_x';
 const KEY = 'abc-shot.png';
 const PIXELS = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+/** Someone else's canvas, and the bytes on it that must never reach this chat. */
+const OTHER_CANVAS = 'canvas_theirs';
+const SECRET_PIXELS = new Uint8Array([1, 1, 1, 1]);
 
 /** Seed the room the way the BROWSER does when a screenshot is pasted: the pixels go to an
  *  asset record, and the image shape carries only `assetId`. There is no agent-write path
@@ -65,7 +68,12 @@ async function seedRoom(src: string) {
  *  door's behaviour on that credential is covered in `worker/canvas-assets.test.ts`, which
  *  is where the Workers-runtime types belong. */
 function fakeEdge(room: Awaited<ReturnType<typeof seedRoom>>) {
-  const objects = new Map<string, Uint8Array>([[`${CANVAS}/${KEY}`, PIXELS]]);
+  // A SECOND canvas's object exists in the bucket, and the container's static credential is
+  // accepted for it too — so a cross-canvas fetch would succeed if nothing narrowed it.
+  const objects = new Map<string, Uint8Array>([
+    [`${CANVAS}/${KEY}`, PIXELS],
+    [`${OTHER_CANVAS}/${KEY}`, SECRET_PIXELS],
+  ]);
 
   const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
     const request = new Request(String(url), init);
@@ -85,6 +93,8 @@ function fakeEdge(room: Awaited<ReturnType<typeof seedRoom>>) {
 }
 
 const config = (fetchImpl: typeof fetch) => ({ origin: ORIGIN, secret: SECRET, fetchImpl });
+/** The fetcher as the bridge binds it: to ONE canvas — the one the store is open on. */
+const assetFetcher = (fetchImpl: typeof fetch, canvasId = CANVAS) => canvasAssetFetcher(config(fetchImpl))(canvasId);
 
 describe('read_image over the real room + asset doors', () => {
   test('an asset-URL image reaches the agent as actual pixels', async () => {
@@ -100,7 +110,7 @@ describe('read_image over the real room + asset doors', () => {
       alt: 'a screenshot',
     });
 
-    const res = await readImageOp(store, 'shape:pic', canvasAssetFetcher(config(fetchImpl)));
+    const res = await readImageOp(store, 'shape:pic', assetFetcher(fetchImpl));
     expect(res).toEqual({ image: { data: Buffer.from(PIXELS).toString('base64'), mimeType: 'image/png' }, text: 'Image shape shape:pic.' });
   });
 
@@ -131,16 +141,64 @@ describe('read_image over the real room + asset doors', () => {
     const room = await seedRoom(`/api/canvas-assets/${CANVAS}/${KEY}`);
     const { fetchImpl } = fakeEdge(room);
     const store = await canvasRoomOpener(config(fetchImpl))(CANVAS);
-    expect(await readImageOp(store, 'shape:nope', canvasAssetFetcher(config(fetchImpl)))).toMatchObject({ isError: true });
+    expect(await readImageOp(store, 'shape:nope', assetFetcher(fetchImpl))).toMatchObject({ isError: true });
   });
 
   test('an asset the bucket does not hold surfaces the edge status, not a silent blank', async () => {
     const room = await seedRoom(`/api/canvas-assets/${CANVAS}/gone.png`);
     const { fetchImpl } = fakeEdge(room);
     const store = await canvasRoomOpener(config(fetchImpl))(CANVAS);
-    const res = await readImageOp(store, 'shape:pic', canvasAssetFetcher(config(fetchImpl)));
+    const res = await readImageOp(store, 'shape:pic', assetFetcher(fetchImpl));
     expect(res).toMatchObject({ isError: true });
     expect((res as { text: string }).text).toContain('404');
+  });
+
+  // The confused deputy: since #333 a `guest_edit` share-link guest writes the same room a
+  // member does, so the guest picks the target and the container supplies the authority.
+  // `canvas-asset-read/v1` is static and the edge accepts it for ANY canvas, so the ONLY
+  // thing standing between a guest and another canvas's screenshot is this binding.
+  test('a src naming ANOTHER canvas is never fetched, even though the credential would open it', async () => {
+    const room = await seedRoom(`/api/canvas-assets/${OTHER_CANVAS}/${KEY}`);
+    const { fetchImpl } = fakeEdge(room);
+    const store = await canvasRoomOpener(config(fetchImpl))(CANVAS);
+    const reached: string[] = [];
+    const spy = (async (url: string | URL | Request, init?: RequestInit) => {
+      reached.push(String(url));
+      return fetchImpl(url as never, init);
+    }) as unknown as typeof fetch;
+
+    const res = await readImageOp(store, 'shape:pic', assetFetcher(spy, CANVAS));
+    expect(res).toMatchObject({ isError: true });
+    expect((res as { text: string }).text).toContain('another canvas');
+    expect(reached).toEqual([]);
+
+    // ...and the credential really would have opened it — the binding is what refuses,
+    // not a missing object or a rejected token.
+    expect(await readImageOp(store, 'shape:pic', assetFetcher(fetchImpl, OTHER_CANVAS))).toEqual({
+      image: { data: Buffer.from(SECRET_PIXELS).toString('base64'), mimeType: 'image/png' },
+      text: 'Image shape shape:pic.',
+    });
+  });
+
+  test('the canvas segment is compared DECODED, so an escaped spelling cannot slip past it', async () => {
+    // `%63` is `c`: the door decodes before it keys the bucket, so an equality check on the
+    // raw segment would pass this through to another canvas's object.
+    const encoded = `/api/canvas-assets/%63anvas_theirs/${KEY}`;
+    const room = await seedRoom(encoded);
+    const { fetchImpl } = fakeEdge(room);
+    const store = await canvasRoomOpener(config(fetchImpl))(CANVAS);
+    const res = await readImageOp(store, 'shape:pic', assetFetcher(fetchImpl, CANVAS));
+    expect(res).toMatchObject({ isError: true });
+    expect((res as { text: string }).text).toContain('another canvas');
+  });
+
+  test('a percent-encoded separator in the key is refused — the client only mints flat keys', async () => {
+    const room = await seedRoom(`/api/canvas-assets/${CANVAS}/a%2F..%2Fb.png`);
+    const { fetchImpl } = fakeEdge(room);
+    const store = await canvasRoomOpener(config(fetchImpl))(CANVAS);
+    const res = await readImageOp(store, 'shape:pic', assetFetcher(fetchImpl, CANVAS));
+    expect(res).toMatchObject({ isError: true });
+    expect((res as { text: string }).text).toContain('flat asset key');
   });
 
   test('a src that is not the asset route is never fetched — the room is writable by any member', async () => {
@@ -153,7 +211,7 @@ describe('read_image over the real room + asset doors', () => {
       return fetchImpl(url as never, init);
     }) as unknown as typeof fetch;
 
-    const res = await readImageOp(store, 'shape:pic', canvasAssetFetcher(config(spy)));
+    const res = await readImageOp(store, 'shape:pic', assetFetcher(spy));
     expect(res).toMatchObject({ isError: true });
     expect(reached).toEqual([]);
   });
