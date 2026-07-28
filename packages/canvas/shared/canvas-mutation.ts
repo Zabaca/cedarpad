@@ -10,7 +10,31 @@
 
 import { z } from 'zod';
 
+import { serviceToken, verifyServiceToken } from './service-token.ts';
 import { DataSourceSchema } from './mart-contract.ts';
+
+// --- the boundary: where the endpoint is, and who the container is when it calls -------
+
+/** `POST` here to mutate a canvas's room. The canvas is in the PATH, never ambient. */
+export const canvasMutatePath = (canvasId: string): string => `/api/canvas-sync/${encodeURIComponent(canvasId)}/mutate`;
+
+/** HMAC label for the container's bearer. Distinct from `platform-rpc/v1` on purpose: a
+ *  token minted for the chat-lifecycle RPC must not be replayable as a canvas write. */
+const TOKEN_LABEL = 'canvas-mutate/v1';
+
+/** The bearer the bridge presents — `HMAC-SHA256(BETTER_AUTH_SECRET, 'canvas-mutate/v1')`,
+ *  the same trust root and the same shape as ADR-0018's platform RPC (#305). */
+export const canvasMutateToken = (secret: string): Promise<string> => serviceToken(secret, TOKEN_LABEL);
+export const verifyCanvasMutateToken = (secret: string, presented: string): Promise<boolean> =>
+  verifyServiceToken(secret, TOKEN_LABEL, presented);
+
+/**
+ * The identity a container-authenticated mutation acts under, stamped by the edge and read
+ * by the room. NOT a user id, and deliberately not one that could collide with a Better
+ * Auth id: an agent write is the container acting on behalf of whoever's agent is running,
+ * and the bridge has no session to name. The room records it as the writer's principal.
+ */
+export const CONTAINER_PRINCIPAL = 'service:container';
 import type { CanvasShape, CanvasState } from '../src/shapes.ts';
 import { SHAPE_COLORS } from '../src/shapes.ts';
 

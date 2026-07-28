@@ -10,7 +10,7 @@
 // `DurableObjectNamespace` (the class cannot `extends DurableObject`), so DO RPC is
 // unavailable and `stub.fetch` is the only way in. This endpoint is that fetch.
 
-import { CanvasMutation, mutationError } from '../shared/canvas-mutation.ts';
+import { CanvasMutation, CONTAINER_PRINCIPAL, mutationError, verifyCanvasMutateToken } from '../shared/canvas-mutation.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
 import { canReachCanvas, SYNC_USER_HEADER } from './sync-api.ts';
@@ -21,6 +21,13 @@ const MUTATE_ROUTE = /^\/api\/canvas-sync\/([^/]+)\/mutate$/;
 /** `/api/canvas-sync/:canvasId/mutate` → the canvas id, else null. */
 export function parseCanvasMutatePath(pathname: string): string | null {
   return MUTATE_ROUTE.exec(pathname)?.[1] ?? null;
+}
+
+/** Is this the container presenting its service bearer? Unconfigured secret ⇒ never. */
+async function isContainer(request: Request, env: Env): Promise<boolean> {
+  const secret = env.BETTER_AUTH_SECRET;
+  const presented = request.headers.get('authorization')?.replace(/^Bearer /, '');
+  return !!secret && !!presented && (await verifyCanvasMutateToken(secret, presented));
 }
 
 const json = (body: unknown, status = 200) =>
@@ -43,8 +50,31 @@ export async function handleCanvasMutate(
   canReach: (env: Env, canvasId: string, userId: string) => Promise<boolean> = canReachCanvas,
 ): Promise<Response> {
   if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
-  if (!user) return json({ error: 'unauthorized' }, 401);
-  if (!(await canReach(env, canvasId, user.id))) return json({ error: 'forbidden' }, 403);
+
+  // TWO principals may write here, and only two.
+  //
+  // A BROWSER arrives with a Better Auth session and is checked per-canvas: the canvas
+  // comes from the path, so naming someone else's canvas is exactly what the 403 refuses.
+  //
+  // The CONTAINER (#305) arrives with no session at all — the bridge is a server, and the
+  // agent write it is carrying originates from a turn, not from a request the bridge can
+  // attribute. Forwarding "the originating user" was considered and rejected: the bridge is
+  // never told who that is (the edge stamps only `x-canvas-id` on its proxied calls, and the
+  // in-canvas agent's tools have no requester at all), so it could only have been a claim the
+  // bridge asserts — a service credential wearing a user's name, with the edge trusting the
+  // container either way. We take the honest version: a SERVICE CREDENTIAL, minted exactly as
+  // ADR-0018's platform RPC mints its own (HMAC over BETTER_AUTH_SECRET, own label, no new
+  // secret in sops), admitted as `CONTAINER_PRINCIPAL`, and NOT run through `canReach` —
+  // there is no user for that question to be about. Blast radius, stated plainly: a caller
+  // holding this bearer may write to any canvas. That is the same trust the container already
+  // has (it serves the workspace's canvases and holds their bytes), and the bearer's root is
+  // BETTER_AUTH_SECRET, which already forges sessions if leaked. It buys nothing new.
+  const container = await isContainer(request, env);
+  if (!container) {
+    if (!user) return json({ error: 'unauthorized' }, 401);
+    if (!(await canReach(env, canvasId, user.id))) return json({ error: 'forbidden' }, 403);
+  }
+  const principal = container ? CONTAINER_PRINCIPAL : user!.id;
 
   let body: unknown;
   try {
@@ -61,7 +91,7 @@ export async function handleCanvasMutate(
   const forwarded = new Request(request.url, {
     method: 'POST',
     body: JSON.stringify(parsed.data),
-    headers: { 'content-type': 'application/json', [SYNC_USER_HEADER]: user.id },
+    headers: { 'content-type': 'application/json', [SYNC_USER_HEADER]: principal },
   });
   return env.CANVAS_SYNC.get(id).fetch(forwarded);
 }

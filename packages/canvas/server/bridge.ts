@@ -10,6 +10,8 @@ import type { CanvasState } from '../src/shapes.ts';
 import { normalizeIncomingShape } from '../src/normalize.ts';
 import { bumpAllComponents, bumpSharedModule, createShapesOp, nextComponentRev, placeComponentOp, updateShapesOp } from '../src/canvas-ops.ts';
 import type { OpResult } from '../src/canvas-ops.ts';
+import { canvasRoomOpener } from './canvas-room.ts';
+import type { RemoteCanvasStore } from '../src/remote-store.ts';
 import { BlobStore, selectBackend } from './blob-store.ts';
 import { type CanvasSession, createCanvasSession, createSessionRegistry } from './canvas-sessions.ts';
 import { createChatHub } from './chat-hub.ts';
@@ -560,6 +562,60 @@ export function sendToChat(targetChatId: string, message: string, canvasId?: str
 // with a fake agent — and `mock.module('./agent.ts')` can't deliver that once another
 // test file has already imported this module (bun's module cache binds first, so the
 // mock silently never applies and the real SDK runs). Production never calls this.
+// --- the canvas room (ADR-0019, #305) -------------------------------------------------
+//
+// Canvas state lives in the canvas's Durable-Object-hosted sync room, not in this process:
+// since #290 every browser reads from the room, so a write to the in-memory session store
+// is a write nobody reads. Each write handler opens a store on the room for the duration of
+// ONE call — open → mutate → flush → discard (`src/remote-store.ts`) — which is also why
+// there is no cached store here to go stale behind a human's edits.
+const productionRoomOpener = canvasRoomOpener({
+  origin: webPocEnv.PLATFORM_RPC_ORIGIN,
+  secret: webPocEnv.BETTER_AUTH_SECRET || (IS_LOCALHOST_EDGE ? LOCAL_DEV_PLATFORM_SECRET : undefined),
+});
+let openCanvasRoom = productionRoomOpener;
+
+/** Test seam, as `setTurnRunChat` is: pass null to restore production. */
+export function setCanvasRoomOpener(fn: ((canvasId: string) => Promise<RemoteCanvasStore>) | null): void {
+  openCanvasRoom = fn ?? productionRoomOpener;
+}
+
+/**
+ * Run one canvas write against the room and answer with its result.
+ *
+ * `flush()` is awaited BEFORE the response, and a flush failure is a 502, never a 200 with
+ * a cheerful body: the mutations go one at a time, so a mid-batch failure leaves the room
+ * holding a prefix of what the caller asked for, and `openRemoteCanvasStore` poisons itself
+ * rather than pretend otherwise. The agent must see that as a tool error — "I drew it" over
+ * an unchanged canvas is the expensive failure mode.
+ *
+ * An op that refuses (`OpResult.isError`) never reaches flush: nothing it queued should
+ * land, and discarding the store is how that is enforced.
+ */
+async function inRoom(canvasId: string, run: (store: RemoteCanvasStore) => OpResult | Record<string, unknown>): Promise<Response> {
+  let store: RemoteCanvasStore;
+  try {
+    store = await openCanvasRoom(canvasId);
+  } catch (e) {
+    return json({ error: `canvas ${canvasId} is unreachable: ${(e as Error).message}` }, 502);
+  }
+  let result: OpResult | Record<string, unknown>;
+  try {
+    result = run(store);
+  } catch (e) {
+    return json({ error: (e as Error).message }, 400);
+  }
+  if (isOpResult(result) && result.isError) return json({ error: result.text }, 400);
+  try {
+    await store.flush();
+  } catch (e) {
+    return json({ error: `canvas write failed: ${(e as Error).message}` }, 502);
+  }
+  return json(isOpResult(result) ? { text: result.text } : result);
+}
+
+const isOpResult = (r: OpResult | Record<string, unknown>): r is OpResult => typeof (r as OpResult).text === 'string';
+
 export function setTurnRunChat(fn: TurnDeps['runChat']): () => void {
   const prev = turnDeps.runChat;
   turnDeps.runChat = fn;
@@ -728,8 +784,14 @@ export async function handleRequest(req: Request): Promise<Response> {
     // bridge with per-canvas stores. Un-namespaced calls resolve to the default
     // canvas, so today's single-canvas frontend is unchanged.
     if (path === BRIDGE_ROUTES.canvas && req.method === 'GET') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
-      return json(session.store.getState() satisfies CanvasState);
+      // Reads come from the ROOM too (#305): reading the session store would answer with
+      // this process's stale copy while every browser looks at a different canvas.
+      try {
+        const store = await openCanvasRoom(canvasIdFrom(req, url));
+        return json(store.getState() satisfies CanvasState);
+      } catch (e) {
+        return json({ error: (e as Error).message }, 502);
+      }
     }
     // Presence heartbeat (#212): merge this client's {cursor, camera} into the canvas's
     // ephemeral room and fan the merged set out over the EXISTING SSE stream (throttled).
@@ -796,10 +858,9 @@ export async function handleRequest(req: Request): Promise<Response> {
       }
     }
     if (path === BRIDGE_ROUTES.deleteShapes && req.method === 'POST') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
       const parsed = DeleteShapesBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
-      return json({ version: session.store.remove(parsed.data.ids) });
+      return inRoom(canvasIdFrom(req, url), (store) => ({ version: store.remove(parsed.data.ids) }));
     }
     if (path === '/api/canvas/clear' && req.method === 'POST') {
       const session = await canvasSessions.get(canvasIdFrom(req, url));
@@ -841,24 +902,20 @@ export async function handleRequest(req: Request): Promise<Response> {
     // agent's tools call (create fills defaults, update merges the patch, place stamps the
     // component rev), minus the chat-card linking — an external client has no chat card.
     // normalizeShape (inside the ops) stays the single shape validator.
-    const opJson = (r: OpResult) => (r.isError ? json({ error: r.text }, 400) : json({ text: r.text }));
     if (path === BRIDGE_ROUTES.shapesCreate && req.method === 'POST') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
       const parsed = CreateShapesBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
-      return opJson(createShapesOp(session.store, parsed.data.shapes));
+      return inRoom(canvasIdFrom(req, url), (store) => createShapesOp(store, parsed.data.shapes));
     }
     if (path === BRIDGE_ROUTES.shapesUpdate && req.method === 'POST') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
       const parsed = UpdateShapesBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
-      return opJson(updateShapesOp(session.store, parsed.data.shapes));
+      return inRoom(canvasIdFrom(req, url), (store) => updateShapesOp(store, parsed.data.shapes));
     }
     if (path === BRIDGE_ROUTES.componentsPlace && req.method === 'POST') {
-      const session = await canvasSessions.get(canvasIdFrom(req, url));
       const parsed = PlaceComponentBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
-      return opJson(placeComponentOp(session.store, { ...parsed.data, rev: nextComponentRev(session.store) }));
+      return inRoom(canvasIdFrom(req, url), (store) => placeComponentOp(store, { ...parsed.data, rev: nextComponentRev(store) }));
     }
 
     // The component library over the wire (MCP full access): the edge MCP tools proxy
@@ -1179,19 +1236,32 @@ export async function handleRequest(req: Request): Promise<Response> {
       // an unresolvable Conversation was before the split.
       const pairing = decodeForwardedPairing(req.headers.get(INBOX_PAIRING_HEADER));
       if (!pairing || pairing.id !== id) return json({ error: 'not_found' }, 404);
-      await placeChatCard(
-        {
-          getSession: async (cid) => {
-            const session = await canvasSessions.get(cid);
-            return {
-              shapes: () => session.store.getState().shapes,
-              upsert: (shapes) => void session.store.upsert(shapes as never),
-            };
+      // The card goes into the ROOM (#305), like every other canvas write: one store per
+      // request, flushed before the 200. `placeChatCard` may touch more than one canvas
+      // (it moves a card off its old one), so each opened store is flushed.
+      const opened = new Map<string, RemoteCanvasStore>();
+      try {
+        await placeChatCard(
+          {
+            getSession: async (cid) => {
+              let store = opened.get(cid);
+              if (!store) {
+                store = await openCanvasRoom(cid);
+                opened.set(cid, store);
+              }
+              return {
+                shapes: () => store!.getState().shapes,
+                upsert: (shapes) => void store!.upsert(shapes as never),
+              };
+            },
+            chatIdForSession: (sid: string) => chatIdForSession(sid) ?? null,
           },
-          chatIdForSession: (sid: string) => chatIdForSession(sid) ?? null,
-        },
-        pairing,
-      );
+          pairing,
+        );
+        for (const store of opened.values()) await store.flush();
+      } catch (e) {
+        return json({ error: `chat card placement failed: ${(e as Error).message}` }, 502);
+      }
       return json({ ok: true, canvasId: pairing.canvasId });
     }
 
