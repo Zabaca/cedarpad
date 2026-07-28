@@ -887,6 +887,21 @@ export const shareLinks = sqliteTable(
     guestChat: integer("guest_chat", { mode: "boolean" }).notNull().default(false),
     /** May guests holding this link join the canvas's voice huddle? (ADR-0017) */
     guestHuddle: integer("guest_huddle", { mode: "boolean" }).notNull().default(false),
+    /* --- #320 guest permissions. Three separate capabilities, never one level: they are
+     * different KINDS of risk, so they are granted separately. `shared/guest-capabilities.ts`
+     * is the one place these rows are turned into a decision — read it, don't re-derive. */
+    /** Use a live component on the canvas — click the button, submit the form. Defaults
+     * TRUE (and is backfilled TRUE): a link exists to show someone something, and a
+     * component you may watch but not use is a broken invite. */
+    guestInteract: integer("guest_interact", { mode: "boolean" }).notNull().default(true),
+    /** Edit the canvas DOCUMENT — create, move, delete shapes. Opt-in per mint: flipping
+     * it on for links already sitting in someone's inbox would silently convert read
+     * access into write access under rules they were never given. */
+    guestEdit: integer("guest_edit", { mode: "boolean" }).notNull().default(false),
+    /** Author component SOURCE (`PUT /api/components/:module`), own/canvas-scoped tier
+     * only. Distinct from `guestEdit` because it is arbitrary JS that hot-reloads into a
+     * MEMBER's authenticated browser — accepted, bounded to the invited canvas, opt-in. */
+    guestEditSource: integer("guest_edit_source", { mode: "boolean" }).notNull().default(false),
     /** Null = the whole canvas (PRD #220). Set = one placed component: the guest surface
      * narrows to that shape rendered fullscreen, chat fully denied (PRD #221). */
     shapeId: text("shape_id"),

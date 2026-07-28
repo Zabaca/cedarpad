@@ -17,6 +17,10 @@ export async function createShareLink(
     createdBy: string;
     guestChat: boolean;
     guestHuddle?: boolean;
+    /* #320. Omitted = the column defaults: interact on, both edits off. */
+    guestInteract?: boolean;
+    guestEdit?: boolean;
+    guestEditSource?: boolean;
     shapeId?: string | null;
   },
 ): Promise<ShareLinkRow> {

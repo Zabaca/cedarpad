@@ -46,6 +46,42 @@ describe("share links — the guest door's credential rows (ADR-0015)", () => {
     });
   });
 
+  // #320: guest permissions are three per-link booleans. Defaults matter as much as the
+  // columns: a link minted with no opinion lets its holder USE the components it shows
+  // (that is what the invite is for), and never lets them edit the canvas or author
+  // executable source. Existing links are backfilled the same way by the migration.
+  it("defaults: interact ON, both edit capabilities OFF", async () => {
+    const link = await createShareLink(db, {
+      canvasId: "cv_caps",
+      workspaceId: "ws_1",
+      createdBy: "user_1",
+      guestChat: false,
+    });
+    expect(link).toMatchObject({ guestInteract: true, guestEdit: false, guestEditSource: false });
+    expect(await getActiveShareLink(db, link.id)).toMatchObject({
+      guestInteract: true,
+      guestEdit: false,
+      guestEditSource: false,
+    });
+  });
+
+  it("each capability is settable per mint, including turning interact off", async () => {
+    const link = await createShareLink(db, {
+      canvasId: "cv_caps2",
+      workspaceId: "ws_1",
+      createdBy: "user_1",
+      guestChat: false,
+      guestInteract: false,
+      guestEdit: true,
+      guestEditSource: true,
+    });
+    expect(await getActiveShareLink(db, link.id)).toMatchObject({
+      guestInteract: false,
+      guestEdit: true,
+      guestEditSource: true,
+    });
+  });
+
   it("an unknown id resolves to null (indistinguishable from revoked, by design)", async () => {
     expect(await getActiveShareLink(db, "sl_nope")).toBeNull();
   });
