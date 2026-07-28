@@ -30,6 +30,7 @@ import { MCP_REGISTRY } from '../server/mcp-registry.ts';
 import { handleShareLinksApi } from './share-links-api.ts';
 import { handleShareAccept, readGuestSession } from './guest-session.ts';
 import { decideGuestGate } from './guest-gate.ts';
+import { handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
 import { handleMartApi, loadCanvasStateFromBucket, MART_ROUTE } from './mart-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
@@ -71,9 +72,20 @@ export class Sandbox extends BaseSandbox {
 // here); this class + binding is the structural placement only.
 export class Warehouse extends BaseSandbox {}
 
+// The canvas sync room class (ADR-0019, #288). Re-exported here because wrangler resolves
+// Durable Object classes off the entrypoint module's exports.
+export { CanvasSyncRoom } from './canvas-sync-do.ts';
+
 export interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
   Warehouse: DurableObjectNamespace<Warehouse>;
+  // One Durable Object per canvas, hosting that canvas's tldraw sync room (ADR-0019).
+  // Addressed ONLY via `idFromName(syncRoomName(canvasId))` — see worker/sync-api.ts.
+  // Unparameterised on purpose: `CanvasSyncRoom` is a plain class rather than a
+  // `cloudflare:workers` `DurableObject` subclass (see canvas-sync-do.ts for why), so it
+  // carries no `DurableObjectBranded` marker. Nothing calls it by RPC — the only traffic
+  // is `stub.fetch` with the WebSocket upgrade — so the plain stub type is exactly right.
+  CANVAS_SYNC: DurableObjectNamespace;
   // Workers static-assets binding for the Notebook SPA build (web-poc/dist, PRD #49
   // slice #58). Served under /notebook AFTER the edge session gate — it's app content,
   // so an unauthenticated hit gets the login, never the SPA.
@@ -309,6 +321,16 @@ export default {
     }
 
     const session = await authenticate(request, env);
+
+    // Canvas sync (ADR-0019): the WebSocket upgrade into the canvas's Durable-Object-hosted
+    // TLSocketRoom. Routed AHEAD of the session gate below and SELF-GATING, for the same
+    // reason /mcp is: the gate's deny branch answers with the login HTML at 200, which a
+    // WebSocket client cannot act on. handleSyncUpgrade answers 401/403 instead, and no
+    // Durable Object is addressed until it has authorized the caller for THIS canvas.
+    const syncCanvasId = parseSyncPath(url.pathname);
+    if (syncCanvasId) {
+      return handleSyncUpgrade(request, env, syncCanvasId, session?.user ?? null);
+    }
 
     // #179: the invite accept flow — reachable WITHOUT a session (the email-bound,
     // single-use token is the credential; the deny branch below would render the login
