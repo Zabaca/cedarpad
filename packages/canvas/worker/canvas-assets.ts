@@ -1,3 +1,9 @@
+import {
+  CANVAS_ASSET_LABEL,
+  operatorRejection,
+  presentedBearer,
+  verifyCanvasOperatorToken,
+} from '../shared/canvas-operator-token.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
 import { canReachCanvas } from './sync-api.ts';
@@ -57,8 +63,22 @@ export async function handleCanvasAsset(
   /** Injected so the gate is testable without a database; production uses the default. */
   canReach: (env: Env, canvasId: string, userId: string) => Promise<boolean> = canReachCanvas,
 ): Promise<Response> {
-  if (!user) return new Response('unauthorized', { status: 401 });
-  if (!(await canReach(env, ref.canvasId, user.id))) return new Response('forbidden', { status: 403 });
+  // The operator principal (#329), checked only when a bearer is presented — a browser
+  // sends none, so the member path below is unchanged. It exists because the migration
+  // uploads a canvas's bytes before the snapshot that names them, and the operator running
+  // it need not be a member of the workspace that owns that canvas: `canReachCanvas` is
+  // the wrong question for that caller, exactly as it is on the snapshot door next door.
+  // Its own label, bound to THIS canvas, and short-lived.
+  const presented = presentedBearer(request);
+  if (presented) {
+    const secret = env.BETTER_AUTH_SECRET;
+    if (!secret) return new Response('unauthorized', { status: 401 });
+    const result = await verifyCanvasOperatorToken(secret, CANVAS_ASSET_LABEL, ref.canvasId, presented);
+    if (!result.ok) return new Response(operatorRejection(result.reason), { status: 401 });
+  } else {
+    if (!user) return new Response('unauthorized', { status: 401 });
+    if (!(await canReach(env, ref.canvasId, user.id))) return new Response('forbidden', { status: 403 });
+  }
 
   const bucket = env.MART_BUCKET as unknown as AssetBucket;
   const path = objectPath(ref);

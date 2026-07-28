@@ -21,7 +21,9 @@
 //
 // TARGETS:
 //   --target <origin>  a deployed or locally-running Worker (e.g. https://app.cedarpad.com).
-//                      Needs an ADMIN session cookie in --cookie or CEDARPAD_COOKIE.
+//                      Authenticates from BETTER_AUTH_SECRET in the ENVIRONMENT (#329):
+//                      a per-request, per-canvas, few-minute operator token. No cookie,
+//                      nothing on a command line, nothing left in shell history.
 //   --target memory    a real TLSocketRoom hosted in THIS process, on the same schema.
 //                      Nothing is deployed and nothing persists — it is the DRY RUN, and
 //                      it exercises the identical reshape, validation and diff.
@@ -35,6 +37,12 @@ import { join } from 'node:path';
 import { InMemorySyncStorage, type RoomSnapshot } from '@tldraw/sync-core';
 import type { TLRecord } from '@tldraw/tlschema';
 
+import {
+  bearer,
+  CANVAS_ASSET_LABEL,
+  CANVAS_SNAPSHOT_LABEL,
+  canvasOperatorToken,
+} from '../shared/canvas-operator-token.ts';
 import { canvasStateKey, s3Backend, fsBackend, type BlobBackend } from '../server/blob-store.ts';
 import type { CanvasShape, CanvasState } from '../src/shapes.ts';
 import { assetUrl } from '../src/canvas-sync.ts';
@@ -199,20 +207,32 @@ interface Destination {
   putAsset(canvas: string, upload: AssetRef, bytes: Uint8Array): Promise<Response> | null;
 }
 
-function httpDestination(origin: string, cookie: string): Destination {
+/**
+ * An <origin> target, authenticated as the OPERATOR principal (#329).
+ *
+ * There is no cookie here and there must never be one again: the credential is derived
+ * from BETTER_AUTH_SECRET — which sops already provides to whoever may run this — so the
+ * run needs nothing on a command line and leaves nothing in shell history or a process
+ * listing. Each request carries its OWN token: bound to that canvas, to that door's label,
+ * and minted at call time, so it is useless a few minutes later and useless against any
+ * other canvas.
+ */
+function httpDestination(origin: string, secret: string): Destination {
   const url = (canvas: string, q = '') => `${origin}/api/canvas-sync/${canvas}/snapshot${q}`;
+  const auth = async (label: string, canvas: string) =>
+    bearer(await canvasOperatorToken(secret, label, canvas));
   return {
-    put: (canvas, snapshot, force) =>
+    put: async (canvas, snapshot, force) =>
       fetch(url(canvas, force ? '?force=1' : ''), {
         method: 'POST',
-        headers: { cookie, 'content-type': 'application/json' },
+        headers: { ...(await auth(CANVAS_SNAPSHOT_LABEL, canvas)), 'content-type': 'application/json' },
         body: JSON.stringify(snapshot),
       }),
-    get: (canvas) => fetch(url(canvas), { headers: { cookie } }),
-    putAsset: (canvas, upload, bytes) =>
+    get: async (canvas) => fetch(url(canvas), { headers: await auth(CANVAS_SNAPSHOT_LABEL, canvas) }),
+    putAsset: async (canvas, upload, bytes) =>
       fetch(`${origin}${assetUrl(canvas, upload.key)}`, {
         method: 'PUT',
-        headers: { cookie, 'content-type': upload.contentType },
+        headers: { ...(await auth(CANVAS_ASSET_LABEL, canvas)), 'content-type': upload.contentType },
         body: bytes as unknown as BodyInit,
       }),
   };
@@ -385,9 +405,14 @@ function flag(name: string): string | undefined {
 function destination(): Destination {
   const target = flag('target') ?? 'memory';
   if (target === 'memory') return memoryDestination();
-  const cookie = flag('cookie') ?? process.env.CEDARPAD_COOKIE;
-  if (!cookie) throw new Error('an origin target needs --cookie <session cookie> (or CEDARPAD_COOKIE)');
-  return httpDestination(target.replace(/\/$/, ''), cookie);
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) {
+    throw new Error(
+      'an origin target needs BETTER_AUTH_SECRET in the environment (sops provides it).\n' +
+        '   It is never passed on the command line — the token is derived from it per request.',
+    );
+  }
+  return httpDestination(target.replace(/\/$/, ''), secret);
 }
 
 const USAGE = `usage:
@@ -399,7 +424,9 @@ const USAGE = `usage:
 --accept-loss acknowledge that draw shapes and arrows with dangling bindings will NOT be
               migrated. Without it, load refuses any dump that contains them.
 --target defaults to "memory": a real room in THIS process. That is the dry run.
-An <origin> target needs an ADMIN session cookie (--cookie / CEDARPAD_COOKIE).
+An <origin> target needs BETTER_AUTH_SECRET in the environment (sops). No cookie, and no
+credential on the command line — a token is derived per request, per canvas, and expires
+in minutes. A rejection that mentions CLOCK SKEW is a clock difference, not a bad secret.
 dump reads R2 (R2_* env) unless --from names a local copy of the bucket, and writes
 OUTSIDE the repo by default: ~/cedarpad-canvas-dumps/<timestamp>/
 Old blobs are never written or deleted.`;

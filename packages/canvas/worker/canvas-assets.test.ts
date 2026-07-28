@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { bearer, CANVAS_ASSET_LABEL, CANVAS_SNAPSHOT_LABEL, canvasOperatorToken } from '../shared/canvas-operator-token.ts';
+import { REQUEST_BOUND_WINDOW_MS } from '../shared/service-token.ts';
 import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
 
 // The canvas asset route is the R2 half of ADR-0019's asset store: image bytes leave the
@@ -25,7 +27,8 @@ function bucketStub() {
   };
 }
 
-const env = (b: ReturnType<typeof bucketStub>) => ({ MART_BUCKET: b.bucket }) as never;
+const SECRET = 'test-secret-at-least-32-characters-long!!';
+const env = (b: ReturnType<typeof bucketStub>) => ({ MART_BUCKET: b.bucket, BETTER_AUTH_SECRET: SECRET }) as never;
 const user = { id: 'u_1' } as never;
 
 describe('parseAssetPath', () => {
@@ -113,5 +116,50 @@ describe('handleCanvasAsset', () => {
       canReach,
     );
     expect(res.status).toBe(405);
+  });
+});
+
+// #329: the migration's asset uploads travel with the snapshot load, which now runs from
+// the environment rather than from a session cookie — and `canReachCanvas` could never
+// serve that run anyway, since the operator need not be a member of every workspace that
+// owns a canvas. Own label, so a snapshot token is not an asset token.
+describe('handleCanvasAsset — the operator principal', () => {
+  const put = (b: ReturnType<typeof bucketStub>, token: string, canvas = 'canvas_y') =>
+    handleCanvasAsset(
+      new Request(`https://x.test/api/canvas-assets/${canvas}/k.png`, { method: 'PUT', body: 'bytes', headers: bearer(token) }),
+      env(b),
+      { canvasId: canvas, key: 'k.png' },
+      null,
+      canReach,
+    );
+
+  test('uploads to a canvas the caller could never REACH as a member', async () => {
+    const b = bucketStub();
+    const res = await put(b, await canvasOperatorToken(SECRET, CANVAS_ASSET_LABEL, 'canvas_y'));
+    expect(res.status).toBe(200);
+    expect(b.objects.get('canvas-assets/canvas_y/k.png')).toBeDefined();
+  });
+
+  test('rejects a SNAPSHOT-label token — the two doors do not share a credential', async () => {
+    const b = bucketStub();
+    const res = await put(b, await canvasOperatorToken(SECRET, CANVAS_SNAPSHOT_LABEL, 'canvas_y'));
+    expect(res.status).toBe(401);
+    expect(b.objects.size).toBe(0);
+  });
+
+  test('rejects a token minted for a different canvas', async () => {
+    const b = bucketStub();
+    const res = await put(b, await canvasOperatorToken(SECRET, CANVAS_ASSET_LABEL, 'canvas_x'));
+    expect(res.status).toBe(401);
+    expect(b.objects.size).toBe(0);
+  });
+
+  test('rejects an expired token, naming skew', async () => {
+    const b = bucketStub();
+    const stale = await canvasOperatorToken(SECRET, CANVAS_ASSET_LABEL, 'canvas_y', Date.now() - REQUEST_BOUND_WINDOW_MS - 1000);
+    const res = await put(b, stale);
+    expect(res.status).toBe(401);
+    expect(await res.text()).toMatch(/SKEW/);
+    expect(b.objects.size).toBe(0);
   });
 });
