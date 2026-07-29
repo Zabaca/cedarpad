@@ -1,7 +1,8 @@
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
 
 import { ChatView } from '../../../shared/ChatView';
-import { onChatFrame, openFrameSignal, setConnectionTarget } from '../../../shared/chat-store';
+import { onChatFrame, openFrameSignal, setChatKind, setConnectionTarget } from '../../../shared/chat-store';
+import { DEV_AGENT_CHAT_KIND } from '../../../shared/bridge-wire';
 import type { InboxChatResponse, InboxItem, InboxListResponse, InboxView } from './contract';
 import { padUrlFor } from './inbox-pad-url';
 import {
@@ -31,6 +32,19 @@ import { inboxStateFromUrl, urlWithInboxState } from './inbox-url';
 
 /** Sticky collapse state for the conversation-list pane. */
 const LIST_COLLAPSED_KEY = 'inbox.list.collapsed';
+
+// Chat kind (CEDA-N67Y50). A new chat is born as one of two KINDs — an ordinary `chat`, or a
+// `dev-agent` chat (repo-aware, `open_pr` armed; ADR-0010/0011). Until now only a Job run could
+// produce the latter, so the Inbox could start ordinary chats only. The kind is declared on the
+// draft's first send, which is what births the row; the last pick is sticky per device, so the
+// primary button stays one click for whichever kind you actually work in.
+const CHAT_KIND_KEY = 'inbox.new-chat.kind';
+type ChatKind = 'chat' | typeof DEV_AGENT_CHAT_KIND;
+const CHAT_KINDS: Array<{ kind: ChatKind; label: string; blurb: string }> = [
+  { kind: 'chat', label: 'Chat', blurb: 'Talk to the workspace agent' },
+  { kind: DEV_AGENT_CHAT_KIND, label: 'Dev-agent', blurb: 'Reads the repo, can open a PR' },
+];
+const parseChatKind = (raw: string | null): ChatKind => (raw === DEV_AGENT_CHAT_KIND ? DEV_AGENT_CHAT_KIND : 'chat');
 
 /** The edge chat proxy prefix a Conversation's <ChatView> addresses its owning bridge through. */
 const bridgePrefix = (convId: string): string => `/inbox/${encodeURIComponent(convId)}/bridge`;
@@ -67,6 +81,9 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
   // the active workspace's bridge). The first send's row-at-start creates the Conversation
   // (ownerRef = this chatId); the next list load matches it back and promotes draft → current.
   const [draft, setDraft] = useState<string | null>(null);
+  // The kind the next new chat is born as, and whether the split button's menu is open.
+  const [newChatKind, setNewChatKind] = useState<ChatKind>(() => parseChatKind(localStorage.getItem(CHAT_KIND_KEY)));
+  const [kindMenuOpen, setKindMenuOpen] = useState(false);
   // A `conv` named in the URL on mount is selected once the (async) list loads and contains it —
   // it may live in a different view than the one showing; cleared after the first load attempt
   // whether or not it matched, since after that the selection is user-driven.
@@ -207,10 +224,25 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
   // Conversation on the active workspace's bridge; loadList promotes it (see draft promotion).
   // Pressing it again while a draft is already open REUSES it — a second press must never discard
   // a half-typed message by remounting <ChatView> on a fresh id.
-  const startDraft = useCallback(() => {
+  const startDraft = useCallback((kind: ChatKind = newChatKind) => {
+    setKindMenuOpen(false);
+    setNewChatKind(kind);
+    try {
+      localStorage.setItem(CHAT_KIND_KEY, kind);
+    } catch {
+      /* storage unavailable: the pick just isn't sticky */
+    }
     setCurrent(null);
-    setDraft((d) => d ?? `chat_${crypto.randomUUID()}`);
-  }, []);
+    setDraft((d) => {
+      const id = d ?? `chat_${crypto.randomUUID()}`;
+      // Declare it on the chat itself, not on this component's state: `send()` reads it when the
+      // draft's first message births the Conversation. Re-declared on a re-pick (null for the
+      // ordinary default), so switching kind mid-draft applies without discarding a half-typed
+      // message.
+      setChatKind(id, kind === DEV_AGENT_CHAT_KIND ? kind : null);
+      return id;
+    });
+  }, [newChatKind]);
 
   // ⌘N / Ctrl+N starts a draft from anywhere in the stage. Ignored when the browser's own
   // modifier combo is in play (Alt) so we never shadow a native shortcut.
@@ -246,11 +278,46 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
         </div>
       ) : (
       <div className="inbox-list" style={{ width: paneWidths.list, flex: 'none' }}>
+        {/* The split entry point (CEDA-N67Y50): one click on the primary button starts a chat of
+            the current kind — unchanged for anyone who never touches the caret — and the caret
+            opens the two-kind menu. */}
         <div className="inbox-newrow">
-          <button type="button" className="inbox-new-chat" title="Start a new chat" onClick={startDraft}>
-            + New chat
-          </button>
+          <div className="inbox-newsplit">
+            <button
+              type="button"
+              className="inbox-new-chat"
+              title={newChatKind === DEV_AGENT_CHAT_KIND ? 'Start a new dev-agent chat' : 'Start a new chat'}
+              onClick={() => startDraft()}
+            >
+              + New {newChatKind === DEV_AGENT_CHAT_KIND ? 'dev-agent chat' : 'chat'}
+            </button>
+            <button
+              type="button"
+              className="inbox-new-kind"
+              aria-label="Choose chat kind"
+              aria-expanded={kindMenuOpen}
+              title="Choose chat kind"
+              onClick={() => setKindMenuOpen((o) => !o)}
+            >
+              ▾
+            </button>
+          </div>
         </div>
+        {kindMenuOpen && (
+          <div className="inbox-kind-menu">
+            {CHAT_KINDS.map((k) => (
+              <button
+                key={k.kind}
+                type="button"
+                className={k.kind === newChatKind ? 'on' : undefined}
+                onClick={() => startDraft(k.kind)}
+              >
+                <b>{k.label}</b>
+                <small>{k.blurb}</small>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="inbox-filters">
           <button type="button" className="panel-collapse" title="Hide conversations (full thread)" onClick={() => setListCollapsed(true)}>
             «
@@ -290,6 +357,7 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
                 <div className="inbox-item draft sel">
                   <div className="inbox-item-top">
                     <b>New chat</b>
+                    {newChatKind === DEV_AGENT_CHAT_KIND && <span className="inbox-badge dev-agent">dev-agent</span>}
                     <span className="inbox-badge">draft</span>
                   </div>
                   <small>Not saved until you send.</small>

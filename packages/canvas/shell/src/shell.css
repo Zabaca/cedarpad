@@ -449,6 +449,62 @@ body,
   background: var(--accent-hi);
   border-color: var(--accent-hi);
 }
+/* The kind picker (CEDA-N67Y50): a caret welded to the primary button's right edge, so the
+   one-click path is untouched and choosing a kind is a deliberate second gesture. */
+.inbox-newsplit {
+  display: flex;
+}
+.inbox-newsplit .inbox-new-chat {
+  border-radius: 7px 0 0 7px;
+  border-right-color: color-mix(in oklch, var(--accent) 70%, var(--void));
+}
+.inbox-new-kind {
+  flex: none;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-left: none;
+  color: var(--on-accent);
+  border-radius: 0 7px 7px 0;
+  padding: 7px 11px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.inbox-new-kind:hover {
+  background: var(--accent-hi);
+  border-color: var(--accent-hi);
+}
+.inbox-kind-menu {
+  flex: none;
+  margin: 6px 12px 0;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 5px;
+  box-shadow: var(--shadow-lift);
+}
+.inbox-kind-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.inbox-kind-menu button:hover,
+.inbox-kind-menu button.on {
+  background: var(--overlay);
+}
+.inbox-kind-menu small {
+  display: block;
+  color: var(--faint);
+  font-size: 11px;
+  margin-top: 2px;
+}
 /* Row zero: the draft. Dashed edge + muted title so it reads as not-yet-saved next to real rows. */
 .inbox-item.draft {
   border-bottom-style: dashed;

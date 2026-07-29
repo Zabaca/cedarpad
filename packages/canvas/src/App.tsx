@@ -8,7 +8,8 @@ import { activeCanvasId } from './active-canvas';
 import { getActiveChat, setForkHandler } from './agent-link';
 import { ChatShapeUtil } from './ChatShape';
 import { SHAPE_SIZE_DEFAULTS } from './shapes';
-import { closeSession, forkSession } from '../shared/chat-store';
+import { armFirstPrompt, closeSession, forkSession } from '../shared/chat-store';
+import { ChatStarter } from './ChatStarter';
 import { DOCK_CHAT_DELETED, postDockMessage } from '../shared/dock-messages';
 import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
@@ -268,7 +269,11 @@ function CanvasApp() {
   // card lands just to the right of it and is joined by a bound arrow — so chats
   // grow into a connected graph rather than scattered cards. With no anchor (first
   // chat / blank canvas) it lands in the middle of the current view, unconnected.
-  const newChat = useCallback(() => {
+  //
+  // `prompt` (from the canvas chat starter) is ARMED on the new shape rather than sent:
+  // `send` no-ops until the session is subscribed, which only happens once the card
+  // mounts and opens its stream — ChatView claims the armed prompt there.
+  const newChat = useCallback((prompt?: string) => {
     const editor = editorRef.current;
     if (!editor) return;
     const id = createShapeId();
@@ -286,6 +291,7 @@ function CanvasApp() {
     }
 
     editor.createShape({ id, type: 'chat', x, y, props: { w: CHAT_W, h: CHAT_H, title: `Chat ${nextChatNumber(editor)}` } });
+    if (prompt) armFirstPrompt(id, prompt);
 
     // Connect the new chat to its anchor with an arrow bound at both ends, so the
     // link follows either card when dragged and shows up as a real graph edge
@@ -299,6 +305,18 @@ function CanvasApp() {
       ]);
     }
     editor.select(id);
+  }, []);
+
+  // What the starter's scope tag says: where the chat it creates is about to land. Same
+  // anchor resolution as newChat, so the tag can't disagree with the placement.
+  const starterScope = useCallback((): string | undefined => {
+    const editor = editorRef.current;
+    if (!editor) return undefined;
+    const anchor = anchorShapeId(editor);
+    const shape = anchor ? editor.getShape(anchor) : undefined;
+    if (!shape) return 'on a clear spot';
+    const title = shape.type === 'chat' ? String((shape.props as { title?: string }).title ?? '') : '';
+    return `next to ${title || shape.type}`;
   }, []);
 
   // Fork a chat: same placement + bound-arrow logic as newChat, but the anchor is
@@ -444,6 +462,11 @@ function CanvasApp() {
             the panel): tldraw's dropdowns portal into its own overflow-clipped container,
             so a trigger outside it (the panel) opens an invisible, clipped menu. */}
         {!guest && <div className="side-panel-slot stage-menu" ref={menuSlotRef} />}
+        {/* The chat starter: type a prompt, and the chat is created WITH that first turn
+            (it replaces both the old FAB and the panel's "＋ New chat"). It lives on the
+            STAGE, not the app, so it centers on the canvas rather than under the docked
+            panel. Guests get it only when their share link grants guestChat (#220). */}
+        {(guest ? guest.guestChat : true) && <ChatStarter onStart={newChat} scope={starterScope} disabled={!ready} />}
       </div>
       {/* The docked side panel (members only — placement is a write): all canvas
           controls, the component palette, and the placed-instance list. */}
@@ -453,7 +476,6 @@ function CanvasApp() {
           onSlots={onSlots}
           onClose={() => togglePanel(false)}
           onAddComponent={() => setGalleryOpen(true)}
-          onNewChat={ready ? newChat : undefined}
         />
       )}
       {/* The component gallery modal (+ Component). */}
@@ -473,13 +495,6 @@ function CanvasApp() {
       )}
       {expandedId && editorRef.current && (
         <ComponentFullscreenOverlay editor={editorRef.current} shapeId={expandedId} onClose={() => setExpandedId(null)} />
-      )}
-      {/* Members create chats from the side panel; the FAB remains for guests whose
-          share link grants guestChat (#220) and for members with the panel collapsed. */}
-      {(guest ? guest.guestChat : !panelOpen) && (
-        <button type="button" className="new-chat-fab" onClick={newChat} disabled={!ready} title="Create a new chat session">
-          ＋ New chat
-        </button>
       )}
       {/* Huddle (ADR-0017): guests join via a floating button when their link grants it;
           members have the button in the side panel. */}

@@ -11,7 +11,7 @@
 import { type ChatEvent, type ChatFrame, type TaskStatus, type TodoStatus, isChatFrame } from './chat-wire.ts';
 import { registerStream, setBeatTargets, setBusyCheck } from '../src/idle.ts';
 import { withCanvasParam, withPadCanvasHeader } from '../src/active-canvas.ts';
-import { CANVAS_ID_HEADER } from './bridge-wire.ts';
+import { CANVAS_ID_HEADER, CHAT_KIND_HEADER } from './bridge-wire.ts';
 
 // `parentId` (set on subagent items) is the spawning Task chip's tool_use id, so the
 // view can indent them under it. Tool items carry their own `toolUseId` so a `task`
@@ -112,6 +112,38 @@ const canvasOverrides = new Map<string, string>();
 /** Stamp `canvasId` on all of a chat's bridge calls (a Shell-docked canvas chat). */
 export function setCanvasOverride(chatId: string, canvasId: string): void {
   canvasOverrides.set(chatId, canvasId);
+}
+
+// First prompt (#CEDA-189MC6): the canvas chat-starter types a prompt BEFORE the chat
+// exists, so the prompt can't be sent inline — `send` no-ops until the session is
+// `subscribed`, which only happens once the card mounts and its stream opens. The prompt
+// is armed against the shape id here and claimed by the chat's own view when it connects.
+const firstPrompts = new Map<string, string>();
+
+/** Arm `text` as the first turn of a chat that hasn't opened its stream yet. */
+export function armFirstPrompt(chatId: string, text: string): void {
+  if (text) firstPrompts.set(chatId, text);
+}
+
+/** Claim a chat's armed first prompt (once — a second call returns ''). */
+export function takeFirstPrompt(chatId: string): string {
+  const text = firstPrompts.get(chatId) ?? '';
+  firstPrompts.delete(chatId);
+  return text;
+}
+
+// Chat kind (CEDA-N67Y50): which KIND a not-yet-born chat asks to be created as. A draft has
+// no Conversation row, so the edge cannot look its kind up — the client declares it, and only
+// on the SEND that births the row (the edge consumes and strips the ask, then answers by
+// minting the dev-agent git token; see worker/index.ts). Never set for an existing chat: its
+// row already carries the kind, and the Inbox proxy re-arms from that.
+const chatKinds = new Map<string, string>();
+
+/** Declare the kind the chat `chatId` should be born as on its first send; `null` withdraws
+ *  the declaration, so the send carries no ask at all (the ordinary-chat default). */
+export function setChatKind(chatId: string, kind: string | null): void {
+  if (kind) chatKinds.set(chatId, kind);
+  else chatKinds.delete(chatId);
 }
 
 /** Per-chat bridge headers: the pad-URL stamp, superseded by an explicit canvas override. */
@@ -287,6 +319,7 @@ export function closeSession(chatId: string): void {
   sessions.delete(chatId);
   listeners.delete(chatId);
   canvasOverrides.delete(chatId);
+  chatKinds.delete(chatId);
   clearBubbles(chatId);
 }
 
@@ -519,9 +552,10 @@ async function dispatchSend(chatId: string, message: string, images: PendingImag
   try {
     // ADR 0004: sessionId / model / effort / fork are server-owned (ChatMeta); the body
     // carries only the turn's content.
+    const kind = chatKinds.get(chatId);
     const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/send`), {
       method: 'POST',
-      headers: chatHeaders(chatId, { 'content-type': 'application/json' }),
+      headers: chatHeaders(chatId, kind ? { 'content-type': 'application/json', [CHAT_KIND_HEADER]: kind } : { 'content-type': 'application/json' }),
       body: JSON.stringify({ message, images: images.map(({ media_type, data }) => ({ media_type, data })) }),
     });
     // fetch only rejects on a network failure, so an HTTP error status (425 Too Early =
