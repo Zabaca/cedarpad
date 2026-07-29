@@ -36,7 +36,7 @@ import {
 } from './mcp-tools.ts';
 import { serveWorkspace, warehouseExec } from './sandbox-runtime.ts';
 import type { Env } from './index.ts';
-import { CANVAS_ID_HEADER, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
+import { CANVAS_ID_HEADER, DATA_MAX_BYTES, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
 
 // The inbound MCP server (ADR-0013 train 3, #177): cedarpad's ONLY programmatic surface.
 // Edge-hosted, stateless per request (workers isolate), OAuth on Better Auth — the bearer
@@ -250,7 +250,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'write_data',
       {
         description:
-          'Create or overwrite a data file NEXT TO the components (same dir), so a component can `import data from "./sales.json"`. Extensions: .json/.csv/.txt/.md only (max 1MB); code goes through write_component. Overwriting reloads placed instances so importers pick up the new data.',
+          `Create or overwrite a data file NEXT TO the components (same dir), so a component can \`import data from "./sales.json"\`. Extensions: .json/.csv/.txt/.md only (max ${DATA_MAX_BYTES} bytes); code goes through write_component. Overwriting reloads placed instances so importers pick up the new data.`,
         inputSchema: WriteDataInput.shape,
       },
       async (input) => text(await tools.writeData(input)),

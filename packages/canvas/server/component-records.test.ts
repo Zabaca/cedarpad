@@ -8,9 +8,11 @@ import {
   componentHistory,
   editComponent,
   materializeComponent,
+  materializeDataFile,
   readComponent,
   recordAuthor,
   writeComponent,
+  writeDataFile,
 } from './components.ts';
 
 // Records (ADR-0022): a Component's source is a ROW, and the file vite compiles from is a
@@ -53,6 +55,16 @@ function fakeRecords(opts: { failWrite?: boolean; failRead?: boolean } = {}) {
     history: async (canvasId, name) => {
       calls.push(`history ${canvasId}/${name}`);
       return versions.get(`${canvasId}/${name}`) ?? [];
+    },
+    writeData: async (canvasId, name, source) => {
+      calls.push(`writeData ${canvasId}/${name}`);
+      if (opts.failWrite) throw new Error('the workspace store refused this write');
+      rows.set(`${canvasId}/${name}`, source);
+    },
+    readData: async (canvasId, name) => {
+      calls.push(`readData ${canvasId}/${name}`);
+      if (opts.failRead) throw new Error('the workspace store is unreachable');
+      return rows.get(`${canvasId}/${name}`) ?? null;
     },
   };
   return { records, rows, calls };
@@ -201,6 +213,82 @@ describe('a Component can be asked what has happened to it', () => {
   test('with no edge in front of the container there is no history to give — the disk keeps none', async () => {
     await writeComponent('Card', 'v1', CANVAS, null);
     expect(await componentHistory('Card', CANVAS, null)).toEqual([]);
+  });
+});
+
+describe('write_data persists a data file as a Record', () => {
+  const dataPath = (name: string) => `${dirPath}components/${name}`;
+
+  test('the content lands in the store, and the file is written as the HMR trigger', async () => {
+    const { records, rows } = fakeRecords();
+    await writeDataFile('sales.json', '{"rows":[1]}', CANVAS, records);
+
+    expect(rows.get(`${CANVAS}/sales.json`)).toBe('{"rows":[1]}');
+    expect(readFileSync(dataPath('sales.json'), 'utf8')).toBe('{"rows":[1]}');
+  });
+
+  test('a store write failure FAILS the tool call and leaves no file behind', async () => {
+    const { records } = fakeRecords({ failWrite: true });
+
+    await expect(writeDataFile('sales.json', '[]', CANVAS, records)).rejects.toThrow(/refused this write/);
+    expect(existsSync(dataPath('sales.json'))).toBe(false);
+  });
+
+  test('an invalid name is refused before anything is stored', async () => {
+    const { records, calls } = fakeRecords();
+    await expect(writeDataFile('evil.tsx', 'x', CANVAS, records)).rejects.toThrow(/invalid data file name/);
+    expect(calls).toEqual([]);
+  });
+
+  test('a data file survives the container losing its filesystem', async () => {
+    const { records } = fakeRecords();
+    await writeDataFile('sales.json', '{"rows":[1]}', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+
+    expect(await materializeDataFile('sales.json', CANVAS, records)).toBe('{"rows":[1]}');
+    expect(readFileSync(dataPath('sales.json'), 'utf8')).toBe('{"rows":[1]}');
+  });
+
+  test('materializing a data file the store has never held answers null, not an error', async () => {
+    const { records } = fakeRecords();
+    expect(await materializeDataFile('ghost.csv', CANVAS, records)).toBeNull();
+  });
+});
+
+describe('a Component materializes together with the data files it imports', () => {
+  // The failure this closes: vite resolves `./sales.json` against the FILESYSTEM while it
+  // transforms the module that imports it. A Component that materialized alone would fail
+  // import analysis before the browser ever asked for the data file — a broken card, which
+  // is precisely the failure mode this PRD exists to remove.
+  test('materializing a Component brings its imported siblings with it', async () => {
+    const { records } = fakeRecords();
+    await writeComponent('Card', 'import rows from "./sales.json";\nimport notes from "./notes.md?raw";\n', CANVAS, records);
+    await writeDataFile('sales.json', '{"rows":[1]}', CANVAS, records);
+    await writeDataFile('notes.md', '# hi', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+
+    await materializeComponent('Card', CANVAS, records);
+
+    expect(readFileSync(`${dirPath}components/sales.json`, 'utf8')).toBe('{"rows":[1]}');
+    expect(readFileSync(`${dirPath}components/notes.md`, 'utf8')).toBe('# hi');
+  });
+
+  test('a Component that imports nothing asks the store for nothing else', async () => {
+    const { records, calls } = fakeRecords();
+    await writeComponent('Card', 'export default () => null;', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+    calls.length = 0;
+
+    await materializeComponent('Card', CANVAS, records);
+    expect(calls).toEqual([`read ${CANVAS}/Card`]);
+  });
+
+  test('an import of a sibling the store has never held still materializes the Component', async () => {
+    const { records } = fakeRecords();
+    await writeComponent('Card', 'import rows from "./missing.json";\n', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+
+    expect(await materializeComponent('Card', CANVAS, records)).toContain('missing.json');
   });
 });
 

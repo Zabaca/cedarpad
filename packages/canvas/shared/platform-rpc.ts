@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ComponentName } from './bridge-wire.ts';
+import { ComponentName, DataFileName, DataFileSource } from './bridge-wire.ts';
 import { parsePrUrl } from './pr-url.ts';
 import { SkillFilePath, SkillName, UploadSkillInput } from './skills-wire.ts';
 import { serviceToken, verifyServiceToken } from './service-token.ts';
@@ -251,6 +251,42 @@ export const SkillListOutput = z.object({
 });
 export type SkillListOutput = z.infer<typeof SkillListOutput>;
 
+/**
+ * Operations 11 and 12 — the **data-file** Record verbs (ADR-0022). A data file is the same
+ * kind of thing as a Component (same table, `kind: 'data'`) but not the same verb: its name
+ * carries an extension from a CLOSED set, and its content has a size cap, so widening
+ * `component.write` with a nullable kind would have hidden two different validation rules
+ * behind one shape. Named separately, the surface still reads as behaviour.
+ *
+ * Both the extension set and the cap are enforced HERE, in the contract, so an oversized or
+ * executable-looking payload is a 400 at the boundary rather than something the edge has to
+ * be trusted to notice. Like the Component verbs, these are NOT best-effort: a data write
+ * that cannot be persisted must fail the tool call.
+ */
+export const DataWriteInput = z.object({
+  workspaceId: z.string().min(1),
+  canvasId: z.string().min(1),
+  /** Attribution, nullable for the same reason `ComponentWriteInput.userId` is. */
+  userId: z.string().min(1).nullable(),
+  name: DataFileName,
+  source: DataFileSource,
+});
+export type DataWriteInput = z.infer<typeof DataWriteInput>;
+
+export const DataWriteOutput = z.object({ rev: z.number().int().positive() });
+export type DataWriteOutput = z.infer<typeof DataWriteOutput>;
+
+export const DataReadInput = z.object({
+  workspaceId: z.string().min(1),
+  canvasId: z.string().min(1),
+  name: DataFileName,
+});
+export type DataReadInput = z.infer<typeof DataReadInput>;
+
+/** `null` = no Record for that name in that tier — an ANSWER, not a failure. */
+export const DataReadOutput = z.object({ source: z.string().nullable() });
+export type DataReadOutput = z.infer<typeof DataReadOutput>;
+
 /** The whole request, discriminated by operation name — the complete surface. */
 export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('conversation.start'), input: ConversationStartInput }),
@@ -263,5 +299,7 @@ export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('component.history'), input: ComponentHistoryInput }),
   z.object({ op: z.literal('skill.write'), input: SkillWriteInput }),
   z.object({ op: z.literal('skill.list'), input: SkillListInput }),
+  z.object({ op: z.literal('data.write'), input: DataWriteInput }),
+  z.object({ op: z.literal('data.read'), input: DataReadInput }),
 ]);
 export type PlatformRpcRequest = z.infer<typeof PlatformRpcRequest>;

@@ -8,6 +8,8 @@ import {
   type ComponentReadOutput,
   type ComponentWriteOutput,
   type ConversationStartOutput,
+  type DataReadOutput,
+  type DataWriteOutput,
   PlatformRpcRequest,
   type SkillListOutput,
   type SkillWriteOutput,
@@ -15,6 +17,7 @@ import {
   verifyPlatformRpcToken,
 } from '../shared/platform-rpc.ts';
 import { componentStore } from './component-store.ts';
+import { dataStore } from './data-store.ts';
 import type { Env } from './index.ts';
 import { makeAssignmentPushNotify, type PushSend, webPushSender } from './push-notify.ts';
 import { d1RecordStore } from './record-store.ts';
@@ -180,6 +183,35 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
     if (!(await workspaceExists(deps.db, workspaceId))) return Response.json({ error: 'forbidden' }, { status: 403 });
     const files = await skillStore(d1SkillFileStore(deps.db)).tree(workspaceId);
     return Response.json({ files } satisfies SkillListOutput);
+  }
+
+  // The data-file verbs. Same shape as the Component ones — the name and the size cap are in
+  // the contract, so what is left here is ownership, then the write — plus the one rule the
+  // contract cannot express: a `.json` that does not parse (the store checks it).
+  if (parsed.data.op === 'data.write') {
+    const { workspaceId, canvasId, userId, name, source } = parsed.data.input;
+    if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
+      return Response.json({ error: 'forbidden' }, { status: 403 });
+    }
+    try {
+      const { rev } = await dataStore(d1RecordStore(deps.db)).write({ workspaceId, canvasId, name, source, userId });
+      return Response.json({ rev } satisfies DataWriteOutput);
+    } catch (e) {
+      // A content rule the caller can fix (unparseable JSON) is a 400 with the reason; a
+      // store failure is NOT caught, so it reaches the container as a 5xx and fails the tool
+      // call. Swallowing that is the 2026-07-29 shape.
+      if (e instanceof Error && /not valid JSON/.test(e.message)) return Response.json({ error: e.message }, { status: 400 });
+      throw e;
+    }
+  }
+
+  if (parsed.data.op === 'data.read') {
+    const { workspaceId, canvasId, name } = parsed.data.input;
+    if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
+      return Response.json({ error: 'forbidden' }, { status: 403 });
+    }
+    const source = await dataStore(d1RecordStore(deps.db)).read({ workspaceId, canvasId, name });
+    return Response.json({ source } satisfies DataReadOutput);
   }
 
   const { conversationId, question } = parsed.data.input;

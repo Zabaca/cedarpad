@@ -995,7 +995,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       // The file lands (and persists) first; the hot-reload bump then goes to the ROOM, so an
       // unreachable room costs the reload, never the authored source.
       try {
-        writeDataFile(name, parsed.data.source, canvasId);
+        await writeDataFile(name, parsed.data.source, canvasId);
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
