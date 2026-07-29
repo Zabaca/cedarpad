@@ -3,6 +3,7 @@
 // directly. Each returns an agent-legible result string (and an error flag).
 
 import type { ArrowShape, CanvasShape } from './shapes';
+import { SHAPE_SIZE_DEFAULTS } from './shapes';
 import type { CanvasStore } from './store';
 import { normalizeShape } from './normalize';
 import type { DataSource } from '../shared/mart-contract';
@@ -363,8 +364,8 @@ export function placeComponentOp(store: CanvasStore, input: PlaceComponentInput,
       id: input.id,
       x: input.x,
       y: input.y,
-      w: input.w ?? 360,
-      h: input.h ?? 260,
+      w: input.w ?? SHAPE_SIZE_DEFAULTS.component.w,
+      h: input.h ?? SHAPE_SIZE_DEFAULTS.component.h,
       module: input.module,
       data: input.data ?? {},
       rev: input.rev,
@@ -386,7 +387,7 @@ export function placeComponentOp(store: CanvasStore, input: PlaceComponentInput,
       store.upsert([shape]);
     }
     const linked = isNew && originChatId ? ' (linked to the chat)' : '';
-    return { text: `Placed <${input.module}> as ${shape.id}${linked}, ${input.w ?? 360}×${input.h ?? 260}.` };
+    return { text: `Placed <${input.module}> as ${shape.id}${linked}, ${input.w ?? SHAPE_SIZE_DEFAULTS.component.w}×${input.h ?? SHAPE_SIZE_DEFAULTS.component.h}.` };
   } catch (e) {
     return { text: `Error: ${(e as Error).message}`, isError: true };
   }
