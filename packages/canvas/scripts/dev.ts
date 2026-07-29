@@ -65,11 +65,44 @@ const startExtension = () => {
 };
 startExtension();
 
+// Console PTY server (ADR-0021). SUPERVISED for the same reason as the extension
+// server — node-pty is a native module, and a segfault must restart THIS process, not
+// take the critical pair (bridge + web) down with it.
+//
+// Spawned with `node`, not `bun`, and deliberately: node-pty is completely
+// non-functional under bun (zero bytes, EBADF on resize — measured across two bun
+// versions and two platforms). See pty-server/README.md before "unifying" the runtime.
+//
+// Optional in local dev: pty-server is its own npm-installed island (bun install cannot
+// build node-pty), so a checkout that hasn't run `npm install` there simply gets no
+// Console rather than a crash-looping stack.
+const PTY_PORT = process.env.CANVAS_PTY_PORT ?? String(Number(BRIDGE_PORT) + 3);
+const PTY_DIR = new URL('../pty-server/', import.meta.url).pathname;
+let ptyServer: ReturnType<typeof Bun.spawn> | null = null;
+const startPtyServer = () => {
+  ptyServer = Bun.spawn(['node', 'server.mjs'], {
+    cwd: PTY_DIR,
+    stdio: ['inherit', 'inherit', 'inherit'],
+    env: { ...process.env, CANVAS_PTY_PORT: PTY_PORT },
+  });
+  void ptyServer.exited.then((code) => {
+    if (shuttingDown) return;
+    console.error(`[console] pty-server exited (${code}); restarting in 1s`);
+    setTimeout(startPtyServer, 1000);
+  });
+};
+if (await Bun.file(`${PTY_DIR}node_modules/node-pty/package.json`).exists()) {
+  startPtyServer();
+} else {
+  console.warn('[console] pty-server not installed — run `cd pty-server && npm install` (npm, not bun)');
+}
+
 const killAll = () => {
   shuttingDown = true;
   bridge.kill();
   web.kill();
   extension?.kill();
+  ptyServer?.kill();
   edge?.kill();
 };
 process.on('SIGINT', () => {
