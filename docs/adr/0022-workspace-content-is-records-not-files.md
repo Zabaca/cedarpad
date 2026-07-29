@@ -89,6 +89,10 @@ and permanent. That asymmetry is the entire point.
    the only mechanism was `Bash`. They persisted purely because the tar swept the directory.
    Production held zero of them. Removing the feature is honest; giving it a tool can be a
    deliberate act later.
+   _Correction (#357, verified against production R2 before deleting)_: "zero" is right about
+   **agent-authored** handlers but wrong about the archive — `workspaces/default/custom.tar` holds
+   one file, `hello.ts`, byte-identical (sha256 `d15df2ad…`) to the image seed at
+   `server/custom/hello.ts`. Nothing a user wrote; the removal stands.
 
 7. **Transcripts: one R2 object per session, materialized on resume.** After a turn, PUT only
    the file that turn touched — `ChatMeta` already holds `chatId → sessionId`, so the target is
@@ -130,6 +134,10 @@ and permanent. That asymmetry is the entire point.
   `server/custom/hello.ts`, yet the stored archive is empty — suggesting a restore can clear a
   directory the image populated. The empty-archive guard freezes that state rather than
   repairing it; this needs its own look during implementation.
+  _Correction (#357)_: `custom.tar` is **not** empty — as of 2026-07-29T18:14:01Z it is 10,240
+  bytes holding exactly the image seed, i.e. the boot restore + flush round-tripped the image's
+  own file rather than clearing it. Whatever remains of this hypothesis has to be re-tested
+  against `skills.tar`; the `custom.tar` half of it is disproven.
 - **What this does NOT fix**: the swallowed restore failure in `container-start.ts` is removed
   by decision 5 rather than repaired, so any *remaining* restore path (transcripts) must not
   reintroduce fail-open.

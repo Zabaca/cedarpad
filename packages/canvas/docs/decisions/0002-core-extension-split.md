@@ -1,6 +1,6 @@
 # 0002 — Core/extension split: a protected core, agent-writable extensions, backend extensions in an isolated process
 
-Status: accepted (supersedes ADR 0001's "no immutability boundary" + whole-subtree overlay; backend-extension server is decided but not yet built)
+Status: accepted, with the **backend half removed** _(2026-07-29, #357)_ — supersedes ADR 0001's "no immutability boundary" + whole-subtree overlay, and the frontend core/extension boundary stands. The **extension server, custom handlers, and the `/api/custom/:handler` route below were built and are now deleted**: no tool ever authored a handler (chat turns drop `Write`/`Edit`, so only the shell could), which made the capability reachable exclusively through the ungated path. See root [ADR-0022](../../../../docs/adr/0022-workspace-content-is-records-not-files.md) decision 6. Reintroducing it means giving it a real authoring tool first.
 
 ## Context
 
