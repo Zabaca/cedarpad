@@ -10,10 +10,11 @@ import { ChatShapeUtil } from './ChatShape';
 import { SHAPE_SIZE_DEFAULTS } from './shapes';
 import { armFirstPrompt, closeSession, forkSession } from '../shared/chat-store';
 import { ChatStarter } from './ChatStarter';
-import { DOCK_CHAT_DELETED, postDockMessage } from '../shared/dock-messages';
+import { DOCK_CHAT_DELETED, FOCUS_CHAT, parseDockMessage, postDockMessage } from '../shared/dock-messages';
 import { adoptSharedComponent, promoteComponent } from './component-library';
 import { ComponentShapeUtil } from './ComponentShape';
 import { setExpandHandler } from './component-expand';
+import { chatShapeIdFor } from './focus-chat';
 import { ComponentFullscreenOverlay } from './ComponentFullscreen';
 import { ComponentGallery } from './ComponentGallery';
 import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './SidePanel';
@@ -421,6 +422,22 @@ function CanvasApp() {
         { scope: 'document' },
       );
 
+      // The focus gesture, Shell → pad (shared/dock-messages.ts): the Inbox's chat head asks
+      // this canvas to center on the card fronting that chat. Same-origin + shape-validated,
+      // like every message on this channel. Camera + selection only — nothing is mutated.
+      const onFocusMessage = (e: MessageEvent) => {
+        if (e.origin !== window.location.origin) return;
+        const msg = parseDockMessage(e.data);
+        if (msg?.type !== FOCUS_CHAT) return;
+        const id = chatShapeIdFor(editor.getCurrentPageShapes(), msg.chatId);
+        if (!id) return; // no card for that chat on this canvas: nothing to fly to
+        const bounds = editor.getShapePageBounds(id as TLShapeId);
+        if (!bounds) return;
+        editor.select(id as TLShapeId);
+        editor.zoomToBounds(bounds, { targetZoom: 1, animation: { duration: 300 } });
+      };
+      window.addEventListener('message', onFocusMessage);
+
       // Seed a starter chat on genuine first run only. We drop one in if the canvas
       // has loaded with no chat AND this browser has never been seeded before, then
       // mark it seeded — so deleting your last chat and refreshing leaves the canvas
@@ -442,6 +459,7 @@ function CanvasApp() {
 
       cleanup.current = () => {
         clearTimeout(t);
+        window.removeEventListener('message', onFocusMessage);
         if (camTimer) clearTimeout(camTimer);
         setForkHandler(null);
         setExpandHandler(null);

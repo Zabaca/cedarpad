@@ -130,7 +130,10 @@ function McpPopover({ chatId, mcp }: { chatId: string; mcp: McpSelection | null 
 
 // `onDock` (optional) renders the dock affordance — only the embedded pad passes it
 // (ChatShape); the Inbox thread and the Shell's own docked panel render without one.
-export function ChatView({ chatId, title, onDock }: { chatId: string; title: string; onDock?: () => void }) {
+// `onFocus` (optional) renders the "⌖ On canvas" affordance — only the Inbox thread passes
+// it, and only when this conversation has a linked canvas AND the canvas pane is showing.
+// The pad's own card never does: focusing the card you are already reading is a no-op.
+export function ChatView({ chatId, title, onDock, onFocus }: { chatId: string; title: string; onDock?: () => void; onFocus?: () => void }) {
   ensureSession(chatId); // idempotent sync load so the first render has the transcript
   const snap = React.useSyncExternalStore(
     React.useCallback((cb) => subscribe(chatId, cb), [chatId]),
@@ -248,6 +251,17 @@ export function ChatView({ chatId, title, onDock }: { chatId: string; title: str
             title="Stop the agent (Esc)"
           >
             Stop
+          </button>
+        )}
+        {onFocus && (
+          <button
+            type="button"
+            className="chat-focus"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onFocus}
+            title="Center the canvas on this chat's card"
+          >
+            ⌖ On canvas
           </button>
         )}
         {snap.contextPct !== null && (

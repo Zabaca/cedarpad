@@ -72,6 +72,25 @@
   padding: 2px 6px;
   cursor: pointer;
 }
+/* "⌖ On canvas" — the focus gesture (Inbox thread only). A labelled pill rather than another
+   bare glyph: it is the one head control whose target lives in a different pane. */
+.chat-focus {
+  font: inherit;
+  font-weight: 400;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 9px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chat-focus:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .chat-stop {
   font: inherit;
   font-weight: 600;

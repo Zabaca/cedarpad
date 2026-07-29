@@ -3,6 +3,7 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef,
 import { ChatView } from '../../../shared/ChatView';
 import { onChatFrame, openFrameSignal, setChatKind, setConnectionTarget } from '../../../shared/chat-store';
 import { DEV_AGENT_CHAT_KIND } from '../../../shared/bridge-wire';
+import { FOCUS_CHAT, postToPad } from '../../../shared/dock-messages';
 import type { InboxChatResponse, InboxItem, InboxListResponse, InboxView } from './contract';
 import { padUrlFor } from './inbox-pad-url';
 import {
@@ -267,6 +268,18 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
   // The canvas pane (the attach panel counts as it) only exists once a conversation is open —
   // the thread takes its space, fixed-width, only when the canvas pane is actually showing.
   const showCanvas = !!current && !canvasHidden;
+  // The focus gesture (CONTEXT.md "Focus a chat card") crosses INTO the pad, so the Inbox — the
+  // one component that holds both panes — owns the iframe ref and hands the thread a sender.
+  // Offered only when there is a live pad to talk to: canvas linked AND the pane showing.
+  const padFrame = useRef<HTMLIFrameElement | null>(null);
+  // The open thread's resolved chatId (a bridge round-trip away from the InboxItem), parked in
+  // a ref: the focus button reads it at click time, so no render depends on it.
+  const focusChatId = useRef<string | null>(null);
+  const reportChatId = useCallback((cid: string) => void (focusChatId.current = cid), []);
+  const focusOnCanvas =
+    showCanvas && current?.canvasId
+      ? () => postToPad(padFrame.current, { type: FOCUS_CHAT, chatId: focusChatId.current ?? '' })
+      : undefined;
 
   return (
     <div className="shell-stage stage-inbox">
@@ -390,6 +403,8 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
             onListReload={loadList}
             canvasHidden={canvasHidden}
             onToggleCanvas={toggleCanvas}
+            onFocusCanvas={focusOnCanvas}
+            reportChatId={reportChatId}
           />
         ) : draft ? (
           // The draft thread: a live same-origin <ChatView> on a chat that has no
@@ -410,7 +425,7 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
       {showCanvas && current && (
         <>
           <div className="inbox-divider" onPointerDown={startResize('thread')} />
-          <CanvasPane item={current} onAttached={loadList} />
+          <CanvasPane item={current} onAttached={loadList} frameRef={padFrame} />
         </>
       )}
     </div>
@@ -421,12 +436,21 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
 // `canvasId`, else the attach panel (link an existing same-workspace canvas, or create one
 // named from the chat summary). Keyed by conversation + canvasId so switching conversations
 // remounts the iframe cleanly rather than reusing a stale one.
-function CanvasPane({ item, onAttached }: { item: InboxItem; onAttached: () => void }) {
+function CanvasPane({
+  item,
+  onAttached,
+  frameRef,
+}: {
+  item: InboxItem;
+  onAttached: () => void;
+  /** Handed down by the Inbox so the thread's focus button can post a gesture into this pad. */
+  frameRef: React.RefObject<HTMLIFrameElement | null>;
+}) {
   const padUrl = padUrlFor(item);
   return (
     <div className="inbox-canvas">
       {padUrl ? (
-        <iframe key={`${item.id}:${item.canvasId}`} className="inbox-canvas-frame" title="canvas" src={padUrl} />
+        <iframe ref={frameRef} key={`${item.id}:${item.canvasId}`} className="inbox-canvas-frame" title="canvas" src={padUrl} />
       ) : (
         <AttachPanel key={item.id} item={item} onAttached={onAttached} />
       )}
@@ -560,6 +584,8 @@ function Thread({
   onListReload,
   canvasHidden,
   onToggleCanvas,
+  onFocusCanvas,
+  reportChatId,
 }: {
   item: InboxItem;
   /** The caller's user id — the Private toggle shows only for the chat's creator (ADR-0016). */
@@ -567,6 +593,10 @@ function Thread({
   onListReload: () => Promise<void>;
   canvasHidden: boolean;
   onToggleCanvas: () => void;
+  /** Post the focus gesture into the linked pad. Absent when there is no pad to talk to. */
+  onFocusCanvas?: () => void;
+  /** The chatId this thread resolved — the gesture names a CHAT, and only the thread knows it. */
+  reportChatId: (chatId: string) => void;
 }) {
   const id = item.id;
   const prefix = bridgePrefix(id);
@@ -592,6 +622,7 @@ function Thread({
       const d = (await r.json()) as InboxChatResponse;
       setConnectionTarget(d.chatId, prefix);
       setChatId(d.chatId);
+      reportChatId(d.chatId);
       setPhase('ready');
     })();
     return () => {
@@ -654,7 +685,7 @@ function Thread({
         <div className="inbox-empty">Waking the conversation…</div>
       ) : (
         <div className="inbox-chatview">
-          <ChatView chatId={chatId} title={item.summary || id} />
+          <ChatView chatId={chatId} title={item.summary || id} onFocus={onFocusCanvas} />
         </div>
       )}
     </>

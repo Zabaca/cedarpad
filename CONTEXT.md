@@ -226,6 +226,15 @@ to be re-homed.)
   just empties the slot; deleting the docked chat's card closes the session and undocks
   (the card is the chat's presence on the canvas — the pane is only a projection of it).
   Which chat is docked is per-device UI memory, not domain state — no schema edge.
+- **Focus a chat card** (Inbox thread): the inverse direction of the same in-page channel —
+  the open chat's header offers **⌖ On canvas**, which asks the linked pad to center its
+  camera on the card fronting *this* chat (select + zoom-to-bounds, the move the canvas side
+  panel's instance list already makes). Camera and selection only — nothing on the canvas is
+  mutated, so it is pure view state, never domain state. Offered only when the Conversation
+  has a linked canvas AND the third pane is showing; a canvas holding no card for the chat
+  (the card was deleted) simply does not move. Dock and focus are the ONLY two gestures that
+  cross the pad↔Shell postMessage boundary (`shared/dock-messages.ts`) — everything else the
+  two surfaces share converges at the bridge.
 - The Inbox is a **unified session index**: EVERY Session gets a Conversation row (created on
   its first turn, idempotent by `sessionId`), so the one surface lists all sessions — canvas
   chats and background-agent runs alike. `end_turn` never *creates* the row; it just sets its
