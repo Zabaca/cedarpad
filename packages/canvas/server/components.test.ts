@@ -129,12 +129,12 @@ describe('shared library: promote (move) + adopt (copy-back to diverge)', () => 
     try {
       await writeComponent(SH, 'export default () => <div>promote me</div>;\n');
       expect(existsSync(ownPath)).toBe(true);
-      expect(isShared(SH)).toBe(false);
+      expect(await isShared(SH)).toBe(false);
 
-      promoteComponent('default', SH);
+      await promoteComponent('default', SH);
       expect(existsSync(ownPath)).toBe(false); // MOVED, not copied
       expect(existsSync(sharedPath)).toBe(true);
-      expect(isShared(SH)).toBe(true);
+      expect(await isShared(SH)).toBe(true);
       // Reads span own + shared, so a canvas still sees the promoted module by bare name.
       expect(await readComponent(SH)).toContain('promote me');
       expect(listComponents()).toContain(SH);
@@ -146,7 +146,7 @@ describe('shared library: promote (move) + adopt (copy-back to diverge)', () => 
   test('editing a promoted module writes back to the shared source (one live source)', async () => {
     try {
       await writeComponent(SH, 'export default () => <div>v1</div>;\n');
-      promoteComponent('default', SH);
+      await promoteComponent('default', SH);
       await editComponent(SH, 'v1', 'v2');
       expect(await readComponent(SH)).toContain('v2');
       expect(existsSync(ownPath)).toBe(false); // still only in shared
@@ -158,8 +158,8 @@ describe('shared library: promote (move) + adopt (copy-back to diverge)', () => 
   test('adopt copies a shared module back into the canvas own dir (diverge)', async () => {
     try {
       await writeComponent(SH, 'export default () => <div>base</div>;\n');
-      promoteComponent('default', SH);
-      adoptSharedComponent('default', SH);
+      await promoteComponent('default', SH);
+      await adoptSharedComponent('default', SH);
       expect(existsSync(ownPath)).toBe(true); // own copy now wins own-first resolution
       expect(existsSync(sharedPath)).toBe(true);
     } finally {
@@ -168,13 +168,13 @@ describe('shared library: promote (move) + adopt (copy-back to diverge)', () => 
   });
 
   test('promote rejects a missing own file and a name collision; preserves path-escape guard', async () => {
-    expect(() => promoteComponent('default', 'DefinitelyMissing')).toThrow(/not in canvas/);
-    expect(() => promoteComponent('default', '../secret')).toThrow(/invalid component name/);
+    await expect(promoteComponent('default', 'DefinitelyMissing')).rejects.toThrow(/not in canvas/);
+    await expect(promoteComponent('default', '../secret')).rejects.toThrow(/invalid component name/);
     try {
       await writeComponent(SH, 'export default () => null;\n');
-      promoteComponent('default', SH);
-      adoptSharedComponent('default', SH); // canvas re-owns a copy (diverged): own + shared coexist
-      expect(() => promoteComponent('default', SH)).toThrow(/already exists/);
+      await promoteComponent('default', SH);
+      await adoptSharedComponent('default', SH); // canvas re-owns a copy (diverged): own + shared coexist
+      await expect(promoteComponent('default', SH)).rejects.toThrow(/already exists/);
     } finally {
       cleanupShared();
     }

@@ -372,6 +372,128 @@ describe('platform RPC: component.write / component.read', () => {
     expect(res.status).toBe(400);
   });
 
+  // The SHARED tier has no canvas of its own, so the ownership check above has nothing to
+  // look up — and "no canvas to check" must never quietly mean "no check". A shared-tier
+  // operation therefore names the canvas it is acting FROM, that canvas is checked exactly
+  // as an own-tier write is, and the null canvas key is minted at the EDGE. The container
+  // never sends the null: entitlement to a workspace's shared library is proved by naming a
+  // canvas the registry agrees is in it.
+  test('a shared-tier write is readable back from the shared tier of that workspace', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+
+    const written = await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_a', canvasId, tier: 'shared', userId: 'u_1', name: 'Legend', source: 'shared source' } },
+      { db },
+    );
+    expect(written.status).toBe(200);
+
+    const shared = await rpc({ op: 'component.read', input: { workspaceId: 'ws_a', canvasId, tier: 'shared', name: 'Legend' } }, { db });
+    expect(ComponentReadOutput.parse(await shared.json()).source).toBe('shared source');
+    // …and it did NOT land in the calling canvas's own library: the tier is a real distinction.
+    const own = await rpc({ op: 'component.read', input: { workspaceId: 'ws_a', canvasId, name: 'Legend' } }, { db });
+    expect(ComponentReadOutput.parse(await own.json()).source).toBeNull();
+  });
+
+  test('a shared-tier write for a workspace the caller cannot name a canvas in is refused', async () => {
+    const db = await freshDb();
+    const victim = await registerCanvas(db, 'ws_victim');
+    await registerCanvas(db, 'ws_intruder');
+
+    // Naming someone else's canvas under your own workspace: the pair is a lie, so 403.
+    const stolen = await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_intruder', canvasId: victim, tier: 'shared', userId: 'u_1', name: 'Legend', source: 'x' } },
+      { db },
+    );
+    expect(stolen.status).toBe(403);
+
+    // Naming no real canvas at all — the shape that would let any authenticated container
+    // write into any workspace's shared library if the check degenerated to nothing.
+    const invented = await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_victim', canvasId: 'cv_never_registered', tier: 'shared', userId: 'u_1', name: 'Legend', source: 'x' } },
+      { db },
+    );
+    expect(invented.status).toBe(403);
+
+    expect(await d1RecordStore(db).get({ workspaceId: 'ws_victim', canvasId: null, name: 'Legend' })).toBeNull();
+    expect(await d1RecordStore(db).get({ workspaceId: 'ws_intruder', canvasId: null, name: 'Legend' })).toBeNull();
+  });
+
+  test('each workspace has its own shared library', async () => {
+    const db = await freshDb();
+    const [a, b] = [await registerCanvas(db, 'ws_a'), await registerCanvas(db, 'ws_b')];
+    await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_a', canvasId: a, tier: 'shared', userId: 'u_1', name: 'Legend', source: 'a source' } },
+      { db },
+    );
+
+    const other = await rpc({ op: 'component.read', input: { workspaceId: 'ws_b', canvasId: b, tier: 'shared', name: 'Legend' } }, { db });
+    expect(ComponentReadOutput.parse(await other.json()).source).toBeNull();
+  });
+});
+
+describe('platform RPC: component.promote / component.adopt', () => {
+  test('promote moves the Component into the shared library and out of the canvas', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    await rpc({ op: 'component.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'Legend', source: 'v1' } }, { db });
+
+    const promoted = await rpc({ op: 'component.promote', input: { workspaceId: 'ws_a', canvasId, userId: 'u_2', name: 'Legend' } }, { db });
+    expect(promoted.status).toBe(200);
+
+    const shared = await rpc({ op: 'component.read', input: { workspaceId: 'ws_a', canvasId, tier: 'shared', name: 'Legend' } }, { db });
+    expect(ComponentReadOutput.parse(await shared.json()).source).toBe('v1');
+    const own = await rpc({ op: 'component.read', input: { workspaceId: 'ws_a', canvasId, name: 'Legend' } }, { db });
+    expect(ComponentReadOutput.parse(await own.json()).source).toBeNull();
+  });
+
+  test('adopt copies the shared Component into the canvas and leaves it shared', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_a', canvasId, tier: 'shared', userId: 'u_1', name: 'Legend', source: 'shared source' } },
+      { db },
+    );
+
+    const adopted = await rpc({ op: 'component.adopt', input: { workspaceId: 'ws_a', canvasId, userId: 'u_2', name: 'Legend' } }, { db });
+    expect(adopted.status).toBe(200);
+
+    const own = await rpc({ op: 'component.read', input: { workspaceId: 'ws_a', canvasId, name: 'Legend' } }, { db });
+    expect(ComponentReadOutput.parse(await own.json()).source).toBe('shared source');
+    const shared = await rpc({ op: 'component.read', input: { workspaceId: 'ws_a', canvasId, tier: 'shared', name: 'Legend' } }, { db });
+    expect(ComponentReadOutput.parse(await shared.json()).source).toBe('shared source');
+  });
+
+  test('promote and adopt are refused for a canvas that is not in the named workspace', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_owner');
+    await rpc({ op: 'component.write', input: { workspaceId: 'ws_owner', canvasId, userId: 'u_1', name: 'Legend', source: 'v1' } }, { db });
+
+    const promote = await rpc({ op: 'component.promote', input: { workspaceId: 'ws_intruder', canvasId, userId: 'u_1', name: 'Legend' } }, { db });
+    expect(promote.status).toBe(403);
+    const adopt = await rpc({ op: 'component.adopt', input: { workspaceId: 'ws_intruder', canvasId, userId: 'u_1', name: 'Legend' } }, { db });
+    expect(adopt.status).toBe(403);
+    // The Component is still exactly where its owner left it.
+    expect((await d1RecordStore(db).get({ workspaceId: 'ws_owner', canvasId, name: 'Legend' }))?.source).toBe('v1');
+  });
+
+  test('a promote the store refuses is a failure, not a success — and nothing moves', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    await rpc({ op: 'component.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'Legend', source: 'v1' } }, { db });
+    await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_a', canvasId, tier: 'shared', userId: 'u_1', name: 'Legend', source: 'theirs' } },
+      { db },
+    );
+
+    const res = await rpc({ op: 'component.promote', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'Legend' } }, { db });
+    expect(res.status).toBe(400);
+    expect((await d1RecordStore(db).get({ workspaceId: 'ws_a', canvasId, name: 'Legend' }))?.source).toBe('v1');
+    expect((await d1RecordStore(db).get({ workspaceId: 'ws_a', canvasId: null, name: 'Legend' }))?.source).toBe('theirs');
+  });
+});
+
+describe('platform RPC: component.write / component.read (history)', () => {
   test('a rewrite bumps the rev and history records who wrote each one', async () => {
     const db = await freshDb();
     const canvasId = await registerCanvas(db, 'ws_a');

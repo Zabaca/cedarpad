@@ -153,11 +153,11 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
 A skill is **content-that-asks** — text the model reads. It is never a **capability** (a grant: tools, tokens, scopes, routing). Capabilities stay code-gated; no workspace data may confer one.
 
 **Record vs File — how workspace content persists** _(ADR-0022; being built by #354. LIVE as
-**Records**: the **own tier** of Components — write, read, version history and on-demand
-materialization (#355, #358) — their **data files** (#360), and **Workspace skills** (#361).
-LIVE as **Files**: per-session **Transcripts** (#356) — that is their permanent home, not a
-staging post. Still awaiting migration to Records: the shared tier.)_ The dividing question is
-**who owns the schema**:
+**Records**: **both writable tiers** of Components — own and shared — with write, read,
+version history, on-demand materialization, promote and adopt (#355, #358, #359), their
+**data files** (#360), and **Workspace skills** (#361). LIVE as **Files**: per-session
+**Transcripts** (#356) — that is their permanent home, not a staging post.)_ The dividing
+question is **who owns the schema**:
 
 - A **Record** is content whose shape *we* define, authored only through our own tools —
   **Components**, their **data files**, and **Workspace skills** (already a files-only
@@ -183,12 +183,13 @@ platform code to workspace data and break the **gated-layer rule**. So resolutio
 **build-time manifest** rather than the container's disk.
 
 A Record write crosses the container/edge boundary as a **domain verb** on the platform RPC
-(`component.write` / `component.read` / `component.history`, `data.write` / `data.read`,
-`skill.write` / `skill.list`), never a generic row op — the RPC is a behavioural contract, not
-a SQL tunnel — and the **edge** validates the name and paths, and ownership-checks the canvas
-(Components, data files) or the workspace (skills), rather than trusting the container's
-payload. Ordering is **store first, then disk**: a write that cannot be persisted fails the
-tool call, and the file it then writes is only an HMR trigger.
+(`component.write` / `component.read` / `component.history` / `component.promote` /
+`component.adopt`, `data.write` / `data.read`, `skill.write` / `skill.list`), never a generic
+row op — the RPC is a behavioural contract, not a SQL tunnel — and the **edge** validates the
+name and paths, and ownership-checks the canvas (Components, data files) or the workspace
+(skills), rather than trusting the container's payload. Ordering is **store first, then disk**:
+a write that cannot be persisted fails the tool call, and the file it then writes is only an
+HMR trigger.
 
 A **data file** is a Record of the same family as the Component that imports it (one table,
 `kind: 'data'`) but its own verb, because what makes it valid is different: a closed,
@@ -199,6 +200,16 @@ reason left.) A data file also never materializes on its own schedule: vite reso
 `./sales.json` against the **filesystem** while it transforms the module importing it, so a
 Component comes down **with the siblings its source imports** — a Component that arrived alone
 would fail import analysis and render a dead card.
+
+The shared tier is `canvas_id NULL`, which has no canvas for that ownership check to look up —
+so **every** Component verb names the canvas it is acting FROM, including a shared one, and the
+edge mints the null itself: a workspace's shared library is reachable only by naming a canvas
+the registry places inside it, which is the same check an own-tier write already passes. (That
+is also why a shared module's dev-server URL carries `?c=<canvasId>`: materializing it goes
+through the edge.) Skills have no canvas at all, so they fall back to "the workspace is real".
+Both are **consistency** checks, not tenancy checks — the platform-RPC bearer is a constant
+with no workspace identity in it, so neither can stop a caller that names a real, coherent
+workspace it does not own (#374).
 
 **Materialization timing is not uniform, and the difference is the point.** A Component is
 materialized **lazily**, when vite requests the module — the client already walks own → shared
@@ -536,8 +547,11 @@ The round-trip:
   a module into the workspace `shared/components/` dir (one live source; vite resolves the
   `@shared` alias to it). A placed instance references a module by its **bare name**, and
   `component-loader` resolves **own-dir first, then `@shared`, then the platform base**
-  (`componentUrls`, ADR-0014) — so promote
-  is a pure file *move* (`server/components.ts` `promoteComponent`), instances stay stable,
+  (`componentUrls`, ADR-0014) — so promote is a change of *tier* with no store rewrite
+  (`server/components.ts` `promoteComponent`, over the Record store since #359: one row
+  relocated, never a write-then-delete, because a half-done promote used to leave the bare
+  name resolving onto a same-named PLATFORM module and rendering the wrong card silently),
+  instances stay stable,
   and another canvas placing the same bare name gets the one shared source. Editing a shared
   module bumps the rev on the **caller's** canvas. (The cross-canvas fan-out over the
   bridge's in-memory session registry went with the old sync plane in #297 — it bumped

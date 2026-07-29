@@ -234,8 +234,8 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
-  const reloadAfterAuthor = (module: string): number => {
-    if (bumpShared && isShared(module)) return bumpShared(module);
+  const reloadAfterAuthor = async (module: string): Promise<number> => {
+    if (bumpShared && (await isShared(module, canvasId))) return bumpShared(module);
     return bumpAllComponents(store, nextComponentRev(store));
   };
   return [
@@ -358,7 +358,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         async ({ module, source }) => {
           try {
             await writeComponent(module, source, canvasId);
-            const reloaded = reloadAfterAuthor(module);
+            const reloaded = await reloadAfterAuthor(module);
             return result({ text: `Wrote ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s)/canvas(es))` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
@@ -376,7 +376,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         async ({ module, old_string, new_string }) => {
           try {
             await editComponent(module, old_string, new_string, canvasId);
-            const reloaded = reloadAfterAuthor(module);
+            const reloaded = await reloadAfterAuthor(module);
             return result({ text: `Edited ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s)/canvas(es))` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
@@ -408,7 +408,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         { module: z.string().describe('Component name to promote (no extension).') },
         async ({ module }) => {
           try {
-            const canvases = promoteToShared(canvasId, module, () => (bumpShared ? bumpShared(module) : bumpAllComponents(store, nextComponentRev(store)) && 1));
+            const canvases = await promoteToShared(canvasId, module, () => (bumpShared ? bumpShared(module) : bumpAllComponents(store, nextComponentRev(store)) && 1));
             return result({ text: `Promoted ${module}.tsx to the shared library${canvases ? ` (reloaded ${canvases} canvas(es) that placed it)` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
@@ -421,7 +421,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         { module: z.string().describe('Shared component name to copy into this canvas (no extension).') },
         async ({ module }) => {
           try {
-            const reloaded = adoptFromShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store)));
+            const reloaded = await adoptFromShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store)));
             return result({ text: `Copied shared ${module}.tsx into this canvas${reloaded ? ` (reloaded ${reloaded} placed instance(s))` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });

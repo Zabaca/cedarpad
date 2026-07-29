@@ -11,19 +11,25 @@
 // a canvas can `adopt` a shared module back into its own dir to diverge. Reads span the
 // canvas's own dir + the shared lib.
 //
-// RECORDS (ADR-0022). Since the 2026-07-29 loss the OWN tier's truth is a row, not the file:
-// `writeComponent` persists the Record first and writes the file second, and a read with no
-// file materializes the Record on demand. The filesystem is a rendering — a cache vite
+// RECORDS (ADR-0022). Since the 2026-07-29 loss both WRITABLE tiers' truth is a row, not the
+// file: `writeComponent` persists the Record first and writes the file second, and a read with
+// no file materializes the Record on demand. The filesystem is a rendering — a cache vite
 // compiles from — so a container that comes back with an empty tree is a slow first request,
 // never a data event. There is deliberately NO boot restore: the failure mode that destroyed
 // the workspace cannot exist where the step does not.
 //
-// The SHARED tier and data files still live only on disk; they move in later slices of #354.
+// `promote` is therefore no longer a rename(2) but ONE change of tier at the store, and the
+// disk is re-rendered from the result. That ordering is the whole point: a promote whose
+// shared write was lost after the own copy had gone made placed instances resolve to a
+// same-named PLATFORM component and render with the wrong props — silent substitution, worse
+// than a 404, because a missing card is visible and a wrong card is not.
+//
+// The PLATFORM tier stays image-only, and data files still live only on disk (slice #360).
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { assertDataFileName, assertDataFileSource, COMPONENT_NAME_RE } from '../shared/bridge-wire.ts';
-import type { ComponentVersion } from '../shared/platform-rpc.ts';
+import type { ComponentTier, ComponentVersion } from '../shared/platform-rpc.ts';
 import { loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
 
 const DEFAULT_CANVAS_ID = 'default';
@@ -56,12 +62,20 @@ function fileIn(dir: string, module: string): string {
  * testable against a fake without a network or a D1.
  */
 export interface ComponentRecords {
-  /** Persist the own-tier source. THROWS when the store refuses or is unreachable. */
-  write(canvasId: string, module: string, source: string): Promise<void>;
-  /** The stored source, or null when the own tier holds no Record for that name. */
-  read(canvasId: string, module: string): Promise<string | null>;
-  /** Every version of the own-tier Component, newest first: who changed it and when. */
-  history(canvasId: string, module: string): Promise<ComponentVersion[]>;
+  /** Persist the source in one of the two writable tiers. `canvasId` is always the canvas
+   *  the write is performed FROM — for a shared write it is the entitlement proof, which is
+   *  why it is present even though the shared library has no canvas of its own.
+   *  THROWS when the store refuses or is unreachable. */
+  write(tier: ComponentTier, canvasId: string, module: string, source: string): Promise<void>;
+  /** The stored source, or null when that tier holds no Record for that name. */
+  read(tier: ComponentTier, canvasId: string, module: string): Promise<string | null>;
+  /** Every version of the Component in that tier, newest first: who changed it and when. */
+  history(tier: ComponentTier, canvasId: string, module: string): Promise<ComponentVersion[]>;
+  /** Move the Component from this canvas into the shared library — one change of tier, so it
+   *  can never end up in both libraries or in neither. THROWS with the store's reason. */
+  promote(canvasId: string, module: string): Promise<void>;
+  /** Copy the shared Component into this canvas's own tier so it can diverge deliberately. */
+  adopt(canvasId: string, module: string): Promise<void>;
   /** Persist an own-tier DATA file (`sales.json`). Same rules, different door: the edge
    *  enforces the closed extension set and the size cap. THROWS when the store refuses. */
   writeData(canvasId: string, name: string, source: string): Promise<void>;
@@ -98,9 +112,12 @@ function containerRecords(): ComponentRecords | null {
   const workspaceId = env.CANVAS_WORKSPACE || 'default';
   const userId = recordAuthor(env);
   return {
-    write: async (canvasId, module, source) => void (await rpc.componentWrite({ workspaceId, canvasId, userId, name: module, source })),
-    read: (canvasId, module) => rpc.componentRead({ workspaceId, canvasId, name: module }),
-    history: (canvasId, module) => rpc.componentHistory({ workspaceId, canvasId, name: module }),
+    write: async (tier, canvasId, module, source) =>
+      void (await rpc.componentWrite({ workspaceId, canvasId, tier, userId, name: module, source })),
+    read: (tier, canvasId, module) => rpc.componentRead({ workspaceId, canvasId, tier, name: module }),
+    history: (tier, canvasId, module) => rpc.componentHistory({ workspaceId, canvasId, tier, name: module }),
+    promote: async (canvasId, module) => void (await rpc.componentPromote({ workspaceId, canvasId, userId, name: module })),
+    adopt: async (canvasId, module) => void (await rpc.componentAdopt({ workspaceId, canvasId, userId, name: module })),
     writeData: async (canvasId, name, source) => void (await rpc.dataWrite({ workspaceId, canvasId, userId, name, source })),
     readData: (canvasId, name) => rpc.dataRead({ workspaceId, canvasId, name }),
   };
@@ -155,38 +172,46 @@ export function listComponentDetails(canvasId: string = DEFAULT_CANVAS_ID): Comp
   });
 }
 
-/** True when the module lives in the shared library (and so is the workspace source). */
-export function isShared(module: string): boolean {
-  return existsSync(fileIn(SHARED_DIR, module));
-}
-
-/** The two tiers below the canvas's own: the workspace shared library, then the platform
- *  base. Both are still plain files (the shared tier becomes a Record in a later slice). */
-function sharedOrBaseFile(module: string): string | null {
-  const shared = fileIn(SHARED_DIR, module);
-  if (existsSync(shared)) return shared;
-  const base = fileIn(BASE_DIR, module);
-  if (existsSync(base)) return base;
-  return null;
-}
-
 /**
- * Write an own-tier Record's source to the file vite compiles from, and return it; null when
- * the store holds no such Component. This is the ONLY restore path there is — ADR-0022
- * decision 5 deletes boot restore rather than guarding it, so there can be no "boot restored
- * nothing" bug. One Component per call: a cold container pays for what is asked for, never
- * for the whole library.
+ * True when the module IS the workspace's shared source — which the Record decides, not the
+ * file. After a recycle the shared file is gone while its Record is not, and answering from
+ * disk alone would send the next edit into the canvas's own tier: a silent fork of the one
+ * live source, exactly what promote exists to prevent.
  */
-export async function materializeComponent(
+export async function isShared(
   module: string,
   canvasId: string = DEFAULT_CANVAS_ID,
   records: ComponentRecords | null = componentRecordStore,
+): Promise<boolean> {
+  if (existsSync(fileIn(SHARED_DIR, module))) return true;
+  return records ? (await records.read('shared', canvasId, module)) !== null : false;
+}
+
+/** The platform tier: image code, never a Record, never written. The last thing tried. */
+function baseFile(module: string): string | null {
+  const base = fileIn(BASE_DIR, module);
+  return existsSync(base) ? base : null;
+}
+
+/**
+ * Write a Record's source to the file vite compiles from, and return it; null when that tier
+ * holds no such Component. This is the ONLY restore path there is — ADR-0022 decision 5
+ * deletes boot restore rather than guarding it, so there can be no "boot restored nothing"
+ * bug. One Component per call: a cold container pays for what is asked for, never for the
+ * whole library.
+ */
+async function materializeInto(
+  tier: ComponentTier,
+  module: string,
+  canvasId: string,
+  records: ComponentRecords | null,
 ): Promise<string | null> {
   if (!records) return null;
-  const file = fileIn(ownDir(canvasId), module); // validates the name before we ask anything
-  const source = await records.read(canvasId, module);
+  const dir = tier === 'shared' ? SHARED_DIR : ownDir(canvasId);
+  const file = fileIn(dir, module); // validates the name before we ask anything
+  const source = await records.read(tier, canvasId, module);
   if (source === null) return null;
-  mkdirSync(ownDir(canvasId), { recursive: true });
+  mkdirSync(dir, { recursive: true });
   writeFileSync(file, source);
   // …and the data files it imports, because vite resolves those against the filesystem while
   // it transforms THIS module. A sibling that is still a row here is a broken card.
@@ -197,12 +222,28 @@ export async function materializeComponent(
   return source;
 }
 
+/** Materialize the canvas's OWN copy of a module (the vite middleware's path). */
+export const materializeComponent = (
+  module: string,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<string | null> => materializeInto('own', module, canvasId, records);
+
+/** Materialize the workspace SHARED copy. `canvasId` is the canvas asking — the edge proves
+ *  entitlement to the workspace's library through it, so a shared read still names one. */
+export const materializeSharedComponent = (
+  module: string,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<string | null> => materializeInto('shared', module, canvasId, records);
+
 /**
- * Own tier, then shared, then platform (ADR-0014 precedence, unchanged) — but the own tier is
- * now "the file OR its Record". Consulting the Record before falling through matters: writing
- * a platform module's name shadows it into the canvas, and after a recycle the shadow file is
- * gone while the Record is not. Falling straight through to base would silently hand back the
- * platform component the user deliberately replaced.
+ * Own tier, then shared, then platform (ADR-0014 precedence, unchanged) — but each writable
+ * tier is now "the file OR its Record". Consulting the Record before falling through matters:
+ * writing a platform module's name shadows it into the canvas, and after a recycle the shadow
+ * file is gone while the Record is not. Falling straight through to base would silently hand
+ * back the platform component the user deliberately replaced — the substitution that made
+ * three promoted cards render blank with no error anywhere.
  */
 export async function readComponent(
   module: string,
@@ -211,16 +252,42 @@ export async function readComponent(
 ): Promise<string> {
   const own = fileIn(ownDir(canvasId), module);
   if (existsSync(own)) return readFileSync(own, 'utf8');
-  const materialized = await materializeComponent(module, canvasId, records);
-  if (materialized !== null) return materialized;
-  const file = sharedOrBaseFile(module);
-  if (file) return readFileSync(file, 'utf8');
+  const ownRecord = await materializeComponent(module, canvasId, records);
+  if (ownRecord !== null) return ownRecord;
+
+  const shared = fileIn(SHARED_DIR, module);
+  if (existsSync(shared)) return readFileSync(shared, 'utf8');
+  const sharedRecord = await materializeSharedComponent(module, canvasId, records);
+  if (sharedRecord !== null) return sharedRecord;
+
+  const base = baseFile(module);
+  if (base) return readFileSync(base, 'utf8');
   throw new Error(`component "${module}" does not exist (list_components to see what does)`);
 }
 
 /**
- * Create or overwrite a module — in the shared lib if it already lives there, else the
- * canvas's own dir. Editing a shared module thus stays the one shared source (propagation).
+ * Which writable tier a canvas resolves a module in — the SAME first-match-wins walk a read
+ * does, own before shared. An overwrite therefore edits the source that canvas actually
+ * resolves: editing a shared module stays the one shared source (propagation), unless this
+ * canvas adopted it, which is what adopting is FOR. Falls back to own, which is where a new
+ * module is born, and it is also the tier whose history a canvas is asking about.
+ *
+ * Files first, Records second: on a live container the file answers for free, and only a
+ * container that has lost its tree pays for the round trips.
+ */
+async function resolvedTier(module: string, canvasId: string, records: ComponentRecords | null): Promise<ComponentTier> {
+  if (existsSync(fileIn(ownDir(canvasId), module))) return 'own';
+  if (existsSync(fileIn(SHARED_DIR, module))) return 'shared';
+  if (records) {
+    if ((await records.read('own', canvasId, module)) !== null) return 'own';
+    if ((await records.read('shared', canvasId, module)) !== null) return 'shared';
+  }
+  return 'own';
+}
+
+/**
+ * Create or overwrite a module — in the tier that canvas already resolves it from, else the
+ * canvas's own library.
  *
  * ORDERING IS THE POINT (ADR-0022): the Record is persisted FIRST, and only then is the file
  * written. A store write that fails throws, so the tool call fails and the agent can retry;
@@ -235,17 +302,16 @@ export async function writeComponent(
   records: ComponentRecords | null = componentRecordStore,
 ): Promise<void> {
   if (typeof source !== 'string' || source.trim().length === 0) throw new Error('source must be non-empty');
-  const shared = isShared(module);
+  const shared = (await resolvedTier(module, canvasId, records)) === 'shared';
   const dir = shared ? SHARED_DIR : ownDir(canvasId);
   const file = fileIn(dir, module); // validates the name before we ask the store anything
-  // The shared tier is still filesystem-only; it becomes a Record in a later slice of #354.
-  if (!shared) await records?.write(canvasId, module, source);
+  await records?.write(shared ? 'shared' : 'own', canvasId, module, source);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   try {
     writeFileSync(file, source);
   } catch (err) {
     // Only forgivable because the Record already landed: the next request materializes it.
-    if (shared || !records) throw err;
+    if (!records) throw err;
     console.error(`[components] ${module}.tsx did not reach disk; it will materialize on next fetch:`, err);
   }
 }
@@ -265,7 +331,11 @@ export async function componentHistory(
   records: ComponentRecords | null = componentRecordStore,
 ): Promise<ComponentVersion[]> {
   fileIn(ownDir(canvasId), module); // validates the name before we ask anything
-  return records ? await records.history(canvasId, module) : [];
+  if (!records) return [];
+  // The history of the Component this canvas RESOLVES: a promoted module's past lives under
+  // the shared key, and asking the own tier for it would answer "no history" about a
+  // Component that has one.
+  return await records.history(await resolvedTier(module, canvasId, records), canvasId, module);
 }
 
 // Data files live NEXT TO components so vite resolves `import data from "./sales.json"`.
@@ -357,23 +427,52 @@ export async function editComponent(
   await writeComponent(module, cur.slice(0, first) + newStr + cur.slice(first + oldStr.length), canvasId, records);
 }
 
-/** Move a component from a canvas's own dir into the shared library (one live source).
- * Placed instances keep referencing it by bare name; the loader falls back to shared. */
-export function promoteComponent(canvasId: string, module: string): void {
-  const src = fileIn(ownDir(canvasId), module);
-  if (!existsSync(src)) throw new Error(`component "${module}" is not in canvas "${canvasId}" own dir to promote`);
+/**
+ * Move a component from a canvas's own library into the workspace shared library (one live
+ * source). Placed instances keep referencing it by bare name; the loader falls back to shared.
+ *
+ * The STORE performs the move — one change of tier, so the Component is never in both
+ * libraries and never in neither — and only then is the disk re-rendered from the result, in
+ * the order that keeps a half-finished render harmless: the shared file lands BEFORE the own
+ * file goes, so no instant exists where the name resolves past both writable tiers and onto a
+ * same-named platform component.
+ */
+export async function promoteComponent(
+  canvasId: string,
+  module: string,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<void> {
+  const src = fileIn(ownDir(canvasId), module); // validates the name before anything else
   const dest = fileIn(SHARED_DIR, module);
-  if (existsSync(dest)) throw new Error(`a shared component "${module}" already exists`);
-  if (!existsSync(SHARED_DIR)) mkdirSync(SHARED_DIR, { recursive: true });
-  renameSync(src, dest);
+  if (!records) {
+    // No edge in front of this process (local dev without the Worker, the unit suite): the
+    // filesystem is the only truth there is, so the move IS the promote.
+    if (!existsSync(src)) throw new Error(`component "${module}" is not in canvas "${canvasId}" own dir to promote`);
+    if (existsSync(dest)) throw new Error(`a shared component "${module}" already exists`);
+    if (!existsSync(SHARED_DIR)) mkdirSync(SHARED_DIR, { recursive: true });
+    renameSync(src, dest);
+    return;
+  }
+  await records.promote(canvasId, module); // throws → nothing moved, the own copy is untouched
+  await materializeSharedComponent(module, canvasId, records);
+  if (existsSync(src)) rmSync(src);
 }
 
-/** Copy a shared component back into a canvas's own dir so that canvas can diverge (its own
- * dir then wins the loader's own-first resolution, decoupling it from later shared edits). */
-export function adoptSharedComponent(canvasId: string, module: string): void {
+/** Copy a shared component back into a canvas's own library so that canvas can diverge (its
+ * own tier then wins own-first resolution, decoupling it from later shared edits). */
+export async function adoptSharedComponent(
+  canvasId: string,
+  module: string,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<void> {
   const src = fileIn(SHARED_DIR, module);
-  if (!existsSync(src)) throw new Error(`no shared component "${module}" to copy`);
-  const dir = ownDir(canvasId);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  copyFileSync(src, fileIn(dir, module));
+  if (!records) {
+    if (!existsSync(src)) throw new Error(`no shared component "${module}" to copy`);
+    const dir = ownDir(canvasId);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    copyFileSync(src, fileIn(dir, module));
+    return;
+  }
+  await records.adopt(canvasId, module);
+  await materializeComponent(module, canvasId, records);
 }

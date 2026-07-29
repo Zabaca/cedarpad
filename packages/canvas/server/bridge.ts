@@ -658,7 +658,12 @@ export function setCanvasRoomOpener(fn: ((canvasId: string) => Promise<RemoteCan
  * An op that refuses (`OpResult.isError`) never reaches flush: nothing it queued should
  * land, and discarding the store is how that is enforced.
  */
-async function inRoom(canvasId: string, run: (store: RemoteCanvasStore) => OpResult | Record<string, unknown>): Promise<Response> {
+async function inRoom(
+  canvasId: string,
+  // Awaited, so an op that has to reach the Record store (promote/adopt) keeps the same
+  // shape as every other route: refuse before the flush, and its error is the response.
+  run: (store: RemoteCanvasStore) => OpResult | Record<string, unknown> | Promise<OpResult | Record<string, unknown>>,
+): Promise<Response> {
   let store: RemoteCanvasStore;
   try {
     store = await openCanvasRoom(canvasId);
@@ -667,7 +672,7 @@ async function inRoom(canvasId: string, run: (store: RemoteCanvasStore) => OpRes
   }
   let result: OpResult | Record<string, unknown>;
   try {
-    result = run(store);
+    result = await run(store);
   } catch (e) {
     return json({ error: (e as Error).message }, 400);
   }
@@ -939,18 +944,18 @@ export async function handleRequest(req: Request): Promise<Response> {
       const canvasId = canvasIdFrom(req, url);
       const body = await readBody(req);
       const module = typeof body.module === 'string' ? body.module : '';
-      return inRoom(canvasId, (store) => ({
+      return inRoom(canvasId, async (store) => ({
         ok: true,
-        reloaded: promoteToShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store))),
+        reloaded: await promoteToShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store))),
       }));
     }
     if (path === '/api/components/adopt' && req.method === 'POST') {
       const canvasId = canvasIdFrom(req, url);
       const body = await readBody(req);
       const module = typeof body.module === 'string' ? body.module : '';
-      return inRoom(canvasId, (store) => ({
+      return inRoom(canvasId, async (store) => ({
         ok: true,
-        reloaded: adoptFromShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store))),
+        reloaded: await adoptFromShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store))),
       }));
     }
 
@@ -1019,7 +1024,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       // module is the workspace's one source, imported by canvases the guest was never
       // invited to. The tier is filesystem state, so only this process can check it — the
       // edge gate authorized the route, not the target.
-      if (guestCaps && isShared(module)) return json({ error: 'guest_not_permitted' }, 403);
+      if (guestCaps && (await isShared(module, canvasId))) return json({ error: 'guest_not_permitted' }, 403);
       const parsed = WriteComponentBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
       try {

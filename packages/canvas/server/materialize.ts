@@ -13,17 +13,33 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { type ComponentRecords, componentRecordStore, materializeComponent, materializeDataFile } from './components.ts';
+import {
+  type ComponentRecords,
+  componentRecordStore,
+  materializeComponent,
+  materializeDataFile,
+  materializeSharedComponent,
+} from './components.ts';
 
 /** The own-tier module URL `src/component-loader.ts` builds: `/src/canvas-<id>/components/<Name>.tsx`.
  *  Anchored and character-classed, so a traversing path resolves to no Component at all. */
 const OWN_MODULE_PATH = /^\/src\/canvas-([A-Za-z0-9][A-Za-z0-9_-]*)\/components\/([A-Za-z][A-Za-z0-9_-]*)\.tsx$/;
+/** The shared-library URL: `/shared/components/<Name>.tsx`, with the asking canvas in `?c=`. */
+const SHARED_MODULE_PATH = /^\/shared\/components\/([A-Za-z][A-Za-z0-9_-]*)\.tsx$/;
+const CANVAS_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
-/** Pure: which Component (if any) a request path names. Null for the shared library, for the
- *  platform tier (image code, never a Record), and for every ordinary app module. */
-export function parseComponentModulePath(url: string): { canvasId: string; module: string } | null {
-  const m = OWN_MODULE_PATH.exec(url.split('?')[0] ?? '');
-  return m ? { canvasId: m[1] as string, module: m[2] as string } : null;
+/** Pure: which Component (if any) a request path names, and in which tier. Null for the
+ *  platform tier (image code, never a Record) and for every ordinary app module — and null
+ *  for a shared request that names no canvas, because the canvas is how the edge proves the
+ *  caller is entitled to that workspace's shared library. */
+export function parseComponentModulePath(url: string): { tier: 'own' | 'shared'; canvasId: string; module: string } | null {
+  const [path = '', query = ''] = url.split('?');
+  const own = OWN_MODULE_PATH.exec(path);
+  if (own) return { tier: 'own', canvasId: own[1] as string, module: own[2] as string };
+  const shared = SHARED_MODULE_PATH.exec(path);
+  if (!shared) return null;
+  const canvasId = new URLSearchParams(query).get('c');
+  return canvasId && CANVAS_ID.test(canvasId) ? { tier: 'shared', canvasId, module: shared[1] as string } : null;
 }
 
 /** The same own-tier directory, but a DATA sibling: the closed non-executable extension set,
@@ -38,6 +54,7 @@ export function parseDataModulePath(url: string): { canvasId: string; file: stri
 }
 
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
+const SHARED = fileURLToPath(new URL('../shared/components/', import.meta.url));
 
 /** Connect-style, which is all vite's middleware stack is — kept structural so this is
  *  testable by calling it, with no dev server to stand up. */
@@ -52,19 +69,28 @@ type Middleware = (req: Req, res: unknown, next: () => void) => void;
 export function componentMaterializeMiddleware(records: ComponentRecords | null): Middleware {
   return (req, _res, next) => {
     if (!records || !req.url) return next();
+    const mod = parseComponentModulePath(req.url);
+    if (mod) {
+      const file = mod.tier === 'shared' ? `${SHARED}${mod.module}.tsx` : `${SRC}canvas-${mod.canvasId}/components/${mod.module}.tsx`;
+      if (existsSync(file)) return next();
+      const materialize = mod.tier === 'shared' ? materializeSharedComponent : materializeComponent;
+      void materialize(mod.module, mod.canvasId, records)
+        .catch((err) => {
+          // A blip, not a crash: the client retries with backoff and falls through the tiers.
+          console.error(`[materialize] ${mod.tier} ${mod.canvasId}/${mod.module}:`, err);
+        })
+        .finally(next);
+      return;
+    }
     // A Component brings the data files it imports with it (see `materializeComponent`); a
     // data file is also servable on its own, for the request vite makes when only the
     // sibling is missing.
-    const hit = parseComponentModulePath(req.url) ?? parseDataModulePath(req.url);
-    if (!hit) return next();
-    const dir = `${SRC}canvas-${hit.canvasId}/components/`;
-    const name = 'module' in hit ? `${hit.module}.tsx` : hit.file;
-    if (existsSync(`${dir}${name}`)) return next();
-    const done = 'module' in hit ? materializeComponent(hit.module, hit.canvasId, records) : materializeDataFile(hit.file, hit.canvasId, records);
-    done
+    const data = parseDataModulePath(req.url);
+    if (!data) return next();
+    if (existsSync(`${SRC}canvas-${data.canvasId}/components/${data.file}`)) return next();
+    void materializeDataFile(data.file, data.canvasId, records)
       .catch((err) => {
-        // A blip, not a crash: the client retries with backoff and falls through the tiers.
-        console.error(`[materialize] ${hit.canvasId}/${name}:`, err);
+        console.error(`[materialize] own ${data.canvasId}/${data.file}:`, err);
       })
       .finally(next);
   };

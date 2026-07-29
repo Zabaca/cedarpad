@@ -3,6 +3,7 @@ import {
   ComponentHistoryOutput,
   type ComponentReadInput,
   ComponentReadOutput,
+  type ComponentTierMoveInput,
   type ComponentVersion,
   type ComponentWriteInput,
   ComponentWriteOutput,
@@ -50,6 +51,11 @@ export interface PlatformRpc {
   /** A Component's version history, newest first — who changed it and when. THROWS like the
    *  other Record verbs: "no history" and "could not ask" must not look the same. */
   componentHistory(input: ComponentHistoryInput): Promise<ComponentVersion[]>;
+  /** Move a Component from a canvas into the workspace shared library — ONE change of tier
+   *  at the edge, so it can never land in both libraries or in neither. */
+  componentPromote(input: ComponentTierMoveInput): Promise<ComponentWriteOutput>;
+  /** Copy a shared Component into a canvas's own library so it can diverge deliberately. */
+  componentAdopt(input: ComponentTierMoveInput): Promise<ComponentWriteOutput>;
   /** Persist a Workspace skill's files as Records (ADR-0022, #361). THROWS, for the same
    *  reason `componentWrite` does: an upload that cannot be persisted must fail its tool call. */
   skillWrite(input: SkillWriteInput): Promise<SkillWriteOutput>;
@@ -114,7 +120,16 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${await platformRpcToken(secret)}` },
       body: JSON.stringify(PlatformRpcRequest.parse(body)),
     });
-    if (!res.ok) throw new Error(`the workspace store refused this write (${body.op}: ${res.status})`);
+    if (!res.ok) {
+      // Carry the edge's reason when it gave one: "a shared component X already exists" is
+      // something the agent can act on, where a bare status code is something it can only
+      // report. The wrapper stays, so "the store refused" is never mistaken for a local bug.
+      const reason = await res
+        .json()
+        .then((b) => (b as { error?: string })?.error)
+        .catch(() => null);
+      throw new Error(`the workspace store refused this write (${body.op}: ${res.status}${reason ? ` — ${reason}` : ''})`);
+    }
     return await res.json();
   };
 
@@ -136,6 +151,8 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
     componentRead: async (input) => ComponentReadOutput.parse(await callStrict({ op: 'component.read', input })).source,
     componentHistory: async (input) =>
       ComponentHistoryOutput.parse(await callStrict({ op: 'component.history', input })).versions,
+    componentPromote: async (input) => ComponentWriteOutput.parse(await callStrict({ op: 'component.promote', input })),
+    componentAdopt: async (input) => ComponentWriteOutput.parse(await callStrict({ op: 'component.adopt', input })),
     skillWrite: async (input) => SkillWriteOutput.parse(await callStrict({ op: 'skill.write', input })),
     skillList: async (input) => SkillListOutput.parse(await callStrict({ op: 'skill.list', input })).files,
     dataWrite: async (input) => DataWriteOutput.parse(await callStrict({ op: 'data.write', input })),
