@@ -6,6 +6,8 @@ import { createWorkspace, getWorkspace, listWorkspaces } from '../web-poc/lib/db
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
+import { deleteCanvasRecords } from './record-reclaim.ts';
+import { d1RecordStore } from './record-store.ts';
 import { DEFAULT_WORKSPACE_ID, readWorkspaceCookie } from './shell-routing.ts';
 import { canvasHiddenFrom, mayFlipCanvas } from './visibility.ts';
 
@@ -181,9 +183,43 @@ export async function handleCanvasesApi(
   }
   if (request.method === 'DELETE') {
     await canvasRegistry.delete(database, canvasId);
+    // ADR-0022 decision 9. Registry row first, Records second: the canvas is gone from the
+    // product either way, and a Record left soft-deletable is a Record still there to delete.
+    // `canvasId` came off the URL and was just proved to belong to this workspace, so the
+    // scope always names a canvas — the shared library (`canvas_id NULL`) is unreachable here.
+    await deleteCanvasRecords(d1RecordStore(database), { workspaceId: existing.workspaceId, canvasId });
     return new Response(null, { status: 204 });
   }
   return new Response('method not allowed', { status: 405 });
+}
+
+/**
+ * `POST /api/workspaces/:id/records/purge` → `{ purged }` — the explicit purge (ADR-0022
+ * decision 9), and the counterpart of the DELETE above.
+ *
+ * Deleting a canvas only hides its Records, so something has to be able to reclaim them or
+ * "delete" is dishonest in the other direction. That something is this, and it is separate on
+ * purpose: it is a request of its own, it names no canvas a caller still has, and it acts only
+ * on rows that were already deleted. Nothing a canvas deletion does can reach it.
+ *
+ * OWNER-only, which is strictly more than a Record write needs — a write is authorized by the
+ * platform-RPC bearer (a constant, so a consistency check rather than a tenancy one, #374),
+ * while this carries a real member session and asks for the strongest role in the workspace.
+ * A purge is the only operation in the system that destroys source, so it gets the strongest
+ * gate the system has.
+ */
+export async function handleRecordPurgeApi(
+  request: Request,
+  database: Database,
+  user: GateUser,
+  workspaceId: string,
+): Promise<Response> {
+  const ws = await getWorkspace(database, workspaceId, user.id);
+  if (!ws) return Response.json({ error: 'workspace not found' }, { status: 404 });
+  if (ws.ownerUserId !== user.id) return Response.json({ error: 'owner only' }, { status: 403 });
+  if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+  const purged = await d1RecordStore(database).purgeDeleted(ws.id);
+  return Response.json({ purged });
 }
 
 // The edge login page (ADR-0007, #47 cutover). With `cs_gate` gone, the edge Better Auth

@@ -18,7 +18,7 @@ import { kickWarehouseMaterialize } from './warehouse-dispatch.ts';
 import { mintDevAgentGitToken, mintRepoReadToken } from './github-app.ts';
 import { DEFAULT_WORKSPACE, resolve, type SandboxCoords } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace, warehouseExec } from './sandbox-runtime.ts';
-import { handleCanvasesApi, handleWorkspacesApi, renderLogin } from './shell.ts';
+import { handleCanvasesApi, handleRecordPurgeApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 import { coordsForWorkspace, handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
 import { handlePushApi } from './push.ts';
@@ -575,6 +575,20 @@ export default {
         // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
         membersMatch[1]!,
         membersMatch[2],
+      );
+    }
+
+    // The explicit purge (ADR-0022 decision 9, #364): the one door that reclaims what a
+    // canvas deletion soft-deleted. Owner-only, edge-served, and deliberately NOT reachable
+    // from the canvas DELETE above — no single click may destroy source.
+    const recordPurgeMatch = /^\/api\/workspaces\/([^/]+)\/records\/purge$/.exec(url.pathname);
+    if (recordPurgeMatch) {
+      return handleRecordPurgeApi(
+        request,
+        createDbForWorker(env as unknown as Bindings),
+        user,
+        // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
+        recordPurgeMatch[1]!,
       );
     }
 

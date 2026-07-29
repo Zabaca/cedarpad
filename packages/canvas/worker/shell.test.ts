@@ -6,7 +6,8 @@ import { drizzle } from 'drizzle-orm/libsql';
 import * as schema from '../web-poc/lib/db/schema.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
-import { handleCanvasesApi, renderLogin } from './shell.ts';
+import { d1RecordStore } from './record-store.ts';
+import { handleCanvasesApi, handleRecordPurgeApi, renderLogin } from './shell.ts';
 
 // In-memory DB built from the real migrations (mirrors canvases.test.ts / workspaces.test.ts).
 const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
@@ -97,6 +98,79 @@ describe('handleCanvasesApi — list/create scoped to the active workspace', () 
       foreign.id,
     );
     expect(patch.status).toBe(404);
+  });
+});
+
+// ADR-0022 decision 9: deleting a canvas takes its Records with it, but only as far as the
+// trash. Before Records, nothing removed a deleted canvas's components at all — the source
+// leaked forever. A hard cascade would be the opposite dishonesty, so what a delete does is
+// SOFT, and reclaiming is a separate act (`handleRecordPurgeApi`).
+describe('handleCanvasesApi — DELETE soft-deletes the canvas’s Records', () => {
+  test('the canvas’s own tier goes; the workspace’s shared library stays', async () => {
+    const ws = await createWorkspace(database, { name: 'Deleting', ownerUserId: USER.id });
+    const cookie = `cs_workspace=${ws.id}`;
+    const canvas = await canvasRegistry.create(database, { workspaceId: ws.id, name: 'Doomed' });
+    const records = d1RecordStore(database);
+    const own = { workspaceId: ws.id, canvasId: canvas.id, name: 'Card' };
+    await records.put({ ...own, kind: 'component', source: 'v1', updatedBy: USER.id });
+    await records.put({ workspaceId: ws.id, canvasId: canvas.id, name: 'sales.json', kind: 'data', source: '[]', updatedBy: USER.id });
+    await records.put({ workspaceId: ws.id, canvasId: null, name: 'Shared', kind: 'component', source: 's', updatedBy: USER.id });
+
+    const res = await handleCanvasesApi(new Request('https://x/api/canvases/x', { method: 'DELETE', headers: { cookie } }), database, USER, canvas.id);
+    expect(res.status).toBe(204);
+
+    // Gone from every listing, and no longer resolvable — so nothing materializes it again.
+    expect(await records.list({ workspaceId: ws.id, canvasId: canvas.id })).toEqual([]);
+    expect(await records.get(own)).toBeNull();
+    // But recoverable: the history is what a soft delete must not be able to destroy.
+    expect((await records.listVersions(own)).map((v) => v.source)).toEqual(['v1']);
+    // The shared library outlives any one canvas in the workspace.
+    expect((await records.list({ workspaceId: ws.id, canvasId: null })).map((r) => r.name)).toEqual(['Shared']);
+  });
+});
+
+// The other half of an honest delete: the one door that actually reclaims. It is a separate
+// request a workspace OWNER makes, never a step of deleting a canvas — the whole reason a
+// delete is soft is that no single click should be able to destroy source.
+describe('handleRecordPurgeApi — the deliberate half', () => {
+  test('the owner’s purge reclaims soft-deleted Records and their history, and spares live ones', async () => {
+    const ws = await createWorkspace(database, { name: 'Purging', ownerUserId: USER.id });
+    const canvas = await canvasRegistry.create(database, { workspaceId: ws.id, name: 'Doomed' });
+    const records = d1RecordStore(database);
+    const own = { workspaceId: ws.id, canvasId: canvas.id, name: 'Card' };
+    await records.put({ ...own, kind: 'component', source: 'v1', updatedBy: USER.id });
+    await records.put({ workspaceId: ws.id, canvasId: null, name: 'Shared', kind: 'component', source: 's', updatedBy: USER.id });
+    await handleCanvasesApi(
+      new Request('https://x/api/canvases/x', { method: 'DELETE', headers: { cookie: `cs_workspace=${ws.id}` } }),
+      database,
+      USER,
+      canvas.id,
+    );
+
+    const res = await handleRecordPurgeApi(new Request('https://x/purge', { method: 'POST' }), database, USER, ws.id);
+    expect(res.status).toBe(200);
+    expect(await readJson(res)).toEqual({ purged: 1 });
+    // Unrecoverable now — that is what "purge" means, and why it is its own request.
+    expect(await records.listVersions(own)).toEqual([]);
+    // A live Record is not trash: the shared library is untouched by emptying it.
+    expect((await records.list({ workspaceId: ws.id, canvasId: null })).map((r) => r.name)).toEqual(['Shared']);
+  });
+
+  test('a member cannot purge, and an outsider is not even told the workspace exists', async () => {
+    const ws = await createWorkspace(database, { name: 'Guarded', ownerUserId: USER.id });
+    const records = d1RecordStore(database);
+    const key = { workspaceId: ws.id, canvasId: 'cv_gone', name: 'Card' };
+    await records.put({ ...key, kind: 'component', source: 'v1', updatedBy: USER.id });
+    await records.softDelete(key);
+
+    await db.insert(schema.user).values({ id: 'user_purge_member', name: 'm', email: 'm-purge@example.com' });
+    await db.insert(schema.workspaceMembers).values({ id: 'wm_purge', workspaceId: ws.id, userId: 'user_purge_member' });
+    const post = () => new Request('https://x/purge', { method: 'POST' });
+    expect((await handleRecordPurgeApi(post(), database, { id: 'user_purge_member' }, ws.id)).status).toBe(403);
+    expect((await handleRecordPurgeApi(post(), database, { id: 'user_purge_outsider' }, ws.id)).status).toBe(404);
+
+    // A refused purge reclaimed nothing — the source is still there to restore.
+    expect((await records.listVersions(key)).map((v) => v.source)).toEqual(['v1']);
   });
 });
 
