@@ -13,13 +13,20 @@ export const SkillName = z
   .max(64)
   .regex(/^[a-z0-9][a-z0-9._-]*$/i, 'skill name must be a plain directory name');
 
-/** A file inside the skill dir: relative, normalized, no traversal, no absolute paths. */
+/** One segment of a skill file path. A leading dot is excluded, which is what rules out `.`,
+ *  `..` and dotfiles in one stroke; the closed character class is what rules out backslashes,
+ *  and requiring every segment to match is what rules out `/abs`, `a//b` and trailing slashes. */
+const SKILL_PATH_SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+
+/** A file inside the skill dir: relative, normalized, no traversal, no dotfiles, no absolute
+ *  paths. Enforced HERE — in the contract both ends parse — and again by the skill store at
+ *  the edge, because this string becomes a filesystem location in the container. */
 export const SkillFilePath = z
   .string()
   .min(1)
   .max(200)
-  .refine((p) => !p.startsWith('/') && !p.includes('..') && !p.includes('\\'), {
-    message: 'file paths must be relative, without .. segments',
+  .refine((p) => p.split('/').every((seg) => SKILL_PATH_SEGMENT.test(seg)), {
+    message: 'file paths must be relative and normalized: no leading /, no . or .. segments, no dotfiles',
   });
 
 export const UploadSkillInput = z.object({

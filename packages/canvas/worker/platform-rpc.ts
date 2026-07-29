@@ -2,12 +2,15 @@ import type { Database } from '../web-poc/lib/db/client.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { findOrCreateConversation } from '../web-poc/lib/db/find-or-create-conversation.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
+import { getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import {
   type ComponentHistoryOutput,
   type ComponentReadOutput,
   type ComponentWriteOutput,
   type ConversationStartOutput,
   PlatformRpcRequest,
+  type SkillListOutput,
+  type SkillWriteOutput,
   type TurnEndOutput,
   verifyPlatformRpcToken,
 } from '../shared/platform-rpc.ts';
@@ -15,6 +18,8 @@ import { componentStore } from './component-store.ts';
 import type { Env } from './index.ts';
 import { makeAssignmentPushNotify, type PushSend, webPushSender } from './push-notify.ts';
 import { d1RecordStore } from './record-store.ts';
+import { d1SkillFileStore } from './skill-file-store.ts';
+import { skillStore } from './skill-store.ts';
 import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 
 // The edge half of the platform RPC (ADR-0018). See `shared/platform-rpc.ts` for the contract
@@ -60,6 +65,23 @@ async function canvasBelongsToWorkspace(db: Database, workspaceId: string, canva
   if (canvasId === DEFAULT_CANVAS_ID) return workspaceId === DEFAULT_WORKSPACE_ID;
   const row = await canvasRegistry.get(db, canvasId);
   return row?.workspaceId === workspaceId;
+}
+
+/**
+ * Ownership for a WORKSPACE-SCOPED Record write (ADR-0022) — Workspace skills (#361), which
+ * have no canvas to contain them. With only one coordinate there is no containment to check,
+ * so the check is that the workspace is REAL: the container names the workspace it is writing
+ * for, and a forged or typo'd id must not quietly mint rows nobody can ever reach.
+ *
+ * NOTE FOR REVIEW: #359 introduces the same question for the shared Component tier
+ * (`canvasId: null`). If it grew its own rule, these two should become one.
+ *
+ * The legacy `default` workspace has no `workspaces` row (it predates the registry, exactly as
+ * the legacy `default` canvas does) and is therefore pinned by hand, like `canvasBelongsToWorkspace`.
+ */
+async function workspaceExists(db: Database, workspaceId: string): Promise<boolean> {
+  if (workspaceId === DEFAULT_WORKSPACE_ID) return true;
+  return (await getWorkspaceRecord(db, workspaceId)) !== null;
 }
 
 /** `POST /api/platform-rpc` — the named operations, nothing else. */
@@ -138,6 +160,26 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
     }
     const versions = await componentStore(d1RecordStore(deps.db)).history({ workspaceId, canvasId, name });
     return Response.json({ versions } satisfies ComponentHistoryOutput);
+  }
+
+  // The Workspace-skill verbs (#361). Same rules as the Component pair above — the contract
+  // already rejected a bad skill name or file path with a 400, so what is left is ownership,
+  // then the write — and the same deliberate absence of a try/catch: a store failure must
+  // reach the container as a non-2xx so `upload_skill` fails and its caller can retry.
+  if (parsed.data.op === 'skill.write') {
+    const { workspaceId, userId, skill, files } = parsed.data.input;
+    if (!(await workspaceExists(deps.db, workspaceId))) return Response.json({ error: 'forbidden' }, { status: 403 });
+    const written = await skillStore(d1SkillFileStore(deps.db)).write({ workspaceId, skill, userId, files });
+    return Response.json(written satisfies SkillWriteOutput);
+  }
+
+  // The whole tree, because that is what the SDK's filesystem discovery needs rendered before
+  // a turn begins (server/skills.ts materializes it).
+  if (parsed.data.op === 'skill.list') {
+    const { workspaceId } = parsed.data.input;
+    if (!(await workspaceExists(deps.db, workspaceId))) return Response.json({ error: 'forbidden' }, { status: 403 });
+    const files = await skillStore(d1SkillFileStore(deps.db)).tree(workspaceId);
+    return Response.json({ files } satisfies SkillListOutput);
   }
 
   const { conversationId, question } = parsed.data.input;

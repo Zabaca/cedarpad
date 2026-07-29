@@ -66,6 +66,13 @@ export interface TurnDeps {
   openCanvasRoom: (canvasId: string) => Promise<RemoteCanvasStore>;
   /** Where an UNADDRESSED turn routes (the bridge's default canvas id). */
   defaultCanvasId: string;
+  /** Render the workspace's skill tree from its Records (ADR-0022, #361). Called FIRST, before
+   *  anything else in the turn: the agent SDK discovers skills by SCANNING `.claude/skills/`
+   *  while `runChat` builds the turn's options, so unlike a Component — which vite requests
+   *  lazily, and whose 404-then-retry the client already handles — there is no later moment
+   *  at which a missing skill file can be fetched. Best-effort: a store failure costs this
+   *  turn its workspace skills, never the turn. */
+  materializeSkills: () => Promise<void>;
   /** Prepare the dev-agent worktree + open_pr for this turn (undefined for a product turn). */
   prepareDevAgent: (
     token: string | undefined,
@@ -137,6 +144,11 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
   // go through find-or-create-by-chat, so awaiting here is what stops them racing into two rows.
   let indexed: Promise<void> = Promise.resolve();
   try {
+    // Workspace skills are Records (ADR-0022, #361), and this is the moment their tree has to
+    // exist: skill discovery is a filesystem scan the SDK performs as it builds the turn's
+    // options, so "before the turn starts" is the only point that is both AFTER a possible
+    // container recycle and BEFORE discovery runs.
+    await deps.materializeSkills();
     // The request's active canvas (#79): the agent's reads, writes, tools, and screenshot
     // round-trip all use THIS store, so shapes land on the human's canvas and broadcast there.
     const activeCanvasId = canvasId ?? deps.defaultCanvasId;

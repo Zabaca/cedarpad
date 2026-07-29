@@ -12,6 +12,10 @@ import {
   type NotifyInput,
   PLATFORM_RPC_PATH,
   PlatformRpcRequest,
+  type SkillListInput,
+  SkillListOutput,
+  type SkillWriteInput,
+  SkillWriteOutput,
   type TurnEndInput,
   TurnEndOutput,
   platformRpcToken,
@@ -42,6 +46,12 @@ export interface PlatformRpc {
   /** A Component's version history, newest first — who changed it and when. THROWS like the
    *  other Record verbs: "no history" and "could not ask" must not look the same. */
   componentHistory(input: ComponentHistoryInput): Promise<ComponentVersion[]>;
+  /** Persist a Workspace skill's files as Records (ADR-0022, #361). THROWS, for the same
+   *  reason `componentWrite` does: an upload that cannot be persisted must fail its tool call. */
+  skillWrite(input: SkillWriteInput): Promise<SkillWriteOutput>;
+  /** The workspace's whole skill tree, for materialization before a turn. THROWS on a store
+   *  failure — the caller decides whether to degrade, and it does (server/skills.ts). */
+  skillList(input: SkillListInput): Promise<SkillListOutput['files']>;
 }
 
 export interface PlatformRpcConfig {
@@ -118,5 +128,7 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
     componentRead: async (input) => ComponentReadOutput.parse(await callStrict({ op: 'component.read', input })).source,
     componentHistory: async (input) =>
       ComponentHistoryOutput.parse(await callStrict({ op: 'component.history', input })).versions,
+    skillWrite: async (input) => SkillWriteOutput.parse(await callStrict({ op: 'skill.write', input })),
+    skillList: async (input) => SkillListOutput.parse(await callStrict({ op: 'skill.list', input })).files,
   };
 }

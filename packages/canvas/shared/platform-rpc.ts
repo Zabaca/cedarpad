@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { ComponentName } from './bridge-wire.ts';
 import { parsePrUrl } from './pr-url.ts';
+import { SkillFilePath, SkillName, UploadSkillInput } from './skills-wire.ts';
 import { serviceToken, verifyServiceToken } from './service-token.ts';
 
 /**
@@ -213,6 +214,43 @@ export type ComponentHistoryOutput = z.infer<typeof ComponentHistoryOutput>;
  *  THIS type rather than each declaring their own — one contract, no mirrors to drift. */
 export type ComponentVersion = ComponentHistoryOutput['versions'][number];
 
+/**
+ * Operations 9 and 10 — the **Workspace-skill** Record verbs (ADR-0022, #361). Same shape and
+ * same reasons as the two above, with one difference that drives everything: a skill is a
+ * DIRECTORY, so the key is two-level and the payload is a set of files. `upload_skill`'s
+ * files-only wire contract is unchanged (PRD #354 story 23) — only where the files land moves.
+ *
+ * `skill.list` returns the workspace's WHOLE tree rather than one skill, and that is a domain
+ * fact rather than a query: the agent SDK discovers skills by SCANNING `.claude/skills/`, so
+ * "what is this workspace's skill tree?" is the only question materialization can ask. There is
+ * still no filter, no table and no statement here.
+ *
+ * The path rules are enforced HERE (`SkillFilePath`, shared with the upload contract) as well
+ * as at the store, because this string becomes a filesystem location in the container.
+ */
+export const SkillWriteInput = z.object({
+  workspaceId: z.string().min(1),
+  /** Attribution (`updated_by`), not authorization — the edge derives permission itself. */
+  userId: z.string().min(1),
+  skill: SkillName,
+  files: UploadSkillInput.shape.files,
+});
+export type SkillWriteInput = z.infer<typeof SkillWriteInput>;
+
+/** How many files the upload persisted — what `upload_skill` already reports to its caller. */
+export const SkillWriteOutput = z.object({ files: z.number().int().nonnegative() });
+export type SkillWriteOutput = z.infer<typeof SkillWriteOutput>;
+
+export const SkillListInput = z.object({ workspaceId: z.string().min(1) });
+export type SkillListInput = z.infer<typeof SkillListInput>;
+
+/** The tree to render under `.claude/skills/`. An empty list is an ANSWER (a workspace with
+ *  no skills), never a failure — the turn then sees platform skills only, as it always did. */
+export const SkillListOutput = z.object({
+  files: z.array(z.object({ skill: SkillName, path: SkillFilePath, content: z.string() })),
+});
+export type SkillListOutput = z.infer<typeof SkillListOutput>;
+
 /** The whole request, discriminated by operation name — the complete surface. */
 export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('conversation.start'), input: ConversationStartInput }),
@@ -223,5 +261,7 @@ export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('component.write'), input: ComponentWriteInput }),
   z.object({ op: z.literal('component.read'), input: ComponentReadInput }),
   z.object({ op: z.literal('component.history'), input: ComponentHistoryInput }),
+  z.object({ op: z.literal('skill.write'), input: SkillWriteInput }),
+  z.object({ op: z.literal('skill.list'), input: SkillListInput }),
 ]);
 export type PlatformRpcRequest = z.infer<typeof PlatformRpcRequest>;

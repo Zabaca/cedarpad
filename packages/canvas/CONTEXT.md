@@ -148,15 +148,16 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
   because the old tar swept the whole directory. Under the Record model (below) an artifact
   with no tool cannot persist, and prod held zero of them, so the feature goes rather than
   earning a tool it was never given. Reintroduce deliberately, with a door, if wanted.
-- **Workspace skill** (`.claude/skills/<name>/` under the package root): a user- or agent-authored skill dir (SKILL.md + supporting files), persisted per workspace and discovered via the SDK's `project` setting source. Chat turns enable **all discovered** skills — no allowlist. Distinct from a **platform skill** (baked into the image at the container's `~/.claude/skills/`, the `user` source: deploy-versioned, PR-reviewed, unshadowable by workspace content). On a name collision the workspace skill wins for chat turns; dev-agent turns keep a pinned skill list resolved in a cwd with no workspace skills (its worktree). _Decided, not yet built._
+- **Workspace skill** (`.claude/skills/<name>/` under the package root): a user- or agent-authored skill dir (SKILL.md + supporting files), persisted per workspace as **Records** (`skill_files`, keyed workspace → skill → path — #361) and discovered via the SDK's `project` setting source from a tree rendered before each turn. Chat turns enable **all discovered** skills — no allowlist. Distinct from a **platform skill** (baked into the image at the container's `~/.claude/skills/`, the `user` source: deploy-versioned, PR-reviewed, unshadowable by workspace content). On a name collision the workspace skill wins for chat turns; dev-agent turns keep a pinned skill list resolved in a cwd with no workspace skills (its worktree). _Decided, not yet built._
 
 A skill is **content-that-asks** — text the model reads. It is never a **capability** (a grant: tools, tokens, scopes, routing). Capabilities stay code-gated; no workspace data may confer one.
 
 **Record vs File — how workspace content persists** _(ADR-0022; being built by #354. LIVE as
 **Records**: the **own tier** of Components — write, read, version history and on-demand
-materialization (#355, #358). LIVE as **Files**: per-session **Transcripts** (#356) — that is
-their permanent home, not a staging post. Still awaiting migration to Records: the shared tier,
-data files and skills.)_ The dividing question is **who owns the schema**:
+materialization (#355, #358) — and **Workspace skills** (#361). LIVE as **Files**: per-session
+**Transcripts** (#356) — that is their permanent home, not a staging post. Still awaiting
+migration to Records: the shared tier and data files.)_ The dividing question is **who owns the
+schema**:
 
 - A **Record** is content whose shape *we* define, authored only through our own tools —
   **Components**, their **data files**, and **Workspace skills** (already a files-only
@@ -182,11 +183,20 @@ platform code to workspace data and break the **gated-layer rule**. So resolutio
 **build-time manifest** rather than the container's disk.
 
 A Record write crosses the container/edge boundary as a **domain verb** on the platform RPC
-(`component.write` / `component.read` / `component.history`), never a generic row op — the RPC is a behavioural
-contract, not a SQL tunnel — and the **edge** validates the name and ownership-checks the
-canvas rather than trusting the container's payload. Ordering is **store first, then disk**:
+(`component.write` / `component.read` / `component.history`, `skill.write` / `skill.list`),
+never a generic row op — the RPC is a behavioural contract, not a SQL tunnel — and the **edge**
+validates the name and paths, and ownership-checks the canvas (Components) or the workspace
+(skills), rather than trusting the container's payload. Ordering is **store first, then disk**:
 a write that cannot be persisted fails the tool call, and the file it then writes is only an
 HMR trigger.
+
+**Materialization timing is not uniform, and the difference is the point.** A Component is
+materialized **lazily**, when vite requests the module — the client already walks own → shared
+→ base and retries with backoff, so a miss is a normal path. A Workspace skill has no such
+request: the agent SDK discovers skills by **scanning** `.claude/skills/` as it builds a turn's
+options, so its tree is rendered **eagerly, before every turn starts** (`server/skills.ts`,
+called first in `server/turn.ts`) — the one moment that is both after a possible recycle and
+before discovery. A skill file that is absent then is simply not a skill for that turn.
 
 **Version** and **attribution** are properties of the store, not of a caller. Every `put`
 appends a version row — an invariant, because a caller that can forget it is how "no history"
