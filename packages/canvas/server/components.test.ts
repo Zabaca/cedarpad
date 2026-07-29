@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { DATA_MAX_BYTES } from '../shared/bridge-wire.ts';
 import { adoptSharedComponent, editComponent, isShared, listComponents, promoteComponent, readComponent, writeComponent, writeDataFile } from './components.ts';
 
 const TMP = 'Tmp_ComponentsTest';
@@ -84,9 +85,9 @@ describe('data files: write_data lands next to components', () => {
     if (existsSync(dfShared)) rmSync(dfShared);
   };
 
-  test('writes into the canvas own dir; components can import it as a sibling', () => {
+  test('writes into the canvas own dir; components can import it as a sibling', async () => {
     try {
-      writeDataFile(DF, '{"rows": [1, 2]}');
+      await writeDataFile(DF, '{"rows": [1, 2]}');
       expect(existsSync(dfOwn)).toBe(true);
       expect(readFileSync(dfOwn, 'utf8')).toContain('rows');
     } finally {
@@ -95,26 +96,26 @@ describe('data files: write_data lands next to components', () => {
   });
 
   test('rejects executable extensions, missing extension, and path escape', () => {
-    expect(() => writeDataFile('evil.tsx', 'x')).toThrow(/invalid data file name/);
-    expect(() => writeDataFile('evil.ts', 'x')).toThrow(/invalid data file name/);
-    expect(() => writeDataFile('evil.js', 'x')).toThrow(/invalid data file name/);
-    expect(() => writeDataFile('noext', 'x')).toThrow(/invalid data file name/);
-    expect(() => writeDataFile('../escape.json', 'x')).toThrow(/invalid data file name/);
+    expect(writeDataFile('evil.tsx', 'x')).rejects.toThrow(/invalid data file name/);
+    expect(writeDataFile('evil.ts', 'x')).rejects.toThrow(/invalid data file name/);
+    expect(writeDataFile('evil.js', 'x')).rejects.toThrow(/invalid data file name/);
+    expect(writeDataFile('noext', 'x')).rejects.toThrow(/invalid data file name/);
+    expect(writeDataFile('../escape.json', 'x')).rejects.toThrow(/invalid data file name/);
   });
 
   test('rejects malformed JSON for .json files (a broken import kills the component build)', () => {
-    expect(() => writeDataFile(DF, '{nope')).toThrow(/not valid JSON/);
+    expect(writeDataFile(DF, '{nope')).rejects.toThrow(/not valid JSON/);
   });
 
-  test('rejects content over the 1MB cap', () => {
-    expect(() => writeDataFile('big.txt', 'x'.repeat(1_048_577))).toThrow(/too large/);
+  test('rejects content over the cap derived from what the store can hold', () => {
+    expect(writeDataFile('big.txt', 'x'.repeat(DATA_MAX_BYTES + 1))).rejects.toThrow(/too large/);
   });
 
-  test('a data file already in the shared lib stays the one shared source on overwrite', () => {
+  test('a data file already in the shared lib stays the one shared source on overwrite', async () => {
     try {
       mkdirSync(fileURLToPath(new URL('../shared/components/', import.meta.url)), { recursive: true });
       writeFileSync(dfShared, '{"v": 1}');
-      writeDataFile(DF, '{"v": 2}');
+      await writeDataFile(DF, '{"v": 2}');
       expect(readFileSync(dfShared, 'utf8')).toContain('"v": 2');
       expect(existsSync(dfOwn)).toBe(false);
     } finally {

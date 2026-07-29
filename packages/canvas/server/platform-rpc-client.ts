@@ -9,6 +9,10 @@ import {
   type ConversationPrOpenedInput,
   type ConversationSettleInput,
   type ConversationStartInput,
+  type DataReadInput,
+  DataReadOutput,
+  type DataWriteInput,
+  DataWriteOutput,
   type NotifyInput,
   PLATFORM_RPC_PATH,
   PlatformRpcRequest,
@@ -52,6 +56,10 @@ export interface PlatformRpc {
   /** The workspace's whole skill tree, for materialization before a turn. THROWS on a store
    *  failure — the caller decides whether to degrade, and it does (server/skills.ts). */
   skillList(input: SkillListInput): Promise<SkillListOutput['files']>;
+  /** Persist a data file as a Record. THROWS for the same reason `componentWrite` does. */
+  dataWrite(input: DataWriteInput): Promise<DataWriteOutput>;
+  /** A data file's stored content, or null when the tier holds no Record. */
+  dataRead(input: DataReadInput): Promise<string | null>;
 }
 
 export interface PlatformRpcConfig {
@@ -130,5 +138,7 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
       ComponentHistoryOutput.parse(await callStrict({ op: 'component.history', input })).versions,
     skillWrite: async (input) => SkillWriteOutput.parse(await callStrict({ op: 'skill.write', input })),
     skillList: async (input) => SkillListOutput.parse(await callStrict({ op: 'skill.list', input })).files,
+    dataWrite: async (input) => DataWriteOutput.parse(await callStrict({ op: 'data.write', input })),
+    dataRead: async (input) => DataReadOutput.parse(await callStrict({ op: 'data.read', input })).source,
   };
 }

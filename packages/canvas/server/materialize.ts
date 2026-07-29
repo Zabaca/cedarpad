@@ -13,7 +13,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { type ComponentRecords, componentRecordStore, materializeComponent } from './components.ts';
+import { type ComponentRecords, componentRecordStore, materializeComponent, materializeDataFile } from './components.ts';
 
 /** The own-tier module URL `src/component-loader.ts` builds: `/src/canvas-<id>/components/<Name>.tsx`.
  *  Anchored and character-classed, so a traversing path resolves to no Component at all. */
@@ -24,6 +24,17 @@ const OWN_MODULE_PATH = /^\/src\/canvas-([A-Za-z0-9][A-Za-z0-9_-]*)\/components\
 export function parseComponentModulePath(url: string): { canvasId: string; module: string } | null {
   const m = OWN_MODULE_PATH.exec(url.split('?')[0] ?? '');
   return m ? { canvasId: m[1] as string, module: m[2] as string } : null;
+}
+
+/** The same own-tier directory, but a DATA sibling: the closed non-executable extension set,
+ *  never `.tsx`. A data import is not the same request shape as a module one — vite tags it
+ *  `?import` / `?raw` / `?t=` — so the query comes off before the extension is judged. */
+const OWN_DATA_PATH = /^\/src\/canvas-([A-Za-z0-9][A-Za-z0-9_-]*)\/components\/([A-Za-z][A-Za-z0-9_-]*\.(?:json|csv|txt|md))$/;
+
+/** Pure: which data file (if any) a request path names, `file` including its extension. */
+export function parseDataModulePath(url: string): { canvasId: string; file: string } | null {
+  const m = OWN_DATA_PATH.exec(url.split('?')[0] ?? '');
+  return m ? { canvasId: m[1] as string, file: m[2] as string } : null;
 }
 
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
@@ -40,12 +51,20 @@ type Middleware = (req: Req, res: unknown, next: () => void) => void;
  */
 export function componentMaterializeMiddleware(records: ComponentRecords | null): Middleware {
   return (req, _res, next) => {
-    const hit = records && req.url ? parseComponentModulePath(req.url) : null;
-    if (!hit || existsSync(`${SRC}canvas-${hit.canvasId}/components/${hit.module}.tsx`)) return next();
-    materializeComponent(hit.module, hit.canvasId, records)
+    if (!records || !req.url) return next();
+    // A Component brings the data files it imports with it (see `materializeComponent`); a
+    // data file is also servable on its own, for the request vite makes when only the
+    // sibling is missing.
+    const hit = parseComponentModulePath(req.url) ?? parseDataModulePath(req.url);
+    if (!hit) return next();
+    const dir = `${SRC}canvas-${hit.canvasId}/components/`;
+    const name = 'module' in hit ? `${hit.module}.tsx` : hit.file;
+    if (existsSync(`${dir}${name}`)) return next();
+    const done = 'module' in hit ? materializeComponent(hit.module, hit.canvasId, records) : materializeDataFile(hit.file, hit.canvasId, records);
+    done
       .catch((err) => {
         // A blip, not a crash: the client retries with backoff and falls through the tiers.
-        console.error(`[materialize] ${hit.canvasId}/${hit.module}:`, err);
+        console.error(`[materialize] ${hit.canvasId}/${name}:`, err);
       })
       .finally(next);
   };

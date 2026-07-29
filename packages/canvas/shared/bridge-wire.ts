@@ -72,6 +72,66 @@ export const DataFileName = z
   .string()
   .regex(DATA_FILE_NAME_RE, 'data file name: letters/digits/_/- with a .json/.csv/.txt/.md extension');
 
+// --- size rules -----------------------------------------------------------------
+
+/** D1's documented maximum for one string value — and for one table row (ADR-0022 decision 3:
+ *  "max row/string 2 MB"). This is the ceiling a data file Record actually has to fit under,
+ *  and the only thing the cap below is derived from. */
+export const D1_MAX_VALUE_BYTES = 2_000_000;
+
+/**
+ * The largest data file `write_data` will author, in UTF-8 bytes.
+ *
+ * HALF the store's ceiling, deliberately. The source is the only large column, but the row
+ * also carries its key, and every write appends a second row holding an identical copy — so
+ * the value has to fit twice over, with the key columns, inside a limit that is stated per
+ * row as well as per value. Half leaves that headroom without arithmetic that would drift
+ * the next time a column is added.
+ *
+ * NOT inherited from the old 1 MiB cap, whose stated reason was "the components sink tars the
+ * whole dir on every flush" — that sink is gone (ADR-0022), and with it that justification.
+ */
+export const DATA_MAX_BYTES = D1_MAX_VALUE_BYTES / 2;
+
+/** Bytes, not characters — the unit the store is limited in. */
+export const utf8Bytes = (s: string): number => new TextEncoder().encode(s).length;
+
+/** A data file's content on the wire. The cap is part of the CONTRACT, so an oversized upload
+ *  is a 400 at whichever boundary sees it first rather than a store exception surfaced raw. */
+export const DataFileSource = z
+  .string()
+  .min(1, 'source must be non-empty')
+  .refine((s) => utf8Bytes(s) <= DATA_MAX_BYTES, `data file too large (max ${DATA_MAX_BYTES} bytes)`);
+
+/**
+ * The same two rules as throwing assertions, for the paths that are not a zod parse: the
+ * agent tool inside the container (which wants the message, not a 400) and the edge's
+ * data-file policy (which must not trust the container's payload). ONE definition, enforced
+ * in both places — the closed extension set is the whole reason `write_data` is a separate
+ * tool from `write_component`, and it only holds if every door checks it.
+ */
+export function assertDataFileName(name: string): void {
+  if (!DATA_FILE_NAME_RE.test(name)) {
+    throw new Error(`invalid data file name "${name}" — <letters/digits/_/->.(json|csv|txt|md); use write_component for code`);
+  }
+}
+
+/** Content rules that depend on the name: the size cap, and `.json` that must PARSE — one
+ *  unparseable data file breaks the build of every Component that imports it. */
+export function assertDataFileSource(name: string, source: string): void {
+  if (typeof source !== 'string' || source.length === 0) throw new Error('source must be non-empty');
+  if (utf8Bytes(source) > DATA_MAX_BYTES) {
+    throw new Error(`data file too large (max ${DATA_MAX_BYTES} bytes; the store holds ${D1_MAX_VALUE_BYTES} per row)`);
+  }
+  if (name.endsWith('.json')) {
+    try {
+      JSON.parse(source);
+    } catch {
+      throw new Error('source is not valid JSON — a broken .json import breaks every component that imports it');
+    }
+  }
+}
+
 // --- request bodies -------------------------------------------------------------
 
 /** Shapes ride as LOOSE records on purpose: server-side `normalizeShape` is the single
@@ -94,7 +154,7 @@ export const PlaceComponentBody = z.object({
   dataSource: DataSourceSchema.optional(),
 });
 export const WriteComponentBody = z.object({ source: z.string().min(1) });
-export const WriteDataBody = z.object({ source: z.string().min(1) });
+export const WriteDataBody = z.object({ source: DataFileSource });
 
 /** One human-readable line out of a failed `safeParse`, for the bridge's `{ error }` 400s. */
 export function wireError(err: z.ZodError): string {

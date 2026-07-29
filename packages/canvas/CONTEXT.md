@@ -154,10 +154,10 @@ A skill is **content-that-asks** — text the model reads. It is never a **capab
 
 **Record vs File — how workspace content persists** _(ADR-0022; being built by #354. LIVE as
 **Records**: the **own tier** of Components — write, read, version history and on-demand
-materialization (#355, #358) — and **Workspace skills** (#361). LIVE as **Files**: per-session
-**Transcripts** (#356) — that is their permanent home, not a staging post. Still awaiting
-migration to Records: the shared tier and data files.)_ The dividing question is **who owns the
-schema**:
+materialization (#355, #358) — their **data files** (#360), and **Workspace skills** (#361).
+LIVE as **Files**: per-session **Transcripts** (#356) — that is their permanent home, not a
+staging post. Still awaiting migration to Records: the shared tier.)_ The dividing question is
+**who owns the schema**:
 
 - A **Record** is content whose shape *we* define, authored only through our own tools —
   **Components**, their **data files**, and **Workspace skills** (already a files-only
@@ -183,12 +183,22 @@ platform code to workspace data and break the **gated-layer rule**. So resolutio
 **build-time manifest** rather than the container's disk.
 
 A Record write crosses the container/edge boundary as a **domain verb** on the platform RPC
-(`component.write` / `component.read` / `component.history`, `skill.write` / `skill.list`),
-never a generic row op — the RPC is a behavioural contract, not a SQL tunnel — and the **edge**
-validates the name and paths, and ownership-checks the canvas (Components) or the workspace
-(skills), rather than trusting the container's payload. Ordering is **store first, then disk**:
-a write that cannot be persisted fails the tool call, and the file it then writes is only an
-HMR trigger.
+(`component.write` / `component.read` / `component.history`, `data.write` / `data.read`,
+`skill.write` / `skill.list`), never a generic row op — the RPC is a behavioural contract, not
+a SQL tunnel — and the **edge** validates the name and paths, and ownership-checks the canvas
+(Components, data files) or the workspace (skills), rather than trusting the container's
+payload. Ordering is **store first, then disk**: a write that cannot be persisted fails the
+tool call, and the file it then writes is only an HMR trigger.
+
+A **data file** is a Record of the same family as the Component that imports it (one table,
+`kind: 'data'`) but its own verb, because what makes it valid is different: a closed,
+non-executable extension set (`.json/.csv/.txt/.md`), `.json` that must parse, and a size cap
+**derived from what the store can hold** — half of D1's 2,000,000-byte row/value ceiling. (The
+old 1 MiB cap was justified by a tar sink that no longer exists; the ceiling is the only
+reason left.) A data file also never materializes on its own schedule: vite resolves
+`./sales.json` against the **filesystem** while it transforms the module importing it, so a
+Component comes down **with the siblings its source imports** — a Component that arrived alone
+would fail import analysis and render a dead card.
 
 **Materialization timing is not uniform, and the difference is the point.** A Component is
 materialized **lazily**, when vite requests the module — the client already walks own → shared

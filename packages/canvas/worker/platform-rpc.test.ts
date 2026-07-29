@@ -9,12 +9,15 @@ import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import * as pushStore from '../web-poc/lib/db/queries/push-subscriptions.ts';
 import { createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { user } from '../web-poc/lib/db/schema.ts';
+import { DATA_MAX_BYTES } from '../shared/bridge-wire.ts';
 import { PushPayload } from '../shared/push-contract.ts';
 import {
   ComponentHistoryOutput,
   ComponentReadOutput,
   ComponentWriteOutput,
   ConversationStartOutput,
+  DataReadOutput,
+  DataWriteOutput,
   PLATFORM_RPC_PATH,
   SkillListOutput,
   SkillWriteOutput,
@@ -562,6 +565,108 @@ describe('platform RPC: skill.write / skill.list', () => {
     expect(versions.map((v) => [v.version, v.content, v.createdBy])).toEqual([
       [2, 'v2', 'u_2'],
       [1, 'v1', 'u_1'],
+    ]);
+  });
+});
+
+describe('platform RPC: data.write / data.read', () => {
+  test('a written data file is readable back as a Record', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+
+    const written = await rpc(
+      { op: 'data.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'sales.json', source: '{"rows":[1]}' } },
+      { db },
+    );
+    expect(written.status).toBe(200);
+    expect(DataWriteOutput.parse(await written.json()).rev).toBe(1);
+
+    const read = await rpc({ op: 'data.read', input: { workspaceId: 'ws_a', canvasId, name: 'sales.json' } }, { db });
+    expect(DataReadOutput.parse(await read.json()).source).toBe('{"rows":[1]}');
+  });
+
+  test('reading a data file nobody wrote answers "absent", not an error', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const read = await rpc({ op: 'data.read', input: { workspaceId: 'ws_a', canvasId, name: 'ghost.csv' } }, { db });
+    expect(read.status).toBe(200);
+    expect(DataReadOutput.parse(await read.json()).source).toBeNull();
+  });
+
+  test('the edge refuses a canvas that does not belong to the named workspace', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_owner');
+
+    const res = await rpc(
+      { op: 'data.write', input: { workspaceId: 'ws_intruder', canvasId, userId: 'u_1', name: 'sales.json', source: '[]' } },
+      { db },
+    );
+    expect(res.status).toBe(403);
+    const read = await rpc({ op: 'data.read', input: { workspaceId: 'ws_owner', canvasId, name: 'sales.json' } }, { db });
+    expect(DataReadOutput.parse(await read.json()).source).toBeNull();
+  });
+
+  test.each([['evil.tsx'], ['../../etc/passwd'], ['noext']])('the edge refuses the name %p at the boundary', async (name) => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const res = await rpc({ op: 'data.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name, source: 'x' } }, { db });
+    expect(res.status).toBe(400);
+  });
+
+  test('unparseable JSON is a 400 the agent can act on, not a 5xx that reads as a store failure', async () => {
+    // The distinction matters: a 5xx means "retry", and retrying a payload that will never
+    // parse is a loop. The store's own rule has to surface as a client error.
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const res = await rpc(
+      { op: 'data.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'sales.json', source: '{nope' } },
+      { db },
+    );
+    expect(res.status).toBe(400);
+
+    const read = await rpc({ op: 'data.read', input: { workspaceId: 'ws_a', canvasId, name: 'sales.json' } }, { db });
+    expect(DataReadOutput.parse(await read.json()).source).toBeNull();
+  });
+
+  test('the edge refuses a data file over the cap — a large upload cannot reach the store', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const res = await rpc(
+      { op: 'data.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'big.txt', source: 'x'.repeat(DATA_MAX_BYTES + 1) } },
+      { db },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test('a data file far larger than D1 max SQL statement round-trips — values are bound', async () => {
+    // D1's maximum SQL *statement* is 100 KB. This is the payload that makes a data file
+    // different from a 20 KB Component: interpolated into SQL it would fail outright.
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const big = 'x'.repeat(400_000);
+
+    const written = await rpc(
+      { op: 'data.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'big.txt', source: big } },
+      { db },
+    );
+    expect(written.status).toBe(200);
+
+    const read = await rpc({ op: 'data.read', input: { workspaceId: 'ws_a', canvasId, name: 'big.txt' } }, { db });
+    expect(DataReadOutput.parse(await read.json()).source).toBe(big);
+  });
+
+  test('a rewrite bumps the rev and appends a version, exactly as a Component does', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const input = { workspaceId: 'ws_a', canvasId, name: 'sales.csv' };
+    await rpc({ op: 'data.write', input: { ...input, userId: 'u_1', source: 'a,b' } }, { db });
+    const second = await rpc({ op: 'data.write', input: { ...input, userId: 'u_2', source: 'c,d' } }, { db });
+
+    expect(DataWriteOutput.parse(await second.json()).rev).toBe(2);
+    const versions = await d1RecordStore(db).listVersions({ workspaceId: 'ws_a', canvasId, name: 'sales.csv' });
+    expect(versions.map((v) => [v.version, v.source, v.createdBy])).toEqual([
+      [2, 'c,d', 'u_2'],
+      [1, 'a,b', 'u_1'],
     ]);
   });
 });

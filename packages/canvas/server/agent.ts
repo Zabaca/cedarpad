@@ -7,6 +7,7 @@
 import { type McpHttpServerConfig, type SDKUserMessage, createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
+import { DATA_MAX_BYTES } from '../shared/bridge-wire.ts';
 import { SHAPE_COLORS } from '../src/shapes.ts';
 import { DataSourceSchema, type MartSidecar } from '../shared/mart-contract.ts';
 import type { CanvasStore } from '../src/store.ts';
@@ -384,14 +385,14 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
       ),
       tool(
         'write_data',
-        'Create or overwrite a data file NEXT TO the components (same dir), so a component can `import data from "./sales.json"`. Extensions: .json/.csv/.txt/.md only (max 1MB); code goes through write_component. Overwriting reloads placed instances so importers pick up the new data.',
+        `Create or overwrite a data file NEXT TO the components (same dir), so a component can \`import data from "./sales.json"\`. Extensions: .json/.csv/.txt/.md only (max ${DATA_MAX_BYTES} bytes); code goes through write_component. Overwriting reloads placed instances so importers pick up the new data.`,
         {
           name: z.string().describe('File name with extension, e.g. "sales.json" (letters/digits/_/-, .json/.csv/.txt/.md).'),
           source: z.string().describe('Full file content. For .json it must parse.'),
         },
         async ({ name, source }) => {
           try {
-            writeDataFile(name, source, canvasId);
+            await writeDataFile(name, source, canvasId);
             // Blunt bump (same as write_component): we can't cheaply know which modules
             // import this file, so reload every placed instance on this canvas.
             const reloaded = bumpAllComponents(store, nextComponentRev(store));

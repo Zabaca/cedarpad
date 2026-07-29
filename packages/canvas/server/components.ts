@@ -22,7 +22,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { COMPONENT_NAME_RE, DATA_FILE_NAME_RE } from '../shared/bridge-wire.ts';
+import { assertDataFileName, assertDataFileSource, COMPONENT_NAME_RE } from '../shared/bridge-wire.ts';
 import type { ComponentVersion } from '../shared/platform-rpc.ts';
 import { loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
 
@@ -62,6 +62,11 @@ export interface ComponentRecords {
   read(canvasId: string, module: string): Promise<string | null>;
   /** Every version of the own-tier Component, newest first: who changed it and when. */
   history(canvasId: string, module: string): Promise<ComponentVersion[]>;
+  /** Persist an own-tier DATA file (`sales.json`). Same rules, different door: the edge
+   *  enforces the closed extension set and the size cap. THROWS when the store refuses. */
+  writeData(canvasId: string, name: string, source: string): Promise<void>;
+  /** The stored data-file content, or null when the own tier holds no Record for that name. */
+  readData(canvasId: string, name: string): Promise<string | null>;
 }
 
 /**
@@ -96,6 +101,8 @@ function containerRecords(): ComponentRecords | null {
     write: async (canvasId, module, source) => void (await rpc.componentWrite({ workspaceId, canvasId, userId, name: module, source })),
     read: (canvasId, module) => rpc.componentRead({ workspaceId, canvasId, name: module }),
     history: (canvasId, module) => rpc.componentHistory({ workspaceId, canvasId, name: module }),
+    writeData: async (canvasId, name, source) => void (await rpc.dataWrite({ workspaceId, canvasId, userId, name, source })),
+    readData: (canvasId, name) => rpc.dataRead({ workspaceId, canvasId, name }),
   };
 }
 
@@ -181,6 +188,12 @@ export async function materializeComponent(
   if (source === null) return null;
   mkdirSync(ownDir(canvasId), { recursive: true });
   writeFileSync(file, source);
+  // …and the data files it imports, because vite resolves those against the filesystem while
+  // it transforms THIS module. A sibling that is still a row here is a broken card.
+  for (const sibling of dataSiblingImports(source)) {
+    if (existsSync(`${ownDir(canvasId)}${sibling}`)) continue;
+    await materializeDataFile(sibling, canvasId, records);
+  }
   return source;
 }
 
@@ -258,26 +271,73 @@ export async function componentHistory(
 // Data files live NEXT TO components so vite resolves `import data from "./sales.json"`.
 // Non-executable extensions only — code must go through writeComponent (the registered,
 // hot-reloading path); a data door that accepts .tsx would just be the bypass again.
-const DATA_NAME = DATA_FILE_NAME_RE;
-const DATA_MAX_BYTES = 1_048_576; // the components sink tars the whole dir on every flush
+//
+// The name rule, the size cap and the JSON rule are one definition in `shared/bridge-wire.ts`,
+// checked here so the agent gets the message without a round trip AND at the edge, which
+// never trusts the container's payload. The cap is re-derived from what the store can hold
+// (ADR-0022); the old 1 MiB number was justified by a tar sink that no longer exists.
 
-/** Create or overwrite a data file a component can import as a sibling — shared lib if it
- * already lives there (one shared source, like writeComponent), else the canvas own dir. */
-export function writeDataFile(name: string, source: string, canvasId: string = DEFAULT_CANVAS_ID): void {
-  if (!DATA_NAME.test(name)) {
-    throw new Error(`invalid data file name "${name}" — <letters/digits/_/->.(json|csv|txt|md); use write_component for code`);
-  }
-  if (Buffer.byteLength(source, 'utf8') > DATA_MAX_BYTES) throw new Error('data file too large (max 1MB)');
-  if (name.endsWith('.json')) {
-    try {
-      JSON.parse(source);
-    } catch {
-      throw new Error('source is not valid JSON — a broken .json import breaks every component that imports it');
-    }
-  }
-  const dir = existsSync(`${SHARED_DIR}${name}`) ? SHARED_DIR : ownDir(canvasId);
+/**
+ * Create or overwrite a data file a component can import as a sibling — shared lib if it
+ * already lives there (one shared source, like writeComponent), else the canvas own dir.
+ *
+ * Same ORDERING as `writeComponent` (ADR-0022): the Record is persisted first and the file
+ * written second, so a store write that fails fails the tool call instead of reporting
+ * success for content that will evaporate at the next recycle.
+ */
+export async function writeDataFile(
+  name: string,
+  source: string,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<void> {
+  assertDataFileName(name);
+  assertDataFileSource(name, source);
+  const shared = existsSync(`${SHARED_DIR}${name}`);
+  const dir = shared ? SHARED_DIR : ownDir(canvasId);
+  // The shared tier is still filesystem-only; it becomes a Record in a later slice of #354.
+  if (!shared) await records?.writeData(canvasId, name, source);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  try {
+    writeFileSync(`${dir}${name}`, source);
+  } catch (err) {
+    // Only forgivable because the Record already landed: the next request materializes it.
+    if (shared || !records) throw err;
+    console.error(`[components] ${name} did not reach disk; it will materialize on next fetch:`, err);
+  }
+}
+
+/**
+ * Write an own-tier data-file Record to the file vite reads, and return its content; null
+ * when the store holds no such data file. The data-file half of `materializeComponent`.
+ */
+export async function materializeDataFile(
+  name: string,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<string | null> {
+  if (!records) return null;
+  assertDataFileName(name); // validates before we ask anything, and before any path is built
+  const dir = ownDir(canvasId);
+  const source = await records.readData(canvasId, name);
+  if (source === null) return null;
+  mkdirSync(dir, { recursive: true });
   writeFileSync(`${dir}${name}`, source);
+  return source;
+}
+
+/**
+ * Pure: the data siblings a module's source imports (`./sales.json`, `./notes.md?raw`).
+ *
+ * Why a Component cannot materialize alone: vite resolves a relative import against the
+ * FILESYSTEM while it transforms the importing module, so a missing sibling is a failed
+ * import analysis — the browser never gets as far as requesting the data file, and the card
+ * is broken. The siblings have to be on disk by the time vite reads the module that imports
+ * them, which means they come down WITH it.
+ */
+function dataSiblingImports(source: string): string[] {
+  const re = /['"]\.\/([A-Za-z][A-Za-z0-9_-]*\.(?:json|csv|txt|md))(?:\?[^'"]*)?['"]/g;
+  return [...new Set([...source.matchAll(re)].map((m) => m[1] as string))];
 }
 
 /** Per-line edit: replace a unique `oldStr` occurrence with `newStr`. Reads through
