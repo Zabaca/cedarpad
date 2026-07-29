@@ -260,6 +260,14 @@ A `CanvasShape` is one of:
   `localStorage`), degrading to guest when the endpoint is absent (local dev).
   Guest naming is ask-once: `setDisplayName` persists browser-wide and is a no-op
   for logged-in users. Presence (#212) reuses this identity.
+- **Components can talk back to their chat (`sendToAgent`, the reply target)**: every
+  instance also receives a `sendToAgent(message)` prop bound to its **reply target** —
+  the chat the card is attached to (its inbound `attachBatchToChat` arrow), resolved fresh
+  at send time by `resolveReplyTarget` (`src/reply-target.ts`): the linked chat is
+  authoritative, else the focused card, else it refuses rather than posting to a stale or
+  wrong chat. The message rides the same `/api/chat/<id>/send` route the card uses, so the
+  reply streams back into that card. `activeChatId` (`src/agent-link.ts`) now tracks only
+  the *focused* card — the fork anchor and that fallback — never the reply target itself.
 - **Live presence (#212, moved onto sync by #293)**: **both** transport and rendering
   are tldraw's now. `useSync` takes a `users: TLUserStore` built from our identity
   (`createCanvasUserStore`, `src/presence.ts`) and the protocol carries presence. The

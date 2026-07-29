@@ -15,9 +15,12 @@ import { isInteractiveControl } from './predicates';
 import { componentShapeProps } from './shape-props';
 import { fetchMart, type MartData } from './mart-data';
 import type { DataSource } from '../shared/mart-contract';
+import { readPage } from './tldraw-bridge';
+import { resolveReplyTarget } from './reply-target';
+import { getActiveChat, postMessageToChat } from './agent-link';
 // ComponentStatus is the read bridge's concern too, so it lives in the model
 // (shapes.ts); pureFromTldrawShape lifts `meta.status` onto the model field there.
-import type { ComponentStatus } from './shapes';
+import type { CanvasShape, ComponentStatus } from './shapes';
 
 /**
  * The typed shape of a `component`'s tldraw `meta`. `status` is strictly OPTIONAL:
@@ -191,6 +194,8 @@ export function ComponentHost({
   dataSource,
   load = (module, rev) => loadComponent(module, rev, activeCanvasId()),
   loadMart = fetchMart,
+  readShapes = () => readPage(editor),
+  post = postMessageToChat,
 }: {
   shapeId: string;
   editor: Editor;
@@ -204,6 +209,10 @@ export function ComponentHost({
   load?: (module: string, rev: number) => Promise<AgentComponent>;
   /** The mart reader. Defaults to the real edge-route fetch; injected in tests. */
   loadMart?: (name: string) => Promise<MartData>;
+  /** Reads all page shapes to resolve this component's reply target; injected in tests. */
+  readShapes?: () => CanvasShape[];
+  /** Posts a component's reply into a chat session; injected in tests. */
+  post?: (chatId: string, message: string) => Promise<void>;
 }) {
   const [Comp, setComp] = React.useState<AgentComponent | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -222,6 +231,19 @@ export function ComponentHost({
       editor.updateShape({ id: shapeId as never, type: 'component', props: { data: { ...(cur.props?.data ?? {}), ...patch } } });
     },
     [editor, shapeId],
+  );
+
+  // The component's reply capability: resolve WHICH chat this instance answers to (its
+  // attached chat via the inbound arrow, else the focused chat) fresh at send time, then
+  // post there. Injected so a component's button reaches the right chat instead of reaching
+  // into a global. Null target => surface, never POST to a dead/wrong chat.
+  const sendToAgent = React.useCallback(
+    async (message: string) => {
+      const target = resolveReplyTarget(readShapes(), shapeId, getActiveChat() || undefined);
+      if (!target) throw new Error('No chat to reply to — focus or attach a chat card first.');
+      await post(target, message);
+    },
+    [readShapes, post, shapeId],
   );
 
   // Mirror this host's lifecycle onto the shape's `meta.status` (same updateShape path
@@ -306,7 +328,7 @@ export function ComponentHost({
         <div style={{ width: '100%', height: '100%', overflow: 'auto' }}>
           {/* #211: identity rides alongside data/setData. `currentUser` is null until
               resolved; `setDisplayName` is the ask-once guest naming (no-op for users). */}
-          <Comp {...resolvedData} setData={setData} currentUser={currentUser ?? undefined} setDisplayName={setDisplayName} />
+          <Comp {...resolvedData} setData={setData} sendToAgent={sendToAgent} currentUser={currentUser ?? undefined} setDisplayName={setDisplayName} />
         </div>
       </ComponentErrorBoundary>
       {martName && <MartFreshnessBadge state={martState} />}

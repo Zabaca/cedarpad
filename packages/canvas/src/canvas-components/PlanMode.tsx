@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { sendToAgent } from '../agent-link';
 
 interface Step {
   text: string;
@@ -10,12 +9,15 @@ interface Props {
   title?: string;
   description?: string;
   steps?: Step[];
+  // Injected by the component host, bound to the chat this card is attached to.
+  sendToAgent: (message: string) => Promise<void>;
 }
 
 export default function PlanMode({
   title = 'Untitled Plan',
   description = '',
   steps = [],
+  sendToAgent,
 }: Props) {
   const [annotations, setAnnotations] = useState<Record<number, string>>({});
   const [notes, setNotes] = useState('');

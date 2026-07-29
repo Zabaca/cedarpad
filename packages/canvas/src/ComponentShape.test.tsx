@@ -14,6 +14,7 @@ import type { Editor } from 'tldraw';
 
 import { ComponentHost, sameStatus } from './ComponentShape';
 import type { ComponentShapeMeta } from './ComponentShape';
+import type { CanvasShape } from './shapes';
 import { LOAD_ATTEMPTS } from './component-loader';
 import type { AgentComponent } from './component-loader';
 
@@ -242,6 +243,78 @@ describe('ComponentHost injects currentUser + setDisplayName', () => {
     expect(props.currentUser?.kind).toBe('guest');
     expect(props.currentUser?.id).toMatch(/^guest_/);
     expect(props.currentUser?.color).toMatch(/^hsl\(/);
+    await host.unmount();
+  });
+});
+
+// The reply-target seam: the host injects a `sendToAgent` bound to the chat THIS component
+// is attached to (its inbound arrow), resolved fresh at send time. readShapes + post are
+// injected so the real resolveReplyTarget runs against fixtures and the POST is observable.
+describe('ComponentHost injects a link-bound sendToAgent', () => {
+  const chatCard = (id: string, chatId: string): CanvasShape =>
+    ({ type: 'chat', id, color: 'grey', x: 0, y: 0, w: 380, h: 460, title: '', chatId }) as CanvasShape;
+  const comp = (id: string): CanvasShape =>
+    ({ type: 'component', id, color: 'grey', x: 0, y: 0, w: 360, h: 260, module: 'Sender', data: {}, rev: 0 }) as CanvasShape;
+  const link = (id: string, from: string, to: string): CanvasShape =>
+    ({ type: 'arrow', id, color: 'grey', x1: 0, y1: 0, x2: 0, y2: 0, text: '', startShapeId: from, endShapeId: to }) as CanvasShape;
+
+  let captured: { sendToAgent: (m: string) => Promise<void> } | null = null;
+  const Sender: AgentComponent = (props) => {
+    captured = props as unknown as { sendToAgent: (m: string) => Promise<void> };
+    return React.createElement('div', null, 'sender');
+  };
+
+  test('posts a message into the chat the component is attached to', async () => {
+    captured = null;
+    const ed = makeEditor({ id: 'shape:comp', type: 'component', props: { w: 360, h: 260, module: 'Sender', data: {}, rev: 0 }, meta: {} });
+    const shapes = [chatCard('shape:cardX', 'conv_abc'), comp('shape:comp'), link('shape:arr', 'shape:cardX', 'shape:comp')];
+    const posts: Array<{ chatId: string; message: string }> = [];
+    const host = render(
+      React.createElement(ComponentHost, {
+        shapeId: 'shape:comp',
+        editor: ed.editor,
+        module: 'Sender',
+        data: {},
+        rev: 0,
+        load: async () => Sender,
+        readShapes: () => shapes,
+        post: async (chatId: string, message: string) => void posts.push({ chatId, message }),
+      }),
+    );
+    await host.mount();
+    await act(async () => {});
+    await act(async () => {
+      await captured!.sendToAgent('hi there');
+    });
+    expect(posts).toEqual([{ chatId: 'conv_abc', message: 'hi there' }]);
+    await host.unmount();
+  });
+
+  test('with no link and no focused chat, sending rejects and never POSTs', async () => {
+    captured = null;
+    const ed = makeEditor({ id: 'shape:comp', type: 'component', props: { w: 360, h: 260, module: 'Sender', data: {}, rev: 0 }, meta: {} });
+    const shapes = [comp('shape:comp')]; // orphan: no chat, no arrow; getActiveChat() is ''
+    const posts: string[] = [];
+    const host = render(
+      React.createElement(ComponentHost, {
+        shapeId: 'shape:comp',
+        editor: ed.editor,
+        module: 'Sender',
+        data: {},
+        rev: 0,
+        load: async () => Sender,
+        readShapes: () => shapes,
+        post: async (chatId: string) => void posts.push(chatId),
+      }),
+    );
+    await host.mount();
+    await act(async () => {});
+    let err: Error | null = null;
+    await act(async () => {
+      await captured!.sendToAgent('hi').catch((e: Error) => void (err = e));
+    });
+    expect(posts).toHaveLength(0);
+    expect((err as unknown as Error)?.message).toMatch(/focus or attach a chat/i);
     await host.unmount();
   });
 });
