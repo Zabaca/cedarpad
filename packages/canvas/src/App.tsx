@@ -7,6 +7,7 @@ import 'tldraw/tldraw.css';
 import { activeCanvasId } from './active-canvas';
 import { getActiveChat, setForkHandler } from './agent-link';
 import { ChatShapeUtil } from './ChatShape';
+import { SHAPE_SIZE_DEFAULTS } from './shapes';
 import { armFirstPrompt, closeSession, forkSession } from '../shared/chat-store';
 import { ChatStarter } from './ChatStarter';
 import { DOCK_CHAT_DELETED, postDockMessage } from '../shared/dock-messages';
@@ -168,8 +169,8 @@ function nextChatNumber(editor: Editor): number {
   return n;
 }
 
-const CHAT_W = 380;
-const CHAT_H = 460;
+const CHAT_W = SHAPE_SIZE_DEFAULTS.chat.w;
+const CHAT_H = SHAPE_SIZE_DEFAULTS.chat.h;
 
 // Resolve the shape a new chat should hang off of: the single selected shape if
 // there is one, else the currently-focused chat (if it's still on the canvas).

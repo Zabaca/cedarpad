@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { sendToAgent } from '../agent-link';
 interface Step { text: string; detail?: string; }
-interface Props { title?: string; description?: string; steps?: Step[]; }
+interface Props { title?: string; description?: string; steps?: Step[]; sendToAgent: (message: string) => Promise<void>; }
 
-export default function PlanModeMinimal({ title = 'Plan', description = '', steps = [] }: Props) {
+export default function PlanModeMinimal({ title = 'Plan', description = '', steps = [], sendToAgent }: Props) {
   const [notes, setNotes] = useState('');
   const [done, setDone] = useState<'approved'|'rejected'|null>(null);
   const [loading, setLoading] = useState(false);

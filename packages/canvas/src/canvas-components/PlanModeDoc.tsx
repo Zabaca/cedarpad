@@ -1,5 +1,4 @@
 import { useState, useRef } from 'react';
-import { sendToAgent } from '../agent-link';
 
 interface Story { role: string; want: string; benefit: string; }
 interface Section {
@@ -15,10 +14,12 @@ interface Props {
   author?: string;
   date?: string;
   sections?: Section[];
+  // Injected by the component host, bound to the chat this card is attached to.
+  sendToAgent: (message: string) => Promise<void>;
 }
 interface Comment { id: number; quote: string; text: string; resolved: boolean; }
 
-export default function PlanModeDoc({ title = 'Plan', status = 'Draft', author = 'Claude', date = '', sections = [] }: Props) {
+export default function PlanModeDoc({ title = 'Plan', status = 'Draft', author = 'Claude', date = '', sections = [], sendToAgent }: Props) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [bubble, setBubble] = useState<{ quote: string; x: number; y: number } | null>(null);
   const [draft, setDraft] = useState('');

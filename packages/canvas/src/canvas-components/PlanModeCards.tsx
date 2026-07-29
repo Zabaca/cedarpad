@@ -1,11 +1,10 @@
 import { useState } from 'react';
-import { sendToAgent } from '../agent-link';
 
 type CardStatus = 'pending' | 'approved' | 'flagged';
 interface Step { text: string; detail?: string; }
-interface Props { title?: string; description?: string; steps?: Step[]; }
+interface Props { title?: string; description?: string; steps?: Step[]; sendToAgent: (message: string) => Promise<void>; }
 
-export default function PlanModeCards({ title = 'Plan', description = '', steps = [] }: Props) {
+export default function PlanModeCards({ title = 'Plan', description = '', steps = [], sendToAgent }: Props) {
   const [cards, setCards] = useState<{ status: CardStatus; note: string }[]>(() => steps.map(() => ({ status: 'pending', note: '' })));
   const [overall, setOverall] = useState('');
   const [done, setDone] = useState<'approved'|'rejected'|null>(null);
