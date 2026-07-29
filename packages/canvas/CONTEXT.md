@@ -140,10 +140,41 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
 
 **Extension**: what the agent authors — hot-reloaded and persisted to R2:
 - **Component** (`src/canvas-components/<Name>.tsx`): an agent-authored React module placed on the canvas. Already in use.
-- **Custom handler**: an agent-authored backend handler, served by a separate **extension server** process and reached at `/api/custom/:handler`. Contract: HTTP request in → may call outbound (APIs, DBs, the core's own `/api/canvas`) → HTTP response out; **no direct `CanvasStore` access** (it's a different process — canvas reads/writes go through the core's API). _Decided, not yet built._
+- **Custom handler** — **DROPPED** _(2026-07-29)_. An agent-authored backend handler at
+  `server/custom/<name>.ts`, served by a separate extension-server process at
+  `/api/custom/:handler`. Removed because it never had an authoring **door**: the tool surface
+  has no `write_custom_handler`, and chat turns drop `Write`/`Edit` — so the only way to author
+  one was `Bash`, the ungated path the QABoard lesson exists to prevent. It survived only
+  because the old tar swept the whole directory. Under the Record model (below) an artifact
+  with no tool cannot persist, and prod held zero of them, so the feature goes rather than
+  earning a tool it was never given. Reintroduce deliberately, with a door, if wanted.
 - **Workspace skill** (`.claude/skills/<name>/` under the package root): a user- or agent-authored skill dir (SKILL.md + supporting files), persisted per workspace and discovered via the SDK's `project` setting source. Chat turns enable **all discovered** skills — no allowlist. Distinct from a **platform skill** (baked into the image at the container's `~/.claude/skills/`, the `user` source: deploy-versioned, PR-reviewed, unshadowable by workspace content). On a name collision the workspace skill wins for chat turns; dev-agent turns keep a pinned skill list resolved in a cwd with no workspace skills (its worktree). _Decided, not yet built._
 
 A skill is **content-that-asks** — text the model reads. It is never a **capability** (a grant: tools, tokens, scopes, routing). Capabilities stay code-gated; no workspace data may confer one.
+
+**Record vs File — how workspace content persists** _(designed 2026-07-29, not yet built; see
+ADR-0022)_. The dividing question is **who owns the schema**:
+
+- A **Record** is content whose shape *we* define, authored only through our own tools —
+  **Components**, their **data files**, and **Workspace skills** (already a files-only
+  `{name, files:[{path, content}]}` wire format). Records live as **rows**, and the
+  container filesystem is a **rendering** of them, materialized on demand so vite can
+  compile. Truth is the row; the file is a cache. This makes structural what
+  `disallowedTools` today only steers: an artifact with no tool has nowhere to live.
+- A **File** is content a third party owns — the **Transcript**, written by the Claude Agent
+  SDK in its own format and read back by `--resume`. We are its custodian, never its author,
+  so it stays an opaque per-session object. Deriving it from rows would mean round-tripping
+  someone else's undocumented format, and a subtly wrong round-trip breaks resume silently.
+  (Consistent with ADR-0004: the JSONL is authoritative, the UI is a projection.)
+
+The **platform tier stays image-only** and is neither: it is deploy-gated code, identical for
+every workspace, versioned with the image that expects it. Making it a Record would demote
+platform code to workspace data and break the **gated-layer rule**. So resolution is
+`own → shared` (rows) `→ base` (the image), and the edge learns the base tier from a
+**build-time manifest** rather than the container's disk.
+
+_Avoid_: "we tar the workspace" (the tar is gone), or treating the filesystem as the durable
+copy — that inversion is what destroyed every own-tier component on 2026-07-29.
 
 **External MCP** (the agent consuming outside tool servers) follows the same line. The **MCP registry** (code, PR-gated, global) is the catalog of approved remote HTTP servers — the trust decision that cedarpad may talk to an endpoint at all. **Enablement** is per-workspace and is an act of owner consent (v1: paste a per-workspace bearer token at connect time; later: an OAuth dance — a registry entry declares its auth kind). **Token custody is edge-side**: per-workspace credentials live in the worker's DB, are attached as a header on the proxied `/send`, and are used for that turn only — the container and R2 never store them (the ADR-0008 dev-agent git-token pattern). A workspace that hasn't connected a server gets no tools, no token, and no connection attempt; an unreachable server degrades that turn's toolset, never fails the turn. Chat flavor only; dev-agent turns get no external MCP servers.
 
