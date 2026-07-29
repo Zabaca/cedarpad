@@ -29,6 +29,7 @@ function recordingRpc(overrides: Partial<PlatformRpc> = {}) {
     notify: async () => {},
     componentWrite: async () => ({ rev: 1 }),
     componentRead: async () => null,
+    componentHistory: async () => [],
     ...overrides,
   };
   return { rpc, turnEnds };

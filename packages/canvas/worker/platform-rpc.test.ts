@@ -9,6 +9,7 @@ import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import * as pushStore from '../web-poc/lib/db/queries/push-subscriptions.ts';
 import { PushPayload } from '../shared/push-contract.ts';
 import {
+  ComponentHistoryOutput,
   ComponentReadOutput,
   ComponentWriteOutput,
   ConversationStartOutput,
@@ -376,5 +377,68 @@ describe('platform RPC: component.write / component.read', () => {
       [2, 'v2', 'u_2'],
       [1, 'v1', 'u_1'],
     ]);
+  });
+});
+
+describe('platform RPC: component.history', () => {
+  test('a Component reports its versions newest first, each with its author', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const input = { workspaceId: 'ws_a', canvasId, name: 'Card' };
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_1', source: 'v1' } }, { db });
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_2', source: 'v2' } }, { db });
+
+    const res = await rpc({ op: 'component.history', input }, { db });
+    expect(res.status).toBe(200);
+    const { versions } = ComponentHistoryOutput.parse(await res.json());
+    expect(versions.map((v) => [v.version, v.createdBy])).toEqual([
+      [2, 'u_2'],
+      [1, 'u_1'],
+    ]);
+    // The timestamp survives the hop as a real instant, not a string nobody can order.
+    expect(versions[0]?.createdAt).toBeInstanceOf(Date);
+  });
+
+  test('the history omits the source — asking what happened must not cost the whole corpus', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const input = { workspaceId: 'ws_a', canvasId, name: 'Card' };
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_1', source: 'a very long component source' } }, { db });
+
+    const body = await (await rpc({ op: 'component.history', input }, { db })).text();
+    expect(body).not.toContain('a very long component source');
+  });
+
+  test('a Component nobody wrote has an empty history, not an error', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const res = await rpc({ op: 'component.history', input: { workspaceId: 'ws_a', canvasId, name: 'Ghost' } }, { db });
+    expect(ComponentHistoryOutput.parse(await res.json()).versions).toEqual([]);
+  });
+
+  test('a write from a container with no identity is stored UNATTRIBUTED, not under a placeholder', async () => {
+    // "We do not know who" is a real state. A history that names a placeholder no user query
+    // will ever match looks attributed and is not — the failure mode this slice exists to close.
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const input = { workspaceId: 'ws_a', canvasId, name: 'Card' };
+    const written = await rpc({ op: 'component.write', input: { ...input, userId: null, source: 'v1' } }, { db });
+    expect(written.status).toBe(200);
+
+    const { versions } = ComponentHistoryOutput.parse(await (await rpc({ op: 'component.history', input }, { db })).json());
+    expect(versions.map((v) => v.createdBy)).toEqual([null]);
+  });
+
+  test('the edge refuses a canvas that does not belong to the named workspace', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_owner');
+    await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_owner', canvasId, userId: 'u_1', name: 'Card', source: 'v1' } },
+      { db },
+    );
+
+    // History is a read of someone else's workspace unless the same ownership rule gates it.
+    const res = await rpc({ op: 'component.history', input: { workspaceId: 'ws_intruder', canvasId, name: 'Card' } }, { db });
+    expect(res.status).toBe(403);
   });
 });

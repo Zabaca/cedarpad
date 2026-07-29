@@ -113,6 +113,24 @@ describe.each(implementations)('RecordStore (%s)', (_name, make) => {
       expect(await store.list({ workspaceId: key.workspaceId, canvasId: null })).toHaveLength(1);
     });
 
+    test('rewriting IDENTICAL source still appends a version — a write is an event, not a diff', async () => {
+      // The decision, stated where it can be broken: the store does not compare content.
+      // Deduplicating would make `rev` stop counting writes, and would drop exactly the fact
+      // attribution exists to record — that someone touched this Component at this moment.
+      // "Nothing changed" is a question a reader of the history can answer; it is not one the
+      // store gets to answer by forgetting the event.
+      const store = make();
+      const key = { workspaceId: ws(), canvasId: 'cv_1', name: 'Card' };
+      await store.put({ ...key, kind: 'component' as const, source: 'same', updatedBy: 'u_1' });
+      const second = await store.put({ ...key, kind: 'component' as const, source: 'same', updatedBy: 'u_2' });
+
+      expect(second.rev).toBe(2);
+      expect((await store.listVersions(key)).map((v) => [v.version, v.createdBy])).toEqual([
+        [2, 'u_2'],
+        [1, 'u_1'],
+      ]);
+    });
+
     test('a version records who wrote it — an unexpected change is attributable', async () => {
       const store = make();
       const key = { workspaceId: ws(), canvasId: 'cv_1', name: 'Card' };
@@ -157,6 +175,9 @@ describe.each(implementations)('RecordStore (%s)', (_name, make) => {
 
       expect(revived.rev).toBe(2);
       expect((await store.get(key))?.source).toBe('v2');
+      // CONTINUING, not restarting: the buried rev is what the next version counts from, so a
+      // delete-then-rewrite cannot mint a second version 1 and orphan the source before it.
+      expect((await store.listVersions(key)).map((v) => v.version)).toEqual([2, 1]);
     });
 
     test('deleting a canvas scope hides its own tier and leaves shared alone', async () => {

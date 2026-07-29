@@ -23,6 +23,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { COMPONENT_NAME_RE, DATA_FILE_NAME_RE } from '../shared/bridge-wire.ts';
+import type { ComponentVersion } from '../shared/platform-rpc.ts';
 import { loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
 
 const DEFAULT_CANVAS_ID = 'default';
@@ -59,7 +60,23 @@ export interface ComponentRecords {
   write(canvasId: string, module: string, source: string): Promise<void>;
   /** The stored source, or null when the own tier holds no Record for that name. */
   read(canvasId: string, module: string): Promise<string | null>;
+  /** Every version of the own-tier Component, newest first: who changed it and when. */
+  history(canvasId: string, module: string): Promise<ComponentVersion[]>;
 }
+
+/**
+ * Who a Record written by THIS container is attributed to (ADR-0022 decision 4). `CANVAS_USER`
+ * is the deployment's single Better Auth `user.id` — see the `Env.CANVAS_USER` doc comment,
+ * which is explicit that "a single static id can't represent whichever of N users is calling"
+ * and that its unset fallback, the literal `'default'`, never matches a real authenticated
+ * user.
+ *
+ * So: unset ⇒ **null**, not `'default'`. The bridge's Inbox call sites can afford a
+ * placeholder because a row that matches nobody merely fails to appear; a version row is the
+ * permanent answer to "who changed this", and a placeholder there is a history that LOOKS
+ * attributed and is not. `updated_by`/`created_by` are nullable for exactly this state.
+ */
+export const recordAuthor = (env: Record<string, string | undefined>): string | null => env.CANVAS_USER || null;
 
 /**
  * The env-wired store, or **null when there is no edge in front of this process** — local
@@ -74,10 +91,11 @@ function containerRecords(): ComponentRecords | null {
   // (worker/container-env.ts). `userId` is ATTRIBUTION — the edge decides permission itself.
   // 'default' is the legacy/prod workspace id (worker/shell-routing.ts DEFAULT_WORKSPACE_ID).
   const workspaceId = env.CANVAS_WORKSPACE || 'default';
-  const userId = env.CANVAS_USER || 'default';
+  const userId = recordAuthor(env);
   return {
     write: async (canvasId, module, source) => void (await rpc.componentWrite({ workspaceId, canvasId, userId, name: module, source })),
     read: (canvasId, module) => rpc.componentRead({ workspaceId, canvasId, name: module }),
+    history: (canvasId, module) => rpc.componentHistory({ workspaceId, canvasId, name: module }),
   };
 }
 
@@ -217,6 +235,24 @@ export async function writeComponent(
     if (shared || !records) throw err;
     console.error(`[components] ${module}.tsx did not reach disk; it will materialize on next fetch:`, err);
   }
+}
+
+/**
+ * What has happened to a Component: every version, newest first, with WHO wrote it and WHEN
+ * (ADR-0022 decision 4). Before Records nothing in this product recorded either, which is why
+ * the 2026-07-29 loss could only be reconstructed from chat transcripts.
+ *
+ * The history comes from the store and nowhere else — the filesystem holds exactly one
+ * revision and no author at all — so with no edge in front of this process the honest answer
+ * is "none", the same explicit state every other Record path has here.
+ */
+export async function componentHistory(
+  module: string,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<ComponentVersion[]> {
+  fileIn(ownDir(canvasId), module); // validates the name before we ask anything
+  return records ? await records.history(canvasId, module) : [];
 }
 
 // Data files live NEXT TO components so vite resolves `import data from "./sales.json"`.

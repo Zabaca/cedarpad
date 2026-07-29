@@ -155,8 +155,11 @@ export type ConversationPrOpenedInput = z.infer<typeof ConversationPrOpenedInput
 export const ComponentWriteInput = z.object({
   workspaceId: z.string().min(1),
   canvasId: z.string().min(1),
-  /** Attribution (`updated_by`), not authorization — the edge derives permission itself. */
-  userId: z.string().min(1),
+  /** Attribution (`updated_by`), not authorization — the edge derives permission itself.
+   *  Nullable because "we do not know who" is a real state (a container with no configured
+   *  identity), and recording a placeholder that no user query will ever match would be a
+   *  history that LOOKS attributed and is not — worse than one that admits the gap. */
+  userId: z.string().min(1).nullable(),
   name: ComponentName,
   source: z.string().refine((s) => s.trim().length > 0, 'source must be non-empty'),
 });
@@ -178,6 +181,38 @@ export type ComponentReadInput = z.infer<typeof ComponentReadInput>;
 export const ComponentReadOutput = z.object({ source: z.string().nullable() });
 export type ComponentReadOutput = z.infer<typeof ComponentReadOutput>;
 
+/**
+ * Operation 8 — "what has happened to this Component" (ADR-0022 decision 4). Before Records
+ * nothing in this product recorded who changed a Component or when, which is why the
+ * 2026-07-29 loss could only be reconstructed from chat transcripts. This is the verb that
+ * makes that question answerable without production credentials.
+ *
+ * Same shape as a read, because it IS a read — of the history rather than the current source.
+ */
+export const ComponentHistoryInput = ComponentReadInput;
+export type ComponentHistoryInput = z.infer<typeof ComponentHistoryInput>;
+
+/**
+ * Newest first, and deliberately WITHOUT the source. "Who changed this and when" must not
+ * cost every revision of the text; a restore (#362) names a version, so the source it needs
+ * never has to make this trip. `createdAt` is coerced because JSON has no instant — the wire
+ * carries an ISO string and both ends work with a Date.
+ */
+export const ComponentHistoryOutput = z.object({
+  versions: z.array(
+    z.object({
+      version: z.number().int().positive(),
+      createdAt: z.coerce.date(),
+      createdBy: z.string().nullable(),
+    }),
+  ),
+});
+export type ComponentHistoryOutput = z.infer<typeof ComponentHistoryOutput>;
+
+/** One entry of a Component's history. The store layer, the edge and the container all use
+ *  THIS type rather than each declaring their own — one contract, no mirrors to drift. */
+export type ComponentVersion = ComponentHistoryOutput['versions'][number];
+
 /** The whole request, discriminated by operation name — the complete surface. */
 export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('conversation.start'), input: ConversationStartInput }),
@@ -187,5 +222,6 @@ export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('notify'), input: NotifyInput }),
   z.object({ op: z.literal('component.write'), input: ComponentWriteInput }),
   z.object({ op: z.literal('component.read'), input: ComponentReadInput }),
+  z.object({ op: z.literal('component.history'), input: ComponentHistoryInput }),
 ]);
 export type PlatformRpcRequest = z.infer<typeof PlatformRpcRequest>;
