@@ -207,48 +207,37 @@ case "$ROLLOUT" in
   DONE*)
     set -- $ROLLOUT
     RSTATUS=$2; RTARGET=$4
-    echo "→ rollout reached '$RSTATUS' — verifying the container application's STORED image matches it"
-    IMG_CHECK=$(sops exec-env "$SECRETS_FILE" \
-      'curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/'"$CF_ACCOUNT"'/containers/applications"' 2>/dev/null \
-      | APP_NAME="$SANDBOX_APP" python3 -c "
-import sys, json, os
-name = os.environ['APP_NAME']
-try:
-    apps = json.load(sys.stdin).get('result') or []
-except Exception as e:
-    print('SKIP could not parse the containers API response (%s)' % e); raise SystemExit
-match = [a for a in apps if a.get('name') == name]
-if not match:
-    print('SKIP no container application named %s' % name); raise SystemExit
-a = match[0]
-img = a['configuration']['image'].split('@')[-1]
-inst = a.get('health', {}).get('instances', {})
-print('%s %s %s %s' % ('OK', img, a.get('version'), inst.get('failed', 0)))
-" 2>/dev/null || echo "SKIP containers API call failed")
+    # The application record lags the rollout — up to ~150s observed — so this POLLS it
+    # to the target rather than reading it once. Reading once is what produced the
+    # 2026-07-29 false alarm on a deploy that was entirely healthy.
+    echo "→ rollout reached '$RSTATUS' — waiting for the application's STORED image to reach the target"
+    IMG_CHECK=$(wait_for_stored_image "$SECRETS_FILE" "$CF_ACCOUNT" "$SANDBOX_APP" "$RTARGET" \
+      "${STORED_IMAGE_WAIT_TIMEOUT:-300}" 15)
 
     case "$IMG_CHECK" in
       SKIP*)
         echo "  ⚠️  could not verify the stored image (${IMG_CHECK#SKIP }) — check by hand:"
         echo "     packages/canvas/scripts/verify-container-image.sh"
         ;;
-      OK*)
+      STALE*)
         set -- $IMG_CHECK
-        STORED=$2; APPVER=$3; NFAILED=$4
-        if [ "$STORED" != "$RTARGET" ]; then
-          echo "❌ rollout reached '$RSTATUS' but the container application's stored image does NOT match its rollout target."
-          echo "   stored : $STORED  (app v$APPVER)"
-          echo "   target : $RTARGET"
-          echo "   This is the 2026-07-28 incident this check exists for: a rollout can report a"
-          echo "   terminal status while configuration.image stays on the previous digest. Serving"
-          echo "   instances can be correct while this is wrong — the canvas works until the first"
-          echo "   idle-sleep, then every cold boot wedges on the stale image. This is NOT the"
-          echo "   progressing-rollout race (the rollout already finished) — investigate by hand,"
-          echo "   do not blindly re-run:"
-          echo "     packages/canvas/scripts/verify-container-image.sh"
-          exit 1
-        else
-          echo "✅ stored image matches the rollout target ($STORED, app v$APPVER, failed instances: $NFAILED)"
-        fi
+        STORED=$2; APPVER=$3; NFAILED=$4; WAITED=$5
+        echo "❌ rollout reached '$RSTATUS', but after ${WAITED}s the application's stored image still"
+        echo "   does not match its rollout target."
+        echo "   stored : $STORED  (app v$APPVER)"
+        echo "   target : $RTARGET"
+        echo "   This is the 2026-07-28 incident this check exists for: a rollout can report a"
+        echo "   terminal status while configuration.image stays on the previous digest. Serving"
+        echo "   instances can be correct while this is wrong — the canvas works until the first"
+        echo "   idle-sleep, then every cold boot wedges on the stale image."
+        echo "   The two settle races are already waited out (rollout status, then this poll), so"
+        echo "   this is not a timing artefact — investigate by hand, do not blindly re-run:"
+        echo "     packages/canvas/scripts/verify-container-image.sh"
+        exit 1
+        ;;
+      MATCH*)
+        set -- $IMG_CHECK
+        echo "✅ stored image matches the rollout target ($2, app v$3, failed instances: $4)"
         ;;
     esac
     ;;
