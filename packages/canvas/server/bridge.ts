@@ -893,7 +893,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         buildRev: BUILD_REV,
         backend: process.env.R2_BUCKET ? 'r2' : 'fs',
         bucket: process.env.R2_BUCKET ?? null,
-        // ADR 0003: the turn-completion artifacts (sessions/components/custom/skills) report
+        // ADR 0003: the turn-completion artifacts (sessions/components/skills) report
         // health here, so a silent save failure is visible.
         artifacts: sink.healthSnapshot(),
         // Split client counts: the chat hub's subscribers are the warmth driver (their 15s
