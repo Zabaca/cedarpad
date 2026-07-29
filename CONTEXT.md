@@ -376,4 +376,10 @@ scheduler daemon — the edge cron is the evaluator. _Avoid_: "the pipeline run"
 - **"session"** — the pipeline's first source is the Inbox's **Session** (a Claude
   conversation), already glossed above. A session-derived mart covers only turns that ran
   **in the container** (canvas chats + dev-agent runs); local terminal sessions are not in
-  `sessions.tar`, so "cost per shipped PR" is a container-side figure.
+  `sessions.tar`, so "cost per shipped PR" is a container-side figure. The **Console**
+  (owner-only terminal, canvas [CONTEXT.md](./packages/canvas/CONTEXT.md)) is the one
+  container-side exception: its Claude sessions *do* land in `sessions.tar` — the sync is
+  what makes `--resume` survive a container sleep — but the mart **excludes them by their
+  pinned session id**. Operator poking has cost and no shipped output, so counting it would
+  degrade "cost per shipped PR" precisely as the Console gets more use. Total container
+  spend is a different metric, not this one.

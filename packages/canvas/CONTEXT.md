@@ -111,6 +111,25 @@ canvas like any other shape; a chat's `ChatMeta` and transcript live *beside* th
 server-owned, not inside canvas state. (The tldraw **pages** layer was removed — see
 [ADR 0007](../../docs/adr/0007-workspace-platform-topology.md).)
 
+**Console** _([ADR-0021](../../docs/adr/0021-the-console-is-an-operator-surface.md),
+designed 2026-07-29, not yet built)_: the **owner-only** drop-down terminal (Quake-style,
+`Ctrl+\``) into a Workspace's container — **one per workspace**, a real PTY running a login shell with
+`claude` auto-launched on a fresh spawn only. Deliberately **not a Conversation**: no
+Inbox row, no `ChatMeta`, no assignee, no `waiting_on`. It is an **operator surface**,
+nearer `wrangler tail` than a chat, so [ADR-0012](../../docs/adr/0012-every-turn-ends-with-end-turn.md)'s
+end-turn law never applies to it — a tty has no turns to end. Owner-only is a
+deliberate hold on capability, **not** a containment claim: a *member* already has an
+unsandboxed root shell via chat (`server/agent.ts:693` disallows only
+`Write`/`Edit`/`NotebookEdit` — "Bash remains, so this steers the model rather than
+sandboxing it"), so the narrower gate buys the option to tighten later, not isolation
+today. Guests are denied by construction (`worker/guest-gate.ts` is a default-deny path
+allowlist). Never a wake-lock — a dismissed Console releases its socket after a grace
+period so the container's normal idle sleep proceeds; continuity across a sleep comes
+from a pinned `--session-id` plus the transcript sync `container-start.ts` already does.
+A second attach **takes over** and the previous one is told it was superseded.
+_Avoid_: "shell" (that is the edge SPA frame), "terminal session" (that is laptop Claude
+Code, excluded from `sessions.tar`), "sandbox", and calling a Console a "session".
+
 ## Core vs extension — the modifiability boundary
 
 The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decisions/0002-core-extension-split.md)):
