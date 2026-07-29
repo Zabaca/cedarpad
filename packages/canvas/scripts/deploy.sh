@@ -174,10 +174,43 @@ echo "✅ warehouse image built + pushed (not started — no dispatch path yet, 
 #
 # So: assert the stored image equals the rollout's target. This is the check that would
 # have caught it at deploy time, when buildRev could not.
-echo "→ verifying the container application's STORED image matches its rollout target"
-IMG_CHECK=$(sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" \
-  'curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/'"$CF_ACCOUNT"'/containers/applications"' 2>/dev/null \
-  | APP_NAME="$SANDBOX_APP" python3 -c "
+#
+# BUT (issue #342): version/configuration.image only advance when the rollout COMPLETES,
+# so reading them immediately after `zbc apply` races a still-`progressing` rollout —
+# observed live: scheduling: 3 -> starting: 3 -> healthy: 2, starting: 1 -> healthy: 3,
+# and only then did version/image flip. That false failure used to say "Re-run this
+# deploy" — re-running REPLACES the healthy in-flight rollout (v146 -> "replaced",
+# superseded by v147). So wait for the newest rollout to leave "progressing" first, and
+# never suggest a re-run while one is still in flight.
+SECRETS_FILE="$BUILD_ROOT/packages/infra/environments/production/secrets.yaml"
+source "$SCRIPT_DIR/scripts/lib/rollout-wait.sh"
+
+echo "→ waiting for the container rollout to settle before checking the stored image (issue #342)"
+ROLLOUT=$(wait_for_rollout "$SECRETS_FILE" "$CF_ACCOUNT" "$SANDBOX_APP_ID" "${ROLLOUT_WAIT_TIMEOUT:-180}" 5)
+
+case "$ROLLOUT" in
+  ERROR*)
+    # Never fail the deploy on a diagnostic that could not run — but never let it pass
+    # silently either, or the check quietly stops existing.
+    echo "  ⚠️  could not read rollout status (${ROLLOUT#ERROR }) — check by hand:"
+    echo "     packages/canvas/scripts/verify-container-image.sh"
+    ;;
+  PROGRESSING*)
+    set -- $ROLLOUT
+    ELAPSED=$2
+    echo "  ⚠️  rollout still progressing after ${ELAPSED}s — this is NOT a failure, it just"
+    echo "     has not finished yet. Do NOT re-run this deploy: re-running replaces an"
+    echo "     in-flight rollout with a new one (that is exactly how v146 became 'replaced')."
+    echo "     Give it more time, then check by hand:"
+    echo "     packages/canvas/scripts/verify-container-image.sh"
+    ;;
+  DONE*)
+    set -- $ROLLOUT
+    RSTATUS=$2; RTARGET=$4
+    echo "→ rollout reached '$RSTATUS' — verifying the container application's STORED image matches it"
+    IMG_CHECK=$(sops exec-env "$SECRETS_FILE" \
+      'curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/'"$CF_ACCOUNT"'/containers/applications"' 2>/dev/null \
+      | APP_NAME="$SANDBOX_APP" python3 -c "
 import sys, json, os
 name = os.environ['APP_NAME']
 try:
@@ -193,39 +226,31 @@ inst = a.get('health', {}).get('instances', {})
 print('%s %s %s %s' % ('OK', img, a.get('version'), inst.get('failed', 0)))
 " 2>/dev/null || echo "SKIP containers API call failed")
 
-case "$IMG_CHECK" in
-  SKIP*)
-    # Never fail the deploy on a diagnostic that could not run — but never let it pass
-    # silently either, or the check quietly stops existing.
-    echo "  ⚠️  could not verify the stored image (${IMG_CHECK#SKIP }) — check by hand:"
-    echo "     packages/canvas/scripts/verify-container-image.sh"
-    ;;
-  OK*)
-    set -- $IMG_CHECK
-    STORED=$2; APPVER=$3; NFAILED=$4
-    TARGET=$(sops exec-env "$BUILD_ROOT/packages/infra/environments/production/secrets.yaml" \
-      'curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/'"$CF_ACCOUNT"'/containers/applications/'"$SANDBOX_APP_ID"'/rollouts"' 2>/dev/null \
-      | python3 -c "
-import sys, json
-try:
-    r = (json.load(sys.stdin).get('result') or [])[0]
-    print(r['target_configuration']['image'].split('@')[-1])
-except Exception:
-    print('?')
-" 2>/dev/null || echo "?")
-    if [ "$TARGET" = "?" ]; then
-      echo "  ⚠️  stored image $STORED (app v$APPVER) — could not read the rollout target to compare"
-    elif [ "$STORED" != "$TARGET" ]; then
-      echo "❌ the container application's stored image does NOT match its rollout target."
-      echo "   stored : $STORED  (app v$APPVER)"
-      echo "   target : $TARGET"
-      echo "   The rollout may report \"completed\" anyway. Serving instances can be correct"
-      echo "   while this is wrong — the canvas will work until the first idle-sleep, then"
-      echo "   every cold boot wedges on the stale image. Re-run this deploy."
-      exit 1
-    else
-      echo "✅ stored image matches the rollout target ($STORED, app v$APPVER, failed instances: $NFAILED)"
-    fi
+    case "$IMG_CHECK" in
+      SKIP*)
+        echo "  ⚠️  could not verify the stored image (${IMG_CHECK#SKIP }) — check by hand:"
+        echo "     packages/canvas/scripts/verify-container-image.sh"
+        ;;
+      OK*)
+        set -- $IMG_CHECK
+        STORED=$2; APPVER=$3; NFAILED=$4
+        if [ "$STORED" != "$RTARGET" ]; then
+          echo "❌ rollout reached '$RSTATUS' but the container application's stored image does NOT match its rollout target."
+          echo "   stored : $STORED  (app v$APPVER)"
+          echo "   target : $RTARGET"
+          echo "   This is the 2026-07-28 incident this check exists for: a rollout can report a"
+          echo "   terminal status while configuration.image stays on the previous digest. Serving"
+          echo "   instances can be correct while this is wrong — the canvas works until the first"
+          echo "   idle-sleep, then every cold boot wedges on the stale image. This is NOT the"
+          echo "   progressing-rollout race (the rollout already finished) — investigate by hand,"
+          echo "   do not blindly re-run:"
+          echo "     packages/canvas/scripts/verify-container-image.sh"
+          exit 1
+        else
+          echo "✅ stored image matches the rollout target ($STORED, app v$APPVER, failed instances: $NFAILED)"
+        fi
+        ;;
+    esac
     ;;
 esac
 
