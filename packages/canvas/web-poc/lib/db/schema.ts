@@ -975,6 +975,77 @@ export const pushSubscriptions = sqliteTable(
 export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect;
 export type NewPushSubscriptionRow = typeof pushSubscriptions.$inferInsert;
 
+/* ------------------------------------------------------------------ *
+ * Component Records (ADR-0022) — workspace content as ROWS, not a tar
+ *
+ * Component source and the data files a Component imports. These used to be
+ * a directory tree that was periodically tarred into R2, which meant a failed
+ * restore could become a destructive write; on 2026-07-29 that destroyed every
+ * own-tier Component in the production workspace. Truth is the row now; the
+ * container filesystem is a rendering of it, materialized on demand.
+ *
+ * `canvas_id` NULL is the workspace SHARED tier; a canvas id is that canvas's
+ * OWN tier. The PLATFORM tier is deliberately absent — base Components are
+ * deploy-gated image code, never workspace data (ADR-0022 decision 8).
+ *
+ * Deletion is soft (`deleted_at`), reclaimed only by an explicit purge: one
+ * click must never destroy source. Plain text ids, no FKs (ADR-0007).
+ * ------------------------------------------------------------------ */
+export const recordKind = ["component", "data"] as const;
+
+export const componentRecords = sqliteTable(
+  "component_records",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    /** NULL = the workspace shared tier. */
+    canvasId: text("canvas_id"),
+    /** `KpiCard` for a component, `sales.json` for a data file. */
+    name: text("name").notNull(),
+    kind: text("kind", { enum: recordKind }).notNull(),
+    source: text("source").notNull(),
+    /** Monotonic from 1 — the `version` of the history row this write appended. */
+    rev: integer("rev").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    /** Better Auth user id of the last writer — nothing recorded WHO before this. */
+    updatedBy: text("updated_by"),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.workspaceId, t.canvasId, t.name] }),
+    // SQLite treats NULLs as DISTINCT in a unique index, so the primary key above does not
+    // actually constrain the shared tier (`canvas_id IS NULL`) — two rows for the same
+    // shared Component would both be accepted and a read would pick one arbitrarily. This
+    // partial index is what makes the shared tier's key real.
+    uniqueIndex("component_records_shared_name_idx")
+      .on(t.workspaceId, t.name)
+      .where(sql`canvas_id is null`),
+  ],
+);
+
+/** Every write appends one of these. Explicit history, not D1 Time Travel: a time-travel
+ *  restore rolls back the WHOLE database, so recovering one Component would also roll back
+ *  auth sessions and the canvas registry (ADR-0022 decision 4). */
+export const componentRecordVersions = sqliteTable(
+  "component_record_versions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    canvasId: text("canvas_id"),
+    name: text("name").notNull(),
+    version: integer("version").notNull(),
+    source: text("source").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    createdBy: text("created_by"),
+  },
+  (t) => [index("component_record_versions_key_idx").on(t.workspaceId, t.canvasId, t.name, t.version)],
+);
+
+export type ComponentRecordRow = typeof componentRecords.$inferSelect;
+export type ComponentRecordVersionRow = typeof componentRecordVersions.$inferSelect;
+
 export type Workspace = typeof workspace.$inferSelect;
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;

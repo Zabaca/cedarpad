@@ -5,7 +5,6 @@
 // room for the duration of one write (`inRoom`). One source of truth — the room.
 
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type { CanvasState } from '../src/shapes.ts';
@@ -29,7 +28,8 @@ import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import { type PlatformRpc, platformRpc } from './platform-rpc-client.ts';
+import type { PlatformRpc } from './platform-rpc-client.ts';
+import { isLocalhostEdge, loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
 import { LOCAL_DEV_PLATFORM_SECRET } from '../shared/platform-rpc.ts';
 import { type Notify, openConversation, placeChatCard } from './inbox.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
@@ -98,20 +98,8 @@ const BOOT_AT = Date.now();
 // EDGE since ADR-0007 / #56; this mount was reachable only when something talked to the bridge
 // directly, i.e. local dev — and #263 put the edge Worker into the dev loop, which is where
 // `/v1/*` and `/api/auth/*` are served from now.
-function loadWebPocEnv(): Record<string, string> {
-  const vars: Record<string, string> = {};
-  try {
-    const text = readFileSync(new URL('../web-poc/.dev.vars', import.meta.url), 'utf8');
-    for (const line of text.split('\n')) {
-      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
-      if (m?.[1]) vars[m[1]] = (m[2] ?? '').replace(/^["']|["']$/g, '');
-    }
-  } catch {
-    // No .dev.vars (container/prod): the container supplies these as real env.
-  }
-  return { ...vars, ...process.env } as Record<string, string>;
-}
-
+// (`loadWebPocEnv` and the RPC wiring live in `platform-rpc-env.ts` since the vite dev server
+// needs the same hop for on-demand Component materialization — ADR-0022.)
 const webPocEnv = loadWebPocEnv();
 
 // Inbox (#61): the bridge is a single-user localhost surface, so the inbox owner + platform
@@ -127,11 +115,7 @@ const INBOX_USER = process.env.CANVAS_USER ?? 'default';
 // The local-dev fallback secret applies ONLY to a localhost edge: a fresh worktree has no
 // `web-poc/.dev.vars`, and without a shared trust root the dev loop would 401 silently rather
 // than obviously. A real `.dev.vars` (and the container's real env) always wins.
-const IS_LOCALHOST_EDGE = /^https?:\/\/(localhost|127\.0\.0\.1)([:/]|$)/.test(webPocEnv.PLATFORM_RPC_ORIGIN ?? '');
-const platformRpcClient = platformRpc({
-  origin: webPocEnv.PLATFORM_RPC_ORIGIN,
-  secret: webPocEnv.BETTER_AUTH_SECRET || (IS_LOCALHOST_EDGE ? LOCAL_DEV_PLATFORM_SECRET : undefined),
-});
+const platformRpcClient = platformRpcFromEnv(webPocEnv);
 if (!platformRpcClient) console.warn('[inbox] no platform RPC configured — Inbox rows will not be filed for this bridge');
 // #87: the real attention signal. Web push (shell/src/push.ts → worker/push.ts →
 // push_subscriptions), logged either way. Delivery itself now runs at the EDGE (it reads the
@@ -633,7 +617,9 @@ export function sendToChat(targetChatId: string, message: string, canvasId?: str
 // there is no cached store here to go stale behind a human's edits.
 const canvasEdgeConfig = {
   origin: webPocEnv.PLATFORM_RPC_ORIGIN,
-  secret: webPocEnv.BETTER_AUTH_SECRET || (IS_LOCALHOST_EDGE ? LOCAL_DEV_PLATFORM_SECRET : undefined),
+  secret:
+    webPocEnv.BETTER_AUTH_SECRET ||
+    (isLocalhostEdge(webPocEnv.PLATFORM_RPC_ORIGIN) ? LOCAL_DEV_PLATFORM_SECRET : undefined),
 };
 const productionRoomOpener = canvasRoomOpener(canvasEdgeConfig);
 /** How `read_image` reaches the pixels: they live behind the edge's asset route since #290,
@@ -1008,7 +994,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (componentRoute && req.method === 'GET') {
       const module = decodeURIComponent(componentRoute[1] as string);
       try {
-        return json({ module, source: readComponent(module, canvasIdFrom(req, url)) });
+        return json({ module, source: await readComponent(module, canvasIdFrom(req, url)) });
       } catch (e) {
         return json({ error: (e as Error).message }, 404);
       }
@@ -1025,7 +1011,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const parsed = WriteComponentBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
       try {
-        writeComponent(module, parsed.data.source, canvasId);
+        await writeComponent(module, parsed.data.source, canvasId);
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }

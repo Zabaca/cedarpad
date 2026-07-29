@@ -27,6 +27,8 @@ function recordingRpc(overrides: Partial<PlatformRpc> = {}) {
       return { conversationId: `conv_for_${input.sessionId}` };
     },
     notify: async () => {},
+    componentWrite: async () => ({ rev: 1 }),
+    componentRead: async () => null,
     ...overrides,
   };
   return { rpc, turnEnds };

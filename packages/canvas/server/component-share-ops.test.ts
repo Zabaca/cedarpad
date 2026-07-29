@@ -15,9 +15,9 @@ const cleanup = () => {
 };
 
 describe('promoteToShared — the promote+reload pairing', () => {
-  test('moves own→shared, THEN reloads, and returns the reload count', () => {
+  test('moves own→shared, THEN reloads, and returns the reload count', async () => {
     try {
-      writeComponent(SH, 'export default () => <div>share me</div>;\n');
+      await writeComponent(SH, 'export default () => <div>share me</div>;\n');
 
       const reloaded = promoteToShared('default', SH, () => {
         // The reload must observe the post-move state: the file is already shared.
@@ -41,9 +41,9 @@ describe('promoteToShared — the promote+reload pairing', () => {
 });
 
 describe('adoptFromShared — the adopt+reload pairing', () => {
-  test('copies shared→own, THEN reloads, and returns the reload count', () => {
+  test('copies shared→own, THEN reloads, and returns the reload count', async () => {
     try {
-      writeComponent(SH, 'export default () => <div>base</div>;\n');
+      await writeComponent(SH, 'export default () => <div>base</div>;\n');
       promoteToShared('default', SH, () => 0); // seed a shared module to adopt
 
       const reloaded = adoptFromShared('default', SH, () => {

@@ -5,10 +5,19 @@ import { fileURLToPath } from 'node:url';
 import { createClient } from '@libsql/client';
 import { conversations, makeDb } from '../web-poc/lib/db/index.ts';
 import { findOrCreateConversation } from '../web-poc/lib/db/find-or-create-conversation.ts';
+import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import * as pushStore from '../web-poc/lib/db/queries/push-subscriptions.ts';
 import { PushPayload } from '../shared/push-contract.ts';
-import { ConversationStartOutput, PLATFORM_RPC_PATH, TurnEndOutput, platformRpcToken } from '../shared/platform-rpc.ts';
+import {
+  ComponentReadOutput,
+  ComponentWriteOutput,
+  ConversationStartOutput,
+  PLATFORM_RPC_PATH,
+  TurnEndOutput,
+  platformRpcToken,
+} from '../shared/platform-rpc.ts';
 import { handlePlatformRpc } from './platform-rpc.ts';
+import { d1RecordStore } from './record-store.ts';
 import type { PushSend } from './push-notify.ts';
 
 // The platform RPC (ADR-0018): the container's ONLY way back into the platform data layer.
@@ -260,5 +269,112 @@ describe('platform RPC: notify', () => {
     const payload = PushPayload.parse(JSON.parse(sent[0]!.payload));
     expect(payload.body).toBe('which branch?');
     expect(payload.conversationId).toBe(conv.id);
+  });
+});
+
+// --- Records (ADR-0022) ------------------------------------------------------------
+// Component source crosses the container/edge boundary as a DOMAIN VERB, and the edge —
+// not the container's payload — decides whether the write is allowed and well-formed.
+
+/** A canvas registered to a workspace, so the ownership check has something real to check. */
+const registerCanvas = async (db: Awaited<ReturnType<typeof freshDb>>, workspaceId: string) =>
+  (await canvasRegistry.create(db, { workspaceId, name: 'Board' })).id;
+
+describe('platform RPC: component.write / component.read', () => {
+  test('a written Component is readable back as a Record', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+
+    const written = await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'KpiCard', source: 'export default () => null;' } },
+      { db },
+    );
+    expect(written.status).toBe(200);
+    expect(ComponentWriteOutput.parse(await written.json()).rev).toBe(1);
+
+    const read = await rpc({ op: 'component.read', input: { workspaceId: 'ws_a', canvasId, name: 'KpiCard' } }, { db });
+    expect(read.status).toBe(200);
+    expect(ComponentReadOutput.parse(await read.json()).source).toBe('export default () => null;');
+  });
+
+  test('reading a Component nobody wrote answers "absent", not an error', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const read = await rpc({ op: 'component.read', input: { workspaceId: 'ws_a', canvasId, name: 'Ghost' } }, { db });
+    expect(read.status).toBe(200);
+    expect(ComponentReadOutput.parse(await read.json()).source).toBeNull();
+  });
+
+  test('the edge refuses a canvas that does not belong to the named workspace', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_owner');
+
+    const res = await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_intruder', canvasId, userId: 'u_1', name: 'Card', source: 'x' } },
+      { db },
+    );
+    expect(res.status).toBe(403);
+    // …and nothing was stored under the real owner either.
+    const read = await rpc({ op: 'component.read', input: { workspaceId: 'ws_owner', canvasId, name: 'Card' } }, { db });
+    expect(ComponentReadOutput.parse(await read.json()).source).toBeNull();
+  });
+
+  test('the edge refuses a canvas with no registry row at all', async () => {
+    const db = await freshDb();
+    const res = await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_a', canvasId: 'cv_never_registered', userId: 'u_1', name: 'Card', source: 'x' } },
+      { db },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test('the legacy default canvas is writable only under the legacy default workspace', async () => {
+    const db = await freshDb();
+    const ok = await rpc(
+      { op: 'component.write', input: { workspaceId: 'default', canvasId: 'default', userId: 'u_1', name: 'Card', source: 'x' } },
+      { db },
+    );
+    expect(ok.status).toBe(200);
+
+    const nope = await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_other', canvasId: 'default', userId: 'u_1', name: 'Card', source: 'x' } },
+      { db },
+    );
+    expect(nope.status).toBe(403);
+  });
+
+  test('the edge validates the name itself — a traversing name never reaches the store', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const res = await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: '../../../etc/passwd', source: 'x' } },
+      { db },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test('the edge refuses a blank source rather than storing an empty Component', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const res = await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'Card', source: '   \n' } },
+      { db },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test('a rewrite bumps the rev and history records who wrote each one', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const input = { workspaceId: 'ws_a', canvasId, name: 'Card' };
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_1', source: 'v1' } }, { db });
+    const second = await rpc({ op: 'component.write', input: { ...input, userId: 'u_2', source: 'v2' } }, { db });
+
+    expect(ComponentWriteOutput.parse(await second.json()).rev).toBe(2);
+    const versions = await d1RecordStore(db).listVersions({ workspaceId: 'ws_a', canvasId, name: 'Card' });
+    expect(versions.map((v) => [v.version, v.source, v.createdBy])).toEqual([
+      [2, 'v2', 'u_2'],
+      [1, 'v1', 'u_1'],
+    ]);
   });
 });
