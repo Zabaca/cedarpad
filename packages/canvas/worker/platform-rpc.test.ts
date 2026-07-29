@@ -613,6 +613,21 @@ describe('platform RPC: data.write / data.read', () => {
     expect(res.status).toBe(400);
   });
 
+  test('unparseable JSON is a 400 the agent can act on, not a 5xx that reads as a store failure', async () => {
+    // The distinction matters: a 5xx means "retry", and retrying a payload that will never
+    // parse is a loop. The store's own rule has to surface as a client error.
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const res = await rpc(
+      { op: 'data.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'sales.json', source: '{nope' } },
+      { db },
+    );
+    expect(res.status).toBe(400);
+
+    const read = await rpc({ op: 'data.read', input: { workspaceId: 'ws_a', canvasId, name: 'sales.json' } }, { db });
+    expect(DataReadOutput.parse(await read.json()).source).toBeNull();
+  });
+
   test('the edge refuses a data file over the cap — a large upload cannot reach the store', async () => {
     const db = await freshDb();
     const canvasId = await registerCanvas(db, 'ws_a');
