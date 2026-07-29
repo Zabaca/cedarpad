@@ -23,10 +23,13 @@ anything the agent can, so the admission decision is binary. Access checks are
 owner-OR-member (`getWorkspace`/`listWorkspaces`); the legacy `default` workspace has a
 real owned row, no bypass. Only the owner invites — admission is a capability grant.
 
-**Invitation**: an email-bound, single-use, expiring copyable link (Better Auth
-`invitation` row; no outbound email infra). Accepting is the ONLY account-creation
-door: `AUTH_DISABLE_SIGNUP` stays on forever, and the accept endpoint creates the
-account server-side (per-request auth instance) for exactly the invited address.
+**Invitation**: an email-bound, single-use, expiring row (Better Auth `invitation`),
+**emailed** to the invitee as a magic link since [ADR-0020](../../docs/adr/0020-passwordless-auth-on-cloudflare-email-sending.md)
+(the link is still returned for copy-paste as a fallback). Holding one is what makes
+an address eligible for a sign-in link, so an invitation is still the ONLY
+account-creation door — but the gate is the allowlist in `sendMagicLink`, not
+`AUTH_DISABLE_SIGNUP`, which is now inert. The account is created when Better Auth
+VERIFIES the link; nothing in the accept handler mints a credential.
 _Avoid_: any public signup path, or an invite link that works for a different email.
 
 **Canvas**: one drawing surface (one `CanvasStore`: its own shapes and chats)

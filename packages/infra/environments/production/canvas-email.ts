@@ -13,8 +13,14 @@ import { cloudflareEmailModule } from '../../modules/cloudflare-email'
  *
  * THE APEX, deliberately: cedarpad.com already terminates inbound (Email Routing MX)
  * and will carry the full inbox later, so outbound lives there too — one domain for
- * all mail. `mail.cedarpad.com` was onboarded earlier and is superseded; it can be
- * left enabled and unused, or removed once this is live.
+ * all mail.
+ *
+ * DO NOT DISABLE `mail.cedarpad.com`. It shares this zone but belongs to the **zbc**
+ * repo, not to us: `zbc/packages/infra/environments/production/email.ts` declares it
+ * with sending + routing and a catch-all into the `zbc-inbox` worker, which sends as
+ * `inbox@mail.cedarpad.com`. It is a separate live service, not a superseded pilot.
+ * Turning it off in the dashboard would break that worker AND drift from zbc's IaC,
+ * which would re-provision it on the next apply.
  *
  * ORDERING: `canvas` imports this, so zbc applies it first — the ordering is enforced
  * rather than left to whoever runs the deploy. The dependency is a RUNTIME one (the

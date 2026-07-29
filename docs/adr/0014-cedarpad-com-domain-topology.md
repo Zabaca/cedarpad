@@ -1,6 +1,11 @@
 # cedarpad.com domain topology: marketing at root, app at app., admin inside the app
 
 Status: accepted (design, grill session 2026-07-13). Graduates the product off `poc.cedarpad.com`.
+The **invitation mechanism** below (manual invites, temporary passwords, "no email-sending
+infrastructure yet") was superseded on 2026-07-29 by
+[ADR-0020](./0020-passwordless-auth-on-cloudflare-email-sending.md): invites are now emailed magic
+links, and there are no passwords. Invitation-only signup as a *policy* is unchanged; only the
+mechanism moved. Everything else here still stands.
 
 The `cedarpad.com` zone splits into two workers: a new **marketing site** (`packages/www`, Astro on a Cloudflare Worker, `custom_domain: cedarpad.com`) and the existing **canvas app worker moved to `app.cedarpad.com`** (`BETTER_AUTH_URL`/`WEB_ORIGIN` flipped in one deploy — a hard cutover). `poc.cedarpad.com` stays routed to the app worker, which 301s that host to `app.`; existing browser sessions are invalidated (cookies are per-host) and that one-time logout is accepted. Auth is email/password only, so there are no OAuth callback URLs to re-register — only our own MCP pairings and dev-agent origin config need updating.
 
