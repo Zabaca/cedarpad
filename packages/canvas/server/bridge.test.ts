@@ -633,6 +633,7 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
       notify: async () => {},
       componentWrite: async () => ({ rev: 1 }),
       componentRead: async () => null,
+      componentHistory: async () => [],
     };
     return { rpc, started };
   };
@@ -675,6 +676,7 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
           notify: async () => {},
           componentWrite: async () => ({ rev: 1 }),
           componentRead: async () => null,
+          componentHistory: async () => [],
         },
       });
     } finally {

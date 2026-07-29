@@ -20,6 +20,7 @@ afterEach(() => {
 const fakeRecords = (rows: Record<string, string>): ComponentRecords => ({
   write: async () => {},
   read: async (canvasId, name) => rows[`${canvasId}/${name}`] ?? null,
+  history: async () => [],
 });
 
 /** Drive the connect-style middleware and resolve once it has called `next()`. */
@@ -68,6 +69,7 @@ describe('the dev-server middleware materializes on a miss', () => {
         asked.push(name);
         return 'from store';
       },
+      history: async () => [],
     });
     mkdirSync(`${dirPath}components/`, { recursive: true });
     writeFileSync(filePath('Card'), 'from disk');
@@ -83,6 +85,7 @@ describe('the dev-server middleware materializes on a miss', () => {
       read: async () => {
         throw new Error('store unreachable');
       },
+      history: async () => [],
     });
     await request(mw, `/src/canvas-${CANVAS}/components/Card.tsx`);
     expect(existsSync(filePath('Card'))).toBe(false);

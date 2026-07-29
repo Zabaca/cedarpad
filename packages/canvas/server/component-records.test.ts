@@ -2,7 +2,16 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { type ComponentRecords, editComponent, materializeComponent, readComponent, writeComponent } from './components.ts';
+import type { ComponentVersion } from '../shared/platform-rpc.ts';
+import {
+  type ComponentRecords,
+  componentHistory,
+  editComponent,
+  materializeComponent,
+  readComponent,
+  recordAuthor,
+  writeComponent,
+} from './components.ts';
 
 // Records (ADR-0022): a Component's source is a ROW, and the file vite compiles from is a
 // rendering of it. These tests drive the container half — the ordering rule (store first,
@@ -22,17 +31,28 @@ afterEach(() => {
 /** A store that remembers what it was told, and can be made to fail. */
 function fakeRecords(opts: { failWrite?: boolean; failRead?: boolean } = {}) {
   const rows = new Map<string, string>();
+  const versions = new Map<string, ComponentVersion[]>();
   const calls: string[] = [];
   const records: ComponentRecords = {
     write: async (canvasId, name, source) => {
       calls.push(`write ${canvasId}/${name}`);
       if (opts.failWrite) throw new Error('the workspace store refused this write');
       rows.set(`${canvasId}/${name}`, source);
+      // As the real store does: every write appends a version, attributed and stamped.
+      const prior = versions.get(`${canvasId}/${name}`) ?? [];
+      versions.set(`${canvasId}/${name}`, [
+        { version: prior.length + 1, createdAt: new Date(), createdBy: 'u_author' },
+        ...prior,
+      ]);
     },
     read: async (canvasId, name) => {
       calls.push(`read ${canvasId}/${name}`);
       if (opts.failRead) throw new Error('the workspace store is unreachable');
       return rows.get(`${canvasId}/${name}`) ?? null;
+    },
+    history: async (canvasId, name) => {
+      calls.push(`history ${canvasId}/${name}`);
+      return versions.get(`${canvasId}/${name}`) ?? [];
     },
   };
   return { records, rows, calls };
@@ -126,6 +146,61 @@ describe('edit_component applies against the stored source', () => {
 
     await editComponent('Card', 'v1', 'v2', CANVAS, records);
     expect(rows.get(`${CANVAS}/Card`)).toBe('const label = "v2";');
+  });
+});
+
+describe('the author a container stamps on a Record', () => {
+  // Attribution is only worth having if it is TRUE. `CANVAS_USER` is this deployment's single
+  // Better Auth user.id (worker/index.ts: "a single static id can't represent whichever of N
+  // users is calling"), and when it is unset the bridge's other call sites fall back to the
+  // literal string 'default' — which, as that same doc comment says, never matches a real
+  // authenticated user. Writing it into `created_by` would be a fake author: a history that
+  // LOOKS attributed and is not, which is worse than one that admits it does not know.
+  test('a configured CANVAS_USER is the author', () => {
+    expect(recordAuthor({ CANVAS_USER: 'user_james' })).toBe('user_james');
+  });
+
+  test('no CANVAS_USER ⇒ no author, rather than a string that is not one', () => {
+    expect(recordAuthor({})).toBeNull();
+    expect(recordAuthor({ CANVAS_USER: '' })).toBeNull();
+  });
+});
+
+describe('a Component can be asked what has happened to it', () => {
+  // User story 3: "who last changed a Component and when". Nothing in this product could
+  // answer that before Records — the 2026-07-29 loss had to be reconstructed from chat
+  // transcripts. The history comes from the STORE, never from the filesystem, because the
+  // filesystem holds exactly one revision and no author at all.
+  test('the history is the store’s, newest first, with who and when', async () => {
+    const { records } = fakeRecords();
+    await writeComponent('Card', 'v1', CANVAS, records);
+    await writeComponent('Card', 'v2', CANVAS, records);
+
+    const history = await componentHistory('Card', CANVAS, records);
+    expect(history.map((v) => v.version)).toEqual([2, 1]);
+    expect(history[0]?.createdBy).toBe('u_author');
+    expect(history[0]?.createdAt).toBeInstanceOf(Date);
+  });
+
+  test('the history survives the container losing its filesystem', async () => {
+    // The recycle, again: the disk holds exactly one revision and no author, so a history
+    // that came from it would be destroyed by the same event Records exist to survive.
+    const { records } = fakeRecords();
+    await writeComponent('Card', 'v1', CANVAS, records);
+    await writeComponent('Card', 'v2', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+
+    expect((await componentHistory('Card', CANVAS, records)).map((v) => v.version)).toEqual([2, 1]);
+  });
+
+  test('a Component the store never held has an empty history, not an error', async () => {
+    const { records } = fakeRecords();
+    expect(await componentHistory('Ghost', CANVAS, records)).toEqual([]);
+  });
+
+  test('with no edge in front of the container there is no history to give — the disk keeps none', async () => {
+    await writeComponent('Card', 'v1', CANVAS, null);
+    expect(await componentHistory('Card', CANVAS, null)).toEqual([]);
   });
 });
 

@@ -26,7 +26,7 @@ import {
   setComponentDataOp,
   updateShapesOp,
 } from '../src/canvas-ops.ts';
-import { editComponent, isShared, listComponents, readComponent, writeComponent, writeDataFile } from './components.ts';
+import { componentHistory, editComponent, isShared, listComponents, readComponent, writeComponent, writeDataFile } from './components.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { type EndTurnDeps, type EndTurnInput, endTurn } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
@@ -34,6 +34,7 @@ import { type McpRegistryEntry, MCP_REGISTRY } from './mcp-registry.ts';
 import { reposPromptAppend } from './repo-checkout.ts';
 import type { TurnCanvasStore } from './turn-canvas-store.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
+import type { ComponentVersion } from '../shared/platform-rpc.ts';
 
 const MODEL = process.env.CANVAS_MODEL ?? 'sonnet';
 
@@ -127,6 +128,21 @@ export function formatMartListing(marts: MartSidecar[]): string {
       return `${m.name} — ${m.description}\n  as of ${m.generatedAt} · ${m.rowCount} rows\n  columns:\n${cols}`;
     })
     .join('\n\n');
+}
+
+/** The `component_history` tool body, extracted so it unit-tests without the SDK (the
+ * `formatMartListing` precedent). One line per version — newest first, with WHO and WHEN,
+ * which is exactly the question ADR-0022 decision 4 exists to make answerable.
+ *
+ * An unattributed version renders as `unknown` rather than being hidden or guessed: a write
+ * made before attribution existed, or by a process with no user, is still a real event, and
+ * quietly attributing it to someone would be worse than admitting the gap. Empty is not an
+ * error either — it is the answer for a Component that lives only in the shared or platform
+ * tier, whose history is not (yet) a Record. */
+export function formatComponentHistory(module: string, versions: ComponentVersion[]): string {
+  if (versions.length === 0) return `${module} has no recorded history in this canvas's own library.`;
+  const lines = versions.map((v) => `  v${v.version} — ${v.createdAt.toISOString()} by ${v.createdBy ?? 'unknown'}`);
+  return `${module} — ${versions.length} version(s), newest first:\n${lines.join('\n')}`;
 }
 
 /** The `send_message` tool body, extracted so the guard rails unit-test without the SDK:
@@ -311,6 +327,18 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         async ({ module }) => {
           try {
             return result({ text: await readComponent(module, canvasId) });
+          } catch (e) {
+            return result({ text: `Error: ${(e as Error).message}`, isError: true });
+          }
+        },
+      ),
+      tool(
+        'component_history',
+        "A component module's version history: every stored revision, newest first, with who wrote it and when. Use it to answer \"who changed this and when\" and to find the revision to go back to after a bad edit. Own-library modules only — a shared or platform module has no history here.",
+        { module: z.string().describe('Component name, e.g. "KpiCard" (no extension).') },
+        async ({ module }) => {
+          try {
+            return result({ text: formatComponentHistory(module, await componentHistory(module, canvasId)) });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
           }
@@ -523,7 +551,7 @@ export type { ChatEvent } from '../shared/chat-wire.ts';
 // run commands on this machine, so keep the bridge bound to localhost / a trusted LAN.
 // Exported for the prompt test (#357): what the prompt promises the agent must match the
 // tools it actually has, so the claim is asserted rather than reviewed by eye.
-export const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and have canvas tools (mcp__canvas__*): read_canvas, read_connected (call with no args to get YOUR own connected subgraph — the shapes arrow-linked to your chat card, each with full state — since shapes you create are auto-linked back to you), read_image (see a screenshot/photo the human pasted onto the canvas; read_canvas/read_connected list image shapes but redact the pixels), view_canvas, create_shapes, update_shapes, delete_shapes, clear_canvas, align_shapes (primitives: rectangle, ellipse, text, note, arrow in colors ${SHAPE_COLORS.join(', ')}; page coordinates, visible area roughly x 0..1000 y 0..700). Plus a reusable COMPONENT library: list_components / read_component / write_component / edit_component author real React files in this canvas's own component dir (with the workspace shared library and the read-only platform library as fallbacks), write_data authors sibling data files (.json/.csv/.txt/.md) a component can import, and place_component / set_component_data render instances on the canvas with a \`data\` props object. \`list_marts\` shows this workspace's materialized warehouse MARTS — their columns, meaning, and freshness. CALL IT FIRST, like list_components, whenever the human asks for an operational KPI, a live table, or anything that should reflect current reality rather than a point-in-time snapshot; then pass \`data_source: {kind:'mart', name:'<a name list_marts returned>'}\` instead of a static \`data\` snapshot — the component then renders the mart's current rows with NO further tool call needed to stay fresh, and the canvas shows the mart's "as of"/row-count itself so nobody mistakes it for live-live. A component names a mart, never a URL or endpoint — there is no fetch/poll capability, so don't reach for one. NEVER invent a mart name: an unknown one renders an EMPTY component that looks like "no data yet", so if list_marts returns nothing (or nothing that fits), use static \`data\` and say so. A mart's description may narrow what it actually covers — read it, and put that caveat on the card's label rather than titling it more broadly than the data supports. Static \`data\` (or write_data files) is still the right choice for anything point-in-time, illustrative, or not backed by a mart. These registered tools are the ONLY way to author component and data files — the generic Write/Edit tools are disabled in chat. Components compose (import each other) and take data — prefer them over hand-placed primitives for charts/tables/cards/dashboards/diagrams. Components you author also receive a \`setData(patch)\` prop that persists their own state (merges into the instance data, syncs to everyone, survives reload); use real controls (button/input/select/[role=button]) so clicks reach the component instead of dragging the shape. They also receive \`currentUser\` (\`{id, name?, email?, color, kind: 'user'|'guest'}\`, null-ish until resolved) — the viewer's identity — and \`setDisplayName(name)\` (persists a GUEST's chosen name browser-wide; no-op for logged-in users). For anything attributing actions to a person (comments, votes, Q&A), prefer \`currentUser.name\`/\`currentUser.id\` and only fall back to asking for a name (via setDisplayName) when it is unset — never ask per-component. ALWAYS \`list_components\` FIRST before authoring anything — the library already has many components and creating a duplicate (e.g. a new "Markdown" when "MarkdownCard" exists) is a mistake. If one already fits the request, \`place_component\` it (or \`edit_component\` to extend it); \`read_component\` a close match for its conventions; only \`write_component\` a NEW module when nothing suitable exists. When unsure whether something exists, list and read before writing. Use all of this to visualize, diagram, or build whatever the human asks — e.g. read files and draw the architecture, or build a data-driven dashboard, on the canvas.
+export const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and have canvas tools (mcp__canvas__*): read_canvas, read_connected (call with no args to get YOUR own connected subgraph — the shapes arrow-linked to your chat card, each with full state — since shapes you create are auto-linked back to you), read_image (see a screenshot/photo the human pasted onto the canvas; read_canvas/read_connected list image shapes but redact the pixels), view_canvas, create_shapes, update_shapes, delete_shapes, clear_canvas, align_shapes (primitives: rectangle, ellipse, text, note, arrow in colors ${SHAPE_COLORS.join(', ')}; page coordinates, visible area roughly x 0..1000 y 0..700). Plus a reusable COMPONENT library: list_components / read_component / write_component / edit_component author real React files in this canvas's own component dir (with the workspace shared library and the read-only platform library as fallbacks), write_data authors sibling data files (.json/.csv/.txt/.md) a component can import, component_history says who changed a module and when (use it when the human asks what happened to a component, or before overwriting one you did not write), and place_component / set_component_data render instances on the canvas with a \`data\` props object. \`list_marts\` shows this workspace's materialized warehouse MARTS — their columns, meaning, and freshness. CALL IT FIRST, like list_components, whenever the human asks for an operational KPI, a live table, or anything that should reflect current reality rather than a point-in-time snapshot; then pass \`data_source: {kind:'mart', name:'<a name list_marts returned>'}\` instead of a static \`data\` snapshot — the component then renders the mart's current rows with NO further tool call needed to stay fresh, and the canvas shows the mart's "as of"/row-count itself so nobody mistakes it for live-live. A component names a mart, never a URL or endpoint — there is no fetch/poll capability, so don't reach for one. NEVER invent a mart name: an unknown one renders an EMPTY component that looks like "no data yet", so if list_marts returns nothing (or nothing that fits), use static \`data\` and say so. A mart's description may narrow what it actually covers — read it, and put that caveat on the card's label rather than titling it more broadly than the data supports. Static \`data\` (or write_data files) is still the right choice for anything point-in-time, illustrative, or not backed by a mart. These registered tools are the ONLY way to author component and data files — the generic Write/Edit tools are disabled in chat. Components compose (import each other) and take data — prefer them over hand-placed primitives for charts/tables/cards/dashboards/diagrams. Components you author also receive a \`setData(patch)\` prop that persists their own state (merges into the instance data, syncs to everyone, survives reload); use real controls (button/input/select/[role=button]) so clicks reach the component instead of dragging the shape. They also receive \`currentUser\` (\`{id, name?, email?, color, kind: 'user'|'guest'}\`, null-ish until resolved) — the viewer's identity — and \`setDisplayName(name)\` (persists a GUEST's chosen name browser-wide; no-op for logged-in users). For anything attributing actions to a person (comments, votes, Q&A), prefer \`currentUser.name\`/\`currentUser.id\` and only fall back to asking for a name (via setDisplayName) when it is unset — never ask per-component. ALWAYS \`list_components\` FIRST before authoring anything — the library already has many components and creating a duplicate (e.g. a new "Markdown" when "MarkdownCard" exists) is a mistake. If one already fits the request, \`place_component\` it (or \`edit_component\` to extend it); \`read_component\` a close match for its conventions; only \`write_component\` a NEW module when nothing suitable exists. When unsure whether something exists, list and read before writing. Use all of this to visualize, diagram, or build whatever the human asks — e.g. read files and draw the architecture, or build a data-driven dashboard, on the canvas.
 
 BOUNDARY (important): you may author ONLY through the component/data tools (which write per-canvas \`src/canvas-<id>/components/\` dirs and the workspace \`shared/components/\` library — both persist across restarts and hot-reload). There is no backend-handler capability: a component cannot get a server-side route of its own, so do not plan around one. Do NOT modify the CORE: the app shell, \`src/canvas-components/\` (the read-only platform library), anything else in \`src/\`, or anything in \`server/\` (especially \`bridge.ts\`). The core is image-only — edits there will NOT persist and can break the live canvas for everyone.
 

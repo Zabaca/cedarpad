@@ -3,6 +3,7 @@ import { conversations } from '../web-poc/lib/db/index.ts';
 import { findOrCreateConversation } from '../web-poc/lib/db/find-or-create-conversation.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import {
+  type ComponentHistoryOutput,
   type ComponentReadOutput,
   type ComponentWriteOutput,
   type ConversationStartOutput,
@@ -125,6 +126,18 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
     }
     const source = await componentStore(d1RecordStore(deps.db)).read({ workspaceId, canvasId, name });
     return Response.json({ source } satisfies ComponentReadOutput);
+  }
+
+  // "Who changed this Component, and when" — the question nothing in this product could
+  // answer before Records. Gated by the same ownership check as a read, because a history is
+  // a read: the names in it are members of the workspace that owns the canvas.
+  if (parsed.data.op === 'component.history') {
+    const { workspaceId, canvasId, name } = parsed.data.input;
+    if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
+      return Response.json({ error: 'forbidden' }, { status: 403 });
+    }
+    const versions = await componentStore(d1RecordStore(deps.db)).history({ workspaceId, canvasId, name });
+    return Response.json({ versions } satisfies ComponentHistoryOutput);
   }
 
   const { conversationId, question } = parsed.data.input;

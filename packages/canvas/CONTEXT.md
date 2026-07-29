@@ -153,10 +153,10 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
 A skill is **content-that-asks** — text the model reads. It is never a **capability** (a grant: tools, tokens, scopes, routing). Capabilities stay code-gated; no workspace data may confer one.
 
 **Record vs File — how workspace content persists** _(ADR-0022; being built by #354. LIVE as
-**Records**: the **own tier** of Components — write, read and on-demand materialization (#355).
-LIVE as **Files**: per-session **Transcripts** (#356) — that is their permanent home, not a
-staging post. Still awaiting migration to Records: the shared tier, data files and skills.)_ The
-dividing question is **who owns the schema**:
+**Records**: the **own tier** of Components — write, read, version history and on-demand
+materialization (#355, #358). LIVE as **Files**: per-session **Transcripts** (#356) — that is
+their permanent home, not a staging post. Still awaiting migration to Records: the shared tier,
+data files and skills.)_ The dividing question is **who owns the schema**:
 
 - A **Record** is content whose shape *we* define, authored only through our own tools —
   **Components**, their **data files**, and **Workspace skills** (already a files-only
@@ -182,11 +182,32 @@ platform code to workspace data and break the **gated-layer rule**. So resolutio
 **build-time manifest** rather than the container's disk.
 
 A Record write crosses the container/edge boundary as a **domain verb** on the platform RPC
-(`component.write` / `component.read`), never a generic row op — the RPC is a behavioural
+(`component.write` / `component.read` / `component.history`), never a generic row op — the RPC is a behavioural
 contract, not a SQL tunnel — and the **edge** validates the name and ownership-checks the
 canvas rather than trusting the container's payload. Ordering is **store first, then disk**:
 a write that cannot be persisted fails the tool call, and the file it then writes is only an
 HMR trigger.
+
+**Version** and **attribution** are properties of the store, not of a caller. Every `put`
+appends a version row — an invariant, because a caller that can forget it is how "no history"
+comes back. Three semantics worth knowing: an identical rewrite **still** appends (a write is
+an *event*, not a diff — `rev` counts writes, and "nothing changed" is for a reader of the
+history to conclude, not for the store to decide by forgetting); a soft delete **keeps** the
+history (that is what makes soft delete safe); and an undelete **continues** the sequence
+rather than restarting it. History is read back with `component.history` — newest first, and
+deliberately **without** the source, so "what happened to this" does not cost every revision
+of the text. The agent's door to it is the `component_history` tool. Restoring a version is
+#362 and is a *forward write*, never a rewind.
+
+_Attribution today is the container's identity, not the turn's human._ A Record write is
+stamped with `CANVAS_USER` — this deployment's single Better Auth `user.id` — so it answers
+"which workspace container" and cannot yet distinguish two members of a workspace (the
+`Env.CANVAS_USER` doc comment says the same thing: "a single static id can't represent
+whichever of N users is calling"). Unset ⇒ **null**, never the `'default'` placeholder the
+Inbox call sites fall back to: a version row is the permanent answer to "who changed this",
+and a name no user query will ever match is a history that *looks* attributed and is not.
+Per-turn attribution needs the edge-attested initiator (`x-inbox-assign`) threaded to the
+authoring tools; it is not built.
 
 _Avoid_: "we tar the workspace" (the tar is gone for the own tier), or treating the filesystem
 as the durable copy — that inversion is what destroyed every own-tier component on 2026-07-29.

@@ -7,6 +7,7 @@
 // on the side that owns the rows, never trusted from the container's payload.
 
 import { COMPONENT_NAME_RE } from '../shared/bridge-wire.ts';
+import type { ComponentVersion } from '../shared/platform-rpc.ts';
 import type { RecordKey, RecordStore } from './record-store.ts';
 
 /** A Component's coordinates. `canvasId: null` is the workspace shared tier. */
@@ -18,6 +19,11 @@ export interface ComponentStore {
   write(input: ComponentKey & { source: string; userId: string | null }): Promise<{ rev: number }>;
   /** A Component's current source, or null when that tier holds none. */
   read(key: ComponentKey): Promise<string | null>;
+  /** Every version of a Component, newest first; empty when it has none. Answers for a
+   *  soft-deleted Component too — history is what a deletion must not be able to destroy.
+   *  Deliberately WITHOUT the source: "what happened to this" must not cost every revision
+   *  of the text, and a restore (#362) names a version rather than carrying one. */
+  history(key: ComponentKey): Promise<ComponentVersion[]>;
 }
 
 /** The same message the filesystem module has always thrown, so the agent-facing tool
@@ -39,6 +45,10 @@ export function componentStore(records: RecordStore): ComponentStore {
     read: async (key) => {
       assertComponentName(key.name);
       return (await records.get(key))?.source ?? null;
+    },
+    history: async (key) => {
+      assertComponentName(key.name);
+      return (await records.listVersions(key)).map(({ version, createdAt, createdBy }) => ({ version, createdAt, createdBy }));
     },
   };
 }

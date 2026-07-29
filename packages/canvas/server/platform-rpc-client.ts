@@ -1,6 +1,9 @@
 import {
+  type ComponentHistoryInput,
+  ComponentHistoryOutput,
   type ComponentReadInput,
   ComponentReadOutput,
+  type ComponentVersion,
   type ComponentWriteInput,
   ComponentWriteOutput,
   type ConversationPrOpenedInput,
@@ -36,6 +39,9 @@ export interface PlatformRpc {
   /** A Component's stored source, or null when the tier holds no Record. THROWS on a real
    *  store failure, so "absent" and "could not ask" stay distinguishable. */
   componentRead(input: ComponentReadInput): Promise<string | null>;
+  /** A Component's version history, newest first — who changed it and when. THROWS like the
+   *  other Record verbs: "no history" and "could not ask" must not look the same. */
+  componentHistory(input: ComponentHistoryInput): Promise<ComponentVersion[]>;
 }
 
 export interface PlatformRpcConfig {
@@ -110,5 +116,7 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
     notify: (input) => call({ op: 'notify', input }).then(() => undefined),
     componentWrite: async (input) => ComponentWriteOutput.parse(await callStrict({ op: 'component.write', input })),
     componentRead: async (input) => ComponentReadOutput.parse(await callStrict({ op: 'component.read', input })).source,
+    componentHistory: async (input) =>
+      ComponentHistoryOutput.parse(await callStrict({ op: 'component.history', input })).versions,
   };
 }

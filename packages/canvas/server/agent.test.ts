@@ -179,3 +179,41 @@ describe('the system prompt does not offer a capability with no tool (#357)', ()
     for (const t of tools) expect(t.description).not.toMatch(/custom handler|server\/custom/i);
   });
 });
+
+// Records (ADR-0022, #358): a Component's history is only worth keeping if somebody can ask
+// for it. `component_history` is that door — the answer to "who last changed this and when",
+// which before Records had to be reconstructed from chat transcripts.
+import { formatComponentHistory } from './agent.ts';
+
+describe('formatComponentHistory: what the agent sees when it asks what happened to a Component', () => {
+  const at = (iso: string) => new Date(iso);
+
+  test('every version renders newest first, with its author and when', () => {
+    const text = formatComponentHistory('KpiCard', [
+      { version: 2, createdAt: at('2026-07-29T18:00:00.000Z'), createdBy: 'user_james' },
+      { version: 1, createdAt: at('2026-07-28T09:30:00.000Z'), createdBy: 'user_sam' },
+    ]);
+    expect(text).toContain('KpiCard');
+    expect(text.indexOf('v2')).toBeLessThan(text.indexOf('v1'));
+    expect(text).toContain('user_james');
+    expect(text).toContain('user_sam');
+    expect(text).toContain('2026-07-29T18:00:00.000Z');
+  });
+
+  test('an unattributed version says so rather than inventing an author', () => {
+    expect(
+      formatComponentHistory('KpiCard', [{ version: 1, createdAt: at('2026-07-29T18:00:00.000Z'), createdBy: null }]),
+    ).toContain('unknown');
+  });
+
+  test('no history is a plain answer, not an error the agent has to interpret', () => {
+    expect(formatComponentHistory('KpiCard', [])).toMatch(/no recorded history/i);
+  });
+});
+
+describe('component_history is a registered canvas tool', () => {
+  test('the agent can ask a Component what happened to it', () => {
+    const tools = createCanvasTools(createStore([])) as Array<{ name: string }>;
+    expect(tools.map((t) => t.name)).toContain('component_history');
+  });
+});
