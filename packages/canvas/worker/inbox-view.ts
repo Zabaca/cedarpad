@@ -1,5 +1,5 @@
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
-import { transcriptKey } from '../server/transcript-r2.ts';
+import { transcriptKey } from '../server/transcript-store.ts';
 
 // The PURE half of the edge Inbox (PRD #50 slice #62): list-ordering + the R2 object-URL
 // derivation. Kept free of any `@cloudflare/sandbox` / edge-runtime import so it unit-tests

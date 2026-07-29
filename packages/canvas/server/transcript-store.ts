@@ -1,14 +1,17 @@
-// Transcript backup/restore to R2 (PRD #50 / ADR-0007, slice #60). The SDK writes the
+// Session Transcripts: one opaque R2 object per session (PRD #50 / ADR-0007 slice #60;
+// per-session granularity made authoritative in #356 / ADR-0022). The SDK writes the
 // authoritative conversation to ~/.claude/projects/<projectDir>/<sessionId>.jsonl for
-// `resume`. This module mirrors that JSONL to R2 so a session's history survives runner
-// sleep. Three flows, same R2-as-runtime-delta pattern as ADR-0001:
-//   backup(sessionId)  — container FS → R2 (idempotent overwrite; handles a growing file)
-//   restore(sessionId) — R2 → container FS, reconstructing the exact path resume needs
-//   read(sessionId)    — R2 → rendered history (the Inbox UI, while the runner sleeps)
+// `resume`; this module mirrors that JSONL to R2 so a session's history survives runner sleep.
 //
-// The key derivation is a pure fn of sessionId and the read seam is a one-method `BlobGetter`
-// so both sides agree: the container passes its Bun-S3 `BlobBackend`; the edge worker (#62)
-// implements `BlobGetter` against its own R2 access and reads with just the sessionId.
+// `TranscriptStore` (bottom of the file) is the container's interface — put one session,
+// materialize one session, list them all. The free functions above it are the pieces it is
+// built from, plus the EDGE's read path: the worker (#62) cannot construct a store (no runner
+// FS), so it calls `transcriptKey` / `read` with just a sessionId against its own R2 access.
+//
+// A Transcript is a FILE, not a Record (CONTEXT.md → Record vs File): the Claude Agent SDK owns
+// the format and reads it back on `--resume`, so the bytes are opaque here — never parsed,
+// normalised or re-encoded. Round-trip fidelity IS the contract; a subtly wrong one breaks
+// conversation continuity silently.
 
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -107,4 +110,70 @@ export async function readRaw(getter: BlobGetter, sessionId: string): Promise<st
 export async function read(getter: BlobGetter, sessionId: string): Promise<ChatEvent[]> {
   const text = await readRaw(getter, sessionId);
   return text === null ? [] : projectJsonl(text);
+}
+
+/** The blob seam `TranscriptStore` needs: get + put (one session) and list (every session, for
+ * the warehouse). `BlobBackend` satisfies it structurally, so the container passes its Bun-S3
+ * backend as-is and tests pass `memBackend()` — the same precedent blob-store.ts set. */
+export interface TranscriptBlobs extends BlobGetter, BlobPutter {
+  list(prefix: string): Promise<string[]>;
+}
+
+/** Prefix every session's transcript object lives under — the warehouse's discovery seam. */
+export const TRANSCRIPT_PREFIX = 'sessions/';
+
+/**
+ * The container's custodian of session Transcripts (#356, ADR-0022 decision 7). A Transcript is
+ * a **File**, not a Record: the Claude Agent SDK owns its format and reads it back on `--resume`,
+ * so we store it as one opaque object per session and never parse, normalise or re-encode it.
+ *
+ * The interface is three verbs, because granularity is the whole point:
+ *   put(sessionId)              — after a turn, write ONLY the session that turn touched.
+ *   materialize(sessionId, cwd) — before a resume, fetch ONLY that session.
+ *   get / listSessions          — read seams (the Inbox already reads via the free fns above).
+ *
+ * What it replaces: a `sessions.tar` of the whole `~/.claude/projects` tree, re-uploaded every
+ * turn (49,111,040 bytes in production against ~650 KB of appends) and re-downloaded at every
+ * cold boot. Nothing here touches boot.
+ */
+export class TranscriptStore {
+  constructor(
+    private readonly blobs: TranscriptBlobs,
+    /** `~/.claude/projects` on the runner — where the SDK writes and resume reads. */
+    private readonly projectsDir: string,
+  ) {}
+
+  /** Write the one session this turn touched. False (and NO write) when the session has no
+   * JSONL on disk: an absent local file must never become an empty object over a good one —
+   * that inversion is the 2026-07-29 loss, and this path must not reintroduce it. */
+  put(sessionId: string): Promise<boolean> {
+    return backup(this.blobs, this.projectsDir, sessionId);
+  }
+
+  /** A session's raw stored bytes, or null when absent. */
+  get(sessionId: string): Promise<Uint8Array | null> {
+    return this.blobs.get(transcriptKey(sessionId));
+  }
+
+  /** Ensure the ONE session a resume is about to read is on the runner FS, at the exact
+   * cwd-scoped path `query({ resume, cwd })` expects. Returns the path, or null when the session
+   * is nowhere (a fresh session — the SDK will start one). Two rules:
+   *   - Fetches nothing else. This is what makes resume cost proportional to one session rather
+   *     than to workspace history, and what lets boot download nothing at all.
+   *   - A local copy WINS. On a warm runner the SDK has been appending since the last put, so
+   *     disk is authoritative; overwriting it would rewind the conversation, and writing a
+   *     second copy would double it (the transcript loader concatenates every glob match).
+   * A `projectsDir` that does not exist yet (a cold container) is "not present", not an error. */
+  async materialize(sessionId: string, cwd: string): Promise<string | null> {
+    const local = await findSessionJsonl(this.projectsDir, sessionId).catch(() => []);
+    if (local.length > 0) return local[0]!;
+    return restore(this.blobs, this.projectsDir, cwd, sessionId);
+  }
+
+  /** Every session with a stored transcript. The warehouse's source since the mart stopped
+   * reading `sessions.tar` — derived from the key layout, so there is no second index to drift. */
+  async listSessions(): Promise<string[]> {
+    const keys = await this.blobs.list(TRANSCRIPT_PREFIX);
+    return keys.filter((k) => k.endsWith('/transcript.jsonl')).map((k) => k.slice(TRANSCRIPT_PREFIX.length, -'/transcript.jsonl'.length));
+  }
 }

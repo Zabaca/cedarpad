@@ -101,6 +101,11 @@ export interface TurnDeps {
   }) => Promise<void>;
   /** Mirror this session's transcript to R2 (resume-restore substrate). Best-effort. */
   backupTranscript: (sessionId: string) => Promise<unknown>;
+  /** #356: fetch THIS session's transcript onto the runner before resuming it. Boot downloads
+   *  no transcripts any more, so a cold container has nothing on disk until this runs. NOT
+   *  best-effort: a failure must abort the turn rather than resume with no history. Optional —
+   *  absent in contexts with no store (tests). */
+  materializeTranscript?: (sessionId: string) => Promise<unknown>;
   /** Cross-chat messaging seam (the bridge holds ChatMeta + the dispatcher): the agent's
    *  `send_message` tool posts into another chat card and kicks its turn. Optional — absent
    *  in contexts without a dispatcher (tests) ⇒ the tool is omitted. */
@@ -139,6 +144,11 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
     // that cannot reach the room has nowhere else to draw (#297 deleted the in-process
     // store), and reporting success over an unchanged canvas is the bug this closes.
     const store = await openTurnCanvasStore(() => deps.openCanvasRoom(activeCanvasId));
+    // #356: the session this turn resumes is fetched HERE, one object, and only when there is a
+    // session to resume. Before prepareDevAgent, which ADOPTS (moves) the JSONL into the
+    // worktree's project dir and can only move a file that is already on disk. A throw lands in
+    // the catch below — resuming with no history would look like an ordinary reply.
+    if (sessionId) await deps.materializeTranscript?.(sessionId);
     const inbox = { ...deps.inbox, workspaceId: flavor.workspaceId, kind: flavor.kind, ownerRef: chatId };
     // A dev-agent send runs in its prepared worktree with open_pr armed; a prepare failure
     // (clone/auth) surfaces through the catch below as the turn's error — better a visible

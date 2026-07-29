@@ -56,6 +56,9 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
     backupTranscript: async () => {
       calls.push('backupTranscript');
     },
+    materializeTranscript: async () => {
+      calls.push('materializeTranscript');
+    },
     ...overrides,
   };
   return { deps, calls };
@@ -113,6 +116,58 @@ describe('runTurnAsync: the turn phase order', () => {
 
     expect(calls).not.toContain('stampSession');
     expect(calls).toContain('settleConversation');
+  });
+});
+
+// #356: boot no longer downloads transcripts, so the session a turn resumes has to be fetched
+// by the turn itself — one object, at the moment it is needed. Before the sink was retired the
+// boot restore of `sessions.tar` supplied it, which is why a cold container could resume at all.
+describe('runTurnAsync: resume materializes its own session', () => {
+  test('a resumed turn fetches its session BEFORE the agent runs', async () => {
+    const fetched: string[] = [];
+    const { deps, calls } = recordingDeps({
+      materializeTranscript: async (sessionId) => {
+        fetched.push(sessionId);
+        calls.push('materializeTranscript');
+      },
+    });
+
+    await runTurnAsync(input({ sessionId: 'sess_cold' }), deps);
+
+    expect(fetched).toEqual(['sess_cold']);
+    // Before prepareDevAgent too: a dev-agent turn ADOPTS (moves) the JSONL into its worktree,
+    // and can only move a file that is already on disk.
+    expect(calls.indexOf('materializeTranscript')).toBeLessThan(calls.indexOf('prepareDevAgent'));
+    expect(calls.indexOf('materializeTranscript')).toBeLessThan(calls.indexOf('runChat'));
+  });
+
+  test('a fresh chat (no session yet) fetches nothing', async () => {
+    const { deps, calls } = recordingDeps();
+
+    await runTurnAsync(input({ sessionId: null }), deps);
+
+    expect(calls).not.toContain('materializeTranscript');
+  });
+
+  // The remaining restore path must not fail OPEN (ADR-0022, "what this does NOT fix"): a fetch
+  // that failed must never let the turn proceed as if the session had no history, because the
+  // agent would answer from nothing and the reply would look like an ordinary one.
+  test('a fetch that fails aborts the turn loudly instead of resuming with no history', async () => {
+    const errors: string[] = [];
+    const { deps, calls } = recordingDeps({
+      materializeTranscript: async () => {
+        throw new Error('R2 unreachable');
+      },
+      broadcast: (_chatId, ev) => {
+        calls.push(`broadcast:${ev.kind}`);
+        if (ev.kind === 'done' && ev.error) errors.push(ev.error);
+      },
+    });
+
+    await runTurnAsync(input({ sessionId: 'sess_flaky' }), deps);
+
+    expect(calls).not.toContain('runChat');
+    expect(errors).toEqual(['R2 unreachable']);
   });
 });
 

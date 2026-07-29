@@ -21,9 +21,6 @@ const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
 // isolated extension server. Same persistence model as components — extension
 // content, image-only core (ADR 0002).
 const CUSTOM = `${ROOT}server/custom`;
-// Claude session transcripts (~/.claude/projects); synced on their own so `resume`
-// survives a recycle.
-const SESSIONS = `${process.env.HOME ?? '/root'}/.claude/projects`;
 // Workspace skills (ADR-0013): user-/agent-authored skill dirs under the package's
 // .claude/skills, discovered by the SDK's 'project' source. Same persistence model as
 // components/custom. Platform skills live at ~/.claude/skills (image-only) instead.
@@ -78,19 +75,12 @@ if (skills) {
   console.log(`[boot] ${ms()} workspace skills restored from R2`);
 }
 
-// Restore Claude session transcripts so `resume` finds the JSONL after a recycle.
-// mkdir first: the dir may not exist on a first boot, and tar/extract/watch need it.
-await Bun.spawn(['mkdir', '-p', SESSIONS]).exited;
-const sessions = await store.loadSessions(WORKSPACE).catch((err) => {
-  console.error('[boot] sessions load failed; starting with none:', err);
-  return null;
-});
-if (sessions) {
-  await extractOverlay(sessions, SESSIONS);
-  console.log(`[boot] ${ms()} Claude sessions restored from R2`);
-}
+// Session transcripts are NOT restored here (#356). They are one opaque object per session, and
+// the ONE a chat resumes is fetched by the turn that resumes it (`TranscriptStore.materialize`).
+// Boot used to download `sessions.tar` — 49,111,040 bytes of a workspace's whole history — to
+// serve whichever single session the human happened to open next.
 
-// Subsequent component / custom / session edits persist back to R2 at TURN-COMPLETION,
+// Subsequent component / custom edits persist back to R2 at TURN-COMPLETION,
 // in-process in the bridge (ADR 0003) — no fs.watch (its recursive mode threw EINVAL on
 // Linux and silently disabled the sessions sync, breaking resume across a recycle). The
 // boot restore above is the only filesystem work here now.

@@ -18,7 +18,6 @@ import {
   canvasDirsKey,
   customKey,
   selectBackend,
-  sessionsKey,
   sharedComponentsKey,
   skillsKey,
 } from './blob-store.ts';
@@ -62,7 +61,7 @@ import {
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { refreshCheckout, removeCheckout } from './repo-checkout.ts';
 import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
-import { adoptSession, backup as backupTranscript } from './transcript-r2.ts';
+import { adoptSession, TranscriptStore } from './transcript-store.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, createCanvasTools, parseCanvasImages, runChat } from './agent.ts';
 import { MCP_TOKENS_HEADER, McpSelectionSchema, applyMcpSelection, decodeMcpTokens, mcpDisallowedTools } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
@@ -153,7 +152,7 @@ const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
 const DEFAULT_CANVAS_ID = process.env.CANVAS_ID ?? 'default';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
 // Capture the raw backend too: the Inbox transcript backup/restore (#60/#61) keys blobs by
-// sessionId (transcript-r2), so it needs the low-level get/put seam, not BlobStore's canvas API.
+// sessionId (transcript-store), so it needs the low-level get/put seam, not BlobStore's canvas API.
 const blobBackend = selectBackend(`${PKG_ROOT}.persist`);
 const blobStore = new BlobStore(blobBackend);
 
@@ -220,6 +219,10 @@ const SRC_ROOT = `${PKG_ROOT}src`;
 const SHARED_COMPONENTS_DIR = `${PKG_ROOT}shared/components`;
 const CUSTOM_DIR = `${PKG_ROOT}server/custom`;
 const SESSIONS_DIR = `${process.env.HOME ?? '/root'}/.claude/projects`;
+// #356: session Transcripts are FILES (CONTEXT.md → Record vs File) — one opaque object per
+// session, NOT a tar of this dir. The store is the only thing that reads or writes them: a turn
+// puts the one session it touched, a resume fetches the one session it needs, boot fetches none.
+const transcripts = new TranscriptStore(blobBackend, SESSIONS_DIR);
 // Workspace skills (ADR-0013): user-/agent-authored skill dirs, discovered by the SDK's
 // 'project' source. Extension content like components/custom; may not exist yet (the dir
 // is created by the first authored skill — flushIfDirty's mtime guard skips an absent dir).
@@ -232,7 +235,6 @@ const sink = new PersistSink();
 // skills, in one flush). The guard refuses to write an empty archive over an existing blob
 // and records `skipped` at /api/status. Do not register a tar artifact without it.
 const nonEmpty = (name: string, key: string) => refuseEmptyTarball(name, () => blobStore.blobExists(key));
-sink.register({ name: 'sessions', serialize: () => tarSubtree(SESSIONS_DIR), guard: nonEmpty('sessions', sessionsKey(WORKSPACE)), save: (b) => blobStore.saveSessions(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'shared-components', serialize: () => tarSubtree(SHARED_COMPONENTS_DIR), guard: nonEmpty('shared-components', sharedComponentsKey(WORKSPACE)), save: (b) => blobStore.saveSharedComponents(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'canvas-dirs', serialize: () => tarCanvasDirs(SRC_ROOT), guard: nonEmpty('canvas-dirs', canvasDirsKey(WORKSPACE)), save: (b) => blobStore.saveCanvasDirs(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'custom', serialize: () => tarSubtree(CUSTOM_DIR), guard: nonEmpty('custom', customKey(WORKSPACE)), save: (b) => blobStore.saveCustom(WORKSPACE, b as Uint8Array) });
@@ -264,7 +266,9 @@ async function flushComponentTrees(): Promise<void> {
 async function onTurnComplete(): Promise<void> {
   await sink.flush('chatMeta');
   if (!process.env.R2_BUCKET) return;
-  await sink.flush('sessions'); // a turn always wrote JSONL
+  // Transcripts are NOT in this batch any more (#356). The turn puts its own session, one
+  // object, after settle — see `turnDeps.backupTranscript`. This sink used to tar the whole
+  // ~/.claude/projects tree here on every turn: 49,111,040 bytes measured in production.
   await flushComponentTrees();
   await flushIfDirty('custom', CUSTOM_DIR);
   await flushIfDirty('skills', SKILLS_DIR);
@@ -602,9 +606,11 @@ const turnDeps: TurnDeps = {
   // Inbox (#60/#61): mirror the transcript to R2 keyed by sessionId so the Inbox can render
   // history and resume can restore it while the runner sleeps. Best-effort — never fails a turn.
   backupTranscript: (sessionId) =>
-    backupTranscript(blobBackend, SESSIONS_DIR, sessionId).catch((err) =>
-      console.error('[inbox] transcript backup failed:', err),
-    ),
+    transcripts.put(sessionId).catch((err) => console.error('[inbox] transcript backup failed:', err)),
+  // #356: boot downloads no transcripts, so a resumed turn fetches its OWN session — one object,
+  // at the moment it is needed. Deliberately NOT `.catch`ed: a failed fetch must fail the turn
+  // rather than let the agent resume with no history and answer as if there were none.
+  materializeTranscript: (sessionId) => transcripts.materialize(sessionId, CANVAS_CWD),
   sendToChat: (targetChatId, message, canvasId) => sendToChat(targetChatId, message, canvasId),
   listMarts: () => blobStore.listMarts(WORKSPACE),
 };
@@ -1280,8 +1286,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       if (!conv || conv.id !== id) return json({ error: `conversation not found: ${id}` }, 404);
       const { chatId } = await openConversation(
         {
-          getter: blobBackend,
-          projectsDir: SESSIONS_DIR,
+          transcripts,
           cwd: CANVAS_CWD,
           chatIdForSession,
           seedChatMeta: (cid, sid) => {

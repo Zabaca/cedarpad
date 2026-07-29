@@ -1,16 +1,20 @@
-// The first mart (ADR-0017, #237): read workspaces/<ws>/sessions.tar (already in R2 for
+// The first mart (ADR-0017, #237): read the stored session Transcripts (already in R2 for
 // `resume`, no connector needed — CONTEXT.md "Data — the workspace warehouse"), parse the
-// Claude Code session JSONL inside it, and transform it via DuckDB SQL into ONE declared
-// mart — mart_session_events, one row per main-agent assistant turn. Runs in the warehouse
-// container (Dockerfile.warehouse), which bakes this file and the `duckdb` CLI it shells out
-// to. Prefer SQL over Python (CLAUDE.md §2 + issue guidance): the transform below is one
-// DuckDB COPY statement; this module is thin TS orchestration around it.
+// Claude Code session JSONL, and transform it via DuckDB SQL into ONE declared mart —
+// mart_session_events, one row per main-agent assistant turn. Runs in the warehouse container
+// (Dockerfile.warehouse), which bakes this file and the `duckdb` CLI it shells out to. Prefer
+// SQL over Python (CLAUDE.md §2 + issue guidance): the transform below is one DuckDB COPY
+// statement; this module is thin TS orchestration around it.
 //
-// SCOPE LIMIT (state it in the mart, not just here): sessions.tar holds only turns that ran
-// IN THE CONTAINER (canvas chats + dev-agent runs) — local terminal sessions never reach it,
+// #356: the source is a DIRECTORY of session JSONL, one file per session, written out by
+// `materialize.ts` from the per-session Transcript objects. It used to be a sessions.tar
+// extracted here.
+//
+// SCOPE LIMIT (state it in the mart, not just here): transcripts exist only for turns that ran
+// IN THE CONTAINER (canvas chats + dev-agent runs) — local terminal sessions never reach R2,
 // so any cost/usage figure derived from this mart is container-side only.
 
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { MartColumn, MartSidecar } from '../shared/mart-contract.ts';
@@ -29,11 +33,12 @@ export const MART_COLUMNS: MartColumn[] = [
 ];
 
 export const MART_DESCRIPTION =
-  'One row per main-agent assistant turn from this workspace’s Claude Code session JSONL ' +
-  '(workspaces/<ws>/sessions.tar). Subagent (sidechain) turns are excluded. COVERS ONLY TURNS ' +
-  'THAT RAN IN THE CONTAINER — canvas chats and dev-agent runs. Local terminal sessions are ' +
-  'not in sessions.tar, so any cost/usage figure derived from this mart is container-side only, ' +
-  'not the user’s total Claude Code usage.';
+  'One row per main-agent assistant turn from the stored Claude Code session transcripts ' +
+  '(sessions/<session_id>/transcript.jsonl). Subagent (sidechain) turns are excluded. COVERS ' +
+  'ONLY TURNS THAT RAN IN THE CONTAINER — canvas chats and dev-agent runs. Local terminal ' +
+  'sessions are never stored, so any cost/usage figure derived from this mart is container-side ' +
+  'only, not the user’s total Claude Code usage. Transcript objects are keyed by session id ' +
+  'alone, so this mart spans every session in the deployment, not only the named workspace’s.';
 
 const run = async (cmd: string[], stdin?: Uint8Array): Promise<string> => {
   const proc = Bun.spawn(cmd, { stdin: stdin ? 'pipe' : 'ignore', stdout: 'pipe', stderr: 'pipe' });
@@ -49,12 +54,6 @@ const run = async (cmd: string[], stdin?: Uint8Array): Promise<string> => {
   if (code !== 0) throw new Error(`${cmd[0]} failed (${code}): ${stderr}`);
   return stdout;
 };
-
-/** Extract a sessions.tar blob (the exact bytes blob-store.ts's `saveSessions` writes) into
- * `dir` (must already exist and be empty — callers own the tmp dir's lifetime). */
-async function extractSessionsTar(tarBytes: Uint8Array, dir: string): Promise<void> {
-  await run(['tar', '-xf', '-', '-C', dir], tarBytes);
-}
 
 /** The DuckDB SQL that IS the transform (CLAUDE.md §2: prefer SQL over Python). An explicit,
  * narrow `columns=` schema on `read_json` sidesteps the on-disk JSONL's heterogeneous record
@@ -97,14 +96,15 @@ export function hasDuckdbCli(): boolean {
 }
 
 /**
- * Materialize mart_session_events from a sessions.tar blob. `workDir` must be a caller-owned,
- * unique, empty directory (e.g. `mkdtemp`) — worktree-safe per CLAUDE.md §6: no fixed /tmp
- * path, so a parallel copy of this pipeline (another worktree, another workspace) never
- * collides. Idempotent: parquet files are immutable (ADR-0017), so rerunning re-derives the
- * same rows from the same source tar into fresh bytes at the caller's chosen path.
+ * Materialize mart_session_events from a directory of session JSONL files. `sessionsDir` is
+ * read-only here and belongs to the caller (since #356 it is the Transcript objects written out
+ * by `materializeWorkspace`); `workDir` must be a caller-owned, unique directory (e.g. `mkdtemp`)
+ * — worktree-safe per CLAUDE.md §6: no fixed /tmp path, so a parallel copy of this pipeline
+ * (another worktree, another workspace) never collides. Idempotent: parquet files are immutable
+ * (ADR-0017), so rerunning re-derives the same rows into fresh bytes at the caller's chosen path.
  */
 export async function materializeSessionEventsMart(
-  sessionsTar: Uint8Array,
+  sessionsDir: string,
   workDir: string,
 ): Promise<{ parquet: Uint8Array; sidecar: MartSidecar }> {
   if (!hasDuckdbCli()) {
@@ -113,10 +113,8 @@ export async function materializeSessionEventsMart(
         'container image (Dockerfile.warehouse); install it locally (e.g. `brew install duckdb`) to run this.',
     );
   }
-  const sessionsDir = join(workDir, 'sessions');
   const parquetPath = join(workDir, `${MART_NAME}.parquet`);
-  await mkdir(sessionsDir, { recursive: true });
-  await extractSessionsTar(sessionsTar, sessionsDir);
+  await mkdir(workDir, { recursive: true });
 
   const jsonlGlob = join(sessionsDir, '**', '*.jsonl');
   await run(['duckdb', ':memory:', '-c', transformSql(jsonlGlob, parquetPath)]);
@@ -132,7 +130,6 @@ export async function materializeSessionEventsMart(
     generatedAt: new Date().toISOString(),
     rowCount,
   };
-  await rm(sessionsDir, { recursive: true, force: true });
   return { parquet, sidecar };
 }
 

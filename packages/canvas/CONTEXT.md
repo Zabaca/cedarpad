@@ -125,10 +125,10 @@ sandboxing it"), so the narrower gate buys the option to tighten later, not isol
 today. Guests are denied by construction (`worker/guest-gate.ts` is a default-deny path
 allowlist). Never a wake-lock — a dismissed Console releases its socket after a grace
 period so the container's normal idle sleep proceeds; continuity across a sleep comes
-from a pinned `--session-id` plus the transcript sync `container-start.ts` already does.
+from a pinned `--session-id` plus the per-session Transcript the turn puts on settle.
 A second attach **takes over** and the previous one is told it was superseded.
 _Avoid_: "shell" (that is the edge SPA frame), "terminal session" (that is laptop Claude
-Code, excluded from `sessions.tar`), "sandbox", and calling a Console a "session".
+Code, which never reaches our store), "sandbox", and calling a Console a "session".
 
 ## Core vs extension — the modifiability boundary
 
@@ -152,8 +152,9 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
 
 A skill is **content-that-asks** — text the model reads. It is never a **capability** (a grant: tools, tokens, scopes, routing). Capabilities stay code-gated; no workspace data may confer one.
 
-**Record vs File — how workspace content persists** _(designed 2026-07-29, not yet built; see
-ADR-0022)_. The dividing question is **who owns the schema**:
+**Record vs File — how workspace content persists** _(designed 2026-07-29; see ADR-0022. The
+**File** half is built — #356; the **Record** half is not yet)_. The dividing question is
+**who owns the schema**:
 
 - A **Record** is content whose shape *we* define, authored only through our own tools —
   **Components**, their **data files**, and **Workspace skills** (already a files-only
@@ -166,6 +167,11 @@ ADR-0022)_. The dividing question is **who owns the schema**:
   so it stays an opaque per-session object. Deriving it from rows would mean round-tripping
   someone else's undocumented format, and a subtly wrong round-trip breaks resume silently.
   (Consistent with ADR-0004: the JSONL is authoritative, the UI is a projection.)
+  `TranscriptStore` (`server/transcript-store.ts`) is the sole custodian: a turn **puts** the
+  one session it touched, a resume **materializes** the one session it needs, and **boot
+  fetches none**. Granularity is the point — the retired `sessions.tar` re-uploaded the whole
+  workspace's history every turn (49,111,040 bytes measured in production against ~650 KB of
+  appends) and re-downloaded it at every cold boot.
 
 The **platform tier stays image-only** and is neither: it is deploy-gated code, identical for
 every workspace, versioned with the image that expects it. Making it a Record would demote
