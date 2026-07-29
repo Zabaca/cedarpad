@@ -1399,20 +1399,6 @@ export async function handleRequest(req: Request): Promise<Response> {
       return json({ token });
     }
 
-    // Agent-authored backend handlers run in the ISOLATED extension server (ADR
-    // 0002), never in this process — so a bad handler can't crash the core/canvas.
-    // Proxy /api/custom/* straight through; a 502 just means that server is down
-    // (dev.ts is restarting it), which leaves the canvas fully intact.
-    if (path.startsWith('/api/custom/')) {
-      const target = `http://localhost:${process.env.CUSTOM_PORT ?? 4512}${path}${url.search}`;
-      try {
-        const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer();
-        return await fetch(target, { method: req.method, headers: req.headers, body });
-      } catch {
-        return json({ error: 'extension server unreachable' }, 502);
-      }
-    }
-
     return json({ error: `not found: ${path}` }, 404);
 }
 

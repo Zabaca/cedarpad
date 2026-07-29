@@ -1,6 +1,6 @@
 // Run the bridge (canvas store + agent), the vite dev server, and the edge Worker
-// together. Bridge on :4511, web on :4510 (vite proxies /api -> bridge), extension
-// server on :4512 (the bridge proxies /api/custom/* -> it), edge Worker on :4512+1.
+// together. Bridge on :4511, web on :4510 (vite proxies /api -> bridge), edge Worker
+// on :4513.
 export {};
 
 import { spawnWrangler } from './wrangler-local.ts';
@@ -13,8 +13,8 @@ const BRIDGE = process.env.CANVAS_BRIDGE ?? `http://localhost:${BRIDGE_PORT}`;
 
 // The edge Worker (ADR-0018, #263): it serves the platform data layer's routes — the
 // Notebook API `/v1/*` and Better Auth `/api/auth/*` — against miniflare's local D1,
-// exactly as it does in production. Port from env, +2 off the bridge so it clears the
-// extension server's 4512.
+// exactly as it does in production. Port from env, +2 off the bridge (the +1 slot the
+// removed extension server held stays vacant so every worktree's ports keep their offsets).
 const EDGE_PORT = process.env.CANVAS_EDGE_PORT ?? String(Number(BRIDGE_PORT) + 2);
 const EDGE = process.env.CANVAS_EDGE ?? `http://localhost:${EDGE_PORT}`;
 
@@ -46,28 +46,11 @@ const web = Bun.spawn(['bun', 'run', 'dev:web'], {
   env: { ...process.env, CANVAS_BRIDGE: BRIDGE, CANVAS_EDGE: EDGE },
 });
 
-// Extension server: isolated agent-authored backend handlers (ADR 0002). SUPERVISED,
-// not part of the critical pair — if a bad handler fatally crashes it, restart just
-// this process; the canvas (bridge + web) is untouched. Handlers hot-reload via
-// cache-bust, so no --watch needed. CANVAS_BRIDGE lets a handler call the core API.
 let shuttingDown = false;
-let extension: ReturnType<typeof Bun.spawn> | null = null;
-const startExtension = () => {
-  extension = Bun.spawn(['bun', 'run', 'server/extension-server.ts'], {
-    stdio: ['inherit', 'inherit', 'inherit'],
-    env: { ...process.env, CANVAS_BRIDGE: BRIDGE },
-  });
-  void extension.exited.then(() => {
-    if (shuttingDown) return;
-    console.error('[custom] extension server exited; restarting in 1s');
-    setTimeout(startExtension, 1000);
-  });
-};
-startExtension();
 
-// Console PTY server (ADR-0021). SUPERVISED for the same reason as the extension
-// server — node-pty is a native module, and a segfault must restart THIS process, not
-// take the critical pair (bridge + web) down with it.
+// Console PTY server (ADR-0021). SUPERVISED, not part of the critical pair — node-pty is
+// a native module, and a segfault must restart THIS process, not take the critical pair
+// (bridge + web) down with it.
 //
 // Spawned with `node`, not `bun`, and deliberately: node-pty is completely
 // non-functional under bun (zero bytes, EBADF on resize — measured across two bun
@@ -101,7 +84,6 @@ const killAll = () => {
   shuttingDown = true;
   bridge.kill();
   web.kill();
-  extension?.kill();
   ptyServer?.kill();
   edge?.kill();
 };
