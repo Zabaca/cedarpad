@@ -14,6 +14,7 @@ import { PushPayload } from '../shared/push-contract.ts';
 import {
   ComponentHistoryOutput,
   ComponentReadOutput,
+  ComponentRestoreOutput,
   ComponentWriteOutput,
   ConversationStartOutput,
   DataReadOutput,
@@ -790,5 +791,174 @@ describe('platform RPC: data.write / data.read', () => {
       [2, 'c,d', 'u_2'],
       [1, 'a,b', 'u_1'],
     ]);
+  });
+});
+
+describe('platform RPC: component.restore', () => {
+  // The verb that turns history into recovery (#362). Its SHAPE is the point: the container
+  // names a VERSION, and the read-then-put happens entirely here, at the edge. The source
+  // never makes the trip out and back — so a restore cannot be forged by a container
+  // composing a payload, and a large Component is not shipped twice for no reason.
+  test('write v1, write v2, restore v1 — v1 is current again and a v3 records the restore', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const input = { workspaceId: 'ws_a', canvasId, name: 'Card' };
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_1', source: 'v1 source' } }, { db });
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_1', source: 'v2 source' } }, { db });
+
+    const restored = await rpc({ op: 'component.restore', input: { ...input, userId: 'u_2', version: 1 } }, { db });
+    expect(restored.status).toBe(200);
+    expect(ComponentRestoreOutput.parse(await restored.json()).rev).toBe(3);
+
+    const read = await rpc({ op: 'component.read', input }, { db });
+    expect(ComponentReadOutput.parse(await read.json()).source).toBe('v1 source');
+
+    // Append-only: the version that was replaced is still on the record, and the restore is
+    // attributed to whoever performed it rather than to the author of the text brought back.
+    const { versions } = ComponentHistoryOutput.parse(await (await rpc({ op: 'component.history', input }, { db })).json());
+    expect(versions.map((v) => [v.version, v.createdBy])).toEqual([
+      [3, 'u_2'],
+      [2, 'u_1'],
+      [1, 'u_1'],
+    ]);
+  });
+
+  test('the request names a version, never a source — the edge is where the old text is read', async () => {
+    // Structural, not incidental: `component.restore` has no `source` field to carry one, so
+    // a container cannot restore a Component to text of its own invention, and the corpus
+    // does not cross the hop twice. A `source` in the payload is simply not part of the verb.
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const input = { workspaceId: 'ws_a', canvasId, name: 'Card' };
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_1', source: 'the real v1' } }, { db });
+
+    const res = await rpc({ op: 'component.restore', input: { ...input, userId: 'u_1', version: 1, source: 'forged' } }, { db });
+    expect(res.status).toBe(200);
+    // The reply carries the new revision and nothing else — the source stayed on this side.
+    expect(await res.json()).toEqual({ rev: 2 });
+    const read = await rpc({ op: 'component.read', input }, { db });
+    expect(ComponentReadOutput.parse(await read.json()).source).toBe('the real v1');
+  });
+
+  test('restoring a soft-deleted Component brings it back into the tier', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const input = { workspaceId: 'ws_a', canvasId, name: 'Card' };
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_1', source: 'v1 source' } }, { db });
+    await d1RecordStore(db).softDelete({ workspaceId: 'ws_a', canvasId, name: 'Card' });
+    expect(ComponentReadOutput.parse(await (await rpc({ op: 'component.read', input }, { db })).json()).source).toBeNull();
+
+    expect((await rpc({ op: 'component.restore', input: { ...input, userId: 'u_1', version: 1 } }, { db })).status).toBe(200);
+
+    expect(ComponentReadOutput.parse(await (await rpc({ op: 'component.read', input }, { db })).json()).source).toBe('v1 source');
+    expect((await d1RecordStore(db).list({ workspaceId: 'ws_a', canvasId })).map((r) => r.name)).toEqual(['Card']);
+  });
+
+  test('the SHARED tier can be restored too, and the own tier is not what moves', async () => {
+    // #359 made the shared library a Record, so its versions exist and `component.history`
+    // will list them. A restore that quietly only ever touched the own tier would leave the
+    // shared tier with a history and no way to act on it — and worse, would fork the one live
+    // source into this canvas, which is the thing promote exists to prevent.
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const shared = { workspaceId: 'ws_a', canvasId, tier: 'shared' as const, name: 'Legend' };
+    await rpc({ op: 'component.write', input: { ...shared, userId: 'u_1', source: 'shared v1' } }, { db });
+    await rpc({ op: 'component.write', input: { ...shared, userId: 'u_1', source: 'shared v2' } }, { db });
+
+    const restored = await rpc({ op: 'component.restore', input: { ...shared, userId: 'u_2', version: 1 } }, { db });
+    expect(restored.status).toBe(200);
+    expect(ComponentRestoreOutput.parse(await restored.json()).rev).toBe(3);
+
+    const read = await rpc({ op: 'component.read', input: shared }, { db });
+    expect(ComponentReadOutput.parse(await read.json()).source).toBe('shared v1');
+    // The canvas's own library was never written into — the restore stayed in the tier it named.
+    const own = await rpc({ op: 'component.read', input: { workspaceId: 'ws_a', canvasId, tier: 'own', name: 'Legend' } }, { db });
+    expect(ComponentReadOutput.parse(await own.json()).source).toBeNull();
+  });
+
+  test('a shared restore still proves entitlement through the canvas it names', async () => {
+    // The shared library has no canvas, so the null key is minted at the EDGE and the caller
+    // names a real canvas to be checked. A canvas outside the workspace is refused, which is
+    // the only thing standing between a caller and another workspace's shared library.
+    const db = await freshDb();
+    const victim = await registerCanvas(db, 'ws_victim');
+    await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_victim', canvasId: victim, tier: 'shared', userId: 'u_1', name: 'Legend', source: 'v1' } },
+      { db },
+    );
+
+    const res = await rpc(
+      { op: 'component.restore', input: { workspaceId: 'ws_intruder', canvasId: victim, tier: 'shared', userId: 'u_x', name: 'Legend', version: 1 } },
+      { db },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test('a version that does not exist is a clean 404, not a 500 and not a silent success', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const input = { workspaceId: 'ws_a', canvasId, name: 'Card' };
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_1', source: 'v1 source' } }, { db });
+
+    const res = await rpc({ op: 'component.restore', input: { ...input, userId: 'u_1', version: 7 } }, { db });
+    expect(res.status).toBe(404);
+    // And nothing was written: a refused restore must not append a version of its own.
+    const { versions } = ComponentHistoryOutput.parse(await (await rpc({ op: 'component.history', input }, { db })).json());
+    expect(versions.map((v) => v.version)).toEqual([1]);
+  });
+
+  test('a version of a DIFFERENT Component cannot be restored into this one', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    await rpc(
+      { op: 'component.write', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'Other', source: 'other v1' } },
+      { db },
+    );
+
+    const res = await rpc(
+      { op: 'component.restore', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'Card', version: 1 } },
+      { db },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  test('the edge refuses a canvas that does not belong to the named workspace', async () => {
+    // A restore IS a write, so it needs at least the ownership gate a write has: without it a
+    // caller could reach into another workspace's canvas and make an old revision current.
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_owner');
+    const input = { workspaceId: 'ws_owner', canvasId, name: 'Card' };
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_1', source: 'v1 source' } }, { db });
+    await rpc({ op: 'component.write', input: { ...input, userId: 'u_1', source: 'v2 source' } }, { db });
+
+    const res = await rpc(
+      { op: 'component.restore', input: { workspaceId: 'ws_intruder', canvasId, userId: 'u_x', name: 'Card', version: 1 } },
+      { db },
+    );
+    expect(res.status).toBe(403);
+    // Refused means refused: the Component the intruder aimed at is untouched.
+    expect(ComponentReadOutput.parse(await (await rpc({ op: 'component.read', input }, { db })).json()).source).toBe('v2 source');
+  });
+
+  test('an unauthenticated caller cannot restore', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const res = await rpc(
+      { op: 'component.restore', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'Card', version: 1 } },
+      { db, token: null },
+    );
+    expect(res.status).toBe(401);
+  });
+
+  test('a version number that is not a version at all is a 400 at the boundary', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    for (const version of [0, -1, 1.5]) {
+      const res = await rpc(
+        { op: 'component.restore', input: { workspaceId: 'ws_a', canvasId, userId: 'u_1', name: 'Card', version } },
+        { db },
+      );
+      expect(res.status).toBe(400);
+    }
   });
 });

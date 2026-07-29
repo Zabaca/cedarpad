@@ -140,6 +140,54 @@ describe.each(implementations)('RecordStore (%s)', (_name, make) => {
     });
   });
 
+  describe('one version, by number', () => {
+    // What a RESTORE needs (#362), and the reason it is not `listVersions` plus a filter:
+    // every row `listVersions` returns carries a full source, so answering "give me v1" by
+    // listing would drag every revision of the text through memory — the exact cost
+    // `listVersions`' metadata-only caller was shaped to avoid.
+    test('a named version reads back with the source it stored', async () => {
+      const store = make();
+      const key = { workspaceId: ws(), canvasId: 'cv_1', name: 'Card' };
+      await store.put({ ...key, kind: 'component' as const, source: 'v1', updatedBy: 'u_1' });
+      await store.put({ ...key, kind: 'component' as const, source: 'v2', updatedBy: 'u_2' });
+
+      const v1 = await store.getVersion(key, 1);
+      expect(v1?.source).toBe('v1');
+      expect(v1?.createdBy).toBe('u_1');
+      expect((await store.getVersion(key, 2))?.source).toBe('v2');
+    });
+
+    test('a version that was never written is null, not an error and not the nearest one', async () => {
+      const store = make();
+      const key = { workspaceId: ws(), canvasId: 'cv_1', name: 'Card' };
+      await store.put({ ...key, kind: 'component' as const, source: 'v1', updatedBy: null });
+
+      expect(await store.getVersion(key, 7)).toBeNull();
+      expect(await store.getVersion({ ...key, name: 'Ghost' }, 1)).toBeNull();
+    });
+
+    test('a version belonging to a DIFFERENT Component is not this one’s', async () => {
+      // Version numbers are per Record, so `v1` exists many times over in one workspace.
+      // A lookup that keyed on the number alone would hand back somebody else's source.
+      const store = make();
+      const w = ws();
+      await store.put({ workspaceId: w, canvasId: 'cv_1', name: 'Card', kind: 'component', source: 'card v1', updatedBy: null });
+      await store.put({ workspaceId: w, canvasId: 'cv_1', name: 'Other', kind: 'component', source: 'other v1', updatedBy: null });
+
+      expect((await store.getVersion({ workspaceId: w, canvasId: 'cv_1', name: 'Card' }, 1))?.source).toBe('card v1');
+    });
+
+    test('a soft-deleted Record still yields its versions — that is what makes recovery possible', async () => {
+      const store = make();
+      const key = { workspaceId: ws(), canvasId: 'cv_1', name: 'Card' };
+      await store.put({ ...key, kind: 'component' as const, source: 'v1', updatedBy: null });
+      await store.softDelete(key);
+
+      expect(await store.get(key)).toBeNull();
+      expect((await store.getVersion(key, 1))?.source).toBe('v1');
+    });
+  });
+
   describe('listing a tier', () => {
     test('list returns one workspace tier, by name, and never another tier', async () => {
       const store = make();

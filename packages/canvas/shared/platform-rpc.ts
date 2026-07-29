@@ -137,7 +137,7 @@ export const ConversationPrOpenedInput = ConversationSettleInput.extend({
 export type ConversationPrOpenedInput = z.infer<typeof ConversationPrOpenedInput>;
 
 /**
- * Operations 6 to 12 — the **Record** verbs (ADR-0022). Component source stops being a
+ * Operations 6 to 15 — the **Record** verbs (ADR-0022). Component source stops being a
  * directory the container tars into R2 and becomes rows the edge owns; this is how the
  * container gets it there. Note what these are NOT: there is no `record.put`, no table, no
  * filter — they are component-shaped, exactly like the chat verbs above are chat-shaped, so
@@ -254,6 +254,44 @@ export type ComponentHistoryOutput = z.infer<typeof ComponentHistoryOutput>;
 export type ComponentVersion = ComponentHistoryOutput['versions'][number];
 
 /**
+ * Operation 15 — "put this Component back the way it was at version N" (#362). The operation
+ * that turns history into RECOVERY: the 2026-07-29 loss needed production credentials, a
+ * database fork at a timestamp, and someone who knew the trick; this is the same act as an
+ * ordinary write.
+ *
+ * (Numbered by WIRE ORDER — its position in the union below — not by topic, which is why a
+ * Component verb lands after the data ones. Appending keeps an added verb from renumbering
+ * every existing one, and two verbs sharing a number is not a conflict git would catch.)
+ *
+ * NOTE WHAT IS ABSENT: there is no `source`. The caller names a VERSION, and the read-then-put
+ * happens entirely at the edge, which buys three things at once — the source stays on the side
+ * that owns the rows; a restore cannot be forged by a container composing text of its own
+ * invention; and a large Component is not shipped across the hop twice to end up where it
+ * already was.
+ *
+ * It DOES carry `tier`, inherited from the write it is derived from, and honours it. The
+ * shared library became a Record in #359, so its versions exist and `component.history` will
+ * happily list them; a restore that silently only ever touched the own tier would leave the
+ * shared tier with a history and no way to act on it — the exact gap this slice closes. As on
+ * every other tiered verb, the container names the canvas it acts FROM and the EDGE mints the
+ * shared tier's null key (`tierCanvas`); the container never sends the null.
+ *
+ * A restore is a FORWARD WRITE, never a rewind: it appends a further version rather than
+ * truncating the ones after the chosen point, so the restore is itself undoable. A "recover"
+ * that erased history would be a second way to lose work — the exact shape ADR-0022 removes.
+ */
+export const ComponentRestoreInput = ComponentWriteInput.omit({ source: true }).extend({
+  /** The version to bring back, as `component.history` numbers them. */
+  version: z.number().int().positive(),
+});
+export type ComponentRestoreInput = z.infer<typeof ComponentRestoreInput>;
+
+/** The revision the restore CREATED — never the one it restored from, which the caller
+ *  already named. A Component with no such version is a 404, not a rev of zero. */
+export const ComponentRestoreOutput = z.object({ rev: z.number().int().positive() });
+export type ComponentRestoreOutput = z.infer<typeof ComponentRestoreOutput>;
+
+/**
  * Operations 11 and 12 — the **Workspace-skill** Record verbs (ADR-0022, #361). Same shape and
  * same reasons as the two above, with one difference that drives everything: a skill is a
  * DIRECTORY, so the key is two-level and the payload is a set of files. `upload_skill`'s
@@ -291,7 +329,7 @@ export const SkillListOutput = z.object({
 export type SkillListOutput = z.infer<typeof SkillListOutput>;
 
 /**
- * Operations 11 and 12 — the **data-file** Record verbs (ADR-0022). A data file is the same
+ * Operations 13 and 14 — the **data-file** Record verbs (ADR-0022). A data file is the same
  * kind of thing as a Component (same table, `kind: 'data'`) but not the same verb: its name
  * carries an extension from a CLOSED set, and its content has a size cap, so widening
  * `component.write` with a nullable kind would have hidden two different validation rules
@@ -342,5 +380,6 @@ export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('skill.list'), input: SkillListInput }),
   z.object({ op: z.literal('data.write'), input: DataWriteInput }),
   z.object({ op: z.literal('data.read'), input: DataReadInput }),
+  z.object({ op: z.literal('component.restore'), input: ComponentRestoreInput }),
 ]);
 export type PlatformRpcRequest = z.infer<typeof PlatformRpcRequest>;

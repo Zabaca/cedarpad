@@ -6,6 +6,7 @@ import { getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import {
   type ComponentHistoryOutput,
   type ComponentReadOutput,
+  type ComponentRestoreOutput,
   type ComponentWriteOutput,
   type ConversationStartOutput,
   type DataReadOutput,
@@ -191,6 +192,30 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
       name,
     });
     return Response.json({ versions } satisfies ComponentHistoryOutput);
+  }
+
+  // "Put this Component back the way it was at version N" (#362). The read-then-put happens
+  // HERE, on the side that owns the rows: the container named a version, not a source, so the
+  // old text never left this process and no payload the container composes could stand in for
+  // it. Gated as a WRITE, because it is one — an unrestricted restore would be a way to reach
+  // into another workspace's canvas and make an old revision current there.
+  if (parsed.data.op === 'component.restore') {
+    const { workspaceId, canvasId, tier, userId, name, version } = parsed.data.input;
+    if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
+      return Response.json({ error: 'forbidden' }, { status: 403 });
+    }
+    // Store failures are, as above, deliberately NOT caught. A version that does not exist is
+    // a different thing entirely — the caller asked for something that was never written — so
+    // it is an answer with a status, not an exception, and above all not a silent success.
+    const restored = await componentStore(d1RecordStore(deps.db)).restore({
+      workspaceId,
+      canvasId: tierCanvas(tier, canvasId),
+      name,
+      version,
+      userId,
+    });
+    if (!restored) return Response.json({ error: 'no such version' }, { status: 404 });
+    return Response.json({ rev: restored.rev } satisfies ComponentRestoreOutput);
   }
 
   // The Workspace-skill verbs (#361). Same rules as the Component pair above — the contract

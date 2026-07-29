@@ -154,9 +154,9 @@ A skill is **content-that-asks** — text the model reads. It is never a **capab
 
 **Record vs File — how workspace content persists** _(ADR-0022; being built by #354. LIVE as
 **Records**: **both writable tiers** of Components — own and shared — with write, read,
-version history, on-demand materialization, promote and adopt (#355, #358, #359), their
-**data files** (#360), and **Workspace skills** (#361). LIVE as **Files**: per-session
-**Transcripts** (#356) — that is their permanent home, not a staging post.)_ The dividing
+version history, restore-to-version, on-demand materialization, promote and adopt (#355, #358,
+#359, #362), their **data files** (#360), and **Workspace skills** (#361). LIVE as **Files**:
+per-session **Transcripts** (#356) — that is their permanent home, not a staging post.)_ The dividing
 question is **who owns the schema**:
 
 - A **Record** is content whose shape *we* define, authored only through our own tools —
@@ -183,13 +183,13 @@ platform code to workspace data and break the **gated-layer rule**. So resolutio
 **build-time manifest** rather than the container's disk.
 
 A Record write crosses the container/edge boundary as a **domain verb** on the platform RPC
-(`component.write` / `component.read` / `component.history` / `component.promote` /
-`component.adopt`, `data.write` / `data.read`, `skill.write` / `skill.list`), never a generic
-row op — the RPC is a behavioural contract, not a SQL tunnel — and the **edge** validates the
-name and paths, and ownership-checks the canvas (Components, data files) or the workspace
-(skills), rather than trusting the container's payload. Ordering is **store first, then disk**:
-a write that cannot be persisted fails the tool call, and the file it then writes is only an
-HMR trigger.
+(`component.write` / `component.read` / `component.history` / `component.restore` /
+`component.promote` / `component.adopt`, `data.write` / `data.read`, `skill.write` /
+`skill.list`), never a generic row op — the RPC is a behavioural contract, not a SQL tunnel —
+and the **edge** validates the name and paths, and ownership-checks the canvas (Components,
+data files) or the workspace (skills), rather than trusting the container's payload. Ordering
+is **store first, then disk**: a write that cannot be persisted fails the tool call, and the
+file it then writes is only an HMR trigger.
 
 A **data file** is a Record of the same family as the Component that imports it (one table,
 `kind: 'data'`) but its own verb, because what makes it valid is different: a closed,
@@ -227,8 +227,20 @@ history to conclude, not for the store to decide by forgetting); a soft delete *
 history (that is what makes soft delete safe); and an undelete **continues** the sequence
 rather than restarting it. History is read back with `component.history` — newest first, and
 deliberately **without** the source, so "what happened to this" does not cost every revision
-of the text. The agent's door to it is the `component_history` tool. Restoring a version is
-#362 and is a *forward write*, never a rewind.
+of the text. The agent's door to it is the `component_history` tool.
+
+**Restore** is what makes that history *recovery*: `component.restore` names a version and
+puts its source back as the current one, through the `restore_component` tool. Three
+properties, each deliberate. It is a **forward write, never a rewind** — it appends a further
+version instead of truncating the ones after the chosen point, so nothing is erased and the
+restore is itself undoable; a "recover" that destroyed history would just be a second way to
+lose work. **The source never enters the container**: the caller names a *version*, and the
+read-then-put happens entirely at the edge, so the text stays on the side that owns the rows,
+a container cannot forge a restore by composing a payload, and a large Component is not
+shipped across the hop twice. And because a restore is a `put`, it **undeletes** — recovering
+a soft-deleted Component is the same one operation, not a second verb to discover. A version
+that does not exist is a 404 and writes nothing; the restore is attributed to whoever
+performed it, not to the author of the text it brought back.
 
 _Attribution today is the container's identity, not the turn's human._ A Record write is
 stamped with `CANVAS_USER` — this deployment's single Better Auth `user.id` — so it answers

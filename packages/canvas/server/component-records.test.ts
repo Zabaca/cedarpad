@@ -15,6 +15,7 @@ import {
   promoteComponent,
   readComponent,
   recordAuthor,
+  restoreComponent,
   writeComponent,
   writeDataFile,
 } from './components.ts';
@@ -84,6 +85,10 @@ function fakeRecords(opts: { failWrite?: boolean; failRead?: boolean; failMove?:
     history: async (tier, canvasId, module) => {
       calls.push(`history ${tier} ${canvasId}/${module}`);
       return await store.history(key(tier, canvasId, module));
+    },
+    restore: async (tier, canvasId, module, version) => {
+      calls.push(`restore ${tier} ${canvasId}/${module}@${version}`);
+      return (await store.restore({ ...key(tier, canvasId, module), version, userId: 'u_author' }))?.rev ?? null;
     },
     writeData: async (canvasId, name, source) => {
       calls.push(`writeData ${canvasId}/${name}`);
@@ -436,6 +441,93 @@ describe('a Component materializes together with the data files it imports', () 
     rmSync(dirPath, { recursive: true, force: true });
 
     expect(await materializeComponent('Card', CANVAS, records)).toContain('missing.json');
+  });
+});
+
+describe('a Component can be put back the way it was', () => {
+  // User story 2, and the slice that would have made 2026-07-29 a five-minute fix: recovery
+  // through the same door as every other Component action, rather than production credentials
+  // and a database fork at a timestamp.
+  test('the restored source becomes the file vite compiles, so the card renders the old version', async () => {
+    const { records } = fakeRecords();
+    await writeComponent('Card', 'v1', CANVAS, records);
+    await writeComponent('Card', 'the bad edit', CANVAS, records);
+    expect(readFileSync(filePath('Card'), 'utf8')).toBe('the bad edit');
+
+    expect(await restoreComponent('Card', 1, CANVAS, records)).toBe(3);
+
+    // Both halves matter: the store is what survives a recycle, and the FILE is what vite
+    // compiles right now. A restore that only moved the row would leave the canvas rendering
+    // the bad edit until the next container recycle.
+    expect(await readComponent('Card', CANVAS, records)).toBe('v1');
+    expect(readFileSync(filePath('Card'), 'utf8')).toBe('v1');
+  });
+
+  test('the container names a version and never carries the source — the edge does the reading', async () => {
+    // The shape this verb exists for. If the container fetched v1 and wrote it back, the old
+    // text would cross the hop twice and a container could "restore" a Component to anything
+    // it liked. What crosses is a NUMBER; the source is resolved on the side that owns the rows.
+    const { records, calls } = fakeRecords();
+    await writeComponent('Card', 'v1', CANVAS, records);
+    await writeComponent('Card', 'v2', CANVAS, records);
+    calls.length = 0;
+
+    await restoreComponent('Card', 1, CANVAS, records);
+
+    // One restore, then the ordinary render path. No `write` — the container never re-sent it.
+    expect(calls).toEqual([`restore own ${CANVAS}/Card@1`, `read own ${CANVAS}/Card`]);
+  });
+
+  test('a restore appends to the history rather than truncating it, so it is itself undoable', async () => {
+    const { records } = fakeRecords();
+    await writeComponent('Card', 'v1', CANVAS, records);
+    await writeComponent('Card', 'v2', CANVAS, records);
+    await restoreComponent('Card', 1, CANVAS, records);
+
+    expect((await componentHistory('Card', CANVAS, records)).map((v) => v.version)).toEqual([3, 2, 1]);
+    // And back again: the version the restore replaced is still there to return to.
+    await restoreComponent('Card', 2, CANVAS, records);
+    expect(await readComponent('Card', CANVAS, records)).toBe('v2');
+  });
+
+  test('a version that does not exist is a clean error, and changes nothing', async () => {
+    const { records } = fakeRecords();
+    await writeComponent('Card', 'v1', CANVAS, records);
+
+    await expect(restoreComponent('Card', 7, CANVAS, records)).rejects.toThrow(/no version 7/);
+    expect(await readComponent('Card', CANVAS, records)).toBe('v1');
+  });
+
+  test('an invalid name is refused before anything is asked of the store', async () => {
+    const { records, calls } = fakeRecords();
+    await expect(restoreComponent('../escape', 1, CANVAS, records)).rejects.toThrow(/invalid component name/);
+    expect(calls).toEqual([]);
+  });
+
+  test('restoring a PROMOTED Component acts on the shared library, not a new own-tier fork', async () => {
+    // The tier a restore acts on is the one the canvas RESOLVES — the same walk
+    // `component_history` uses, so a restore always targets the Component whose history the
+    // caller was just shown. Rebuilding it in the own tier instead would fork the one live
+    // source, which is exactly what promote exists to prevent.
+    const SH = 'Tmp_RecordsShared';
+    const { records, stored } = fakeRecords();
+    await writeComponent(SH, 'v1', CANVAS, records);
+    await promoteComponent(CANVAS, SH, records);
+    await writeComponent(SH, 'the bad shared edit', CANVAS, records);
+
+    const rev = await restoreComponent(SH, 1, CANVAS, records);
+
+    expect(await stored('shared', SH)).toBe('v1');
+    expect(await stored('own', SH)).toBeNull();
+    expect(readFileSync(sharedPath(SH), 'utf8')).toBe('v1');
+    expect(rev).toBeGreaterThan(1);
+  });
+
+  test('with no edge in front of the container there is nothing to restore FROM, and it says so', async () => {
+    // The disk holds exactly one revision. Silently succeeding here would be a "recovery"
+    // that recovered nothing — the shape this whole ADR exists to remove.
+    await writeComponent('Card', 'v1', CANVAS, null);
+    await expect(restoreComponent('Card', 1, CANVAS, null)).rejects.toThrow(/no version history/);
   });
 });
 
