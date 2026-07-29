@@ -101,7 +101,7 @@ server-owned, not inside canvas state. (The tldraw **pages** layer was removed �
 The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decisions/0002-core-extension-split.md)):
 
 **Core**: the code that must stay correct for the canvas to work — image-only, the agent must not modify it. Two parts:
-- **Render Pad**: the container-served frontend — `App.tsx`, `sync.ts`, `ComponentShape`, the tldraw canvas + chat. The navigation chrome (rail, canvas selector) now lives in the edge **Shell SPA** (`shell/`, PRD #103), which iframes this pad. _Avoid_: calling a canvas-component part of the "pad".
+- **Render Pad**: the container-served frontend — `App.tsx`, `canvas-sync.ts`, `ComponentShape`, the tldraw canvas + chat. The navigation chrome (rail, canvas selector) now lives in the edge **Shell SPA** (`shell/`, PRD #103), which iframes this pad. _Avoid_: calling a canvas-component part of the "pad".
 - **Bridge** (a.k.a. **bridge core**): the single stateful backend process — the `CanvasStore`, persistence, the agent runner, the core `/api/*` routes. The authoritative owner of canvas state.
 
 **Extension**: what the agent authors — hot-reloaded and persisted to R2:
@@ -193,8 +193,9 @@ A `CanvasShape` is one of:
   only when the shape is a child of a `frame`; top-level (page-parented) shapes omit
   it. When present, that shape's `x/y` are **parent-relative** (tldraw's native
   representation), so a frame and its children round-trip with no coordinate math —
-  the only rule is the frame must be created before its children (`sync.ts`
-  `orderByParent`). Re-parenting an existing shape into a frame on another client is
+  the only rule is a frame's children must resolve to an existing parent — on load
+  `worker/blob-to-snapshot.ts` rebuilds the snapshot parent-resolved (a child whose
+  frame is missing falls back to the page). Re-parenting an existing shape into a frame on another client is
   not yet propagated over sync (the create path on reload is correct; live
   cross-client re-parent is deferred).
 - **A canvas has no pages.** A top-level shape carries no tldraw parent (tldraw
@@ -218,8 +219,10 @@ A `CanvasShape` is one of:
   screenshot; the pixels live in a tldraw **asset** record, not the shape. The
   converters bridge that: editor→model resolves the asset's data URL into the
   shape's `src` (`tldraw-bridge.ts` via `editor.getAsset`), and model→editor
-  recreates the asset from `src` before the shape (`sync.ts` `ensureImageAssets`,
-  using a deterministic `imageAssetId(shapeId)`). **Pixels no longer ride inline on the
+  recreates the asset from `src` (on load, `worker/blob-to-snapshot.ts` emits one asset
+  record per image shape, using a deterministic `imageAssetId(shapeId)` from
+  `src/tldraw-conventions.ts`; live uploads run through `createCanvasAssetStore` in
+  `src/canvas-sync.ts`). **Pixels no longer ride inline on the
   wire**: since ADR-0019 the room's asset records carry a URL and the bytes live in R2
   behind `/api/canvas-assets/:canvas/:key` (`worker/canvas-assets.ts`). Inlining base64
   into records would put images in DO SQLite and rebroadcast them on every sync — the
@@ -326,7 +329,7 @@ chat-card means a single tab with a few chats + the canvas stream saturates the 
 and starves every POST (`/send`, shape upserts) into "pending". A session's output
 is visible regardless of who triggered it (the chat card, another client, or an
 on-canvas component posting to `/send`). Session state (transcript, resume token,
-SSE subscription) lives in the client-side `src/chat-store.ts` singleton, keyed
+SSE subscription) lives in the client-side `shared/chat-store.ts` singleton, keyed
 by chat id and **independent of any React component** — so a chat card culled by
 tldraw when scrolled off-screen keeps streaming; the SSE closes only when the
 chat shape is deleted (`App` watches the editor for removed `chat` shapes).
@@ -339,12 +342,12 @@ resume token (echo the last `done`'s `sessionId` back on the next `/send`); it i
 distinct from the chat `:id`.
 
 Each frame on that stream is a **`ChatFrame`** (a `ChatEvent` tagged with its
-`chatId`). **`ChatEvent`** is discriminated on `kind` ∈ `delta`, `tool_start`,
-`tool`, `thinking`, `tool_progress`, `task`, `todo`, `done`. The canonical type, its
+`chatId`). **`ChatEvent`** is discriminated on `kind` ∈ `init`, `delta`, `tool_start`,
+`tool`, `thinking`, `tool_progress`, `task`, `todo`, `done`, `config`. The canonical type, its
 kind list, and the `isChatFrame` routing guard live in ONE place (code:
 `shared/chat-wire.ts`), imported by the producer (`server/bridge.ts`), the
 source-of-truth stream (`server/agent.ts`), and the consumer/router
-(`src/chat-store.ts`), so a new kind is added once and read once.
+(`shared/chat-store.ts`), so a new kind is added once and read once.
 _Avoid_: re-declaring the kinds in any of those three modules.
 
 ## Agent tools (`server/agent.ts` → `src/canvas-ops.ts`)

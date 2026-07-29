@@ -3,7 +3,7 @@
 // kind is added in exactly one place:
 //   - PRODUCER: server/bridge.ts wraps each event as a ChatFrame and broadcasts it.
 //   - SOURCE OF TRUTH: server/agent.ts's runChat() yields the ChatEvent stream.
-//   - CONSUMER / ROUTER: src/chat-store.ts parses, guards, and routes frames by chatId.
+//   - CONSUMER / ROUTER: shared/chat-store.ts parses, guards, and routes frames by chatId.
 //
 // No upward dependency: the kind literals are inlined below, so both server/ and
 // src/ depend on this module and never the reverse. One place to read, one to grep.
@@ -15,8 +15,8 @@ export type TaskStatus = 'running' | 'pending' | 'paused' | 'completed' | 'faile
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'deleted';
 
 /**
- * The typed event stream one chat turn emits, discriminated on `kind`. The 9 kinds:
- * `init` | `delta` | `tool_start` | `tool` | `thinking` | `tool_progress` | `task` | `todo` | `done`.
+ * The typed event stream one chat turn emits, discriminated on `kind`. The 10 kinds:
+ * `init` | `delta` | `tool_start` | `tool` | `thinking` | `tool_progress` | `task` | `todo` | `done` | `config`.
  *
  * `parentId` (= the spawning Task tool_use id) is set on events that came from a
  * subagent, so the UI nests them under that Task chip. Absent = the main agent.
