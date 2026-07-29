@@ -13,7 +13,16 @@ import { bumpAllComponents, createShapesOp, nextComponentRev, placeComponentOp, 
 import type { OpResult } from '../src/canvas-ops.ts';
 import { canvasAssetFetcher, canvasRoomOpener } from './canvas-room.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
-import { BlobStore, selectBackend } from './blob-store.ts';
+import {
+  BlobStore,
+  canvasDirsKey,
+  customKey,
+  selectBackend,
+  sessionsKey,
+  sharedComponentsKey,
+  skillsKey,
+} from './blob-store.ts';
+import { refuseEmptyTarball } from './persist-guards.ts';
 import { type ScreenshotChannel, createScreenshotChannels } from './screenshot-channel.ts';
 import { createChatHub } from './chat-hub.ts';
 import { sseComment } from './sse.ts';
@@ -216,11 +225,18 @@ const SESSIONS_DIR = `${process.env.HOME ?? '/root'}/.claude/projects`;
 // is created by the first authored skill — flushIfDirty's mtime guard skips an absent dir).
 const SKILLS_DIR = `${PKG_ROOT}.claude/skills`;
 const sink = new PersistSink();
-sink.register({ name: 'sessions', serialize: () => tarSubtree(SESSIONS_DIR), save: (b) => blobStore.saveSessions(WORKSPACE, b as Uint8Array) });
-sink.register({ name: 'shared-components', serialize: () => tarSubtree(SHARED_COMPONENTS_DIR), save: (b) => blobStore.saveSharedComponents(WORKSPACE, b as Uint8Array) });
-sink.register({ name: 'canvas-dirs', serialize: () => tarCanvasDirs(SRC_ROOT), save: (b) => blobStore.saveCanvasDirs(WORKSPACE, b as Uint8Array) });
-sink.register({ name: 'custom', serialize: () => tarSubtree(CUSTOM_DIR), save: (b) => blobStore.saveCustom(WORKSPACE, b as Uint8Array) });
-sink.register({ name: 'skills', serialize: () => tarSubtree(SKILLS_DIR), save: (b) => blobStore.saveSkills(WORKSPACE, b as Uint8Array) });
+// EVERY tar artifact carries the empty-archive guard (persist-guards.ts). Each of these
+// saves is a FULL REPLACE of one R2 key, so an empty source tree flushed after a boot that
+// failed to restore destroys the artifact workspace-wide with no second copy — that is
+// exactly the 2026-07-29 loss (all own-tier components, all custom handlers, all workspace
+// skills, in one flush). The guard refuses to write an empty archive over an existing blob
+// and records `skipped` at /api/status. Do not register a tar artifact without it.
+const nonEmpty = (name: string, key: string) => refuseEmptyTarball(name, () => blobStore.blobExists(key));
+sink.register({ name: 'sessions', serialize: () => tarSubtree(SESSIONS_DIR), guard: nonEmpty('sessions', sessionsKey(WORKSPACE)), save: (b) => blobStore.saveSessions(WORKSPACE, b as Uint8Array) });
+sink.register({ name: 'shared-components', serialize: () => tarSubtree(SHARED_COMPONENTS_DIR), guard: nonEmpty('shared-components', sharedComponentsKey(WORKSPACE)), save: (b) => blobStore.saveSharedComponents(WORKSPACE, b as Uint8Array) });
+sink.register({ name: 'canvas-dirs', serialize: () => tarCanvasDirs(SRC_ROOT), guard: nonEmpty('canvas-dirs', canvasDirsKey(WORKSPACE)), save: (b) => blobStore.saveCanvasDirs(WORKSPACE, b as Uint8Array) });
+sink.register({ name: 'custom', serialize: () => tarSubtree(CUSTOM_DIR), guard: nonEmpty('custom', customKey(WORKSPACE)), save: (b) => blobStore.saveCustom(WORKSPACE, b as Uint8Array) });
+sink.register({ name: 'skills', serialize: () => tarSubtree(SKILLS_DIR), guard: nonEmpty('skills', skillsKey(WORKSPACE)), save: (b) => blobStore.saveSkills(WORKSPACE, b as Uint8Array) });
 sink.register(chatMeta.persistable());
 
 const savedMtime: Record<'shared-components' | 'canvas-dirs' | 'custom' | 'skills', number> = {

@@ -2,8 +2,15 @@
 // sessions each register as a Persistable; every save flows through one
 // attempt → record-health → log wrapper so a silent failure (the class of bug that hid
 // the dead sessions watcher) is visible at /api/status for all four. Only the wrapper and
-// the health map are shared — each artifact keeps its own serialize (tar vs JSON) and
-// guard (canvas keeps its degraded/empty-write protection).
+// the health map are shared — each artifact keeps its own serialize (tar vs JSON) and guard.
+//
+// GUARDS ARE NOT OPTIONAL FOR FULL-REPLACE ARTIFACTS. This comment used to say "canvas
+// keeps its degraded/empty-write protection" — that guard was deleted with the old sync
+// plane (ADR-0019 / #297, see blob-store.ts), the sentence was left behind, and for a
+// while it read as though something here was still protecting the tars. Nothing was. On
+// 2026-07-29 an empty flush destroyed every own-tier component, custom handler and
+// workspace skill. Every tar artifact now registers `refuseEmptyTarball`
+// (persist-guards.ts); a new one must too.
 
 export type SaveResult = 'none' | 'ok' | 'skipped' | 'failed';
 

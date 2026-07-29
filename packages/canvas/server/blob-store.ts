@@ -148,6 +148,13 @@ export class BlobStore {
     return bytes === null ? null : (JSON.parse(dec.decode(bytes)) as CanvasState);
   }
 
+  /** Does a blob exist? Existence ONLY — deliberately never the bytes. The empty-archive
+   *  guard (`persist-guards.ts`) asks this on every flush, and `sessions.tar` is tens of
+   *  megabytes; a `get` here would download it once per turn. */
+  blobExists(key: string): Promise<boolean> {
+    return this.backend.exists(key);
+  }
+
   loadSharedComponents(ws: string): Promise<Uint8Array | null> {
     return this.backend.get(sharedComponentsKey(ws));
   }
