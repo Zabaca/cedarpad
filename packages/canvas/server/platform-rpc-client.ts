@@ -1,4 +1,5 @@
 import {
+  type ConversationPrOpenedInput,
   type ConversationSettleInput,
   type ConversationStartInput,
   type NotifyInput,
@@ -11,12 +12,15 @@ import {
 
 // The container half of the platform RPC (ADR-0018). Since #266 the container holds NO
 // platform-data-layer client at all, so this is the only way it writes — and the surface is
-// four named verbs; there is no query, exec, or table name to reach for.
+// a handful of named verbs; there is no query, exec, or table name to reach for.
 
 /** The operations, as the bridge calls them. All resolve even when the edge is down. */
 export interface PlatformRpc {
   conversationStart(input: ConversationStartInput): Promise<void>;
   conversationSettle(input: ConversationSettleInput): Promise<void>;
+  /** "this run opened a PR" — the url the `open_pr` tool returned, so the Conversation
+   *  carries its PR state and the Inbox can offer to merge it (CONTEXT.md "Open PR"). */
+  conversationPrOpened(input: ConversationPrOpenedInput): Promise<void>;
   /** The one operation whose reply is read: the id is the handle `notify` then names. */
   turnEnd(input: TurnEndInput): Promise<TurnEndOutput | null>;
   notify(input: NotifyInput): Promise<void>;
@@ -68,6 +72,7 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
   return {
     conversationStart: async (input) => void (await call({ op: 'conversation.start', input })),
     conversationSettle: async (input) => void (await call({ op: 'conversation.settle', input })),
+    conversationPrOpened: async (input) => void (await call({ op: 'conversation.prOpened', input })),
     turnEnd: async (input) => {
       const res = await call({ op: 'turn.end', input });
       if (!res) return null;

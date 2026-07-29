@@ -6,6 +6,7 @@ import { DEV_AGENT_CHAT_KIND } from '../../../shared/bridge-wire';
 import { FOCUS_CHAT, postToPad } from '../../../shared/dock-messages';
 import type { InboxChatResponse, InboxItem, InboxListResponse, InboxView } from './contract';
 import { padUrlFor } from './inbox-pad-url';
+import { thirdPane } from './inbox-third-pane';
 import {
   CANVAS_HIDDEN_KEY,
   clampWidth,
@@ -425,35 +426,120 @@ export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
       {showCanvas && current && (
         <>
           <div className="inbox-divider" onPointerDown={startResize('thread')} />
-          <CanvasPane item={current} onAttached={loadList} frameRef={padFrame} />
+          <ThirdPane item={current} onAttached={loadList} onMerged={loadList} frameRef={padFrame} />
         </>
       )}
     </div>
   );
 }
 
-// The linked canvas, third pane: a live Render Pad iframe when the conversation has a
-// `canvasId`, else the attach panel (link an existing same-workspace canvas, or create one
-// named from the chat summary). Keyed by conversation + canvasId so switching conversations
-// remounts the iframe cleanly rather than reusing a stale one.
-function CanvasPane({
+// The third pane. It used to be the linked canvas alone; a dev-agent run with an open PR now
+// takes the same slot (CONTEXT.md "Open PR") — the run's durable artifact deserves the space
+// the canvas gets, and merging is the one action you cannot take anywhere else in the app.
+// `thirdPane` owns which of the three shows and whether there is anything to switch between;
+// the human's pick is per-conversation state, so it never leaks across rows.
+// The canvas view stays keyed by conversation + canvasId so switching conversations remounts
+// the iframe cleanly rather than reusing a stale one.
+function ThirdPane({
   item,
   onAttached,
+  onMerged,
   frameRef,
 }: {
   item: InboxItem;
   onAttached: () => void;
+  onMerged: () => Promise<void>;
   /** Handed down by the Inbox so the thread's focus button can post a gesture into this pad. */
   frameRef: React.RefObject<HTMLIFrameElement | null>;
 }) {
+  const [preferred, setPreferred] = useState<'pr' | 'canvas' | null>(null);
+  const { show, canToggle } = thirdPane(item, preferred);
   const padUrl = padUrlFor(item);
+
   return (
     <div className="inbox-canvas">
-      {padUrl ? (
+      {canToggle && (
+        <div className="inbox-pane-switch">
+          <button type="button" className={show === 'pr' ? 'on' : undefined} onClick={() => setPreferred('pr')}>
+            PR
+          </button>
+          <button type="button" className={show === 'canvas' ? 'on' : undefined} onClick={() => setPreferred('canvas')}>
+            Canvas
+          </button>
+        </div>
+      )}
+      {show === 'pr' ? (
+        <PrPane key={`${item.id}:pr`} item={item} onMerged={onMerged} />
+      ) : show === 'canvas' && padUrl ? (
         <iframe ref={frameRef} key={`${item.id}:${item.canvasId}`} className="inbox-canvas-frame" title="canvas" src={padUrl} />
       ) : (
         <AttachPanel key={item.id} item={item} onAttached={onAttached} />
       )}
+    </div>
+  );
+}
+
+// The PR the run opened, and the one thing you want to do with it. Merging is an edge act
+// (`POST /api/inbox/:id/merge`, ADR-0008 — the App key never leaves the edge): it squash-
+// merges, stamps the row and closes the conversation in one call, so a success is simply a
+// list reload away from being visible everywhere. A refusal shows GitHub's own words and
+// leaves the button live, because the usual cause is a check that is about to go green.
+function PrPane({ item, onMerged }: { item: InboxItem; onMerged: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Local echo of the merge, exactly as the thread head keeps its own Close/Reopen state:
+  // merging CLOSES the conversation, so the refreshed list no longer carries this row in the
+  // Open view and `current` keeps its pre-merge snapshot. Without this the pane would still
+  // offer to merge something already merged.
+  const [justMerged, setJustMerged] = useState(false);
+  const merged = !!item.prMergedAt || justMerged;
+  const prUrl = item.prUrl ?? '';
+  const number = /\/pull\/(\d+)/.exec(prUrl)?.[1];
+
+  const merge = async () => {
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/inbox/${encodeURIComponent(item.id)}/merge`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    }).catch(() => null);
+    if (!res?.ok) {
+      const body = (await res?.json().catch(() => null)) as { error?: string } | null;
+      setError(body?.error ?? 'Merge failed.');
+      setBusy(false);
+      return;
+    }
+    setJustMerged(true);
+    // The row now carries the merge stamp and has left the Open view; the refetch moves the
+    // list on (this pane is already the receipt).
+    await onMerged();
+    setBusy(false);
+  };
+
+  return (
+    <div className="inbox-pr">
+      <div className="inbox-pr-head">
+        <span className="inbox-pr-num">{number ? `#${number}` : 'Pull request'}</span>
+        <span className={`inbox-badge pr${merged ? ' merged' : ''}`}>{merged ? 'merged' : 'open'}</span>
+      </div>
+      <div className="inbox-pr-body">
+        {item.repo && <div className="inbox-pr-repo">{item.repo}</div>}
+        <a className="inbox-pr-link" href={prUrl} target="_blank" rel="noreferrer">
+          {prUrl}
+        </a>
+        {merged && <div className="inbox-pr-merged">Merged — this run is done.</div>}
+      </div>
+      <div className="inbox-pr-actions">
+        {!merged && (
+          <button type="button" className="inbox-pr-merge" disabled={busy} onClick={() => void merge()}>
+            {busy ? 'Merging…' : 'Squash & merge'}
+          </button>
+        )}
+        <a className="inbox-pr-review" href={prUrl} target="_blank" rel="noreferrer">
+          Review on GitHub ↗
+        </a>
+        {error && <small className="inbox-pr-error">{error}</small>}
+      </div>
     </div>
   );
 }

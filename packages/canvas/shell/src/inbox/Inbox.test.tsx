@@ -35,6 +35,10 @@ type Item = {
   assignedTo: string | null;
   /** The chatId that birthed the row — how a draft is matched back to its Conversation. */
   ownerRef?: string;
+  /** The run's PR state (CONTEXT.md "Open PR") — what the merge action is rendered from. */
+  repo?: string | null;
+  prUrl?: string | null;
+  prMergedAt?: number | null;
 };
 
 const realFetch = globalThis.fetch;
@@ -42,6 +46,8 @@ let calls: string[] = [];
 let store: Item[] = [];
 /** Every same-origin chat SEND, with the chat-kind the client declared on it (CEDA-N67Y50). */
 let sends: Array<{ url: string; kind: string | null }> = [];
+/** When set, the stubbed merge route refuses with this as GitHub's reason. */
+let mergeFails: string | null = null;
 
 const item = (o: Partial<Item> & { id: string }): Item => ({
   status: 'open',
@@ -54,6 +60,9 @@ const item = (o: Partial<Item> & { id: string }): Item => ({
   lastActivity: 0,
   canvasId: null,
   assignedTo: null,
+  repo: null,
+  prUrl: null,
+  prMergedAt: null,
   ...o,
 });
 
@@ -103,6 +112,18 @@ function stubInbox() {
       // <ChatView>'s rehydrate on connect (JSONL-derived transcript under the proxy prefix).
       if (sub.endsWith('/transcript')) return Response.json({ config: {}, events: [] });
       return Response.json({ ok: true });
+    }
+
+    // Merge — the edge lands the run's PR, stamps it merged and closes the row in one act.
+    const mergeRoute = /^\/api\/inbox\/([^/]+)\/merge$/.exec(u.pathname);
+    if (mergeRoute && method === 'POST') {
+      const row = store.find((r) => r.id === mergeRoute[1]);
+      if (mergeFails) return Response.json({ error: mergeFails }, { status: 409 });
+      if (row) {
+        row.prMergedAt = 1234;
+        row.status = 'closed';
+      }
+      return Response.json({ conversation: row });
     }
 
     // Close / reopen — edge store transitions (no transcript, no wake).
@@ -172,6 +193,7 @@ const viewFilter = () => container.querySelector('[aria-label="View filter"]');
 beforeEach(() => {
   calls = [];
   sends = [];
+  mergeFails = null;
   store = [];
   stubInbox();
   (globalThis as { EventSource?: unknown }).EventSource = StubEventSource as unknown;
@@ -446,7 +468,7 @@ describe('the canvas pane', () => {
     expect(frame).not.toBeNull();
     expect(frame?.getAttribute('src')).toBe('/w/ws_1/canvas/cv_1/pad');
     expect(frame?.getAttribute('title')).toBe('canvas');
-    expect(container.querySelector('.inbox-canvas-empty')).toBeNull();
+    expect(container.querySelector('.inbox-canvas-empty') === null).toBe(true);
   });
 
   test('a toggle button hides the canvas pane (persisted; the thread takes the space)', async () => {
@@ -736,5 +758,89 @@ describe('choosing the chat kind for a new chat', () => {
     await sendFirstMessage('second');
 
     expect(sends.map((s) => s.kind)).toEqual(['dev-agent', 'dev-agent']);
+  });
+});
+
+// The Inbox merge (CONTEXT.md "Open PR"). The run's PR takes the third pane — the slot the
+// linked canvas otherwise holds — so the artifact you opened the row for gets the same
+// first-class space, and a conversation that has both lets you switch between them.
+describe('the PR pane: landing a dev-agent run without leaving the Inbox', () => {
+  const PR = 'https://github.com/Zabaca/cedarpad/pull/283';
+  const prPane = () => container.querySelector('.inbox-pr');
+  const mergeBtn = () => container.querySelector('.inbox-pr-merge') as HTMLButtonElement | null;
+  const paneToggle = () => [...container.querySelectorAll('.inbox-pane-switch button')];
+  const openFirst = async () => {
+    await mount();
+    await flush();
+    await click(items()[0] as Element);
+  };
+
+  test('a run with an open PR shows the PR pane, with the PR it opened', async () => {
+    store = [item({ id: 'c1', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: PR })];
+    await openFirst();
+
+    expect(prPane() !== null).toBe(true);
+    expect(prPane()?.textContent).toContain('#283');
+    expect(prPane()?.textContent).toContain('Zabaca/cedarpad');
+    expect(mergeBtn() !== null).toBe(true);
+    // The pane replaces the canvas — this conversation has no canvas to attach anyway.
+    expect(container.querySelector('.inbox-canvas-empty') === null).toBe(true);
+  });
+
+  test('an ordinary chat has no PR pane and no merge action', async () => {
+    store = [item({ id: 'c1', canvasId: 'cv_1' })];
+    await openFirst();
+
+    expect(prPane() === null).toBe(true);
+    expect(mergeBtn() === null).toBe(true);
+  });
+
+  test('merging calls the edge merge route and the row lands merged + closed', async () => {
+    store = [item({ id: 'c1', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: PR })];
+    await openFirst();
+
+    await click(mergeBtn());
+
+    expect(calls).toContain('POST /api/inbox/c1/merge');
+    expect(store[0]?.prMergedAt).toBe(1234);
+    expect(store[0]?.status).toBe('closed');
+    // The pane becomes the receipt: no second merge is offered.
+    expect(mergeBtn() === null).toBe(true);
+    expect(prPane()?.textContent).toContain('Merged');
+  });
+
+  test('a refusal shows GitHub‘s own reason and leaves the PR mergeable', async () => {
+    store = [item({ id: 'c1', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: PR })];
+    mergeFails = 'Pull Request is not mergeable';
+    await openFirst();
+
+    await click(mergeBtn());
+
+    expect(prPane()?.textContent).toContain('Pull Request is not mergeable');
+    expect(store[0]?.prMergedAt).toBeNull();
+    // Retrying after CI goes green is one click — the button is still there.
+    expect(mergeBtn() !== null).toBe(true);
+  });
+
+  test('with a canvas AND an open PR the pane leads with the PR and offers the switch', async () => {
+    store = [item({ id: 'c1', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: PR, canvasId: 'cv_1' })];
+    await openFirst();
+
+    expect(prPane() !== null).toBe(true);
+    expect(paneToggle().map((b) => b.textContent)).toEqual(['PR', 'Canvas']);
+
+    await click(paneToggle()[1] as Element);
+    expect(prPane() === null).toBe(true);
+    expect(container.querySelector('.inbox-canvas-frame') !== null).toBe(true);
+
+    await click(paneToggle()[0] as Element);
+    expect(prPane() !== null).toBe(true);
+  });
+
+  test('with no canvas there is nothing to switch between, so no switch is rendered', async () => {
+    store = [item({ id: 'c1', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: PR })];
+    await openFirst();
+
+    expect(paneToggle()).toEqual([]);
   });
 });

@@ -221,6 +221,19 @@ export async function attachRepo(db: Database, id: string, repo: string): Promis
   return get(db, id);
 }
 
+/** Record the PR this dev-agent run opened (CONTEXT.md "Open PR"). Last-wins, unlike the
+ * first-wins edges above: a run may open a second PR after the first is merged or closed,
+ * and the row names the one currently in play. Stamping a new PR clears any merge mark. */
+export async function recordPr(db: Database, id: string, prUrl: string): Promise<ConversationRow | null> {
+  return patch(db, id, { prUrl, prMergedAt: null });
+}
+
+/** Land the recorded PR: stamp the merge and CLOSE the conversation in one act — landing
+ * the PR is what ends a dev-agent run (grill 2026-07-29). */
+export async function markPrMerged(db: Database, id: string, at: Date = now()): Promise<ConversationRow | null> {
+  return patch(db, id, { prMergedAt: at, status: "closed", waitingOn: "none" });
+}
+
 /** Hard-delete a Conversation row (legacy-duplicate cleanup only — product flows archive
  * via close(), they never delete). */
 export async function remove(db: Database, id: string): Promise<void> {

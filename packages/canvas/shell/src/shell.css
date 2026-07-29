@@ -626,18 +626,138 @@ body,
   border-color: var(--accent);
   color: var(--accent);
 }
-/* Third pane: the conversation's linked canvas, live (#161). Shares the thread's remaining
-   space with a larger weight — the pad is the thing being worked on. */
+/* Third pane: the conversation's linked canvas, live (#161) — or, for a dev-agent run that
+   opened a PR, the PR panel (CONTEXT.md "Open PR"). Column layout so the pane switch can sit
+   above whichever of the two is showing. Shares the thread's remaining space with a larger
+   weight — whatever is in here is the thing being worked on. */
 .inbox-canvas {
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-direction: column;
+  min-height: 0;
   border-left: 1px solid var(--line);
 }
 .inbox-canvas-frame {
+  flex: 1;
   width: 100%;
-  height: 100%;
   border: 0;
+}
+/* PR | Canvas — rendered ONLY when the conversation has both, so there is never a switch
+   with nothing to switch to. */
+.inbox-pane-switch {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.inbox-pane-switch button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  padding: 3px 12px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.inbox-pane-switch button.on {
+  background: var(--overlay);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+/* The PR panel: the run's artifact, and the merge that lands it. */
+.inbox-pr {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+.inbox-pr-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--line);
+}
+.inbox-pr-num {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+.inbox-badge.pr {
+  background: oklch(0.3 0.06 300);
+  color: oklch(0.78 0.13 300);
+  text-transform: none;
+  letter-spacing: normal;
+}
+.inbox-badge.pr.merged {
+  background: var(--overlay);
+  color: var(--muted);
+}
+.inbox-pr-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 15px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.inbox-pr-repo {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+.inbox-pr-link {
+  display: block;
+  margin-top: 8px;
+  color: var(--faint);
+  font-size: 11.5px;
+  word-break: break-all;
+}
+.inbox-pr-merged {
+  margin-top: 12px;
+  color: var(--success);
+}
+.inbox-pr-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 15px;
+  border-top: 1px solid var(--line);
+}
+/* Merging is the one irreversible action in the Inbox, so it gets its own colour rather than
+   the accent every other primary shares — it should never be clicked by muscle memory. */
+.inbox-pr-merge {
+  background: oklch(0.6 0.16 300);
+  border: 1px solid oklch(0.6 0.16 300);
+  color: oklch(0.98 0 0);
+  padding: 7px 12px;
+  border-radius: 7px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.inbox-pr-merge:hover:not(:disabled) {
+  background: oklch(0.68 0.16 300);
+  border-color: oklch(0.68 0.16 300);
+}
+.inbox-pr-merge:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.inbox-pr-review {
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.inbox-pr-error {
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .inbox-canvas-empty {
   margin: auto;

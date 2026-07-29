@@ -807,6 +807,14 @@ export const conversations = sqliteTable(
     /** Nullable run→repo edge (ADR-0015): the repo a dev-agent conversation operates on.
      *  One run = one repo; replies re-mint for exactly this repo. First-wins like canvasId. */
     repo: text("repo"),
+    /** The PR this dev-agent run opened (CONTEXT.md "Open PR"): stamped when the `open_pr`
+     *  tool succeeds, reported edge-ward through the platform RPC. Its presence — not a
+     *  transcript mention — is what "this run has an open PR" means, and it is what the
+     *  Inbox renders its Merge action from. Null for every ordinary chat. */
+    prUrl: text("pr_url"),
+    /** When that PR was merged FROM THE INBOX (epoch ms). Null = still open. Set together
+     *  with closing the conversation: landing the PR is what ends the run. */
+    prMergedAt: integer("pr_merged_at", { mode: "timestamp_ms" }),
     /** Platform workspace id (registry / `cs_workspace`). Plain text, no FK. */
     workspaceId: text("workspace_id").notNull(),
     /** The CREATOR (immutable attribution: who started the session) — never an access

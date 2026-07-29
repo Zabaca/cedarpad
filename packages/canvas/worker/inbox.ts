@@ -5,6 +5,9 @@ import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
 import { orderInbox, unseenCount, viewToListOpts, type InboxItem } from './inbox-view.ts';
+import { mintDevAgentGitToken } from './github-app.ts';
+import { resolveDevAgentRepo } from './github-connection.ts';
+import { mergePullRequest } from './pr-merge.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import { activeWorkspaceId } from './shell.ts';
 import { listVisibleConversations, resolveConversationById } from './access.ts';
@@ -50,6 +53,15 @@ async function inboxReadAt(database: ReturnType<typeof db>, workspaceId: string,
   return ws?.inboxReadAt ? ws.inboxReadAt.getTime() : 0;
 }
 
+/** The merge route's outward-facing collaborators, as default-parameter test seams (the
+ *  shape `inbox-bridge.ts` uses): production always resolves the repo, mints, and calls
+ *  GitHub for real. */
+export interface InboxApiDeps {
+  resolveRepo: typeof resolveDevAgentRepo;
+  mint: typeof mintDevAgentGitToken;
+  merge: typeof mergePullRequest;
+}
+
 /**
  * The edge Inbox API — WORKSPACE-SHARED (CONTEXT.md): visibility and action are
  * membership-gated, never creator-gated.
@@ -61,6 +73,7 @@ async function inboxReadAt(database: ReturnType<typeof db>, workspaceId: string,
  *   POST /api/inbox/:id/close       → store close
  *   POST /api/inbox/:id/reopen      → store reopen
  *   POST /api/inbox/:id/assign     → advisory assignment: { userId } (a member) or { userId: null }
+ *   POST /api/inbox/:id/merge      → squash-merge the run's open PR, stamp + close the row
  * Every per-id route verifies the caller is a member of the Conversation's workspace (else 404).
  */
 export async function handleInboxApi(
@@ -69,6 +82,7 @@ export async function handleInboxApi(
   user: GateUser,
   id?: string,
   action?: string,
+  deps: InboxApiDeps = { resolveRepo: resolveDevAgentRepo, mint: mintDevAgentGitToken, merge: mergePullRequest },
 ): Promise<Response> {
   const database = db(env);
   const url = new URL(request.url);
@@ -188,6 +202,35 @@ export async function handleInboxApi(
       return Response.json({ error: 'assignee is not a workspace member' }, { status: 400 });
     }
     const updated = await conversations.assign(database, id, target);
+    return Response.json({ conversation: updated });
+  }
+
+  // Land the run's PR (CONTEXT.md "Open PR"). Membership-gated like every other per-id action
+  // (the resolve above already 404'd a stranger) — merging is inbox triage, not repo config;
+  // the owner's gate was installing the App and selecting the repo. The merge happens HERE
+  // rather than in the container because the App private key never leaves the edge (ADR-0008).
+  if (action === 'merge') {
+    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+    if (!conv.prUrl) return Response.json({ error: 'this conversation has no open PR' }, { status: 409 });
+    if (conv.prMergedAt) return Response.json({ error: 'this PR has already been merged' }, { status: 409 });
+
+    // The conversation's OWN repo (ADR-0015: one run = one repo); legacy rows without the
+    // edge fall back to the workspace's first selected repo, exactly as a send does.
+    const resolved = await deps.resolveRepo(env, database, conv.workspaceId, conv.repo ?? undefined);
+    const token = resolved
+      ? await deps.mint(env, { nowSec: Math.floor(Date.now() / 1000), ...resolved })
+      : null;
+    // No credential ⇒ stop. Never attempt the merge token-less: the failure would come back
+    // as GitHub's opaque 404 rather than "this workspace has no write access to that repo".
+    if (!token) {
+      return Response.json({ error: 'no GitHub credential for this repo — check the workspace’s repository connection' }, { status: 502 });
+    }
+
+    const result = await deps.merge({ prUrl: conv.prUrl, token });
+    // GitHub reporting the PR as already merged means the ROW was stale, not that the merge
+    // failed — record it as merged rather than showing the human an error about it.
+    if (!result.ok && !result.alreadyMerged) return Response.json({ error: result.reason }, { status: 409 });
+    const updated = await conversations.markPrMerged(database, id);
     return Response.json({ conversation: updated });
   }
 

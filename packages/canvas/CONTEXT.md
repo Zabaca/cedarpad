@@ -72,6 +72,21 @@ conversation claims it for that user, deliberately. _Avoid_: scoping Inbox reads
 `user_id`, repurposing `user_id` as the assignee, or making assignment exclusive
 (assignee-only reply). _(Decided 2026-07-15.)_
 
+**Open PR (a Conversation's PR state)** _(decided 2026-07-29)_: a dev-agent Conversation
+that has called `open_pr` **carries the PR it opened** — `pr_url` on the row, stamped by
+the container reporting the tool's result back through the platform RPC (the edge owns the
+row, ADR-0018). That, not a transcript mention, is what "this run has an open PR" means,
+and it is what the Inbox renders a **Merge** action from. Merging is an *edge* act — the
+GitHub App private key never leaves the edge (ADR-0008), so the container never merges —
+squash-only, membership-gated like every other per-id Inbox action, and it stamps
+`pr_merged_at` and **closes** the Conversation: landing the PR is what ends the run. A
+refusal from GitHub (conflict, red required check, branch protection) leaves the row in
+its open-PR state with GitHub's own reason shown, so a retry after CI goes green is one
+click; a PR GitHub reports as already merged is recorded as merged — the row was stale.
+For a **Job**, this is the arming step (see "Job" below): the job is live once merged.
+_Avoid_: reading PR state by scraping the transcript, or by querying GitHub per row while
+listing the Inbox — the list is a cheap edge D1 read that must never wake a runner.
+
 **Visibility (canvas + chat)** _(ADR-0016, decided + implemented 2026-07-17)_:
 a canvas is **workspace-visible** (default; today's behavior) or **private** —
 private means only its **creator** (`created_by`, a new registry column) can see or
