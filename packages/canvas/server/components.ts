@@ -1,7 +1,7 @@
-// Scoped filesystem CRUD for agent-authored component modules. The agent can only
-// touch a validated <Name>.tsx (no path escape) inside a canvas's own dir or the
-// workspace shared library, so it stays in the locked sandbox while building a real,
-// composable component library that vite compiles and the canvas dynamic-imports.
+// Scoped CRUD for agent-authored component modules. The agent can only touch a validated
+// <Name>.tsx (no path escape) inside a canvas's own dir or the workspace shared library, so
+// it stays in the locked sandbox while building a real, composable component library that
+// vite compiles and the canvas dynamic-imports.
 //
 // Dirs (ADR-0007 Option B, mirrors src/component-loader.ts):
 //   default canvas own dir → src/canvas-components/
@@ -10,10 +10,20 @@
 // `promote` MOVES a module from a canvas's own dir into the shared lib (one live source);
 // a canvas can `adopt` a shared module back into its own dir to diverge. Reads span the
 // canvas's own dir + the shared lib.
+//
+// RECORDS (ADR-0022). Since the 2026-07-29 loss the OWN tier's truth is a row, not the file:
+// `writeComponent` persists the Record first and writes the file second, and a read with no
+// file materializes the Record on demand. The filesystem is a rendering — a cache vite
+// compiles from — so a container that comes back with an empty tree is a slow first request,
+// never a data event. There is deliberately NO boot restore: the failure mode that destroyed
+// the workspace cannot exist where the step does not.
+//
+// The SHARED tier and data files still live only on disk; they move in later slices of #354.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { COMPONENT_NAME_RE, DATA_FILE_NAME_RE } from '../shared/bridge-wire.ts';
+import { loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
 
 const DEFAULT_CANVAS_ID = 'default';
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
@@ -35,6 +45,44 @@ function fileIn(dir: string, module: string): string {
   if (!NAME.test(module)) throw new Error(`invalid component name "${module}" — use letters/digits/_/- and no extension`);
   return `${dir}${module}.tsx`;
 }
+
+/**
+ * The container's door to the Record store (ADR-0022): a Component named by its canvas and
+ * module, never a row and never a query. Behind it is the platform RPC's `component.write` /
+ * `component.read` — the container holds no database credential and never has.
+ *
+ * A default-parameter seam (the `bridge.ts` pattern), so the ordering rules below are
+ * testable against a fake without a network or a D1.
+ */
+export interface ComponentRecords {
+  /** Persist the own-tier source. THROWS when the store refuses or is unreachable. */
+  write(canvasId: string, module: string, source: string): Promise<void>;
+  /** The stored source, or null when the own tier holds no Record for that name. */
+  read(canvasId: string, module: string): Promise<string | null>;
+}
+
+/**
+ * The env-wired store, or **null when there is no edge in front of this process** — local
+ * dev without the Worker, and the unit suite. That is an explicit state, not a fallback: with
+ * no store the filesystem is all there is, exactly as it was before this ADR.
+ */
+function containerRecords(): ComponentRecords | null {
+  const env = loadWebPocEnv();
+  const rpc = platformRpcFromEnv(env);
+  if (!rpc) return null;
+  // The container's identity, as every other container-side write already derives it
+  // (worker/container-env.ts). `userId` is ATTRIBUTION — the edge decides permission itself.
+  // 'default' is the legacy/prod workspace id (worker/shell-routing.ts DEFAULT_WORKSPACE_ID).
+  const workspaceId = env.CANVAS_WORKSPACE || 'default';
+  const userId = env.CANVAS_USER || 'default';
+  return {
+    write: async (canvasId, module, source) => void (await rpc.componentWrite({ workspaceId, canvasId, userId, name: module, source })),
+    read: (canvasId, module) => rpc.componentRead({ workspaceId, canvasId, name: module }),
+  };
+}
+
+/** The store this process talks to, resolved once from env. Null = no edge in front of it. */
+export const componentRecordStore = containerRecords();
 
 function namesIn(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -87,28 +135,88 @@ export function isShared(module: string): boolean {
   return existsSync(fileIn(SHARED_DIR, module));
 }
 
-/** Resolve the on-disk path of an existing module: own dir first, then shared, then platform. */
-function resolveExisting(module: string, canvasId: string): string {
-  const own = fileIn(ownDir(canvasId), module);
-  if (existsSync(own)) return own;
+/** The two tiers below the canvas's own: the workspace shared library, then the platform
+ *  base. Both are still plain files (the shared tier becomes a Record in a later slice). */
+function sharedOrBaseFile(module: string): string | null {
   const shared = fileIn(SHARED_DIR, module);
   if (existsSync(shared)) return shared;
   const base = fileIn(BASE_DIR, module);
   if (existsSync(base)) return base;
+  return null;
+}
+
+/**
+ * Write an own-tier Record's source to the file vite compiles from, and return it; null when
+ * the store holds no such Component. This is the ONLY restore path there is — ADR-0022
+ * decision 5 deletes boot restore rather than guarding it, so there can be no "boot restored
+ * nothing" bug. One Component per call: a cold container pays for what is asked for, never
+ * for the whole library.
+ */
+export async function materializeComponent(
+  module: string,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<string | null> {
+  if (!records) return null;
+  const file = fileIn(ownDir(canvasId), module); // validates the name before we ask anything
+  const source = await records.read(canvasId, module);
+  if (source === null) return null;
+  mkdirSync(ownDir(canvasId), { recursive: true });
+  writeFileSync(file, source);
+  return source;
+}
+
+/**
+ * Own tier, then shared, then platform (ADR-0014 precedence, unchanged) — but the own tier is
+ * now "the file OR its Record". Consulting the Record before falling through matters: writing
+ * a platform module's name shadows it into the canvas, and after a recycle the shadow file is
+ * gone while the Record is not. Falling straight through to base would silently hand back the
+ * platform component the user deliberately replaced.
+ */
+export async function readComponent(
+  module: string,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<string> {
+  const own = fileIn(ownDir(canvasId), module);
+  if (existsSync(own)) return readFileSync(own, 'utf8');
+  const materialized = await materializeComponent(module, canvasId, records);
+  if (materialized !== null) return materialized;
+  const file = sharedOrBaseFile(module);
+  if (file) return readFileSync(file, 'utf8');
   throw new Error(`component "${module}" does not exist (list_components to see what does)`);
 }
 
-export function readComponent(module: string, canvasId: string = DEFAULT_CANVAS_ID): string {
-  return readFileSync(resolveExisting(module, canvasId), 'utf8');
-}
-
-/** Create or overwrite a module file — in the shared lib if it already lives there, else the
- * canvas's own dir. Editing a shared module thus stays the one shared source (propagation). */
-export function writeComponent(module: string, source: string, canvasId: string = DEFAULT_CANVAS_ID): void {
+/**
+ * Create or overwrite a module — in the shared lib if it already lives there, else the
+ * canvas's own dir. Editing a shared module thus stays the one shared source (propagation).
+ *
+ * ORDERING IS THE POINT (ADR-0022): the Record is persisted FIRST, and only then is the file
+ * written. A store write that fails throws, so the tool call fails and the agent can retry;
+ * the alternative — the old one — was a disk write that reported success and evaporated at
+ * the next bad boot. The file write is best-effort by comparison: under on-demand
+ * materialization it is only an HMR trigger.
+ */
+export async function writeComponent(
+  module: string,
+  source: string,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<void> {
   if (typeof source !== 'string' || source.trim().length === 0) throw new Error('source must be non-empty');
-  const dir = isShared(module) ? SHARED_DIR : ownDir(canvasId);
+  const shared = isShared(module);
+  const dir = shared ? SHARED_DIR : ownDir(canvasId);
+  const file = fileIn(dir, module); // validates the name before we ask the store anything
+  // The shared tier is still filesystem-only; it becomes a Record in a later slice of #354.
+  if (!shared) await records?.write(canvasId, module, source);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(fileIn(dir, module), source);
+  try {
+    writeFileSync(file, source);
+  } catch (err) {
+    // Only forgivable because the Record already landed: the next request materializes it.
+    if (shared || !records) throw err;
+    console.error(`[components] ${module}.tsx did not reach disk; it will materialize on next fetch:`, err);
+  }
 }
 
 // Data files live NEXT TO components so vite resolves `import data from "./sales.json"`.
@@ -136,13 +244,21 @@ export function writeDataFile(name: string, source: string, canvasId: string = D
   writeFileSync(`${dir}${name}`, source);
 }
 
-/** Per-line edit: replace a unique `oldStr` occurrence with `newStr` in a module file. */
-export function editComponent(module: string, oldStr: string, newStr: string, canvasId: string = DEFAULT_CANVAS_ID): void {
-  const cur = readComponent(module, canvasId);
+/** Per-line edit: replace a unique `oldStr` occurrence with `newStr`. Reads through
+ *  `readComponent`, so an edit after a recycle patches the stored source rather than
+ *  racing a file that is not there. */
+export async function editComponent(
+  module: string,
+  oldStr: string,
+  newStr: string,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<void> {
+  const cur = await readComponent(module, canvasId, records);
   const first = cur.indexOf(oldStr);
   if (first === -1) throw new Error('old_string not found — read_component first and copy the exact text');
   if (cur.indexOf(oldStr, first + 1) !== -1) throw new Error('old_string is not unique — include more surrounding context');
-  writeComponent(module, cur.slice(0, first) + newStr + cur.slice(first + oldStr.length), canvasId);
+  await writeComponent(module, cur.slice(0, first) + newStr + cur.slice(first + oldStr.length), canvasId, records);
 }
 
 /** Move a component from a canvas's own dir into the shared library (one live source).

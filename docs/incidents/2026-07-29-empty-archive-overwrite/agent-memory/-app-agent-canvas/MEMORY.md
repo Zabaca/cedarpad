@@ -1,0 +1,1 @@
+- [Don't bury the lead in headings](feedback_dont_bury_the_lead.md) — put the direct point/takeaway in the heading itself, not just a topic label.

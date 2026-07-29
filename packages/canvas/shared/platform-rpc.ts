@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ComponentName } from './bridge-wire.ts';
 import { parsePrUrl } from './pr-url.ts';
 import { serviceToken, verifyServiceToken } from './service-token.ts';
 
@@ -134,6 +135,49 @@ export const ConversationPrOpenedInput = ConversationSettleInput.extend({
 });
 export type ConversationPrOpenedInput = z.infer<typeof ConversationPrOpenedInput>;
 
+/**
+ * Operations 6 and 7 — the **Record** verbs (ADR-0022). Component source stops being a
+ * directory the container tars into R2 and becomes rows the edge owns; this is how the
+ * container gets it there. Note what these are NOT: there is no `record.put`, no table, no
+ * filter — they are component-shaped, exactly like the chat verbs above are chat-shaped, so
+ * the surface stays behavioural and cannot decay into a SQL tunnel.
+ *
+ * The name is validated HERE as well as at the store, so a traversing name is a 400 at the
+ * boundary rather than something the edge has to be trusted to notice. `canvasId` is
+ * required: this slice carries the OWN tier only, and the shared tier gets its own verb
+ * rather than a nullable field nobody can see the meaning of.
+ *
+ * These two break the "best-effort" rule that governs every operation above them, and
+ * deliberately: a Component write that cannot be persisted must FAIL the tool call so the
+ * agent can retry. Today's disk write succeeds, reports success, and can evaporate on the
+ * next bad boot — a write that fails loudly beats one that lies.
+ */
+export const ComponentWriteInput = z.object({
+  workspaceId: z.string().min(1),
+  canvasId: z.string().min(1),
+  /** Attribution (`updated_by`), not authorization — the edge derives permission itself. */
+  userId: z.string().min(1),
+  name: ComponentName,
+  source: z.string().refine((s) => s.trim().length > 0, 'source must be non-empty'),
+});
+export type ComponentWriteInput = z.infer<typeof ComponentWriteInput>;
+
+/** The stored revision — the container logs it; it never holds the row. */
+export const ComponentWriteOutput = z.object({ rev: z.number().int().positive() });
+export type ComponentWriteOutput = z.infer<typeof ComponentWriteOutput>;
+
+export const ComponentReadInput = z.object({
+  workspaceId: z.string().min(1),
+  canvasId: z.string().min(1),
+  name: ComponentName,
+});
+export type ComponentReadInput = z.infer<typeof ComponentReadInput>;
+
+/** `null` = no Record for that name in that tier. Absent is an ANSWER, not a failure —
+ *  the caller must be able to fall through to the next tier without treating it as an error. */
+export const ComponentReadOutput = z.object({ source: z.string().nullable() });
+export type ComponentReadOutput = z.infer<typeof ComponentReadOutput>;
+
 /** The whole request, discriminated by operation name — the complete surface. */
 export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('conversation.start'), input: ConversationStartInput }),
@@ -141,5 +185,7 @@ export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('conversation.prOpened'), input: ConversationPrOpenedInput }),
   z.object({ op: z.literal('turn.end'), input: TurnEndInput }),
   z.object({ op: z.literal('notify'), input: NotifyInput }),
+  z.object({ op: z.literal('component.write'), input: ComponentWriteInput }),
+  z.object({ op: z.literal('component.read'), input: ComponentReadInput }),
 ]);
 export type PlatformRpcRequest = z.infer<typeof PlatformRpcRequest>;

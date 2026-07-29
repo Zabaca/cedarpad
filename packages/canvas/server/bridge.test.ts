@@ -631,6 +631,8 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
       conversationPrOpened: async () => {},
       turnEnd: async () => null,
       notify: async () => {},
+      componentWrite: async () => ({ rev: 1 }),
+      componentRead: async () => null,
     };
     return { rpc, started };
   };
@@ -671,6 +673,8 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
         conversationPrOpened: async () => {},
           turnEnd: async () => null,
           notify: async () => {},
+          componentWrite: async () => ({ rev: 1 }),
+          componentRead: async () => null,
         },
       });
     } finally {

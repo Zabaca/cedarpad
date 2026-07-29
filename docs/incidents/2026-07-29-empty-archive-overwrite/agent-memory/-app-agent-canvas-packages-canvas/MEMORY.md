@@ -1,0 +1,2 @@
+- [Use write_component tool](feedback_use_write_component_tool.md) — filesystem Write on canvas-components/ files silently fails to register with the canvas backend
+- [promote_component not durable](project_promote_component_not_durable.md) — shared/components/ output from promote_component doesn't survive container restarts; treat as session-only

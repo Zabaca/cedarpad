@@ -28,50 +28,50 @@ describe('component file CRUD', () => {
     expect(listComponents('cv_somewhere_else')).toContain('MarkdownCard');
   });
 
-  test('read returns source (platform base resolves for any canvas); missing throws', () => {
-    expect(readComponent('KpiCard')).toContain('KpiCard');
-    expect(readComponent('KpiCard', 'cv_somewhere_else')).toContain('KpiCard');
-    expect(() => readComponent('DefinitelyMissing')).toThrow(/does not exist/);
+  test('read returns source (platform base resolves for any canvas); missing throws', async () => {
+    expect(await readComponent('KpiCard')).toContain('KpiCard');
+    expect(await readComponent('KpiCard', 'cv_somewhere_else')).toContain('KpiCard');
+    expect(readComponent('DefinitelyMissing')).rejects.toThrow(/does not exist/);
   });
 
-  test('writing a platform module name shadows it into the canvas own dir — base stays untouched', () => {
+  test('writing a platform module name shadows it into the canvas own dir — base stays untouched', async () => {
     const basePath = fileURLToPath(new URL('../src/canvas-components/KpiCard.tsx', import.meta.url));
     const shadowPath = fileURLToPath(new URL('../src/canvas-default/components/KpiCard.tsx', import.meta.url));
     const baseBefore = readFileSync(basePath, 'utf8');
     try {
-      writeComponent('KpiCard', 'export default () => <div>shadowed</div>;\n');
+      await writeComponent('KpiCard', 'export default () => <div>shadowed</div>;\n');
       expect(readFileSync(basePath, 'utf8')).toBe(baseBefore); // read-only tier
       expect(existsSync(shadowPath)).toBe(true);
-      expect(readComponent('KpiCard')).toContain('shadowed'); // own wins resolution
+      expect(await readComponent('KpiCard')).toContain('shadowed'); // own wins resolution
     } finally {
       if (existsSync(shadowPath)) rmSync(shadowPath);
     }
   });
 
-  test('write then read round-trips; edit replaces a unique snippet', () => {
+  test('write then read round-trips; edit replaces a unique snippet', async () => {
     try {
-      writeComponent(TMP, 'export default () => <div>v1</div>;\n');
-      expect(readComponent(TMP)).toContain('v1');
-      editComponent(TMP, 'v1', 'v2');
-      expect(readComponent(TMP)).toContain('v2');
+      await writeComponent(TMP, 'export default () => <div>v1</div>;\n');
+      expect(await readComponent(TMP)).toContain('v1');
+      await editComponent(TMP, 'v1', 'v2');
+      expect(await readComponent(TMP)).toContain('v2');
     } finally {
       cleanup();
     }
   });
 
-  test('edit rejects a non-unique or missing old_string', () => {
+  test('edit rejects a non-unique or missing old_string', async () => {
     try {
-      writeComponent(TMP, 'a a\n');
-      expect(() => editComponent(TMP, 'a', 'b')).toThrow(/not unique/);
-      expect(() => editComponent(TMP, 'zzz', 'b')).toThrow(/not found/);
+      await writeComponent(TMP, 'a a\n');
+      expect(editComponent(TMP, 'a', 'b')).rejects.toThrow(/not unique/);
+      expect(editComponent(TMP, 'zzz', 'b')).rejects.toThrow(/not found/);
     } finally {
       cleanup();
     }
   });
 
-  test('rejects path-escaping / invalid names', () => {
-    expect(() => readComponent('../secret')).toThrow(/invalid component name/);
-    expect(() => writeComponent('a/b', 'x')).toThrow(/invalid component name/);
+  test('rejects path-escaping / invalid names', async () => {
+    expect(readComponent('../secret')).rejects.toThrow(/invalid component name/);
+    expect(writeComponent('a/b', 'x')).rejects.toThrow(/invalid component name/);
   });
 });
 
@@ -124,9 +124,9 @@ describe('data files: write_data lands next to components', () => {
 });
 
 describe('shared library: promote (move) + adopt (copy-back to diverge)', () => {
-  test('promote moves the file own → shared; then it resolves as shared', () => {
+  test('promote moves the file own → shared; then it resolves as shared', async () => {
     try {
-      writeComponent(SH, 'export default () => <div>promote me</div>;\n');
+      await writeComponent(SH, 'export default () => <div>promote me</div>;\n');
       expect(existsSync(ownPath)).toBe(true);
       expect(isShared(SH)).toBe(false);
 
@@ -135,28 +135,28 @@ describe('shared library: promote (move) + adopt (copy-back to diverge)', () => 
       expect(existsSync(sharedPath)).toBe(true);
       expect(isShared(SH)).toBe(true);
       // Reads span own + shared, so a canvas still sees the promoted module by bare name.
-      expect(readComponent(SH)).toContain('promote me');
+      expect(await readComponent(SH)).toContain('promote me');
       expect(listComponents()).toContain(SH);
     } finally {
       cleanupShared();
     }
   });
 
-  test('editing a promoted module writes back to the shared source (one live source)', () => {
+  test('editing a promoted module writes back to the shared source (one live source)', async () => {
     try {
-      writeComponent(SH, 'export default () => <div>v1</div>;\n');
+      await writeComponent(SH, 'export default () => <div>v1</div>;\n');
       promoteComponent('default', SH);
-      editComponent(SH, 'v1', 'v2');
-      expect(readComponent(SH)).toContain('v2');
+      await editComponent(SH, 'v1', 'v2');
+      expect(await readComponent(SH)).toContain('v2');
       expect(existsSync(ownPath)).toBe(false); // still only in shared
     } finally {
       cleanupShared();
     }
   });
 
-  test('adopt copies a shared module back into the canvas own dir (diverge)', () => {
+  test('adopt copies a shared module back into the canvas own dir (diverge)', async () => {
     try {
-      writeComponent(SH, 'export default () => <div>base</div>;\n');
+      await writeComponent(SH, 'export default () => <div>base</div>;\n');
       promoteComponent('default', SH);
       adoptSharedComponent('default', SH);
       expect(existsSync(ownPath)).toBe(true); // own copy now wins own-first resolution
@@ -166,11 +166,11 @@ describe('shared library: promote (move) + adopt (copy-back to diverge)', () => 
     }
   });
 
-  test('promote rejects a missing own file and a name collision; preserves path-escape guard', () => {
+  test('promote rejects a missing own file and a name collision; preserves path-escape guard', async () => {
     expect(() => promoteComponent('default', 'DefinitelyMissing')).toThrow(/not in canvas/);
     expect(() => promoteComponent('default', '../secret')).toThrow(/invalid component name/);
     try {
-      writeComponent(SH, 'export default () => null;\n');
+      await writeComponent(SH, 'export default () => null;\n');
       promoteComponent('default', SH);
       adoptSharedComponent('default', SH); // canvas re-owns a copy (diverged): own + shared coexist
       expect(() => promoteComponent('default', SH)).toThrow(/already exists/);

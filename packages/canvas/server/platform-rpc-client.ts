@@ -1,4 +1,8 @@
 import {
+  type ComponentReadInput,
+  ComponentReadOutput,
+  type ComponentWriteInput,
+  ComponentWriteOutput,
   type ConversationPrOpenedInput,
   type ConversationSettleInput,
   type ConversationStartInput,
@@ -14,7 +18,8 @@ import {
 // platform-data-layer client at all, so this is the only way it writes — and the surface is
 // a handful of named verbs; there is no query, exec, or table name to reach for.
 
-/** The operations, as the bridge calls them. All resolve even when the edge is down. */
+/** The operations, as the bridge calls them. The chat-lifecycle ones all resolve even when
+ *  the edge is down; the two Record verbs at the bottom deliberately do not. */
 export interface PlatformRpc {
   conversationStart(input: ConversationStartInput): Promise<void>;
   conversationSettle(input: ConversationSettleInput): Promise<void>;
@@ -24,6 +29,13 @@ export interface PlatformRpc {
   /** The one operation whose reply is read: the id is the handle `notify` then names. */
   turnEnd(input: TurnEndInput): Promise<TurnEndOutput | null>;
   notify(input: NotifyInput): Promise<void>;
+  /** Persist a Component as a Record (ADR-0022). THROWS if the edge refuses or is
+   *  unreachable — a Component write that cannot be persisted must fail the tool call so
+   *  the agent can retry, rather than succeed to disk and evaporate on the next bad boot. */
+  componentWrite(input: ComponentWriteInput): Promise<ComponentWriteOutput>;
+  /** A Component's stored source, or null when the tier holds no Record. THROWS on a real
+   *  store failure, so "absent" and "could not ask" stay distinguishable. */
+  componentRead(input: ComponentReadInput): Promise<string | null>;
 }
 
 export interface PlatformRpcConfig {
@@ -69,6 +81,19 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
     }
   };
 
+  // The Record verbs' counterpart to `call` (ADR-0022): the same hop, but a failure PROPAGATES.
+  // Component source is the thing the 2026-07-29 outage destroyed; "logged, turn continues" is
+  // exactly the fail-open that turned a failed read into a destructive write.
+  const callStrict = async (body: PlatformRpcRequest): Promise<unknown> => {
+    const res = await doFetch(`${origin}${PLATFORM_RPC_PATH}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${await platformRpcToken(secret)}` },
+      body: JSON.stringify(PlatformRpcRequest.parse(body)),
+    });
+    if (!res.ok) throw new Error(`the workspace store refused this write (${body.op}: ${res.status})`);
+    return await res.json();
+  };
+
   return {
     conversationStart: async (input) => void (await call({ op: 'conversation.start', input })),
     conversationSettle: async (input) => void (await call({ op: 'conversation.settle', input })),
@@ -83,5 +108,7 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
       return parsed.success ? parsed.data : null;
     },
     notify: (input) => call({ op: 'notify', input }).then(() => undefined),
+    componentWrite: async (input) => ComponentWriteOutput.parse(await callStrict({ op: 'component.write', input })),
+    componentRead: async (input) => ComponentReadOutput.parse(await callStrict({ op: 'component.read', input })).source,
   };
 }
