@@ -15,6 +15,9 @@ import { SkillName, UploadSkillInput as UploadSkillFiles } from '../shared/skill
 import type { Database } from '../web-poc/lib/db/index.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { listVisibleCanvases, listVisibleConversations, resolveCanvas, resolveConversationByOwnerRef } from './access.ts';
+import { componentCatalog } from './component-catalog.ts';
+import { d1RecordStore } from './record-store.ts';
+import { DEFAULT_CANVAS_ID } from './shell-routing.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { getWorkspace, listWorkspaces } from '../web-poc/lib/db/queries/workspaces.ts';
 
@@ -275,11 +278,20 @@ export function buildMcpTools(deps: McpToolDeps) {
     },
 
     // The component library over the wire: the same list/read/write the in-canvas agent
-    // has, proxied to the bridge (the single writer of the container filesystem).
+    // has, proxied to the bridge (the single writer of the container filesystem) — except
+    // the LISTING, which is answered here at the edge (ADR-0022, #363). Own and shared are
+    // Records the edge owns and the platform tier is a manifest bundled with this worker, so
+    // an outside agent browsing the library never wakes (or bills) a container.
     async listComponents(input: z.infer<typeof ListComponentsInput>) {
       const ws = await requireWorkspace(input.workspace_id);
-      const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, BRIDGE_ROUTES.components, { headers });
+      // The same access choke point every canvas tool funnels through — it just yields the
+      // canvas id rather than a header now, because there is no request to stamp it onto.
+      await canvasHeader(ws.id, input.canvas_id);
+      const details = await componentCatalog(d1RecordStore(deps.db), {
+        workspaceId: ws.id,
+        canvasId: input.canvas_id ?? DEFAULT_CANVAS_ID,
+      });
+      return { components: details.map((d) => d.name), details };
     },
 
     async readComponent(input: z.infer<typeof ReadComponentInput>) {

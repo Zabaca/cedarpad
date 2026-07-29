@@ -172,6 +172,24 @@ export type ConversationPrOpenedInput = z.infer<typeof ConversationPrOpenedInput
 export const ComponentTier = z.enum(['own', 'shared']).default('own');
 export type ComponentTier = z.infer<typeof ComponentTier>;
 
+/**
+ * The tier a listing REPORTS, which is one wider than the tier an operation can address:
+ * `base` is the image-only platform library (ADR-0022 decision 8) — never written, never a
+ * Record, but always visible. Callers use these labels for duplicate-avoidance, so a listing
+ * without them is not a substitute for one with them (PRD #354 story 11).
+ */
+export const ComponentTierLabel = z.enum(['own', 'shared', 'base']);
+export type ComponentTierLabel = z.infer<typeof ComponentTierLabel>;
+
+/** One line of the component library: what it is called, what its leading comment says it
+ *  does, and which tier the naming canvas RESOLVES it in. */
+export const ComponentCatalogEntry = z.object({
+  name: z.string().min(1),
+  description: z.string(),
+  tier: ComponentTierLabel,
+});
+export type ComponentCatalogEntry = z.infer<typeof ComponentCatalogEntry>;
+
 export const ComponentWriteInput = z.object({
   workspaceId: z.string().min(1),
   /** The canvas the write is performed FROM — the entitlement proof, always a real canvas. */
@@ -198,6 +216,30 @@ export const ComponentReadInput = z.object({
   name: ComponentName,
 });
 export type ComponentReadInput = z.infer<typeof ComponentReadInput>;
+
+/**
+ * The listing verb. It is deliberately NOT `component.read` with a wildcard: the question is
+ * "what can this canvas place?", which spans all three tiers — the two writable ones the edge
+ * holds as Records and the image-only PLATFORM tier it knows from the build-time manifest.
+ * Only the edge can answer all three at once, and only the edge can answer any of them with
+ * the container's filesystem gone.
+ *
+ * No `tier` field, unlike the read/write pair: a listing that let a caller pick one tier
+ * would be a filter, and it would also throw away the PRECEDENCE that makes the answer
+ * meaningful (own beats shared beats base — the tier a name resolves in is what the label
+ * reports).
+ */
+export const ComponentListInput = z.object({
+  workspaceId: z.string().min(1),
+  /** The canvas asking — its own tier, plus the workspace library it can reach through it. */
+  canvasId: z.string().min(1),
+});
+export type ComponentListInput = z.infer<typeof ComponentListInput>;
+
+/** Every Component the canvas can see, name-ordered, each labelled with the tier it resolves
+ *  in. An empty list is an ANSWER (a workspace with nothing but an empty platform tier). */
+export const ComponentListOutput = z.object({ components: z.array(ComponentCatalogEntry) });
+export type ComponentListOutput = z.infer<typeof ComponentListOutput>;
 
 /**
  * Operations 9 and 10 — promote (own → shared) and adopt (shared → own). They name only the
@@ -374,6 +416,7 @@ export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('component.write'), input: ComponentWriteInput }),
   z.object({ op: z.literal('component.read'), input: ComponentReadInput }),
   z.object({ op: z.literal('component.history'), input: ComponentHistoryInput }),
+  z.object({ op: z.literal('component.list'), input: ComponentListInput }),
   z.object({ op: z.literal('component.promote'), input: ComponentTierMoveInput }),
   z.object({ op: z.literal('component.adopt'), input: ComponentTierMoveInput }),
   z.object({ op: z.literal('skill.write'), input: SkillWriteInput }),

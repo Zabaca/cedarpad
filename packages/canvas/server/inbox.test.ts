@@ -31,6 +31,7 @@ function recordingRpc(overrides: Partial<PlatformRpc> = {}) {
     componentRead: async () => null,
     componentHistory: async () => [],
     componentRestore: async () => null,
+    componentList: async () => [],
     componentPromote: async () => ({ rev: 1 }),
     componentAdopt: async () => ({ rev: 1 }),
     skillWrite: async () => ({ files: 0 }),

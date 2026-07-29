@@ -1,6 +1,9 @@
 import {
+  type ComponentCatalogEntry,
   type ComponentHistoryInput,
   ComponentHistoryOutput,
+  type ComponentListInput,
+  ComponentListOutput,
   type ComponentReadInput,
   ComponentReadOutput,
   type ComponentRestoreInput,
@@ -57,6 +60,11 @@ export interface PlatformRpc {
    *  Component has no such version. The caller names a VERSION, so the old source is read and
    *  re-put at the edge and never travels here. THROWS on a real store failure. */
   componentRestore(input: ComponentRestoreInput): Promise<number | null>;
+  /** Every Component the canvas can see — own and shared from Records, the platform tier from
+   *  the edge's build-time manifest — each labelled with the tier it RESOLVES in. THROWS like
+   *  the other Record verbs: "the library is empty" and "could not ask" must not look alike,
+   *  because the first is what makes an agent author a duplicate of everything. */
+  componentList(input: ComponentListInput): Promise<ComponentCatalogEntry[]>;
   /** Move a Component from a canvas into the workspace shared library — ONE change of tier
    *  at the edge, so it can never land in both libraries or in neither. */
   componentPromote(input: ComponentTierMoveInput): Promise<ComponentWriteOutput>;
@@ -171,6 +179,7 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
       if (!res.ok) throw await refused(body, res);
       return ComponentRestoreOutput.parse(await res.json()).rev;
     },
+    componentList: async (input) => ComponentListOutput.parse(await callStrict({ op: 'component.list', input })).components,
     componentPromote: async (input) => ComponentWriteOutput.parse(await callStrict({ op: 'component.promote', input })),
     componentAdopt: async (input) => ComponentWriteOutput.parse(await callStrict({ op: 'component.adopt', input })),
     skillWrite: async (input) => SkillWriteOutput.parse(await callStrict({ op: 'skill.write', input })),

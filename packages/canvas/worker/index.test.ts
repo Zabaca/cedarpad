@@ -679,6 +679,26 @@ describe('GET / — the Shell SPA, served from ASSETS without waking the contain
     expect(served).toEqual([]);
   });
 
+  // PRD #354 story 29 (ADR-0022, #363): listing the component library is answered HERE from
+  // Records plus the bundled platform manifest. It used to fall through to the container,
+  // which can mean cold-booting one — 30–120s and real money — to list a few kilobytes.
+  test('GET /api/components is answered at the edge, never proxied to a container', async () => {
+    workspaceRecord = { id: 'default' };
+    served = [];
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/components', { headers: { cookie: 'cs_workspace=default' } }),
+      env,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { components: string[]; details: { name: string; tier: string }[] };
+    // The platform tier comes from the manifest bundled with this worker, so the edge can
+    // answer it with no filesystem and no container.
+    expect(body.components).toContain('BarChart');
+    expect(body.details.find((d) => d.name === 'BarChart')?.tier).toBe('base');
+    expect(served).toEqual([]);
+  });
+
   // The catch-all fallthrough is what lets the container's vite dev server serve the pad's
   // modules. `/assets/*` is the shell's prefix; vite's are `/src/*`, `/@vite/*`, `/node_modules/*`.
   test('the container’s vite paths still fall through to serveWorkspace', async () => {

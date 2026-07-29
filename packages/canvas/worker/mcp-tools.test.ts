@@ -8,6 +8,7 @@ import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { addWorkspaceMember, createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { buildMcpTools, RunDevAgentInput, WriteComponentInput } from './mcp-tools.ts';
+import { d1RecordStore } from './record-store.ts';
 
 // In-memory DB built from the real migrations (mirrors shell.test.ts).
 const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
@@ -242,15 +243,39 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     await expect(tools.readTranscript({ chat_id: 'mcp_ghost' })).rejects.toThrow(/not found/);
   });
 
-  test('list/read/write component proxy the bridge component routes, canvas-scoped and access-checked', async () => {
+  // ADR-0022 / PRD #354 story 29: the LISTING is answered at the edge from Records plus the
+  // bundled platform manifest. An outside agent browsing the library must not cold-boot (and
+  // bill) a container to read a few kilobytes of names — so this tool makes no bridge call
+  // at all, which is what the empty `bridgeCalls` below states.
+  test('list_components is answered at the edge — Records plus the platform manifest, with tier labels, no container', async () => {
+    bridgeCalls = [];
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'CatalogBoard' });
+    await d1RecordStore(database).put({
+      workspaceId: WS,
+      canvasId: board.id,
+      name: 'OwnCard',
+      kind: 'component',
+      source: '// This canvas.\n',
+      updatedBy: 'u_1',
+    });
+
+    const res = await tools.listComponents({ workspace_id: WS, canvas_id: board.id });
+    expect(res.details).toContainEqual({ name: 'OwnCard', description: 'This canvas.', tier: 'own' });
+    expect(res.details.find((d) => d.name === 'BarChart')?.tier).toBe('base');
+    expect(res.components).toEqual(res.details.map((d) => d.name));
+    expect(bridgeCalls).toEqual([]);
+
+    await expect(tools.listComponents({ workspace_id: OTHER_WS })).rejects.toThrow(/not found/);
+    await expect(tools.listComponents({ workspace_id: WS, canvas_id: 'cv_ghost' })).rejects.toThrow(/canvas/);
+  });
+
+  test('read/write component proxy the bridge component routes, canvas-scoped and access-checked', async () => {
     bridgeCalls = [];
     const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'ComponentBoard' });
     bridgeResponses = {
-      '/api/components': { components: ['KpiCard'] },
       '/api/components/KpiCard': { module: 'KpiCard', source: 'export default …' },
     };
 
-    expect(await tools.listComponents({ workspace_id: WS })).toEqual({ components: ['KpiCard'] });
     expect(await tools.readComponent({ workspace_id: WS, module: 'KpiCard' })).toEqual({ module: 'KpiCard', source: 'export default …' });
 
     bridgeResponses['/api/components/NewCard'] = { ok: true, module: 'NewCard', reloaded: 1 };
@@ -271,7 +296,7 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
 
     // A bridge error surfaces as a thrown error, and access is workspace-checked.
     await expect(tools.readComponent({ workspace_id: WS, module: 'ZzGhost' })).rejects.toThrow(/404|not found/);
-    await expect(tools.listComponents({ workspace_id: OTHER_WS })).rejects.toThrow(/not found/);
+    await expect(tools.readComponent({ workspace_id: OTHER_WS, module: 'KpiCard' })).rejects.toThrow(/not found/);
   });
 
   test('write_component requires canvas_id — an omitted or unregistered one is rejected before it can land in the wrong canvas', async () => {

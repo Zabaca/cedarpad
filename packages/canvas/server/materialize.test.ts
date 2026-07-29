@@ -27,6 +27,7 @@ const fakeRecords = (rows: Record<string, string>): ComponentRecords => ({
   read: async (tier, canvasId, name) => rows[tier === 'shared' ? `shared/${name}` : `${canvasId}/${name}`] ?? null,
   history: async () => [],
   restore: async () => null,
+  list: async () => [],
   promote: async () => {},
   adopt: async () => {},
   writeData: async () => {},
@@ -126,6 +127,7 @@ describe('the dev-server middleware materializes on a miss', () => {
         return 'from store';
       },
       history: async () => [],
+  list: async () => [],
       promote: async () => {},
       adopt: async () => {},
     });
@@ -144,6 +146,7 @@ describe('the dev-server middleware materializes on a miss', () => {
         throw new Error('store unreachable');
       },
       history: async () => [],
+  list: async () => [],
       promote: async () => {},
       adopt: async () => {},
     });
