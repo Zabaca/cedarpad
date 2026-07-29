@@ -5,9 +5,11 @@
  * per-project fixtures land in one place. What lives here now:
  *
  * - `signIn()` — a real Better Auth account, created through the edge's own `/api/auth/*`
- *   handler and carrying its session cookie. NOT a shim: local dev leaves signup open
- *   (`server/dev-worker-config.ts` drops `AUTH_DISABLE_SIGNUP`), so e2e uses the same door a
- *   dev user does, and the session is verified by the same `worker/auth-gate.ts` prod runs.
+ *   handler and carrying its session cookie. NOT a shim: it drives the same passwordless
+ *   magic-link endpoints a real user does (request → verify), and the session is verified
+ *   by the same `worker/auth-gate.ts` prod runs. The one thing it cannot do is read email,
+ *   so it lifts the token out of D1 — see `readMagicLinkToken` for why that needs no
+ *   test-only branch in production code.
  * - `joinBridgeWorkspace()` — the one piece of state no API can create: membership of the
  *   workspace the container files its Conversations into. Seeded straight into the local D1
  *   (production's `default` workspace row was seeded the same way, by hand, once, #179).
@@ -63,6 +65,30 @@ export interface AuthFixtures {
   edgeRequest: APIRequestContext;
 }
 
+/**
+ * Recover the magic-link token for `email` from the local D1.
+ *
+ * Passwordless sign-in normally crosses an email hop a headless test cannot follow.
+ * Rather than shim the send path, this reads what Better Auth already stores: the
+ * plugin writes the token to `verification` (as `identifier`, in PLAIN form by
+ * default) before invoking the send seam, keying the row's `value` to the address.
+ * READ-ONLY — the D1 write-lock warning on `joinBridgeWorkspace` does not apply.
+ */
+async function readMagicLinkToken(email: string): Promise<string> {
+  const db = createClient({ url: `file:${requireLocalD1File()}` });
+  try {
+    const rows = await db.execute({
+      sql: 'SELECT identifier FROM verification WHERE value LIKE ? ORDER BY created_at DESC LIMIT 1',
+      args: [`%"${email}"%`],
+    });
+    const token = rows.rows[0]?.identifier;
+    if (typeof token !== 'string') throw new Error(`no magic-link token stored for ${email}`);
+    return token;
+  } finally {
+    db.close();
+  }
+}
+
 export const test = base.extend<AuthFixtures>({
   signIn: async ({}, use) => {
     const contexts: APIRequestContext[] = [];
@@ -71,12 +97,29 @@ export const test = base.extend<AuthFixtures>({
       const email = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
       const request = await apiRequest.newContext({ baseURL: EDGE_BASE_URL });
       contexts.push(request);
-      const res = await request.post('/api/auth/sign-up/email', {
-        data: { email, password: 'e2e-password-276', name: 'E2E User' },
+
+      // Ask for a magic link. Locally there is no EMAIL binding, so nothing is actually
+      // sent — but Better Auth persists the token BEFORE it tries to send, so the link
+      // is recoverable from D1 without a test-only hook in production code.
+      // `name` is carried on the request and applied when verification creates the
+      // user — without it the display name falls back to the email's local part, and
+      // specs that assert on a collaborator's name (canvas-presence) would read a
+      // random per-run string.
+      const asked = await request.post('/api/auth/sign-in/magic-link', {
+        data: { email, name: 'E2E User', callbackURL: '/' },
       });
-      if (!res.ok()) throw new Error(`sign-up failed (${res.status()}): ${await res.text()}`);
-      const { user } = (await res.json()) as { user: { id: string } };
-      return { id: user.id, email, request };
+      if (!asked.ok()) throw new Error(`magic-link request failed (${asked.status()}): ${await asked.text()}`);
+
+      const token = await readMagicLinkToken(email);
+      const verified = await request.get(`/api/auth/magic-link/verify?token=${token}&callbackURL=/`);
+      if (!verified.ok()) throw new Error(`magic-link verify failed (${verified.status()}): ${await verified.text()}`);
+
+      // The session cookie now lives on `request`; ask the edge who it thinks we are.
+      const session = await request.get('/api/auth/get-session');
+      if (!session.ok()) throw new Error(`get-session failed (${session.status()}): ${await session.text()}`);
+      const body = (await session.json()) as { user?: { id: string } } | null;
+      if (!body?.user) throw new Error('magic-link verify did not establish a session');
+      return { id: body.user.id, email, request };
     });
     for (const context of contexts) await context.dispose();
   },

@@ -4,7 +4,7 @@ import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
-import { authenticate, decideGate, handleAuth, inviteSignUp } from './auth-gate.ts';
+import { authenticate, decideGate, handleAuth, sendSignInLink } from './auth-gate.ts';
 import { resolveCanvas } from './access.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
 import { handleConnectorSecretsApi } from './connector-secrets.ts';
@@ -371,7 +371,7 @@ export default {
         session?.user ?? null,
         // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
         inviteMatch[1]!,
-        { signUp: inviteSignUp(env) },
+        { sendSignInLink: sendSignInLink(env) },
       );
     }
 
@@ -552,6 +552,7 @@ export default {
         // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
         invitationsMatch[1]!,
         invitationsMatch[2],
+        { sendSignInLink: sendSignInLink(env) },
       );
     }
 

@@ -228,8 +228,11 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
     void reload();
   };
 
-  // The manual invite (ADR-0014): admin creates the user with a temp password and
-  // sends it over their own channel — no email infrastructure yet (Resend later).
+  // The manual invite (ADR-0014), now passwordless: this creates the account and the
+  // workspace membership, and the user signs in by asking the login page for a magic
+  // link — creating the row is what makes their address eligible for one. The password
+  // below is vestigial: admin/create-user still requires the field, but there is no
+  // password credential to sign in with, so it is generated and never shown.
   const createUser = async () => {
     const email = window.prompt('Create a user — email (from the waitlist, usually):');
     if (!email) return;
@@ -259,7 +262,7 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
       }).catch(() => null);
       if (!added?.ok) window.alert('User created, but adding them to the workspace failed — add them manually.');
     }
-    window.prompt('User created. Temporary password (send it over your own channel):', password);
+    window.alert(`User created. Tell ${email} to sign in at cedarpad and request a sign-in link — it will be emailed to them.`);
     void reload();
   };
 

@@ -108,6 +108,16 @@
   // here is a judgment call matching the container-env test fixture — confirm against the
   // real deploy secret before relying on this in prod.
   "r2_buckets": [{ "binding": "MART_BUCKET", "bucket_name": "agent-canvas" }],
+  // Cloudflare Email Sending: outbound magic links + invitations (no vendor key —
+  // the binding IS the credential). Sends as the APEX `cedarpad.com`, which MUST be
+  // enabled for Email Sending before this ships — see the FROM note in
+  // web-poc/worker/email.ts for that and the two DNS invariants it depends on.
+  // Reaching arbitrary recipients (an invitee who has never written to us) requires
+  // the Workers Paid plan, which the containers above already imply.
+  // Deliberately NOT declared on the preview env: preview shares production's
+  // platform D1, so a binding there would mail real people. web-poc/worker/email.ts
+  // degrades to a logging no-op wherever the binding is absent.
+  "send_email": [{ "name": "EMAIL" }],
   // The www worker's waitlist D1, ALSO bound here so /admin gets a waitlist view
   // (ADR-0014). Read-only from this worker; www owns the schema + migrations.
   "d1_databases": [

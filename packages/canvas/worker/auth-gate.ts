@@ -81,20 +81,23 @@ export async function authenticate(request: Request, env: Env): Promise<Resolved
 }
 
 /**
- * #179: the guarded account-creation door. Builds a per-request Better Auth instance
- * with signup ENABLED — while the global AUTH_DISABLE_SIGNUP stays "true" — so an
- * account can be created ONLY through the invite-accept handler, after the email-bound
- * token has been validated. Never expose this outside that path.
+ * Mint + email a magic link for `email`, landing the recipient on `callbackURL`.
+ * This replaced the password-signup door at the passwordless cutover: account
+ * creation now happens when Better Auth VERIFIES the link, and whether a link is
+ * sent at all is decided by the allowlist inside `sendMagicLink` (an existing user
+ * or a pending invitation) — not by the caller.
+ *
+ * Best-effort by contract: issuing an invitation must not fail because mail did.
  */
-export function inviteSignUp(env: Env) {
-  return async (input: { email: string; name: string; password: string }): Promise<{ userId: string; setCookie: string }> => {
-    const db = createDbForWorker(env as unknown as Bindings);
-    const auth = createAuth(db, { ...(env as unknown as Bindings), AUTH_DISABLE_SIGNUP: 'false' });
-    const { headers, response } = await auth.api.signUpEmail({
-      body: { email: input.email, name: input.name, password: input.password },
-      returnHeaders: true,
-    });
-    return { userId: response.user.id, setCookie: headers.get('set-cookie') ?? '' };
+export function sendSignInLink(env: Env) {
+  return async (email: string, callbackURL: string): Promise<void> => {
+    await edgeAuth(env)
+      // `requireHeaders` on this endpoint: we call it server-side, not on behalf of an
+      // inbound request, so there are no headers to forward — an empty set is honest.
+      .api.signInMagicLink({ body: { email, callbackURL }, headers: new Headers() })
+      .catch((err) => {
+        console.error('[auth] sign-in link request failed', err);
+      });
   };
 }
 

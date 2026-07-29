@@ -189,10 +189,16 @@ export async function handleCanvasesApi(
 // The edge login page (ADR-0007, #47 cutover). With `cs_gate` gone, the edge Better Auth
 // gate is the sole gate: any unauthenticated request to a non-public route is DENIED here
 // and served this page instead of the container. It is self-contained static HTML (the
-// no-container constraint — it can't pull `/src`) that posts email/password to the PUBLIC
-// Better Auth endpoints (`/api/auth/*`, served at the edge), so a user signs in without a
-// container ever waking. On success the session cookie is set and it reloads to `/`.
+// no-container constraint — it can't pull `/src`) that posts to the PUBLIC Better Auth
+// endpoints (`/api/auth/*`, served at the edge), so a user signs in without a container
+// ever waking.
 // Served with 401 so the deny is machine-legible (matches the pre-cutover gate status).
+//
+// PASSWORDLESS: it collects an email and asks for a magic link. There is no password
+// field because there is no password credential (see web-poc/worker/auth.ts). The sign-in
+// no longer completes in this page — the session is minted when the emailed link is
+// verified — so where the user lands afterwards is decided HERE, up front, and carried
+// as `callbackURL` across the mail hop.
 export function renderLogin(): Response {
   return new Response(LOGIN_HTML, {
     status: 401,
@@ -221,34 +227,39 @@ button:disabled{opacity:.5;cursor:default}
   <p class=sub id=sub>Sign in to continue.</p>
   <form id=f>
     <label for=email>Email</label><input id=email type=email autocomplete=email required>
-    <label for=pw>Password</label><input id=pw type=password autocomplete=current-password required>
-    <button id=go type=submit>Log in</button>
+    <button id=go type=submit>Email me a sign-in link</button>
     <div class=err id=err></div>
   </form>
   <div class=toggle>Accounts are created by invitation.</div>
 </div>
 <script>
-// #179: no public signup — AUTH_DISABLE_SIGNUP stays on and the ONLY account-creation
-// door is the /invite/<token> accept flow, so the old Sign-up toggle (dead in prod,
-// server-rejected) is gone.
+// #179: no public signup. The ONLY account-creation door is an invitation, enforced
+// server-side by the allowlist in sendMagicLink — this page asks for a link for any
+// address and is TOLD nothing about whether one was actually sent.
 const err=document.getElementById('err'),go=document.getElementById('go');
 document.getElementById('f').onsubmit=async(e)=>{
   e.preventDefault();err.textContent='';go.disabled=true;
   const email=document.getElementById('email').value.trim();
-  const password=document.getElementById('pw').value;
+  // #177: an interrupted OAuth authorize (/api/auth/mcp/authorize with no session)
+  // redirected HERE with its query intact. The session is now minted on a LATER
+  // request (the emailed link), so the continuation cannot be decided on return —
+  // it rides along as callbackURL and Better Auth redirects there after verifying.
+  const q=new URLSearchParams(location.search);
+  const callbackURL=(q.has('client_id')&&q.has('redirect_uri')&&q.has('response_type'))
+    ?'/api/auth/mcp/authorize'+location.search:'/';
   try{
-    const r=await fetch('/api/auth/sign-in/email',{method:'POST',credentials:'same-origin',
-      headers:{'content-type':'application/json'},body:JSON.stringify({email,password})});
+    const r=await fetch('/api/auth/sign-in/magic-link',{method:'POST',credentials:'same-origin',
+      headers:{'content-type':'application/json'},body:JSON.stringify({email,callbackURL})});
     if(r.ok){
-      // #177: an interrupted OAuth authorize (/api/auth/mcp/authorize with no session)
-      // redirected HERE with its query intact — continue it instead of landing on '/'.
-      const q=new URLSearchParams(location.search);
-      location.href=(q.has('client_id')&&q.has('redirect_uri')&&q.has('response_type'))
-        ?'/api/auth/mcp/authorize'+location.search:'/';
+      // Same confirmation whether or not an email actually went out — an uninvited
+      // address must not be able to tell itself apart from an invited one.
+      document.getElementById('f').remove();
+      document.getElementById('sub').textContent=
+        'If '+email+' has access, a sign-in link is on its way. It expires in 15 minutes.';
       return;
     }
     const d=await r.json().catch(()=>null);
-    err.textContent=(d&&(d.message||d.error))||'Sign in failed';
+    err.textContent=(d&&(d.message||d.error))||'Could not send a sign-in link';
   }catch(_){err.textContent='Something went wrong';}
   go.disabled=false;
 };
