@@ -36,6 +36,14 @@ export const HEADLESS_SEND_HEADER = 'x-headless-send';
 export const DEV_AGENT_GIT_TOKEN_HEADER = 'x-dev-agent-git-token';
 /** The run's target repo (`owner/name`), resolved and stamped by the edge next to the token. */
 export const DEV_AGENT_REPO_HEADER = 'x-dev-agent-repo';
+/** The kind a NEW chat asks to be born as (CEDA-N67Y50). A draft has no Conversation row yet,
+ * so the row-driven arming in worker/inbox-bridge.ts has nothing to key on — the client declares
+ * its intent here instead, on the same-origin send. It is an ASK, not an answer: the edge
+ * consumes and STRIPS it, and the turn is dev-agent only if the edge's own mint succeeded
+ * (the token remains the complete definition, ADR-0010/0011). */
+export const CHAT_KIND_HEADER = 'x-chat-kind';
+/** The one value `CHAT_KIND_HEADER` carries; anything else is an ordinary chat. */
+export const DEV_AGENT_CHAT_KIND = 'dev-agent';
 /** The Conversation the edge already resolved + ownership-checked, forwarded on the
  * open-conversation GET so the container never re-reads the row (ADR-0018 / #261). */
 export const INBOX_CONVERSATION_HEADER = 'x-inbox-conversation';

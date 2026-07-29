@@ -51,7 +51,15 @@ import {
   parseWorkspaceRoute,
   readWorkspaceCookie,
 } from './shell-routing.ts';
-import { CANVAS_ID_HEADER, GUEST_CANVAS_HEADER, GUEST_CAPS_HEADER } from '../shared/bridge-wire.ts';
+import {
+  CANVAS_ID_HEADER,
+  CHAT_KIND_HEADER,
+  DEV_AGENT_CHAT_KIND,
+  DEV_AGENT_GIT_TOKEN_HEADER,
+  DEV_AGENT_REPO_HEADER,
+  GUEST_CANVAS_HEADER,
+  GUEST_CAPS_HEADER,
+} from '../shared/bridge-wire.ts';
 
 // One container = one workspace = one canvas (v1). The Worker is the proxy into the
 // in-container vite dev server, which serves the app and forwards /api/* to the bridge.
@@ -884,13 +892,43 @@ export default {
     // not inbox-adopted) gets the workspace's connected external-MCP tokens exactly like the
     // Inbox proxy does (worker/inbox-bridge.ts) — same header, same "no tokens ⇒ untouched".
     const isChatSend = request.method === 'POST' && IS_CHAT_SEND.test(url.pathname);
+    // The edge-owned headers below are answers the edge alone writes, so a client-sent copy of
+    // any of them must never survive into the container — on ANY request, not only a send.
+    // Cloning is skipped entirely when the client sent none (the overwhelmingly common case).
+    const forged = [CHAT_KIND_HEADER, DEV_AGENT_GIT_TOKEN_HEADER, DEV_AGENT_REPO_HEADER];
+    const asksDevAgent = isChatSend && request.headers.get(CHAT_KIND_HEADER) === DEV_AGENT_CHAT_KIND;
     let proxied = request;
-    if (isChatSend) {
+    if (isChatSend || forged.some((h) => request.headers.has(h))) {
       proxied = new Request(request);
+      for (const h of forged) proxied.headers.delete(h);
+    }
+    if (isChatSend) {
       // Shared-inbox assignment: a pad send is a human act — stamp its initiator so the
       // bridge assigns the born Conversation to them (overwrites any client-sent value).
       proxied.headers.set(INBOX_ASSIGN_HEADER, user.id);
       proxied = await withMcpTokensHeader(proxied, env, workspaceId);
+      // Chat-kind selection (CEDA-N67Y50): the Inbox's "+ New chat" draft has no Conversation
+      // row, so worker/inbox-bridge.ts's row-driven arming has nothing to key on — the draft
+      // declares the kind it wants to be born as on `x-chat-kind` instead, and the edge answers
+      // with the same per-send mint the Inbox proxy does. The ask was already stripped above,
+      // so the token stays the complete definition of a dev-agent turn (ADR-0010/0011). Once
+      // born the row IS dev-agent and every later send re-arms through the Inbox proxy — this
+      // is the birth case only.
+      if (asksDevAgent) {
+        // Best-effort, exactly as the Inbox proxy's mint is: a workspace with no connected repo
+        // proxies the send unarmed, and the chat simply files as an ordinary one.
+        const resolved = await resolveDevAgentRepo(env, createDbForWorker(env as unknown as Bindings), workspaceId).catch(
+          (e: unknown) => {
+            console.error(`[dev-agent] repo resolution failed — new chat starts token-less: ${String(e)}`);
+            return null;
+          },
+        );
+        if (resolved) {
+          proxied.headers.set(DEV_AGENT_REPO_HEADER, resolved.repoFullName);
+          const token = await mintDevAgentGitToken(env, { nowSec: Math.floor(Date.now() / 1000), ...resolved });
+          if (token) proxied.headers.set(DEV_AGENT_GIT_TOKEN_HEADER, token);
+        }
+      }
     }
 
     return serveWorkspace(proxied, env, coords);
