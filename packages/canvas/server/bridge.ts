@@ -464,10 +464,11 @@ export async function prepareDevAgentTurn(
   repo: string | undefined,
   chatId: string,
   sessionId: string | null,
-  // Default-parameter test seam: production always uses the real git manager + adopt.
-  deps: { manager: typeof createRepoWorktreeManager; adopt: typeof adoptSession } = {
+  // Default-parameter test seam: production always uses the real git manager + adopt + RPC.
+  deps: { manager: typeof createRepoWorktreeManager; adopt: typeof adoptSession; rpc?: PlatformRpc | null } = {
     manager: createRepoWorktreeManager,
     adopt: adoptSession,
+    rpc: platformRpcClient,
   },
 ): Promise<DevAgentTurn | undefined> {
   // Both the token AND the repo come from the edge (ADR-0015): a token without a target
@@ -478,9 +479,23 @@ export async function prepareDevAgentTurn(
   if (sessionId) await deps.adopt(SESSIONS_DIR, sessionId, worktree.path);
   const openPr: OpenPr = async (input) => {
     const url = await openDevAgentPr({ git, worktree }, input);
-    return url
-      ? `Opened PR: ${url}`
-      : 'Nothing to commit — the worktree is clean. Make your edits first, then call open_pr again.';
+    if (!url) return 'Nothing to commit — the worktree is clean. Make your edits first, then call open_pr again.';
+    // CONTEXT.md "Open PR": the url is the run's durable artifact, so it becomes Conversation
+    // state rather than only a line in the transcript — that is what lets the Inbox offer to
+    // merge it. Names the CHAT, never the row (ADR-0018), and best-effort like every other
+    // RPC call site: a failed report must never fail a turn whose PR is already open.
+    await deps.rpc
+      ?.conversationPrOpened({
+        sessionId: chatMeta.get(chatId).sessionId ?? sessionId ?? chatId,
+        userId: INBOX_USER,
+        workspaceId: WORKSPACE,
+        kind: DEV_AGENT_KIND,
+        ownerRef: chatId,
+        repo,
+        prUrl: url,
+      })
+      .catch((err) => console.error('[dev-agent] open_pr: reporting the PR edge-ward failed:', err));
+    return `Opened PR: ${url}`;
   };
   return { openPr, cwd: worktree.path };
 }

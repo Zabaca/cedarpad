@@ -21,6 +21,7 @@ function recordingRpc(overrides: Partial<PlatformRpc> = {}) {
   const rpc: PlatformRpc = {
     conversationStart: async () => {},
     conversationSettle: async () => {},
+    conversationPrOpened: async () => {},
     turnEnd: async (input) => {
       turnEnds.push(input);
       return { conversationId: `conv_for_${input.sessionId}` };

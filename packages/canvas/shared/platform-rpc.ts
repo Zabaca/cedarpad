@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { parsePrUrl } from './pr-url.ts';
 import { serviceToken, verifyServiceToken } from './service-token.ts';
 
 /**
@@ -16,7 +17,7 @@ import { serviceToken, verifyServiceToken } from './service-token.ts';
  * fails the turn"), so an unreachable edge degrades exactly as a failed platform-data-layer
  * write does today: logged, turn continues.
  *
- * #266 (the container drops its database) completed the surface: the four verbs below are
+ * #266 (the container drops its database) completed the surface: the verbs below are
  * every write a container turn originates. ADR-0018 named two of them — the two that had no
  * local-client fallback left after #261/#264 — but `conversation.settle` and `turn.end` are
  * the same kind of thing (chat-lifecycle, best-effort, no row returned to the caller), and
@@ -120,10 +121,24 @@ export type TurnEndInput = z.infer<typeof TurnEndInput>;
 export const TurnEndOutput = z.object({ conversationId: z.string().min(1) });
 export type TurnEndOutput = z.infer<typeof TurnEndOutput>;
 
+/**
+ * Operation 5 — "this run opened a PR" (CONTEXT.md "Open PR"). The `open_pr` tool's result
+ * is the one durable artifact a dev-agent run produces, and until now it was only ever
+ * spoken into the transcript. Reporting it here is what gives the Conversation its PR state
+ * — and therefore what makes the Inbox's Merge action appear. Same identity fields as a
+ * settle (the container names the chat, never the row); the url is validated HERE so no
+ * unreadable link can reach the row and, from there, an authenticated GitHub call.
+ */
+export const ConversationPrOpenedInput = ConversationSettleInput.extend({
+  prUrl: z.string().refine((u) => parsePrUrl(u) !== null, 'not a GitHub pull-request url'),
+});
+export type ConversationPrOpenedInput = z.infer<typeof ConversationPrOpenedInput>;
+
 /** The whole request, discriminated by operation name — the complete surface. */
 export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('conversation.start'), input: ConversationStartInput }),
   z.object({ op: z.literal('conversation.settle'), input: ConversationSettleInput }),
+  z.object({ op: z.literal('conversation.prOpened'), input: ConversationPrOpenedInput }),
   z.object({ op: z.literal('turn.end'), input: TurnEndInput }),
   z.object({ op: z.literal('notify'), input: NotifyInput }),
 ]);

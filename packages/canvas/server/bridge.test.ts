@@ -375,6 +375,51 @@ describe('prepareDevAgentTurn: the per-conversation open_pr gate + prepared-work
     expect(adopted).toEqual([]);
     expect(turn!.cwd).toBe('/wt/x');
   });
+
+  // CONTEXT.md "Open PR": the tool's url is the run's durable artifact. Reporting it edge-ward
+  // is what gives the Conversation its PR state — and therefore the Inbox its Merge action.
+  test('a successful open_pr reports the PR edge-ward, naming the chat (never the row)', async () => {
+    const reported: Array<{ ownerRef?: string; prUrl: string; kind?: string; repo?: string }> = [];
+    const fakeManager = (() => ({
+      ensureWorktree: async (branch: string) => ({ path: '/wt/pr', branch, hub: '/wt/hub' }),
+      commit: async () => true,
+      pushAndOpenPR: async () => 'https://github.com/Zabaca/cedarpad/pull/283',
+    })) as unknown as typeof createRepoWorktreeManager;
+
+    const turn = await prepareDevAgentTurn('ghs_minted', 'Zabaca/cedarpad', 'chat_pr', 'sess_pr', {
+      manager: fakeManager,
+      adopt: async () => null,
+      rpc: { conversationPrOpened: async (input: (typeof reported)[number]) => void reported.push(input) } as never,
+    });
+    const said = await turn!.openPr({ title: 't', body: 'b', commitMessage: 'c' });
+
+    expect(said).toContain('https://github.com/Zabaca/cedarpad/pull/283');
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({
+      ownerRef: 'chat_pr',
+      prUrl: 'https://github.com/Zabaca/cedarpad/pull/283',
+      kind: DEV_AGENT_KIND,
+      repo: 'Zabaca/cedarpad',
+    });
+  });
+
+  test('a clean worktree opens no PR, so nothing is reported', async () => {
+    const reported: unknown[] = [];
+    const fakeManager = (() => ({
+      ensureWorktree: async (branch: string) => ({ path: '/wt/clean', branch, hub: '/wt/hub' }),
+      commit: async () => false,
+      pushAndOpenPR: async () => 'https://github.com/Zabaca/cedarpad/pull/999',
+    })) as unknown as typeof createRepoWorktreeManager;
+
+    const turn = await prepareDevAgentTurn('ghs_minted', 'Zabaca/cedarpad', 'chat_clean', null, {
+      manager: fakeManager,
+      adopt: async () => null,
+      rpc: { conversationPrOpened: async (i: unknown) => void reported.push(i) } as never,
+    });
+    await turn!.openPr({ title: 't', body: 'b', commitMessage: 'c' });
+
+    expect(reported).toEqual([]);
+  });
 });
 
 // ADR-0011: one turn per chat, enforced at the wire. The client queue only protects the tab
@@ -583,6 +628,7 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
     const rpc: PlatformRpc = {
       conversationStart: async (input) => void started.push(input),
       conversationSettle: async () => {},
+      conversationPrOpened: async () => {},
       turnEnd: async () => null,
       notify: async () => {},
     };
@@ -622,6 +668,7 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
             throw new Error('connect ECONNREFUSED');
           },
           conversationSettle: async () => {},
+        conversationPrOpened: async () => {},
           turnEnd: async () => null,
           notify: async () => {},
         },

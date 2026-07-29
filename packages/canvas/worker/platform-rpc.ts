@@ -59,6 +59,16 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
     return new Response(null, { status: 200 });
   }
 
+  // The run opened a PR (CONTEXT.md "Open PR"): find-or-create by chat exactly as a settle
+  // does — a PR can be the first thing a turn reports — then stamp the url. The row is what
+  // the Inbox renders its Merge action from; the container never learns it.
+  if (parsed.data.op === 'conversation.prOpened') {
+    const { prUrl, ...identity } = parsed.data.input;
+    const conv = await findOrCreateConversation(deps.db, identity);
+    await conversations.recordPr(deps.db, conv.id, prUrl);
+    return new Response(null, { status: 200 });
+  }
+
   // `end_turn` (ADR-0012 / #266): the turn declares its ending and the EDGE owns the row
   // transition. The container gets back only the id, which is the handle it then names in
   // `notify` — it never learns the row.
