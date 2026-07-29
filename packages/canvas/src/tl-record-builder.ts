@@ -135,7 +135,14 @@ export function buildShapeRecord(shape: CanvasShape, existing: TLRecord | undefi
     y: partial.y ?? 0,
     rotation: (existing as unknown as { rotation?: number } | undefined)?.rotation ?? 0,
     index: (existing as unknown as { index?: string } | undefined)?.index ?? CREATE_INDEX,
-    parentId: (partial as unknown as { parentId?: string }).parentId ?? (existing as unknown as { parentId?: string } | undefined)?.parentId ?? pageId,
+    // Frame first, then the named page, then whatever the record already had, then the
+    // canvas's default page. A frame outranks a page because it is the stronger claim:
+    // `parentId` also fixes the coordinate space, and the frame itself sits on a page.
+    parentId:
+      (partial as unknown as { parentId?: string }).parentId ??
+      shape.page ??
+      (existing as unknown as { parentId?: string } | undefined)?.parentId ??
+      pageId,
     isLocked: (existing as unknown as { isLocked?: boolean } | undefined)?.isLocked ?? false,
     opacity: (existing as unknown as { opacity?: number } | undefined)?.opacity ?? 1,
     meta: (existing as unknown as { meta?: Record<string, unknown> } | undefined)?.meta ?? {},

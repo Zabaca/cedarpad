@@ -41,8 +41,10 @@ import { SHAPE_COLORS } from '../src/shapes.ts';
 const Color = z.enum(SHAPE_COLORS);
 const Id = z.string().min(1);
 
-/** Fields every shape carries. `parentId` present ⇒ x/y are frame-relative. */
-const base = { id: Id, color: Color, parentId: Id.optional() };
+/** Fields every shape carries. `parentId` present ⇒ x/y are frame-relative; `page`
+ *  present ⇒ the shape is not on the canvas's first page. Both may be set at once (a
+ *  frame on page two holding a shape). */
+const base = { id: Id, color: Color, parentId: Id.optional(), page: Id.optional() };
 const box = { ...base, x: z.number(), y: z.number(), w: z.number(), h: z.number() };
 const point = { ...base, x: z.number(), y: z.number() };
 

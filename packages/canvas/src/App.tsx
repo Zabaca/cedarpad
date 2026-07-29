@@ -79,8 +79,14 @@ function CanvasContextMenu(props: TLUiContextMenuProps) {
 // cursors, click-to-follow (auto-unfollow on local pan/zoom) — rendered straight from
 // the instance_presence records tldraw sync broadcasts. Off by default in tldraw;
 // enabling the components is all it takes.
+// PageMenu is DELIBERATELY not nulled. It was, once — but nulling it only removed the
+// page SWITCHER, not the ability to make a page: `DefaultContextMenuContent` renders
+// tldraw's `MoveToPageMenu` ("Move to page → New page") unless `options.maxPages <= 1`,
+// and we pass no options. So a shape could be moved to a second page that the human then
+// had no UI to navigate back to — present in the room, invisible in the browser.
+// If pages are ever to be hidden again, set `maxPages: 1` (which drops the context-menu
+// item too); nulling the menu alone is what stranded them.
 const tldrawComponents: TLComponents = {
-  PageMenu: null,
   ContextMenu: CanvasContextMenu,
   SharePanel: DefaultSharePanel,
   PeopleMenu: DefaultPeopleMenu,

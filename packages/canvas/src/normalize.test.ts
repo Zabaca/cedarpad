@@ -1,6 +1,56 @@
 import { describe, expect, test } from 'bun:test';
 
-import { mintId, normalizeIncomingShape, normalizeShape, parseParentId } from './normalize';
+import { mintId, normalizeIncomingShape, normalizeShape, parsePage, parseParentId } from './normalize';
+
+// A canvas can hold more than one page: tldraw's context menu offers "Move to page →
+// New page", and the page switcher is back. `parentId` stays FRAME-only (its x/y
+// contract is parent-relative and pages have no coordinates), so page membership is a
+// separate field. A shape reaches us with its page either as `page` (the agent's
+// vocabulary) or as a `page:`-prefixed `parentId` (tldraw's own record, for a top-level
+// shape) — both mean the same thing.
+describe('parsePage', () => {
+  test('reads an explicit page field', () => {
+    expect(parsePage({ page: 'page:two' })).toBe('page:two');
+  });
+
+  test('reads a page:-prefixed parentId, which is how tldraw parents a top-level shape', () => {
+    expect(parsePage({ parentId: 'page:two' })).toBe('page:two');
+  });
+
+  test('an explicit page wins over parentId, and a frame parent is not a page', () => {
+    expect(parsePage({ page: 'page:two', parentId: 'shape:f' })).toBe('page:two');
+    expect(parsePage({ parentId: 'shape:f' })).toBeUndefined();
+  });
+
+  test('absent, empty, and non-string are all undefined', () => {
+    expect(parsePage({})).toBeUndefined();
+    expect(parsePage({ page: '' })).toBeUndefined();
+    expect(parsePage({ page: 42 })).toBeUndefined();
+  });
+});
+
+describe('normalize carries the page through', () => {
+  test('normalizeShape keeps an explicit page and still drops the page parentId', () => {
+    const shape = normalizeShape({ id: 'shape:a', type: 'rectangle', x: 0, y: 0, page: 'page:two' });
+    expect(shape.page).toBe('page:two');
+    expect(shape.parentId).toBeUndefined();
+  });
+
+  test('a shape with no page stays exactly as today — omitted, not defaulted', () => {
+    expect(normalizeShape({ id: 'shape:a', type: 'rectangle', x: 0, y: 0 }).page).toBeUndefined();
+  });
+
+  test('a framed shape can carry both: the frame parents it, the page holds the frame', () => {
+    const shape = normalizeShape({ id: 'shape:a', type: 'rectangle', x: 0, y: 0, parentId: 'shape:f', page: 'page:two' });
+    expect(shape.parentId).toBe('shape:f');
+    expect(shape.page).toBe('page:two');
+  });
+
+  test('incoming image and embed carry the page too', () => {
+    expect(normalizeIncomingShape({ id: 'shape:i', type: 'image', x: 0, y: 0, parentId: 'page:two' }).page).toBe('page:two');
+    expect(normalizeIncomingShape({ id: 'shape:e', type: 'embed', x: 0, y: 0, parentId: 'page:two' }).page).toBe('page:two');
+  });
+});
 
 // parentId parsing was previously inlined identically in three places
 // (normalizeShape, and the image/embed branches of normalizeIncomingShape).
