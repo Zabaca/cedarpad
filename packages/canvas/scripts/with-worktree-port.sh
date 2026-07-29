@@ -7,18 +7,17 @@
 #   PORT               — vite dev server port  (vite.config.ts reads this)
 #   CANVAS_BRIDGE_PORT — bun bridge listen port (= PORT + 1; bridge.ts reads it,
 #                        scripts/dev.ts derives the vite /api proxy target from it)
-#   CUSTOM_PORT        — extension server listen port (= PORT + 2; server/extension-server.ts
-#                        reads it, the bridge proxies /api/custom/* to it). Derived here
-#                        because its 4512 default is a singleton two worktrees collide on.
+#   (PORT + 2 is deliberately unused — it was the removed extension server's slot, #357.
+#                        The later offsets keep their values so a worktree's ports don't move.)
 #   CANVAS_EDGE_PORT   — edge Worker (wrangler dev) listen port (= PORT + 3; ADR-0018
 #                        #263 — scripts/dev.ts derives the vite /v1 + /api/auth proxy
 #                        target from it).
 #   CANVAS_PTY_PORT    — Console pty-server listen port (= PORT + 4; ADR-0021.
 #                        pty-server/server.mjs reads it; scripts/dev.ts passes it).
 #
-# STRIDE: the block below allocates on a stride of 8 because a worktree consumes FIVE
-# consecutive ports (PORT..PORT+4). It was previously a stride of 2 while already
-# consuming four, so adjacent slots silently overlapped — worktree A's CUSTOM_PORT was
+# STRIDE: the block below allocates on a stride of 8 because a worktree spans FIVE
+# consecutive slots (PORT..PORT+4). It was previously a stride of 2 while already
+# spanning four, so adjacent slots silently overlapped — worktree A's high ports were
 # worktree B's vite PORT. Widening the stride costs slot count (47, was 190); a same-slot
 # collision now fails loudly with EADDRINUSE instead of two stacks quietly sharing a port.
 # Keep stride >= the number of ports exported here.
@@ -57,7 +56,6 @@ PORT=$((PORT_LOW + (HASH_NUM % SLOTS) * STRIDE))
 
 export PORT
 export CANVAS_BRIDGE_PORT=$((PORT + 1))
-export CUSTOM_PORT=$((PORT + 2))
 export CANVAS_EDGE_PORT=$((PORT + 3))
 export CANVAS_PTY_PORT=$((PORT + 4))
 export E2E_BASE_URL="http://localhost:${PORT}"

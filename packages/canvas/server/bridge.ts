@@ -16,7 +16,6 @@ import type { RemoteCanvasStore } from '../src/remote-store.ts';
 import {
   BlobStore,
   canvasDirsKey,
-  customKey,
   selectBackend,
   sessionsKey,
   sharedComponentsKey,
@@ -209,7 +208,7 @@ try {
 
 // The file-tar artifacts that the dead fs.watch left silent (ADR 0003). Each registers
 // as a Persistable through one sink so all of them report health at /api/status; saved at
-// turn-completion (sessions always; components/custom on a max-mtime dirty-check). Canvas keeps
+// turn-completion (sessions always; components/skills on a max-mtime dirty-check). Canvas keeps
 // its own onChange trigger + health below. R2 in the container only — locally these files
 // already live on disk and the session JSONL is read in place.
 const COMPONENTS_DIR = `${PKG_ROOT}src/canvas-components`;
@@ -218,10 +217,9 @@ const COMPONENTS_DIR = `${PKG_ROOT}src/canvas-components`;
 // read-only at runtime, so its legacy tar is restored at boot but never flushed again.
 const SRC_ROOT = `${PKG_ROOT}src`;
 const SHARED_COMPONENTS_DIR = `${PKG_ROOT}shared/components`;
-const CUSTOM_DIR = `${PKG_ROOT}server/custom`;
 const SESSIONS_DIR = `${process.env.HOME ?? '/root'}/.claude/projects`;
 // Workspace skills (ADR-0013): user-/agent-authored skill dirs, discovered by the SDK's
-// 'project' source. Extension content like components/custom; may not exist yet (the dir
+// 'project' source. Extension content like the component library; may not exist yet (the dir
 // is created by the first authored skill — flushIfDirty's mtime guard skips an absent dir).
 const SKILLS_DIR = `${PKG_ROOT}.claude/skills`;
 const sink = new PersistSink();
@@ -235,14 +233,12 @@ const nonEmpty = (name: string, key: string) => refuseEmptyTarball(name, () => b
 sink.register({ name: 'sessions', serialize: () => tarSubtree(SESSIONS_DIR), guard: nonEmpty('sessions', sessionsKey(WORKSPACE)), save: (b) => blobStore.saveSessions(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'shared-components', serialize: () => tarSubtree(SHARED_COMPONENTS_DIR), guard: nonEmpty('shared-components', sharedComponentsKey(WORKSPACE)), save: (b) => blobStore.saveSharedComponents(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'canvas-dirs', serialize: () => tarCanvasDirs(SRC_ROOT), guard: nonEmpty('canvas-dirs', canvasDirsKey(WORKSPACE)), save: (b) => blobStore.saveCanvasDirs(WORKSPACE, b as Uint8Array) });
-sink.register({ name: 'custom', serialize: () => tarSubtree(CUSTOM_DIR), guard: nonEmpty('custom', customKey(WORKSPACE)), save: (b) => blobStore.saveCustom(WORKSPACE, b as Uint8Array) });
 sink.register({ name: 'skills', serialize: () => tarSubtree(SKILLS_DIR), guard: nonEmpty('skills', skillsKey(WORKSPACE)), save: (b) => blobStore.saveSkills(WORKSPACE, b as Uint8Array) });
 sink.register(chatMeta.persistable());
 
-const savedMtime: Record<'shared-components' | 'canvas-dirs' | 'custom' | 'skills', number> = {
+const savedMtime: Record<'shared-components' | 'canvas-dirs' | 'skills', number> = {
   'shared-components': 0,
   'canvas-dirs': 0,
-  custom: 0,
   skills: 0,
 };
 async function flushIfDirty(name: keyof typeof savedMtime, dir: string): Promise<void> {
@@ -266,7 +262,6 @@ async function onTurnComplete(): Promise<void> {
   if (!process.env.R2_BUCKET) return;
   await sink.flush('sessions'); // a turn always wrote JSONL
   await flushComponentTrees();
-  await flushIfDirty('custom', CUSTOM_DIR);
   await flushIfDirty('skills', SKILLS_DIR);
 }
 
@@ -898,7 +893,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         buildRev: BUILD_REV,
         backend: process.env.R2_BUCKET ? 'r2' : 'fs',
         bucket: process.env.R2_BUCKET ?? null,
-        // ADR 0003: the turn-completion artifacts (sessions/components/custom/skills) report
+        // ADR 0003: the turn-completion artifacts (sessions/components/skills) report
         // health here, so a silent save failure is visible.
         artifacts: sink.healthSnapshot(),
         // Split client counts: the chat hub's subscribers are the warmth driver (their 15s
@@ -1397,20 +1392,6 @@ export async function handleRequest(req: Request): Promise<Response> {
       const token = data?.data?.session_token;
       if (!token) return json({ error: 'No data.session_token in LiveAvatar response', detail: data }, 502);
       return json({ token });
-    }
-
-    // Agent-authored backend handlers run in the ISOLATED extension server (ADR
-    // 0002), never in this process — so a bad handler can't crash the core/canvas.
-    // Proxy /api/custom/* straight through; a 502 just means that server is down
-    // (dev.ts is restarting it), which leaves the canvas fully intact.
-    if (path.startsWith('/api/custom/')) {
-      const target = `http://localhost:${process.env.CUSTOM_PORT ?? 4512}${path}${url.search}`;
-      try {
-        const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.arrayBuffer();
-        return await fetch(target, { method: req.method, headers: req.headers, body });
-      } catch {
-        return json({ error: 'extension server unreachable' }, 502);
-      }
     }
 
     return json({ error: `not found: ${path}` }, 404);

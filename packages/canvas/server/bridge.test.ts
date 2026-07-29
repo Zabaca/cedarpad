@@ -1049,6 +1049,32 @@ describe('PUT /api/skills/:name — workspace-skill upload (#177)', () => {
   });
 });
 
+// #357: the custom-handler feature is gone. It never had an authoring door (no write tool,
+// and chat turns drop Write/Edit), so the route only ever served files put there by the
+// ungated shell. Its absence must look like every other unknown path — a 404 from the route
+// table — not a 502 from a proxy to a process nobody starts.
+describe('/api/status: the turn-completion artifacts (#357)', () => {
+  test('reports every surviving persist sink, and no custom-handler sink', async () => {
+    const res = await handleRequest(new Request('http://localhost/api/status'));
+
+    expect(res.status).toBe(200);
+    const { artifacts } = (await res.json()) as { artifacts: Array<{ name: string }> };
+    expect(artifacts.map((a) => a.name).sort()).toEqual(['canvas-dirs', 'chatMeta', 'sessions', 'shared-components', 'skills']);
+  });
+});
+
+describe('/api/custom/* is not a route (#357)', () => {
+  test('a handler path 404s exactly like any other unknown /api path', async () => {
+    const removed = await handleRequest(new Request('http://localhost/api/custom/hello'));
+    const unknown = await handleRequest(new Request('http://localhost/api/no-such-route'));
+
+    expect(removed.status).toBe(404);
+    expect(await removed.json()).toEqual({ error: 'not found: /api/custom/hello' });
+    // The neighbour the removal shares code with: the route table's fallthrough still answers.
+    expect(unknown.status).toBe(404);
+  });
+});
+
 // Cross-chat messaging: the bridge-bound seam behind the agent's send_message tool.
 import { sendToChat } from './bridge.ts';
 

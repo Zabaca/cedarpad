@@ -96,7 +96,7 @@ export async function maxMtimeCanvasDirs(srcRoot: string): Promise<number> {
 }
 
 /** Newest mtime (ms) under `dir`, skipping the EXCLUDES dirs by name at any depth. The
- *  turn-completion save uses it to skip re-tarring an unchanged component/custom library
+ *  turn-completion save uses it to skip re-tarring an unchanged component/skill library
  *  after a draw-only turn. An absent dir → 0 (nothing to save). */
 export async function maxMtimeMs(dir: string): Promise<number> {
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => null);
