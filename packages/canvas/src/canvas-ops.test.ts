@@ -215,6 +215,24 @@ describe('canvas ops (the agent tool logic)', () => {
       normalizeShape({ type: 'ellipse', x: 300, y: 100, w: 160, h: 100 }),
     ];
 
+    // The chat card is itself a shape on a page, so "which page does the agent write to"
+    // is not a question anyone has to answer — it is read off the chat the turn came
+    // from. This is the same lookup that already tucks the batch beside the chat, so a
+    // batch cannot be positioned relative to a card on one page and land on another.
+    test('the batch inherits the page the originating chat lives on', () => {
+      const s = createStore();
+      s.upsert([
+        normalizeShape({ id: 'shape:chat', type: 'chat', color: 'black', x: 1000, y: 200, w: 380, h: 460, title: 'Chat', page: 'page:two' }),
+      ]);
+      const out = attachBatchToChat(s, batch(), 'shape:chat', { preservePosition: true });
+      expect(out.every((sh) => sh.page === 'page:two')).toBe(true);
+    });
+
+    test('a chat on the default page leaves the batch unpaged, exactly as before', () => {
+      const out = attachBatchToChat(chatOnCanvas(), batch(), 'shape:chat', { preservePosition: true });
+      expect(out.every((sh) => sh.page === undefined)).toBe(true);
+    });
+
     test('chat-missing => batch identity: length unchanged, no arrows', () => {
       const s = createStore(); // no chat on the canvas
       const made = batch();

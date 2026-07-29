@@ -220,9 +220,17 @@ export function attachBatchToChat(
   chatId: string,
   opts: AttachOptions,
 ): CanvasShape[] {
-  if (!store.getState().shapes.some((s) => s.id === chatId)) return made;
+  const chat = store.getState().shapes.find((s) => s.id === chatId);
+  if (!chat) return made;
   const positioned = opts.preservePosition ? made : tuckBesideChat(store, made, chatId);
-  return [...positioned, ...linkRootsToChat(positioned, chatId)];
+  const linked = [...positioned, ...linkRootsToChat(positioned, chatId)];
+  // The turn's shapes land on the page the chat card is on. The agent never chooses a
+  // page and has no tool to name one: the chat IS the location, the same way it is
+  // already the anchor the batch is positioned against. A batch tucked beside a card on
+  // page two that landed on page one would be positioned relative to something it cannot
+  // see. `chat.page` is undefined on a single-page canvas, which leaves the batch exactly
+  // as it was before pages existed.
+  return chat.page ? linked.map((s) => ({ ...s, page: chat.page })) : linked;
 }
 
 export function createShapesOp(store: CanvasStore, raw: Array<Record<string, unknown>>, originChatId?: string): OpResult {

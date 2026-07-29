@@ -30,6 +30,15 @@ export interface BaseShape {
    * round-trip without coordinate math — the frame just has to be created first.
    */
   parentId?: string;
+  /**
+   * The tldraw page this shape lives on, e.g. "page:two". Omitted on a single-page
+   * canvas, which is nearly all of them — absent means "the canvas's first page", so
+   * every shape written before pages existed still round-trips unchanged.
+   *
+   * Distinct from `parentId`: that means "inside this frame" and makes x/y
+   * parent-relative; a page has no coordinates. A framed shape carries both.
+   */
+  page?: string;
 }
 
 export interface RectangleShape extends BaseShape {

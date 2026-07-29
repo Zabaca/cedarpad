@@ -69,6 +69,8 @@ export function readShapes(room: Room): CanvasShape[] {
   const all = records(room);
   const bindings = bindingViews(all);
   const assets = assetSrcs(all);
+  const byId = new Map(all.map((r) => [String(r.id), r]));
+  const defaultPage = firstPageId(all);
   const out: CanvasShape[] = [];
   for (const r of all) {
     if (r.typeName !== 'shape') continue;
@@ -79,12 +81,54 @@ export function readShapes(room: Room): CanvasShape[] {
       arrowBindings: bindings.get(String(r.id)),
       imageSrc: assetId ? assets.get(String(assetId)) : undefined,
     });
-    if (shape) out.push(shape);
+    if (shape) {
+      // ABSENT MEANS THE DEFAULT PAGE. Tagging every shape unconditionally would change
+      // the read shape of every single-page canvas — which is nearly all of them — and
+      // spend tokens on a field that carries no information there.
+      const page = pageOf(r, byId, defaultPage);
+      if (page !== defaultPage) shape.page = page;
+      out.push(shape);
+    }
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-const firstPageId = (all: AnyRecord[]): string => String(all.find((r) => r.typeName === 'page')?.id ?? 'page:page');
+/** The canvas's pages in tldraw's own order. `index` is the fractional index the page
+ *  switcher sorts by, so the FIRST of these is the page a human opens the canvas on —
+ *  which is what makes it the right default for a shape that names no page. Falling back
+ *  to record order (and then to sync-core's `page:page`) keeps a room with a malformed or
+ *  absent page record answerable rather than throwing on read. */
+function orderedPages(all: AnyRecord[]): string[] {
+  const pages = all.filter((r) => r.typeName === 'page');
+  pages.sort((a, b) => String(a.index ?? '').localeCompare(String(b.index ?? '')));
+  return pages.map((p) => String(p.id));
+}
+
+const firstPageId = (all: AnyRecord[]): string => orderedPages(all)[0] ?? 'page:page';
+
+/**
+ * The page a shape sits on, walking up through any frames that contain it.
+ *
+ * A framed shape's `parentId` is the FRAME, not a page, so its page is its frame's page
+ * (or its frame's frame's, for a nested frame). Without the walk every framed shape would
+ * report the default page and an agent would move it across pages by accident.
+ *
+ * The `seen` guard is for a parent cycle. tldraw cannot produce one, but this reads
+ * whatever is in the room — including records written by an older or buggier client — and
+ * a read path that can hang is worse than one that answers the default.
+ */
+function pageOf(shape: AnyRecord, byId: Map<string, AnyRecord>, fallback: string): string {
+  const seen = new Set<string>();
+  let cur: AnyRecord | undefined = shape;
+  while (cur && !seen.has(String(cur.id))) {
+    seen.add(String(cur.id));
+    const parent = String(cur.parentId ?? '');
+    if (parent.startsWith('page:')) return parent;
+    if (!parent.startsWith('shape:')) return fallback;
+    cur = byId.get(parent);
+  }
+  return fallback;
+}
 
 /**
  * Apply one contract-parsed mutation and answer with the room's post-state.
@@ -96,11 +140,20 @@ export async function applyMutation(room: Room, mutation: CanvasMutation): Promi
   if (mutation.op !== 'read') {
     const all = records(room);
     const pageId = firstPageId(all);
+    const pages = new Set(orderedPages(all));
     const existing = new Map(all.filter((r) => r.typeName === 'shape').map((r) => [String(r.id), r as TLRecord]));
     try {
       await room.updateStore((ctx) => {
         if (mutation.op === 'upsert') {
           for (const shape of mutation.shapes) {
+            // A page the room does not have is REFUSED, not quietly redirected to the
+            // default. Silently landing the shape somewhere else is the failure mode that
+            // looks like data loss to the human: they asked for page 3, the agent said it
+            // wrote, and nothing is there. `updateStore` is transactional, so throwing
+            // here rolls the whole batch back.
+            if (shape.page && !pages.has(shape.page)) {
+              throw new UnbuildableShapeError(`no page "${shape.page}" on this canvas`);
+            }
             ctx.put(buildShapeRecord(shape, existing.get(shape.id), pageId));
             // Referential integrity is ours (ADR-0019): a bound arrow's binding records
             // are written with the arrow, and re-put on every update so a rebind lands.

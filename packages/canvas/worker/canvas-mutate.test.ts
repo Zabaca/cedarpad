@@ -90,3 +90,77 @@ describe('the room, not the contract, is the last line of defence', () => {
     expect((await applyMutation(r, { op: 'read' })).shapes).toEqual([]);
   });
 });
+
+// A canvas can hold more than one page (tldraw's "Move to page → New page", plus the
+// restored page switcher). The agent's model gained a `page` field for it. The rule the
+// whole feature rests on: ABSENT MEANS THE FIRST PAGE. Every canvas that has only one
+// page — nearly all of them — therefore reads and writes exactly as it did before, which
+// is why the round-trip tests above still assert bare equality.
+describe('pages', () => {
+  const secondPage = { id: 'page:two', typeName: 'page', name: 'Page 2', index: 'a2', meta: {} };
+  const withSecondPage = async (r: ReturnType<typeof room>) => {
+    await r.updateStore((ctx) => ctx.put(secondPage as never));
+  };
+
+  test('a shape on the only page reads back with no page field at all', async () => {
+    const r = room();
+    const after = await applyMutation(r, { op: 'upsert', shapes: [rect] });
+    expect(after.shapes[0]).not.toHaveProperty('page');
+  });
+
+  test('a shape written with a page lands there and reads it back', async () => {
+    const r = room();
+    await withSecondPage(r);
+    const after = await applyMutation(r, { op: 'upsert', shapes: [{ ...rect, page: 'page:two' }] });
+    expect(after.shapes[0]?.page).toBe('page:two');
+    // ...and it really is parented to that page in the room, not just labelled.
+    const rec = r.getCurrentSnapshot().documents.find((d) => d.state.id === 'shape:r')?.state as { parentId: string };
+    expect(rec.parentId).toBe('page:two');
+  });
+
+  test('shapes on different pages come back distinguishable rather than flattened together', async () => {
+    const r = room();
+    await withSecondPage(r);
+    await applyMutation(r, { op: 'upsert', shapes: [rect, { ...rect, id: 'shape:s', page: 'page:two' }] });
+    const read = await applyMutation(r, { op: 'read' });
+    expect(read.shapes.map((s) => [s.id, s.page])).toEqual([
+      ['shape:r', undefined],
+      ['shape:s', 'page:two'],
+    ]);
+  });
+
+  test('a shape in a frame reports the frame as its parent and the frame\'s page as its page', async () => {
+    const r = room();
+    await withSecondPage(r);
+    const frame: CanvasShape = { id: 'shape:f', type: 'frame', x: 0, y: 0, w: 200, h: 200, color: 'black', name: 'F', page: 'page:two' };
+    await applyMutation(r, { op: 'upsert', shapes: [frame, { ...rect, parentId: 'shape:f' }] });
+    const read = await applyMutation(r, { op: 'read' });
+    // The child never named a page — it inherits one by living in a frame that has one.
+    // Without walking up, a framed shape would silently report the default page.
+    expect(read.shapes.find((s) => s.id === 'shape:r')).toMatchObject({ parentId: 'shape:f', page: 'page:two' });
+  });
+
+  test('a page that does not exist is refused, not silently written to the default page', async () => {
+    const r = room();
+    await expect(applyMutation(r, { op: 'upsert', shapes: [{ ...rect, page: 'page:ghost' }] })).rejects.toBeInstanceOf(
+      MutationRejected,
+    );
+    expect((await applyMutation(r, { op: 'read' })).shapes).toEqual([]);
+  });
+});
+
+// Guideline 7: the contract is the boundary, and a field the schema does not name is
+// STRIPPED there — silently, and only in the process that crosses it. Every unit test
+// above would still pass with `page` missing from the zod schema, because they call
+// applyMutation directly. This is the one that would fail.
+describe('the page survives the contract', () => {
+  test('parsing an upsert keeps the page rather than stripping it', () => {
+    const parsed = CanvasMutation.parse({ op: 'upsert', shapes: [{ ...rect, page: 'page:two' }] });
+    expect(parsed.op === 'upsert' && parsed.shapes[0]?.page).toBe('page:two');
+  });
+
+  test('and a result carrying a paged shape parses back', () => {
+    const parsed = CanvasMutationResult.parse({ version: 1, shapes: [{ ...rect, page: 'page:two' }] });
+    expect(parsed.shapes[0]?.page).toBe('page:two');
+  });
+});

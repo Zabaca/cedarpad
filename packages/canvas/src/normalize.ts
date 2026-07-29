@@ -71,14 +71,31 @@ export function parseParentId(raw: Record<string, unknown>): string | undefined 
 }
 
 /**
+ * The page a shape lives on, when it isn't the canvas's only one.
+ *
+ * Separate from `parentId` on purpose: `parentId` means "inside this frame" and carries a
+ * coordinate contract (x/y are parent-relative), which a page has no equivalent of. A
+ * shape can have both — a frame parents it, and the frame sits on a page.
+ *
+ * Accepts either spelling because the two ends speak differently: the agent sends `page`,
+ * while a tldraw record spells a top-level shape's page as its `parentId`.
+ */
+export function parsePage(raw: Record<string, unknown>): string | undefined {
+  if (typeof raw.page === 'string' && raw.page.length > 0) return raw.page;
+  return typeof raw.parentId === 'string' && raw.parentId.startsWith('page:') ? raw.parentId : undefined;
+}
+
+/**
  * Validate + normalize a raw shape. `id` is preserved if given (so the agent can
  * update an existing shape) else minted.
  */
 export function normalizeShape(raw: Record<string, unknown>): CanvasShape {
   const id = typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : mintId();
   const parentId = parseParentId(raw);
+  const page = parsePage(raw);
   const shape = buildShape(raw, id, color(raw.color));
   if (parentId) shape.parentId = parentId;
+  if (page) shape.page = page;
   return shape;
 }
 
@@ -211,6 +228,8 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
       alt: str(raw.alt),
     };
     if (parentId) shape.parentId = parentId;
+    const page = parsePage(raw);
+    if (page) shape.page = page;
     return shape;
   }
   if (raw.type === 'embed') {
@@ -230,6 +249,8 @@ export function normalizeIncomingShape(raw: Record<string, unknown>): CanvasShap
       url: str(raw.url),
     };
     if (parentId) shape.parentId = parentId;
+    const page = parsePage(raw);
+    if (page) shape.page = page;
     return shape;
   }
   return normalizeShape(raw);
