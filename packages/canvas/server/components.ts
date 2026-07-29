@@ -71,6 +71,10 @@ export interface ComponentRecords {
   read(tier: ComponentTier, canvasId: string, module: string): Promise<string | null>;
   /** Every version of the Component in that tier, newest first: who changed it and when. */
   history(tier: ComponentTier, canvasId: string, module: string): Promise<ComponentVersion[]>;
+  /** Make an earlier version of that tier's Component current again, returning the NEW
+   *  revision — null when there is no such version. A VERSION number goes out; the source is
+   *  read and re-put on the store's own side and never comes back through here. */
+  restore(tier: ComponentTier, canvasId: string, module: string, version: number): Promise<number | null>;
   /** Move the Component from this canvas into the shared library — one change of tier, so it
    *  can never end up in both libraries or in neither. THROWS with the store's reason. */
   promote(canvasId: string, module: string): Promise<void>;
@@ -116,6 +120,8 @@ function containerRecords(): ComponentRecords | null {
       void (await rpc.componentWrite({ workspaceId, canvasId, tier, userId, name: module, source })),
     read: (tier, canvasId, module) => rpc.componentRead({ workspaceId, canvasId, tier, name: module }),
     history: (tier, canvasId, module) => rpc.componentHistory({ workspaceId, canvasId, tier, name: module }),
+    restore: (tier, canvasId, module, version) =>
+      rpc.componentRestore({ workspaceId, canvasId, tier, userId, name: module, version }),
     promote: async (canvasId, module) => void (await rpc.componentPromote({ workspaceId, canvasId, userId, name: module })),
     adopt: async (canvasId, module) => void (await rpc.componentAdopt({ workspaceId, canvasId, userId, name: module })),
     writeData: async (canvasId, name, source) => void (await rpc.dataWrite({ workspaceId, canvasId, userId, name, source })),
@@ -336,6 +342,43 @@ export async function componentHistory(
   // the shared key, and asking the own tier for it would answer "no history" about a
   // Component that has one.
   return await records.history(await resolvedTier(module, canvasId, records), canvasId, module);
+}
+
+/**
+ * Put a Component back the way it was at an earlier version (#362), returning the NEW revision
+ * the restore created. This is what turns history into recovery: before Records, undoing a bad
+ * edit meant production credentials and a database fork at a timestamp.
+ *
+ * A restore is a FORWARD WRITE. It appends a version rather than truncating the ones after the
+ * chosen point, so nothing is erased and the restore is itself undoable — a "recover" that
+ * destroyed history would just be a second way to lose work.
+ *
+ * WHERE THE SOURCE LIVES: not here. This sends a version NUMBER; the store reads that version
+ * and re-puts it on its own side. What comes back is a revision. The `materializeComponent`
+ * that follows is the ORDINARY render path — the same call any read after a recycle makes —
+ * and it exists because the stale file on disk is what vite compiles until something replaces
+ * it. Moving the row alone would leave the canvas rendering the bad edit.
+ */
+export async function restoreComponent(
+  module: string,
+  version: number,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<number> {
+  fileIn(ownDir(canvasId), module); // validates the name before we ask anything
+  // No edge in front of this process ⇒ no version rows anywhere. Succeeding here would be a
+  // recovery that recovered nothing, which is precisely the silent shape ADR-0022 removes.
+  if (!records) throw new Error(`no version history for "${module}" — this workspace has no Record store in front of it`);
+  // The SAME walk `componentHistory` uses, and that is the point: a restore must act on the
+  // Component whose history the caller was just shown. Choosing the tiers differently would
+  // let `component_history` list a promoted module's past while the restore quietly rebuilt
+  // it in the canvas's own library — a fork of the one live source, which promote exists to
+  // prevent.
+  const tier = await resolvedTier(module, canvasId, records);
+  const rev = await records.restore(tier, canvasId, module, version);
+  if (rev === null) throw new Error(`no version ${version} of "${module}" — component_history lists the versions that exist`);
+  await (tier === 'shared' ? materializeSharedComponent : materializeComponent)(module, canvasId, records);
+  return rev;
 }
 
 // Data files live NEXT TO components so vite resolves `import data from "./sales.json"`.

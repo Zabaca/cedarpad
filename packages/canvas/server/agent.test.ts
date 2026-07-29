@@ -217,3 +217,31 @@ describe('component_history is a registered canvas tool', () => {
     expect(tools.map((t) => t.name)).toContain('component_history');
   });
 });
+
+// Records (ADR-0022, #362): history is only recovery if something can act on it.
+import { formatComponentRestore } from './agent.ts';
+
+describe('formatComponentRestore: what the agent is told after putting a Component back', () => {
+  test('it names both the version restored FROM and the new revision the restore created', () => {
+    const text = formatComponentRestore('KpiCard', 1, 3);
+    expect(text).toContain('KpiCard');
+    expect(text).toContain('v1');
+    expect(text).toContain('v3');
+  });
+
+  test('it says the history was appended to, not rewound — so the restore is known to be undoable', () => {
+    // The agent must not report a restore as if it erased the versions after it. If it thinks
+    // recovery is destructive it will hesitate to use it, which is how a five-minute fix
+    // becomes an incident again.
+    const text = formatComponentRestore('KpiCard', 1, 3);
+    expect(text).toMatch(/v2/);
+    expect(text).toMatch(/nothing was (erased|lost)|still there|undo/i);
+  });
+});
+
+describe('restore_component is a registered canvas tool', () => {
+  test('recovery is available through the same door as every other Component action', () => {
+    const tools = createCanvasTools(createStore([])) as Array<{ name: string }>;
+    expect(tools.map((t) => t.name)).toContain('restore_component');
+  });
+});

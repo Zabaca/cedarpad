@@ -27,6 +27,13 @@ export interface ComponentStore {
    *  Deliberately WITHOUT the source: "what happened to this" must not cost every revision
    *  of the text, and a restore (#362) names a version rather than carrying one. */
   history(key: ComponentKey): Promise<ComponentVersion[]>;
+  /** Make an earlier version current again, returning the NEW revision — or null when that
+   *  Component has no such version. A FORWARD WRITE: the named source is put as the current
+   *  one and a further version is appended, so nothing after it is erased and the restore is
+   *  itself undoable. Reading the source happens HERE, on the side that owns the rows — the
+   *  caller names a version, never a source, so a restore cannot be forged by composing one.
+   *  Tier-agnostic like every other method here: the key it is given already names the tier. */
+  restore(input: ComponentKey & { version: number; userId: string | null }): Promise<{ rev: number } | null>;
   /** Move a canvas's Component into the workspace shared library: ONE change of tier, so
    *  the Component is never in both libraries and never in neither. */
   promote(input: TierMove): Promise<{ rev: number }>;
@@ -58,6 +65,16 @@ export function componentStore(records: RecordStore): ComponentStore {
     history: async (key) => {
       assertComponentName(key.name);
       return (await records.listVersions(key)).map(({ version, createdAt, createdBy }) => ({ version, createdAt, createdBy }));
+    },
+    restore: async ({ version, userId, ...key }) => {
+      assertComponentName(key.name);
+      const prior = await records.getVersion(key, version);
+      if (!prior) return null;
+      // A `put`, deliberately — the same write every other author goes through, so it appends
+      // a version, undeletes the Record, and is attributed to whoever asked for the restore
+      // rather than to the author of the text being brought back.
+      const row = await records.put({ ...key, kind: 'component', source: prior.source, updatedBy: userId });
+      return { rev: row.rev };
     },
     promote: async ({ workspaceId, canvasId, name, userId }) => {
       assertComponentName(name);

@@ -26,6 +26,7 @@ const fakeRecords = (rows: Record<string, string>): ComponentRecords => ({
   write: async () => {},
   read: async (tier, canvasId, name) => rows[tier === 'shared' ? `shared/${name}` : `${canvasId}/${name}`] ?? null,
   history: async () => [],
+  restore: async () => null,
   promote: async () => {},
   adopt: async () => {},
   writeData: async () => {},

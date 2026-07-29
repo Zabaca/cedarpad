@@ -59,6 +59,11 @@ export interface RecordStore {
   list(scope: RecordScope): Promise<RecordRow[]>;
   /** A Record's history, newest first. Survives a soft delete. */
   listVersions(key: RecordKey): Promise<RecordVersionRow[]>;
+  /** ONE version, with its source — what a restore reads (#362). Null when that Record has
+   *  no such version. Separate from `listVersions` because every version row carries a full
+   *  source: fetching them all to keep one would drag the whole corpus of a long-cared-for
+   *  Component through memory to answer a question about a single revision. */
+  getVersion(key: RecordKey, version: number): Promise<RecordVersionRow | null>;
   /**
    * Change a live Record's TIER — the whole of it, history included — and append a version
    * recording the move. What `promote` is made of.
@@ -109,6 +114,7 @@ export const memRecordStore = (): RecordStore => {
         .filter((r) => keyOf(r).startsWith(scopeOf(scope)) && r.deletedAt === null)
         .sort((a, b) => a.name.localeCompare(b.name)),
     listVersions: async (key) => [...(versions.get(keyOf(key)) ?? [])].sort((a, b) => b.version - a.version),
+    getVersion: async (key, version) => (versions.get(keyOf(key)) ?? []).find((v) => v.version === version) ?? null,
     move: async (from, to, updatedBy) => {
       const [fromId, toId] = [keyOf(from), keyOf(to)];
       const row = rows.get(fromId);
@@ -206,6 +212,15 @@ export const d1RecordStore = (db: Database): RecordStore => {
 
     listVersions: async (key) =>
       await db.select().from(componentRecordVersions).where(versionKeyWhere(key)).orderBy(desc(componentRecordVersions.version)),
+
+    getVersion: async (key, version) =>
+      (
+        await db
+          .select()
+          .from(componentRecordVersions)
+          .where(and(versionKeyWhere(key), eq(componentRecordVersions.version, version)))
+          .limit(1)
+      )[0] ?? null,
 
     move: async (from, to, updatedBy) => {
       const row = await rowOf(from);

@@ -179,6 +179,103 @@ describe('ComponentStore — the three tiers, and moving between them', () => {
   });
 });
 
+// A restore is what turns history into RECOVERY (#362) — the operation that would have made
+// 2026-07-29 a five-minute fix. It is a FORWARD WRITE, never a rewind: it reads the named
+// version's source and puts it as the new current, appending a further version. Anything that
+// truncated the versions after it would be the destructive-overwrite shape this whole ADR
+// exists to remove — recovery becoming a second way to lose work.
+describe('ComponentStore — a Component can be restored to an earlier version', () => {
+  const key = { workspaceId: 'ws_a', canvasId: 'cv_1', name: 'Card' };
+
+  test('restoring an earlier version makes its source current WITHOUT erasing what came after', async () => {
+    const store = componentStore(memRecordStore());
+    await store.write({ ...key, source: 'v1', userId: 'u_1' });
+    await store.write({ ...key, source: 'v2', userId: 'u_1' });
+
+    const restored = await store.restore({ ...key, version: 1, userId: 'u_2' });
+
+    expect(restored?.rev).toBe(3);
+    expect(await store.read(key)).toBe('v1');
+    // Three versions, not one: the bad edit is still ON the record, which is what makes the
+    // restore itself undoable rather than a second irreversible act.
+    expect((await store.history(key)).map((v) => v.version)).toEqual([3, 2, 1]);
+  });
+
+  test('a restore is itself reversible — the version it replaced is still there to go back to', async () => {
+    const store = componentStore(memRecordStore());
+    await store.write({ ...key, source: 'v1', userId: 'u_1' });
+    await store.write({ ...key, source: 'v2', userId: 'u_1' });
+    await store.restore({ ...key, version: 1, userId: 'u_1' });
+
+    expect(await store.restore({ ...key, version: 2, userId: 'u_1' })).toEqual({ rev: 4 });
+    expect(await store.read(key)).toBe('v2');
+  });
+
+  test('the restore is attributed to whoever performed it, not to the original author', async () => {
+    // The new version is a new event with a new actor: "u_2 put the old text back" is the
+    // fact worth keeping. Copying u_1 forward would make the history claim u_1 acted today.
+    const store = componentStore(memRecordStore());
+    await store.write({ ...key, source: 'v1', userId: 'u_1' });
+    await store.restore({ ...key, version: 1, userId: 'u_2' });
+
+    expect((await store.history(key)).map((v) => v.createdBy)).toEqual(['u_2', 'u_1']);
+  });
+
+  test('restoring a soft-deleted Component brings it back into the tier', async () => {
+    // Reachable because history SURVIVES a soft delete: deleting a canvas hides its own tier
+    // and the versions are still there. Restore is a `put`, and a put undeletes — so recovery
+    // after a delete is the same one operation, not a second "undelete" verb to discover.
+    const records = memRecordStore();
+    const store = componentStore(records);
+    await store.write({ ...key, source: 'v1', userId: 'u_1' });
+    await records.softDelete(key);
+    expect(await store.read(key)).toBeNull();
+
+    await store.restore({ ...key, version: 1, userId: 'u_1' });
+
+    expect(await store.read(key)).toBe('v1');
+    expect((await records.list({ workspaceId: key.workspaceId, canvasId: key.canvasId })).map((r) => r.name)).toEqual(['Card']);
+  });
+
+  test('a version that does not exist is null, and nothing is written', async () => {
+    // Not a silent no-op that reports success, and not an exception the caller has to
+    // pattern-match: absent is an ANSWER here, exactly as it is for a read.
+    const store = componentStore(memRecordStore());
+    await store.write({ ...key, source: 'v1', userId: 'u_1' });
+
+    expect(await store.restore({ ...key, version: 7, userId: 'u_1' })).toBeNull();
+    expect(await store.read(key)).toBe('v1');
+    expect((await store.history(key)).map((v) => v.version)).toEqual([1]);
+  });
+
+  test('a version number belonging to a DIFFERENT Component does not restore this one', async () => {
+    const store = componentStore(memRecordStore());
+    await store.write({ workspaceId: 'ws_a', canvasId: 'cv_1', name: 'Other', source: 'other v1', userId: 'u_1' });
+
+    expect(await store.restore({ ...key, version: 1, userId: 'u_1' })).toBeNull();
+    expect(await store.read(key)).toBeNull();
+  });
+
+  test('the shared tier restores the same way — the key it is given already names the tier', async () => {
+    const store = componentStore(memRecordStore());
+    const sharedKey = { workspaceId: 'ws_a', canvasId: null, name: 'Legend' };
+    await store.write({ ...sharedKey, source: 'shared v1', userId: 'u_1' });
+    await store.write({ ...sharedKey, source: 'shared v2', userId: 'u_1' });
+
+    expect(await store.restore({ ...sharedKey, version: 1, userId: 'u_2' })).toEqual({ rev: 3 });
+    expect(await store.read(sharedKey)).toBe('shared v1');
+    // …and no own-tier Record was conjured: same name, different tier, different Record.
+    expect(await store.read({ workspaceId: 'ws_a', canvasId: 'cv_1', name: 'Legend' })).toBeNull();
+  });
+
+  test('restore refuses a traversing name for the same reason a write does', async () => {
+    const store = componentStore(memRecordStore());
+    await expect(store.restore({ ...key, name: '../../etc/passwd', version: 1, userId: null })).rejects.toThrow(
+      /invalid component name/,
+    );
+  });
+});
+
 describe('ComponentStore — the edge validates, it does not trust the caller', () => {
   // The container names the Component; the edge decides whether that name is a Component
   // at all. A traversing name is how a "write" becomes a write to somewhere else.
