@@ -38,6 +38,10 @@ const row = (o: Partial<ConversationRow>): ConversationRow =>
     unread: o.unread ?? false,
     lastActivity: o.lastActivity ?? new Date(0),
     ownerRef: o.ownerRef ?? null,
+    kind: o.kind ?? 'chat',
+    repo: o.repo ?? null,
+    prUrl: o.prUrl ?? null,
+    prMergedAt: o.prMergedAt ?? null,
     workspaceId: o.workspaceId ?? 'default',
     userId: o.userId ?? 'u',
     summary: o.summary ?? null,
@@ -75,6 +79,32 @@ describe('orderInbox', () => {
   test('projects ownerRef (the draft-chat match key for the Shell)', () => {
     const [item] = orderInbox([row({ id: 'x', ownerRef: 'chat_abc' })]);
     expect(item?.ownerRef).toBe('chat_abc');
+  });
+
+  // The Conversation's PR state (CONTEXT.md "Open PR"): what the Inbox renders its Merge
+  // action from. A row that never opened a PR carries neither field.
+  test('projects the open PR a dev-agent run left on the row', () => {
+    const [item] = orderInbox([
+      row({ id: 'x', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: 'https://github.com/Zabaca/cedarpad/pull/283' }),
+    ]);
+    expect(item).toMatchObject({
+      kind: 'dev-agent',
+      repo: 'Zabaca/cedarpad',
+      prUrl: 'https://github.com/Zabaca/cedarpad/pull/283',
+      prMergedAt: null,
+    });
+  });
+
+  test('projects the merge stamp once the PR has landed', () => {
+    const [item] = orderInbox([
+      row({ id: 'x', kind: 'dev-agent', prUrl: 'https://github.com/Zabaca/cedarpad/pull/283', prMergedAt: new Date(9000) }),
+    ]);
+    expect(item?.prMergedAt).toBe(9000);
+  });
+
+  test('an ordinary chat carries no PR state', () => {
+    const [item] = orderInbox([row({ id: 'x' })]);
+    expect(item).toMatchObject({ prUrl: null, prMergedAt: null });
   });
 });
 
@@ -376,5 +406,142 @@ describe('handleInboxApi — shared read mark + badge stream (read-for-all)', ()
     const frame = new TextDecoder().decode(value);
     expect(frame).toContain('"count":1'); // one open conversation, never read
     await reader.cancel();
+  });
+});
+
+// The Inbox merge (CONTEXT.md "Open PR"): landing a dev-agent run's PR without leaving the
+// Inbox. Merging is an EDGE act — the App private key never leaves the edge (ADR-0008) — so
+// the two outward-facing pieces (minting the repo-scoped token, calling GitHub) are the
+// injected seams; everything else is real.
+describe('handleInboxApi — POST /api/inbox/:id/merge', () => {
+  const devAgentConv = async (over: Partial<{ prUrl: string; repo: string; kind: 'chat' | 'dev-agent' }> = {}) => {
+    const conv = await conversations.create(database, {
+      sessionId: `s_merge_${Math.random().toString(36).slice(2)}`,
+      userId: USER.id,
+      workspaceId: 'default',
+      kind: over.kind ?? 'dev-agent',
+      repo: over.repo ?? 'Zabaca/cedarpad',
+    });
+    if (over.prUrl !== undefined) await conversations.recordPr(database, conv.id, over.prUrl);
+    return conv;
+  };
+
+  const merge = (
+    convId: string,
+    seams: Partial<Parameters<typeof handleInboxApi>[5]> = {},
+    caller: { id: string } = USER,
+  ) =>
+    handleInboxApi(
+      new Request(`https://x/api/inbox/${convId}/merge`, { method: 'POST' }),
+      {} as never,
+      caller as never,
+      convId,
+      'merge',
+      {
+        resolveRepo: async () => ({ repoFullName: 'Zabaca/cedarpad', auth: { kind: 'installation', installationId: '42' } }),
+        mint: async () => 'ghs_minted',
+        merge: async () => ({ ok: true }),
+        ...seams,
+      } as never,
+    );
+
+  test('merges the recorded PR with a token scoped to the conversation‘s own repo, then stamps and closes the row', async () => {
+    const conv = await devAgentConv({ prUrl: 'https://github.com/Zabaca/cedarpad/pull/283' });
+    const merged: Array<{ prUrl: string; token: string }> = [];
+    const mintedFor: string[] = [];
+
+    const res = await merge(conv.id, {
+      mint: (async (_env: unknown, o: { repoFullName: string }) => {
+        mintedFor.push(o.repoFullName);
+        return 'ghs_minted';
+      }) as never,
+      merge: (async (o: { prUrl: string; token: string }) => {
+        merged.push(o);
+        return { ok: true };
+      }) as never,
+    });
+
+    expect(res.status).toBe(200);
+    expect(mintedFor).toEqual(['Zabaca/cedarpad']);
+    expect(merged).toEqual([{ prUrl: 'https://github.com/Zabaca/cedarpad/pull/283', token: 'ghs_minted' }]);
+
+    const row = await conversations.get(database, conv.id);
+    expect(row?.prMergedAt).not.toBeNull();
+    expect(row?.status).toBe('closed'); // landing the PR is what ends the run
+  });
+
+  test('a conversation with no recorded PR has nothing to merge — 409, and GitHub is never called', async () => {
+    const conv = await devAgentConv();
+    const calls: unknown[] = [];
+
+    const res = await merge(conv.id, { merge: (async (o: unknown) => (calls.push(o), { ok: true })) as never });
+
+    expect(res.status).toBe(409);
+    expect(calls).toEqual([]);
+  });
+
+  test('an already-merged PR cannot be merged twice — 409, and GitHub is never called', async () => {
+    const conv = await devAgentConv({ prUrl: 'https://github.com/Zabaca/cedarpad/pull/283' });
+    await conversations.markPrMerged(database, conv.id);
+    const calls: unknown[] = [];
+
+    const res = await merge(conv.id, { merge: (async (o: unknown) => (calls.push(o), { ok: true })) as never });
+
+    expect(res.status).toBe(409);
+    expect(calls).toEqual([]);
+  });
+
+  test('GitHub‘s refusal reaches the caller verbatim and the row keeps its open PR', async () => {
+    const conv = await devAgentConv({ prUrl: 'https://github.com/Zabaca/cedarpad/pull/283' });
+
+    const res = await merge(conv.id, {
+      merge: (async () => ({ ok: false, alreadyMerged: false, reason: 'Pull Request is not mergeable' })) as never,
+    });
+
+    expect(res.status).toBe(409);
+    expect((await readJson(res)).error).toBe('Pull Request is not mergeable');
+    const row = await conversations.get(database, conv.id);
+    expect(row?.prMergedAt).toBeNull();
+    expect(row?.status).toBe('open'); // retry after CI goes green is one click
+  });
+
+  test('a PR GitHub reports as ALREADY merged is recorded as merged — the row was stale, not wrong', async () => {
+    const conv = await devAgentConv({ prUrl: 'https://github.com/Zabaca/cedarpad/pull/283' });
+
+    const res = await merge(conv.id, {
+      merge: (async () => ({ ok: false, alreadyMerged: true, reason: 'already merged' })) as never,
+    });
+
+    expect(res.status).toBe(200);
+    const row = await conversations.get(database, conv.id);
+    expect(row?.prMergedAt).not.toBeNull();
+    expect(row?.status).toBe('closed');
+  });
+
+  test('any workspace MEMBER may merge; a stranger gets the same 404 as a missing row', async () => {
+    const forMember = await devAgentConv({ prUrl: 'https://github.com/Zabaca/cedarpad/pull/1' });
+    expect((await merge(forMember.id, {}, MEMBER)).status).toBe(200);
+
+    const forStranger = await devAgentConv({ prUrl: 'https://github.com/Zabaca/cedarpad/pull/2' });
+    expect((await merge(forStranger.id, {}, STRANGER)).status).toBe(404);
+  });
+
+  test('no repo credential resolves ⇒ 502, never a merge attempted token-less', async () => {
+    const conv = await devAgentConv({ prUrl: 'https://github.com/Zabaca/cedarpad/pull/283' });
+    const calls: unknown[] = [];
+
+    const res = await merge(conv.id, {
+      mint: (async () => null) as never,
+      merge: (async (o: unknown) => (calls.push(o), { ok: true })) as never,
+    });
+
+    expect(res.status).toBe(502);
+    expect(calls).toEqual([]);
+  });
+
+  test('only POST', async () => {
+    const conv = await devAgentConv({ prUrl: 'https://github.com/Zabaca/cedarpad/pull/283' });
+    const res = await handleInboxApi(new Request(`https://x/api/inbox/${conv.id}/merge`), {} as never, USER, conv.id, 'merge');
+    expect(res.status).toBe(405);
   });
 });

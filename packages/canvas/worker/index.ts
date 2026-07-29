@@ -680,7 +680,7 @@ export default {
     // platform D1 + R2: list/detail/close/reopen never wake a container (history reads
     // from the R2 transcript while the runner sleeps); only reply forwards into the
     // container (#61).
-    const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen|assign|visibility))?)?$/.exec(url.pathname);
+    const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen|assign|visibility|merge))?)?$/.exec(url.pathname);
     if (inboxApiMatch) {
       return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
     }
