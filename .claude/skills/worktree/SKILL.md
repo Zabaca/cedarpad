@@ -22,7 +22,7 @@ parallel *processes* from colliding; this keeps you from writing to the wrong
 *checkout*.
 
 **The failure mode:** an agent in a worktree runs a command like
-`cd /Users/uptown/Projects/zabaca/cedarpad && …` (the *main* checkout) and edits
+`cd /Users/james/Projects/zabaca/cedarpad && …` (the *main* checkout) and edits
 or commits there instead of in its worktree. It has happened repeatedly. It's
 dangerous because the main checkout may hold the human's own uncommitted work, or
 another agent's — a stray write there can block a `git pull`, collide, or get lost.
@@ -32,7 +32,7 @@ problem, not a port problem.
 **Why the pull toward main exists — and how to resist each:**
 
 1. **Your environment says the project is at the main path.** The system context
-   advertises the repo's *main* working directory (`/Users/uptown/Projects/zabaca/cedarpad`).
+   advertises the repo's *main* working directory (`/Users/james/Projects/zabaca/cedarpad`).
    That is NOT where you are. Do not trust it as your cwd. **Run
    `git rev-parse --show-toplevel` first and treat *that* as your root** — it will be
    a `.claude/worktrees/agent-…` path.
@@ -111,7 +111,7 @@ trade (ADR-0018). `test:e2e` needs no extra step: Playwright's `globalSetup` app
 them.
 
 > **Default behavior is preserved.** With none of these env vars set — a plain
-> `bun run dev` — the ports are `4510`/`4511`/`4513` and the state dir is
+> `bun run dev` — the ports are `4510`/`4511`/`4512`/`4513` and the state dir is
 > `packages/canvas/.wrangler/state`. The wrappers are opt-in via the `:e2e` scripts.
 
 The canonical composition is `with-worktree-port.sh with-worktree-db.sh <cmd>`,
@@ -124,11 +124,20 @@ already wired into the `package.json` scripts below.
 From `packages/canvas`:
 
 ```sh
-bun test                 # unit tests (bun test ./server ./src ./worker) — in-memory DBs, already parallel-safe
+bun run test             # unit tests (./server ./shared ./src ./shell ./worker) — in-memory DBs, already parallel-safe
+bun run webpoc:test      # web-poc's suite — a DIFFERENT runner (vitest), see below
 bun run dev:e2e          # dev stack on the worktree's derived port + DB
 bun run test:e2e         # Playwright over the dev stack (isolated port + DB)
 bun run test:e2e:ui      # Playwright UI mode for iterating
 ```
+
+**Never run bare `bun test`** (CLAUDE.md says the same). Its default glob also collects
+`web-poc/`'s **vitest** specs and runs them under the wrong runner, producing ~10 spurious
+failures in the `conversations` / `mcp-tokens` round-trips. They are not real — those files
+pass under `webpoc:test`. `bun run test` is scoped to exclude them, and `bun test` exposes no
+ignore option, so the script is the only guard. Typechecking splits the same way:
+`bun run typecheck` covers canvas + the edge Worker, `bun run webpoc:typecheck` covers the
+platform data layer.
 
 `dev:e2e` starts a heavier stack than it used to: vite + bridge + **the edge Worker**
 (ADR-0018), because the platform data layer is now served locally by the edge.
@@ -194,19 +203,33 @@ authorization test is observable.
 ## The authenticated fixtures (`e2e/fixtures/test.ts`)
 
 Since #276 the project-local `test` is an EXTENSION of Playwright's, not a re-export.
-Three fixtures, all addressed at the **edge Worker's own origin**:
+Five fixtures, all addressed at the **edge Worker's own origin**:
 
 | Fixture | What it gives you |
 | --- | --- |
 | `owner` | the signed-in user who OWNS what the bridge files — **use this one** |
 | `signIn()` | a fresh Better Auth account, signed in, owning nothing — the stranger side |
 | `joinBridgeWorkspace(user)` | membership of the bridge's workspace — `setup` project ONLY (see below) |
+| `promoteToAdmin(user)` | Better Auth's `admin` role — `setup` project ONLY, same reason |
 | `edgeRequest` | an anonymous request context at the edge — the deny side of a gate assertion |
 
-**Auth is NOT shimmed.** `signIn()` posts to the edge's real `/api/auth/sign-up/email`
-(local dev leaves signup open — `dev-worker-config.ts` drops `AUTH_DISABLE_SIGNUP`), and
-the session it returns is verified by the same `worker/auth-gate.ts` production runs.
-Call it twice for two users, which is how an authorization boundary gets proven.
+**Auth is NOT shimmed, and it is passwordless** (ADR-0020, #346). `signIn()` drives the same
+two magic-link endpoints a real user does — `POST /api/auth/sign-in/magic-link`, then
+`GET /api/auth/magic-link/verify?token=…` — and the session it returns is verified by the same
+`worker/auth-gate.ts` production runs. Call it twice for two users, which is how an
+authorization boundary gets proven.
+
+The one thing a headless test cannot do is read email, and the fixture does **not** shim the
+send seam for it. Instead `readMagicLinkToken` lifts the token out of the local D1: Better Auth
+persists it to the `verification` table (as `identifier`, in plain form) *before* invoking the
+send seam, keying the row's `value` to the address. So the whole hop stays production code —
+no test-only branch anywhere — and the read is READ-ONLY, so the write-lock warning below does
+not apply to it. Locally there is no `EMAIL` binding, so nothing is actually sent.
+
+`promoteToAdmin` exists because the snapshot door the canvas migration loads through is
+**admin**-gated, not member-gated (`worker/canvas-snapshot-api.ts` — replacing a canvas's whole
+document is an operator action, #321). No signup path sets that role, so the owner carries it,
+seeded in `setup` alongside the workspace membership.
 
 **Talk to the edge port, not vite's.** In production the edge is in front of everything;
 locally it sits BESIDE vite, which proxies only `/api/auth/*` and `/v1/*` to it. So
@@ -214,14 +237,14 @@ locally it sits BESIDE vite, which proxies only `/api/auth/*` and `/v1/*` to it.
 `$CANVAS_EDGE_PORT` is the real gate answering. The fixtures bind their request contexts to
 `EDGE_BASE_URL` (derived from `CANVAS_EDGE_PORT`) for exactly this reason.
 
-**Never write the live D1 from a test.** `joinBridgeWorkspace` is the one raw-SQL seam —
-the container files its Conversations into the legacy `default` workspace, and no API
-creates that row (production seeded it by hand, once, #179). But
-the edge Worker holds that SQLite file open, and D1's write lock admits ONE writer: an
-external write landing mid-request makes *miniflare's* write fail, and it surfaces
-somewhere else entirely — a sign-up `422 FAILED_TO_CREATE_USER`, or
-`[platform-rpc] conversation.start failed: 500` in an unrelated parallel test. Seeding per
-test made ~25% of a 4-worker run fail that way.
+**Never write the live D1 from a test.** `joinBridgeWorkspace` and `promoteToAdmin` are the
+only raw-SQL *write* seams — the container files its Conversations into the legacy `default`
+workspace and no API creates that row (production seeded it by hand, once, #179), and no
+signup path grants `admin`. But the edge Worker holds that SQLite file open, and D1's write
+lock admits ONE writer: an external write landing mid-request makes *miniflare's* write fail,
+and it surfaces somewhere else entirely — a sign-in that fails to create the user
+(`422 FAILED_TO_CREATE_USER`), or `[platform-rpc] conversation.start failed: 500` in an
+unrelated parallel test. Seeding per test made ~25% of a 4-worker run fail that way.
 
 So the seed runs exactly once, in the **`setup` project** (`e2e/specs/auth.setup.ts`, which
 every other project `dependencies`-on), where nothing else is in flight. It parks the
@@ -234,9 +257,10 @@ test.
 
 ## Authoring a new e2e spec
 
-Specs live in `packages/canvas/e2e/specs/*.spec.ts` and import `test` / `expect`
-from `../fixtures/test.ts` (never `@playwright/test` directly) — that is where the
-authenticated fixtures documented above live.
+Specs live in `packages/canvas/e2e/specs/*.spec.ts` and get `test` / `expect`
+from `../fixtures/test.ts`, never from `@playwright/test` directly — that is where the
+authenticated fixtures documented above live. (Importing a *type* from `@playwright/test`
+is fine; `authed-edge.spec.ts` takes `APIRequestContext` that way.)
 
 ### The loop
 
@@ -259,16 +283,40 @@ authenticated fixtures documented above live.
 
 ## Current specs
 
-- `e2e/specs/smoke.spec.ts` — proves the harness round-trips: the wrappers
-  derive a port + DB, Playwright launches the canvas dev stack on that port, and
-  the app shell (`<title>Agent Canvas</title>`, `#root`) renders. No auth.
-- `e2e/specs/open-conversation.spec.ts` — the bridge's half of the forwarded-row seam
-  (#261), driven directly with the header stamped by hand.
-- `e2e/specs/chat-turn-conversation.spec.ts` — a chat turn files its Conversation via the
-  platform RPC (#262, #266), driven at the bridge.
-- `e2e/specs/authed-edge.spec.ts` — the gated paths (#276): the session gate, **a user
-  cannot open a Conversation they do not own**, and a chat turn driven through the edge
-  over the real container→edge RPC hop.
+**Harness and platform**
+
+- `auth.setup.ts` — the `setup` project every other project depends on: signs in the ONE
+  owning user, joins it to the bridge's workspace, promotes it to `admin`, and parks the
+  session in `test-results/.auth/owner.json`. The only place that writes the live D1.
+- `smoke.spec.ts` — proves the harness round-trips: the wrappers derive a port + DB,
+  Playwright launches the canvas dev stack on that port, and the app shell
+  (`<title>Agent Canvas</title>`, `#root`) renders. No auth.
+- `open-conversation.spec.ts` — the bridge's half of the forwarded-row seam (#261), driven
+  directly with the header stamped by hand.
+- `chat-turn-conversation.spec.ts` — a chat turn files its Conversation via the platform RPC
+  (#262, #266), driven at the bridge.
+- `authed-edge.spec.ts` — the gated paths (#276): the session gate, **a user cannot open a
+  Conversation they do not own**, and a chat turn driven through the edge over the real
+  container→edge RPC hop.
+
+**Canvas**
+
+- `canvas-room-writes.spec.ts` — #305: the browser reads the Durable-Object-hosted room
+  (#290) while the bridge writes to it, so a 200 actually means something appeared.
+- `canvas-chat-agent-writes.spec.ts` — #310: an in-canvas chat agent draws and a watching
+  browser sees it.
+- `canvas-binding-cleanup.spec.ts` — #292 item 2: the CLIENT side of binding cleanup, which
+  only the server sweep in `worker/canvas-mutate.ts` prevents (sync-core has no binding
+  logic — ADR-0019).
+- `canvas-ui-drag.spec.ts` — #301 (#285 criterion 1): the one spec that *drives* the tldraw
+  surface — tool keys and pointer drags across `.tl-canvas` — rather than writing through
+  HTTP and watching.
+- `canvas-presence.spec.ts` — #293: two independent browser contexts on the same canvas over
+  tldraw sync's own presence channel, both upgrades authorized by the real edge gate.
+- `canvas-guest-read.spec.ts` — #294: a component-scoped share link (#221) end to end — a
+  real member mints it, a real anonymous browser walks `/share/<id>`.
+- `canvas-asset-migration.spec.ts` — #321: the migration's asset upload over real HTTP
+  against a real bucket (the admin-gated snapshot door — hence `promoteToAdmin`).
 
 ---
 
