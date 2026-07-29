@@ -8,7 +8,7 @@ import { createRoot, type Root } from 'react-dom/client';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-import { connectionTarget } from '../../../shared/chat-store';
+import { connectionTarget, send } from '../../../shared/chat-store';
 import { InboxStage } from './Inbox';
 
 // A minimal in-memory edge for the Inbox stage. The LIST is D1-only (`/api/inbox*`), scoped
@@ -40,6 +40,8 @@ type Item = {
 const realFetch = globalThis.fetch;
 let calls: string[] = [];
 let store: Item[] = [];
+/** Every same-origin chat SEND, with the chat-kind the client declared on it (CEDA-N67Y50). */
+let sends: Array<{ url: string; kind: string | null }> = [];
 
 const item = (o: Partial<Item> & { id: string }): Item => ({
   status: 'open',
@@ -64,6 +66,10 @@ function stubInbox() {
     const method = init?.method ?? 'GET';
     calls.push(`${method} ${url}`);
     const u = new URL(url, 'https://poc.cedarpad.com');
+    if (method === 'POST' && u.pathname.endsWith('/send')) {
+      sends.push({ url, kind: new Headers(init?.headers).get('x-chat-kind') });
+      return Response.json({ ok: true });
+    }
 
     // GET /api/inbox?view=  — the edge list (D1, no wake; server-side workspace-scoped, no
     // client ?workspace= param). view maps to the same status filter the edge's
@@ -165,6 +171,7 @@ const viewFilter = () => container.querySelector('[aria-label="View filter"]');
 
 beforeEach(() => {
   calls = [];
+  sends = [];
   store = [];
   stubInbox();
   (globalThis as { EventSource?: unknown }).EventSource = StubEventSource as unknown;
@@ -642,5 +649,92 @@ describe('starting a new chat', () => {
     // One draft row, and the SAME chat — a second click must not discard a half-typed message.
     expect(container.querySelectorAll('.inbox-item.draft').length).toBe(1);
     expect(draftChatId()).toBe(first as string);
+  });
+});
+
+// Choosing the chat KIND for a new chat (CEDA-N67Y50, approved design: the split "New chat"
+// button). The primary button is unchanged — one click still starts an ordinary chat. A caret
+// beside it opens a two-item menu; picking "Dev-agent" starts the draft as a dev-agent chat,
+// which the draft's FIRST send declares to the edge on `x-chat-kind` (there is no Conversation
+// row yet, so the edge's row-driven arming has nothing to key on — see worker/index.ts).
+describe('choosing the chat kind for a new chat', () => {
+  const newChatButton = () => container.querySelector('.inbox-new-chat');
+  const caret = () => container.querySelector('.inbox-new-kind');
+  const menuItems = () => [...container.querySelectorAll('.inbox-kind-menu button')];
+
+  /** The draft's client-minted chatId, read off the same-origin transcript request its
+   *  <ChatView> makes on mount — an observable of the component, not a peek at its state. */
+  const draftChatId = (): string => {
+    let found: string | null = null;
+    for (const c of calls) {
+      const m = /^GET .*\/api\/chat\/(chat_[^/]+)\/transcript$/.exec(c);
+      if (m && !c.includes('/bridge/')) found = m[1] as string;
+    }
+    expect(found).not.toBeNull();
+    return found as string;
+  };
+
+  /** Send the draft's first message — the send that BIRTHS the Conversation, and the one the
+   *  declared kind rides on. Driven through `chat-store`'s exported `send`, the same entry
+   *  point <ChatView>'s composer calls, so the assertion stays on the public interface. */
+  const sendFirstMessage = async (text: string) => {
+    await act(async () => {
+      await send(draftChatId(), text, []);
+    });
+    await flush();
+  };
+
+  test('the caret opens a two-item menu naming both kinds', async () => {
+    await mount();
+    expect(menuItems()).toEqual([]);
+
+    await click(caret());
+
+    expect(menuItems().map((b) => b.textContent)).toEqual([
+      expect.stringContaining('Chat'),
+      expect.stringContaining('Dev-agent'),
+    ]);
+  });
+
+  test('picking Dev-agent starts a draft whose first send declares the dev-agent kind', async () => {
+    await mount();
+    await click(caret());
+
+    await click(menuItems()[1] ?? null);
+
+    expect(container.querySelector('.inbox-item.draft')).not.toBeNull();
+    await sendFirstMessage('open a PR for the sync seam');
+    expect(sends.map((s) => s.kind)).toEqual(['dev-agent']);
+  });
+
+  test('the plain button still starts an ordinary chat — nothing declared', async () => {
+    await mount();
+
+    await click(newChatButton());
+    await sendFirstMessage('what is a nostr relay');
+
+    expect(sends.map((s) => s.kind)).toEqual([null]);
+  });
+
+  test('the draft row is badged with the kind it will be born as', async () => {
+    await mount();
+    await click(caret());
+    await click(menuItems()[1] ?? null);
+
+    expect(container.querySelector('.inbox-item.draft')?.textContent).toContain('dev-agent');
+  });
+
+  test('the picked kind sticks: the plain button starts the next chat as dev-agent too', async () => {
+    await mount();
+    await click(caret());
+    await click(menuItems()[1] ?? null);
+    await sendFirstMessage('first');
+    await act(async () => root.unmount());
+    await mount();
+
+    await click(newChatButton());
+    await sendFirstMessage('second');
+
+    expect(sends.map((s) => s.kind)).toEqual(['dev-agent', 'dev-agent']);
   });
 });

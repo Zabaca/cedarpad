@@ -25,6 +25,9 @@ let served: SandboxCoords[] = [];
 let servedReqs: Array<{ path: string; method: string }> = [];
 let servedMcpTokenHeaders: Array<string | null> = [];
 let servedGuestCanvasHeaders: Array<string | null> = [];
+// The dev-agent arming pair the fall-through stamps when a same-origin send DECLARES the
+// dev-agent kind (there is no Conversation row yet — see the `x-chat-kind` describe below).
+let servedDevAgentHeaders: Array<{ token: string | null; repo: string | null; kind: string | null }> = [];
 let assets: string[] = [];
 let inboxCalls: Array<{ id?: string; action?: string }> = [];
 let conv: ConversationRow | null = null;
@@ -50,6 +53,11 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedReqs.push({ path: u.pathname + u.search, method: req.method });
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     servedGuestCanvasHeaders.push(req.headers.get('x-guest-canvas'));
+    servedDevAgentHeaders.push({
+      token: req.headers.get('x-dev-agent-git-token'),
+      repo: req.headers.get('x-dev-agent-repo'),
+      kind: req.headers.get('x-chat-kind'),
+    });
     return new Response('pad-html');
   },
   sandboxFor: () => ({}),
@@ -95,6 +103,18 @@ mock.module('./github-connection.ts', () => ({
 }));
 afterAll(() => {
   resolveDevAgentRepoImpl = realResolveDevAgentRepo;
+});
+// The dev-agent git-token mint. Same delegate-and-restore discipline as resolveDevAgentRepo
+// above: github-app.test.ts exercises the REAL mint later in this process.
+const realGithubApp = await import('./github-app.ts');
+const realMintDevAgentGitToken = realGithubApp.mintDevAgentGitToken;
+let mintDevAgentGitTokenImpl: typeof realMintDevAgentGitToken = (...args) => realMintDevAgentGitToken(...args);
+mock.module('./github-app.ts', () => ({
+  ...realGithubApp,
+  mintDevAgentGitToken: (...args: Parameters<typeof realMintDevAgentGitToken>) => mintDevAgentGitTokenImpl(...args),
+}));
+afterAll(() => {
+  mintDevAgentGitTokenImpl = realMintDevAgentGitToken;
 });
 mock.module('./auth-gate.ts', () => ({
   ...realAuthGate,
@@ -577,6 +597,8 @@ beforeEach(() => {
   session = { user: { id: 'u_1' } };
   discoverJobsImpl = () => Promise.resolve([]);
   resolveDevAgentRepoImpl = (...args) => realResolveDevAgentRepo(...args);
+  mintDevAgentGitTokenImpl = (...args) => realMintDevAgentGitToken(...args);
+  servedDevAgentHeaders = [];
   workspaceRecord = null;
   canvasRecord = null;
   served = [];
@@ -918,6 +940,59 @@ describe('the same-origin chat send attaches the workspace’s connected MCP tok
     mcpTokensByWorkspace = { default: { ledgerbot: 'tok_default' } };
     await GET('/api/chat/chat_1/transcript');
     expect(servedMcpTokenHeaders).toEqual([null]);
+  });
+});
+
+// Selecting the chat kind on a NEW chat (CEDA-N67Y50). The Inbox's "+ New chat" draft has no
+// Conversation row yet, so `worker/inbox-bridge.ts`'s row-driven arming (isDevAgentConversation)
+// cannot apply — the draft's FIRST send lands on this same-origin fall-through instead. The
+// client declares the kind it wants on `x-chat-kind`; the edge answers by resolving the
+// workspace's repo and minting the same per-send git token the Inbox proxy mints, which is what
+// `server/bridge.ts turnFlavor` reads to file the born Conversation under kind 'dev-agent'.
+describe('a same-origin send declaring the dev-agent chat kind is armed at the edge', () => {
+  const SEND = (headers: Record<string, string>) =>
+    worker.fetch(new Request('https://poc.cedarpad.com/api/chat/chat_1/send', { method: 'POST', headers }), env);
+
+  const armed = () => {
+    resolveDevAgentRepoImpl = () =>
+      Promise.resolve({ repoFullName: 'Zabaca/cedarpad', auth: { kind: 'public' } } as never);
+    mintDevAgentGitTokenImpl = () => Promise.resolve('ghs_minted_for_this_send');
+  };
+
+  test('the declared kind mints the token and stamps the repo', async () => {
+    armed();
+    await SEND({ 'x-chat-kind': 'dev-agent' });
+    expect(servedDevAgentHeaders).toEqual([
+      { token: 'ghs_minted_for_this_send', repo: 'Zabaca/cedarpad', kind: null },
+    ]);
+  });
+
+  test('no declared kind ⇒ an ordinary chat send, unarmed', async () => {
+    armed();
+    await SEND({});
+    expect(servedDevAgentHeaders).toEqual([{ token: null, repo: null, kind: null }]);
+  });
+
+  test('a CLIENT-SENT git token never reaches the container — the edge is the only minter', async () => {
+    resolveDevAgentRepoImpl = () => Promise.resolve(null);
+    await SEND({ 'x-chat-kind': 'dev-agent', 'x-dev-agent-git-token': 'ghs_forged', 'x-dev-agent-repo': 'evil/repo' });
+    expect(servedDevAgentHeaders).toEqual([{ token: null, repo: null, kind: null }]);
+  });
+
+  test('a workspace with no connected repo proxies the send unarmed rather than failing it', async () => {
+    resolveDevAgentRepoImpl = () => Promise.resolve(null);
+    const res = await SEND({ 'x-chat-kind': 'dev-agent' });
+    expect(res.status).toBe(200);
+    expect(servedDevAgentHeaders).toEqual([{ token: null, repo: null, kind: null }]);
+  });
+
+  test('a non-send request is never armed, whatever it declares', async () => {
+    armed();
+    await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/chat/chat_1/transcript', { headers: { 'x-chat-kind': 'dev-agent' } }),
+      env,
+    );
+    expect(servedDevAgentHeaders).toEqual([{ token: null, repo: null, kind: null }]);
   });
 });
 
