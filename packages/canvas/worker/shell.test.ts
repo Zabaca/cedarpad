@@ -199,11 +199,21 @@ describe('renderLogin — the post-cutover deny page (edge Better Auth is the so
     await res.text(); // drain
   });
 
-  test('posts credentials to the PUBLIC edge Better Auth sign-in — and offers NO public signup (#179: invite-only)', async () => {
+  test('asks the PUBLIC edge Better Auth for a magic link — no password, no public signup (#179: invite-only)', async () => {
     const html = await renderLogin().text();
-    expect(html).toContain('/api/auth/sign-in/email');
-    // The only account-creation door is the /invite/<token> accept flow.
+    expect(html).toContain('/api/auth/sign-in/magic-link');
+    // Passwordless: the password credential is gone, so neither the password
+    // sign-in nor any signup endpoint may appear.
+    expect(html).not.toContain('/api/auth/sign-in/email');
     expect(html).not.toContain('/api/auth/sign-up/email');
+    expect(html).not.toContain('type=password');
+  });
+
+  test('reveals nothing about whether the address has an account', async () => {
+    const html = await renderLogin().text();
+    // The confirmation is conditional prose, not a claim that mail was sent — an
+    // uninvited address must not be able to tell itself apart from an invited one.
+    expect(html).toContain('has access');
   });
 
   test('is the Better Auth login, NOT the deleted cs_gate ?key= page', async () => {
@@ -218,6 +228,10 @@ describe('renderLogin — the post-cutover deny page (edge Better Auth is the so
     // carrying the original OAuth query, instead of always landing on '/'.
     expect(html).toContain('/api/auth/mcp/authorize');
     expect(html).toContain('client_id');
+    // Passwordless moves the session mint to a LATER request (the emailed link), so
+    // the continuation can no longer be read off location.search on return — it must
+    // be handed to Better Auth as callbackURL and survive the mail hop.
+    expect(html).toContain('callbackURL');
   });
 });
 

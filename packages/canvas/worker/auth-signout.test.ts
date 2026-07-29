@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, mock, test } from 'bun:test';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
+import { eq } from 'drizzle-orm';
 import * as schema from '../web-poc/lib/db/schema.ts';
 
 // Reproduces the reported bug ("signout doesn't work") end-to-end against the REAL edge
@@ -44,11 +45,50 @@ const { edgeAuth, handleAuth } = await import('./auth-gate.ts');
 const sessionFor = (cookie: string) => edgeAuth(env).api.getSession({ headers: new Headers({ cookie }) });
 
 const ORIGIN = 'https://poc.cedarpad.com';
+
+// Captures what the send seam would have put on the wire. Passwordless means the ONLY
+// way to mint a session is to verify an emailed link, so the test has to read the mail.
+const outbox: Array<{ to: string; subject: string; text?: string }> = [];
 const env = {
   BETTER_AUTH_SECRET: 'test-secret-at-least-32-characters-long!!',
   BETTER_AUTH_URL: ORIGIN,
   WEB_ORIGIN: ORIGIN,
+  EMAIL: {
+    send: async (msg: { to: string; subject: string; text?: string }) => {
+      outbox.push(msg);
+    },
+  },
 } as unknown as import('./index.ts').Env;
+
+/** Drive a full passwordless sign-in and return the session cookie it mints. */
+async function signInByMagicLink(email: string): Promise<string> {
+  outbox.length = 0;
+  const requested = await handleAuth(
+    new Request(`${ORIGIN}/api/auth/sign-in/magic-link`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: ORIGIN },
+      body: JSON.stringify({ email, callbackURL: '/' }),
+    }),
+    env,
+  );
+  expect(requested.status).toBe(200);
+
+  // The link only exists in the email — exactly the property that makes an uninvited
+  // address unable to sign itself in.
+  expect(outbox).toHaveLength(1);
+  const token = /token=([A-Za-z0-9_.-]+)/.exec(outbox[0]?.text ?? '')?.[1];
+  expect(token).toBeTruthy();
+
+  const verified = await handleAuth(
+    new Request(`${ORIGIN}/api/auth/magic-link/verify?token=${token}&callbackURL=/`, {
+      headers: { origin: ORIGIN },
+    }),
+    env,
+  );
+  const cookie = extractCookie(verified);
+  expect(cookie).not.toBe('');
+  return cookie;
+}
 
 function extractCookie(res: Response): string {
   // `Headers` collapses repeated `set-cookie` under Node/undici; Better Auth may set more
@@ -60,18 +100,11 @@ function extractCookie(res: Response): string {
 }
 
 describe('sign-out actually clears the edge session (repro for "signout doesn\'t work")', () => {
-  test('sign up -> sign in -> sign out -> authenticate() sees no session', async () => {
-    const signUp = await handleAuth(
-      new Request(`${ORIGIN}/api/auth/sign-up/email`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', origin: ORIGIN },
-        body: JSON.stringify({ email: 'jae@example.com', password: 'correct-horse-battery', name: 'Jae' }),
-      }),
-      env,
-    );
-    expect(signUp.status).toBe(200);
-    const cookie = extractCookie(signUp);
-    expect(cookie).not.toBe('');
+  test('magic-link sign in -> sign out -> authenticate() sees no session', async () => {
+    // An existing account is one half of the magic-link allowlist (a pending invitation
+    // is the other), so seeding the row is what makes this address eligible for a link.
+    await db.insert(schema.user).values({ id: 'jae_1', name: 'Jae', email: 'jae@example.com' });
+    const cookie = await signInByMagicLink('jae@example.com');
 
     // The session is live: Better Auth resolves a user from the cookie.
     const beforeSignOut = await sessionFor(cookie);
@@ -94,5 +127,30 @@ describe('sign-out actually clears the edge session (repro for "signout doesn\'t
     // work" question a browser reload of `/` asks the edge gate.
     const afterSignOut = await sessionFor(cookie);
     expect(afterSignOut).toBeNull();
+  });
+});
+
+// The passwordless cutover moved the signup gate into `sendMagicLink`. Better Auth's
+// sign-in/magic-link endpoint is PUBLIC and creates a user on verify, so if a link went
+// out to any address that asked, cedarpad would have open signup.
+describe('magic-link allowlist — the door that replaced AUTH_DISABLE_SIGNUP', () => {
+  test('an uninvited address gets no link, and the response is indistinguishable from an invited one', async () => {
+    outbox.length = 0;
+    const res = await handleAuth(
+      new Request(`${ORIGIN}/api/auth/sign-in/magic-link`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: ORIGIN },
+        body: JSON.stringify({ email: 'stranger@example.com', callbackURL: '/' }),
+      }),
+      env,
+    );
+
+    // Same 200 an invited address gets — the endpoint must not confirm who has access.
+    expect(res.status).toBe(200);
+    // ...but nothing was actually sent, so the stranger can never complete a sign-in.
+    expect(outbox).toEqual([]);
+    // And no account was conjured by merely asking.
+    const rows = await db.select().from(schema.user).where(eq(schema.user.email, 'stranger@example.com'));
+    expect(rows).toHaveLength(0);
   });
 });

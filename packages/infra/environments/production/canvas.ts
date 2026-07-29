@@ -1,4 +1,5 @@
 import { cloudflareModule } from '../../modules/cloudflare'
+import canvasEmail from './canvas-email'
 
 /**
  * canvas — tldraw canvas + Claude agent (imported from the ceo repo). A Worker
@@ -46,6 +47,13 @@ export default cloudflareModule.instance({
   // so this updates the existing worker in place. (web-poc does the same: instance
   // `web-poc` deploys worker `cedarpad-web-poc`.)
   name: 'canvas',
+  // Email Sending must be onboarded BEFORE this worker rolls out. The dependency is a
+  // runtime one, not a build one — the `send_email` binding names no domain, so the
+  // deploy itself would succeed either way — but auth is passwordless, so the first
+  // login after a rollout sends a magic link, and a send from a domain that is not yet
+  // enabled is a login outage rather than a degraded feature. The import makes zbc
+  // apply canvas-email first instead of leaving the order to whoever runs the deploy.
+  imports: [canvasEmail],
   config: {
     workdir: 'packages/canvas',
     accountId: '99a19e584439be0568f33aad0477372b',

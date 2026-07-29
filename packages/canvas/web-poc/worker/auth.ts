@@ -3,8 +3,11 @@ import { schema } from "../lib/db/index.js";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { apiKey } from "@better-auth/api-key";
-import { admin, mcp, organization } from "better-auth/plugins";
+import { admin, magicLink, mcp, organization } from "better-auth/plugins";
+import { eq } from "drizzle-orm";
+import { hasPendingInvitationForEmail } from "../lib/db/queries/invitations.js";
 import type { Bindings } from "./context.js";
+import { createEmailSender } from "./email.js";
 
 /**
  * Build a Better Auth instance for the current request's env + db.
@@ -34,15 +37,51 @@ export function createAuth(db: Database, env: Bindings) {
       ...(env.WEB_ORIGIN ? [env.WEB_ORIGIN] : []),
     ],
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
-    // Signup is disabled in prod (James-only) and open in dev (PRD #49 #15): the edge
-    // sets AUTH_DISABLE_SIGNUP="true" in prod, leaves it unset in dev.
-    emailAndPassword: { enabled: true, disableSignUp: env.AUTH_DISABLE_SIGNUP === "true" },
+    // PASSWORDLESS. There is no password credential on this platform at all — the
+    // magic-link plugin below is the only way to hold a session. `AUTH_DISABLE_SIGNUP`
+    // governed this switch and no longer gates anything; the allowlist in
+    // `sendMagicLink` is what keeps account creation closed now.
+    emailAndPassword: { enabled: false },
     plugins: [
       // ADR-0014: admin lives inside the app, gated on `user.role === "admin"`.
       // Supplies the operator verbs (create-user = the manual invite, list-users,
       // ban) without a second auth surface. Roles are assigned by data update,
       // never by any signup path.
       admin(),
+      // THE credential (passwordless cutover). Better Auth's
+      // `POST /sign-in/magic-link` is PUBLIC and creates the user on verify, so the
+      // allowlist below — not `disableSignUp` — is what keeps signup closed: a link
+      // is only ever DELIVERED to an address that already holds an account or holds
+      // a pending invitation. `disableSignUp` would be too strong: an invitee has no
+      // user row yet, and their first click is exactly what must create it.
+      //
+      // Non-allowed addresses get the SAME silent ok as allowed ones (the endpoint
+      // never confirms who has an account) — the foothill-inbox pattern.
+      magicLink({
+        // 15 minutes, not the 5-minute default: these links cross a mail hop, and
+        // an invite may sit unopened for a few minutes.
+        expiresIn: 60 * 15,
+        sendMagicLink: async ({ email, url }) => {
+          const address = email.trim().toLowerCase();
+          const [existing] = await db
+            .select({ id: schema.user.id })
+            .from(schema.user)
+            .where(eq(schema.user.email, address))
+            .limit(1);
+          const allowed =
+            existing !== undefined || (await hasPendingInvitationForEmail(db, address, Date.now()));
+          if (!allowed) return;
+
+          await createEmailSender(env.EMAIL)(
+            {
+              to: address,
+              subject: "Sign in to cedarpad",
+              text: `Sign in to cedarpad (this link is valid for 15 minutes and can be used once):\n\n${url}\n\nIf you did not request this, you can ignore this email.`,
+            },
+            "[auth] magic link",
+          );
+        },
+      }),
       organization({
         schema: {
           organization: { modelName: "workspace" },

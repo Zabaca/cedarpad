@@ -1,6 +1,15 @@
 import type { Database } from "../lib/db/index.js";
 import type { AccessScope } from "./access.js";
 
+/**
+ * The Cloudflare Email Sending (`send_email`) binding, narrowed to what we send.
+ * Structured-object form, not raw MIME. `replyTo`/`html`/`cc` exist upstream; we
+ * send plain text only.
+ */
+export interface SendEmailBinding {
+  send(message: { from: string; to: string; subject: string; text?: string }): Promise<unknown>;
+}
+
 /** Cloudflare Worker env bindings (from wrangler vars/secrets or .dev.vars). */
 export interface Bindings {
   /** The platform data layer on D1 (ADR-0018) — bound in local dev (miniflare's local D1,
@@ -17,10 +26,19 @@ export interface Bindings {
   /** Production web origin (e.g. the Pages URL) — trusted for CSRF/Origin checks. */
   WEB_ORIGIN?: string;
   /**
-   * When "true", Better Auth email/password signup is disabled (prod is James-only,
-   * PRD #49 #15). Unset in dev leaves signup open. Set as an edge Worker var.
+   * INERT since the passwordless cutover. It gated email/password signup, and there is
+   * no password credential any more — what keeps account creation closed now is the
+   * allowlist in `sendMagicLink` (see auth.ts). Still declared in wrangler.jsonc and in
+   * the generated worker-configuration.d.ts; removing it is a config change, not a code
+   * one, so it is left in place rather than half-removed.
    */
   AUTH_DISABLE_SIGNUP?: string;
+  /**
+   * Cloudflare Email Sending. Optional on purpose: local dev and per-PR preview
+   * workers have no binding, and the send seam degrades to a logging no-op there
+   * rather than failing the request that asked for the mail.
+   */
+  EMAIL?: SendEmailBinding;
   /**
    * Dev-only: when set, requests may pass `x-dev-workspace: <workspaceId>` to
    * act as that workspace WITHOUT authentication. Never set this in production.

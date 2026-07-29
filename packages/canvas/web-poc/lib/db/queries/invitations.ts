@@ -49,6 +49,32 @@ export async function getAcceptableInvitation(
   return { row };
 }
 
+/**
+ * Is there ANY pending, unexpired invitation bound to this email (in any
+ * workspace)? This is the signup half of the magic-link allowlist: Better Auth's
+ * sign-in/magic-link endpoint is public and creates a user on verify, so an
+ * uninvited address must never be sent a link. Workspace-blind on purpose — the
+ * question is "may this address hold an account", not "which workspace".
+ */
+export async function hasPendingInvitationForEmail(
+  db: Database,
+  email: string,
+  nowMs: number,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: workspaceInvitations.id })
+    .from(workspaceInvitations)
+    .where(
+      and(
+        eq(workspaceInvitations.email, normalizeEmail(email)),
+        eq(workspaceInvitations.status, "pending"),
+        gt(workspaceInvitations.expiresAt, new Date(nowMs)),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
 /** Consume a pending invitation: verifies binding + freshness, adds membership,
  *  marks accepted. The status flip is guarded on `pending` so a raced double
  *  accept can't run twice. */
