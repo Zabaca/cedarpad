@@ -7,6 +7,8 @@ import { conversations, makeDb } from '../web-poc/lib/db/index.ts';
 import { findOrCreateConversation } from '../web-poc/lib/db/find-or-create-conversation.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import * as pushStore from '../web-poc/lib/db/queries/push-subscriptions.ts';
+import { createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
+import { user } from '../web-poc/lib/db/schema.ts';
 import { PushPayload } from '../shared/push-contract.ts';
 import {
   ComponentHistoryOutput,
@@ -14,11 +16,14 @@ import {
   ComponentWriteOutput,
   ConversationStartOutput,
   PLATFORM_RPC_PATH,
+  SkillListOutput,
+  SkillWriteOutput,
   TurnEndOutput,
   platformRpcToken,
 } from '../shared/platform-rpc.ts';
 import { handlePlatformRpc } from './platform-rpc.ts';
 import { d1RecordStore } from './record-store.ts';
+import { d1SkillFileStore } from './skill-file-store.ts';
 import type { PushSend } from './push-notify.ts';
 
 // The platform RPC (ADR-0018): the container's ONLY way back into the platform data layer.
@@ -440,5 +445,123 @@ describe('platform RPC: component.history', () => {
     // History is a read of someone else's workspace unless the same ownership rule gates it.
     const res = await rpc({ op: 'component.history', input: { workspaceId: 'ws_intruder', canvasId, name: 'Card' } }, { db });
     expect(res.status).toBe(403);
+  });
+});
+
+// Workspace skills as Records (#361). Same "the edge owns the rows" shape as the Component
+// verbs, but a two-level key (the skill, then the path inside it) — a skill is a DIRECTORY.
+// `skill.list` answers with the workspace's WHOLE tree because that is the only question
+// materialization ever asks: the agent SDK discovers skills by SCANNING a directory.
+describe('platform RPC: skill.write / skill.list', () => {
+  const makeWorkspace = async (db: Awaited<ReturnType<typeof freshDb>>) => {
+    await db.insert(user).values({ id: 'u_owner', name: 'Owner', email: 'owner@example.com' }).onConflictDoNothing();
+    return (await createWorkspace(db, { name: 'W', ownerUserId: 'u_owner' })).id;
+  };
+
+  test('an uploaded multi-file skill comes back as the workspace tree', async () => {
+    const db = await freshDb();
+    const workspaceId = await makeWorkspace(db);
+
+    const written = await rpc(
+      {
+        op: 'skill.write',
+        input: {
+          workspaceId,
+          userId: 'u_1',
+          skill: 'corpus-linguist',
+          files: [
+            { path: 'SKILL.md', content: '---\nname: corpus-linguist\n---\nbody' },
+            { path: 'data/corpus.yaml', content: 'a: 1' },
+          ],
+        },
+      },
+      { db },
+    );
+    expect(written.status).toBe(200);
+    expect(SkillWriteOutput.parse(await written.json()).files).toBe(2);
+
+    const listed = await rpc({ op: 'skill.list', input: { workspaceId } }, { db });
+    expect(listed.status).toBe(200);
+    expect(SkillListOutput.parse(await listed.json()).files).toEqual([
+      { skill: 'corpus-linguist', path: 'SKILL.md', content: '---\nname: corpus-linguist\n---\nbody' },
+      { skill: 'corpus-linguist', path: 'data/corpus.yaml', content: 'a: 1' },
+    ]);
+  });
+
+  test('a workspace with no skills lists an empty tree, not an error', async () => {
+    const db = await freshDb();
+    const listed = await rpc({ op: 'skill.list', input: { workspaceId: await makeWorkspace(db) } }, { db });
+    expect(listed.status).toBe(200);
+    expect(SkillListOutput.parse(await listed.json()).files).toEqual([]);
+  });
+
+  test('one workspace never sees another workspace’s skills', async () => {
+    const db = await freshDb();
+    const mine = await makeWorkspace(db);
+    const theirs = await makeWorkspace(db);
+    await rpc(
+      { op: 'skill.write', input: { workspaceId: theirs, userId: 'u_1', skill: 'secret', files: [{ path: 'SKILL.md', content: 'x' }] } },
+      { db },
+    );
+
+    const listed = await rpc({ op: 'skill.list', input: { workspaceId: mine } }, { db });
+    expect(SkillListOutput.parse(await listed.json()).files).toEqual([]);
+  });
+
+  test('the edge refuses a workspace that does not exist', async () => {
+    const db = await freshDb();
+    const res = await rpc(
+      { op: 'skill.write', input: { workspaceId: 'ws_never_created', userId: 'u_1', skill: 'x', files: [{ path: 'SKILL.md', content: 'x' }] } },
+      { db },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test('the legacy default workspace is writable without a registry row', async () => {
+    const db = await freshDb();
+    const res = await rpc(
+      { op: 'skill.write', input: { workspaceId: 'default', userId: 'u_1', skill: 'x', files: [{ path: 'SKILL.md', content: 'x' }] } },
+      { db },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  test.each([['../escape.md'], ['/etc/passwd'], ['.hidden']])(
+    'the edge validates the file path itself — %p never reaches the store',
+    async (path) => {
+      const db = await freshDb();
+      const res = await rpc(
+        { op: 'skill.write', input: { workspaceId: await makeWorkspace(db), userId: 'u_1', skill: 'ok', files: [{ path, content: 'x' }] } },
+        { db },
+      );
+      expect(res.status).toBe(400);
+    },
+  );
+
+  test('the edge validates the skill name itself — a traversing name is a 400', async () => {
+    const db = await freshDb();
+    const res = await rpc(
+      {
+        op: 'skill.write',
+        input: { workspaceId: await makeWorkspace(db), userId: 'u_1', skill: '../evil', files: [{ path: 'SKILL.md', content: 'x' }] },
+      },
+      { db },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test('a re-upload bumps the file’s rev and history records who wrote each one', async () => {
+    const db = await freshDb();
+    const workspaceId = await makeWorkspace(db);
+    const upload = (userId: string, content: string) =>
+      rpc({ op: 'skill.write', input: { workspaceId, userId, skill: 'linter', files: [{ path: 'SKILL.md', content }] } }, { db });
+    await upload('u_1', 'v1');
+    await upload('u_2', 'v2');
+
+    const versions = await d1SkillFileStore(db).listVersions({ workspaceId, skill: 'linter', path: 'SKILL.md' });
+    expect(versions.map((v) => [v.version, v.content, v.createdBy])).toEqual([
+      [2, 'v2', 'u_2'],
+      [1, 'v1', 'u_1'],
+    ]);
   });
 });

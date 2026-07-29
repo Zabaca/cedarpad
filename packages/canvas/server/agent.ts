@@ -721,7 +721,9 @@ export async function* runChat(
     ...(kind === 'chat' ? { disallowedTools: ['Write', 'Edit', 'NotebookEdit', ...(mcpToolOptOuts ?? [])] } : {}),
     // Load user + project .claude config (ADR-0013): 'user' discovers platform skills (baked
     // at the container's ~/.claude/skills), 'project' discovers workspace skills (the
-    // package's .claude/skills, synced via skills.tar). Discovery and enable are two stages:
+    // package's .claude/skills, rendered from its Records before the turn starts — ADR-0022 /
+    // #361: discovery is a filesystem SCAN, so the tree must already exist by the time this
+    // runs). Discovery and enable are two stages:
     // the sources find skills, the `skills` filter picks.
     settingSources: ['user', 'project'] as Array<'user' | 'project' | 'local'>,
     // The skill policy is per-turn (ADR-0013): dev-agent turns pass a pinned list; chat

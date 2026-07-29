@@ -25,6 +25,9 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
   const deps: TurnDeps = {
     aborters: new Map(),
     flavor: () => ({ workspaceId: 'default', kind: 'chat' as const, skills: ['impeccable', 'tdd'] }),
+    materializeSkills: async () => {
+      calls.push('materializeSkills');
+    },
     requestScreenshot: () => async () => null,
     openCanvasRoom: async () => {
       calls.push('openCanvasRoom');
@@ -80,6 +83,12 @@ describe('runTurnAsync: the turn phase order', () => {
     await runTurnAsync(input(), deps);
 
     expect(calls).toEqual([
+      // ADR-0022 / #361: the workspace's skill tree is rendered from its Records BEFORE
+      // anything else, because the SDK discovers skills by scanning the filesystem while
+      // `runChat` builds the turn's options — a skill that is not on disk by then does not
+      // exist for this turn. There is no lazy request to hang materialization off, as there
+      // is for a Component module.
+      'materializeSkills',
       'openCanvasRoom',
       'prepareDevAgent',
       'runChat',

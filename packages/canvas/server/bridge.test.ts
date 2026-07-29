@@ -634,6 +634,8 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
       componentWrite: async () => ({ rev: 1 }),
       componentRead: async () => null,
       componentHistory: async () => [],
+      skillWrite: async () => ({ files: 0 }),
+      skillList: async () => [],
     };
     return { rpc, started };
   };
@@ -677,6 +679,8 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
           componentWrite: async () => ({ rev: 1 }),
           componentRead: async () => null,
           componentHistory: async () => [],
+          skillWrite: async () => ({ files: 0 }),
+          skillList: async () => [],
         },
       });
     } finally {

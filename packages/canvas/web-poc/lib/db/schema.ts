@@ -1046,6 +1046,64 @@ export const componentRecordVersions = sqliteTable(
 export type ComponentRecordRow = typeof componentRecords.$inferSelect;
 export type ComponentRecordVersionRow = typeof componentRecordVersions.$inferSelect;
 
+/* ------------------------------------------------------------------ *
+ * Skill Records (ADR-0022) — Workspace skills as ROWS
+ *
+ * The second Record family, separate from `component_records` for one
+ * reason: a skill is a DIRECTORY (SKILL.md plus arbitrary supporting
+ * paths), so its key is TWO-level — the skill, then the path inside it —
+ * where a Component's is (workspace, canvas, name).
+ *
+ * Workspace-scoped, with no canvas: a skill belongs to the workspace, and
+ * every chat turn in it discovers the same set. PLATFORM skills are
+ * deliberately absent — they are image-baked, deploy-gated code at the
+ * container's ~/.claude/skills (ADR-0013), never workspace data.
+ * ------------------------------------------------------------------ */
+export const skillFiles = sqliteTable(
+  "skill_files",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    /** The skill dir name — `.claude/skills/<skill>/`. */
+    skill: text("skill").notNull(),
+    /** The relative path inside it: `SKILL.md`, `data/corpus.yaml`. */
+    path: text("path").notNull(),
+    content: text("content").notNull(),
+    /** Monotonic from 1 — the `version` of the history row this write appended. */
+    rev: integer("rev").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedBy: text("updated_by"),
+    /** Soft delete, as with Components: reclaiming rows is an explicit purge, never an
+     *  upload's side effect. No door writes this yet — `upload_skill` MERGES files, which
+     *  is the contract it has always had (#177) — so removal arrives with its own tool. */
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [primaryKey({ columns: [t.workspaceId, t.skill, t.path] })],
+);
+
+/** Every skill-file write appends one of these — the same explicit history Components get,
+ *  for the same reason: a re-upload is a full replace, and without a version row a bad
+ *  SKILL.md is as final as a delete (ADR-0022 decision 4). */
+export const skillFileVersions = sqliteTable(
+  "skill_file_versions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    skill: text("skill").notNull(),
+    path: text("path").notNull(),
+    version: integer("version").notNull(),
+    content: text("content").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    createdBy: text("created_by"),
+  },
+  (t) => [index("skill_file_versions_key_idx").on(t.workspaceId, t.skill, t.path, t.version)],
+);
+
+export type SkillFileRow = typeof skillFiles.$inferSelect;
+export type SkillFileVersionRow = typeof skillFileVersions.$inferSelect;
+
 export type Workspace = typeof workspace.$inferSelect;
 export type Observation = typeof observations.$inferSelect;
 export type NewObservation = typeof observations.$inferInsert;

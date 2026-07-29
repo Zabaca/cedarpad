@@ -69,6 +69,7 @@ import { readGuestCapabilities, type GuestCapabilities } from '../shared/guest-c
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
+import { SKILLS_DIR, materializeSkills, writeSkill } from './skills.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
 import { createHuddleSupervisor } from './huddle-supervisor.ts';
 
@@ -206,9 +207,9 @@ const SESSIONS_DIR = `${process.env.HOME ?? '/root'}/.claude/projects`;
 // puts the one session it touched, a resume fetches the one session it needs, boot fetches none.
 const transcripts = new TranscriptStore(blobBackend, SESSIONS_DIR);
 // Workspace skills (ADR-0013): user-/agent-authored skill dirs, discovered by the SDK's
-// 'project' source. Extension content like the component library; may not exist yet (the dir
-// is created by the first authored skill — flushIfDirty's mtime guard skips an absent dir).
-const SKILLS_DIR = `${PKG_ROOT}.claude/skills`;
+// 'project' source. Since #361 their truth is a ROW (`server/skills.ts`) and this tree is a
+// RENDERING of it, materialized before each turn; the tar below is the legacy sink, retired
+// with the others in #366.
 const sink = new PersistSink();
 // EVERY tar artifact carries the empty-archive guard (persist-guards.ts). Each of these
 // saves is a FULL REPLACE of one R2 key, so an empty source tree flushed after a boot that
@@ -574,6 +575,11 @@ const turnDeps: TurnDeps = {
   // Lambda, not the binding: `canvasAssetFetcherFor` is declared below this object.
   fetchAsset: (canvasId) => canvasAssetFetcherFor(canvasId),
   defaultCanvasId: DEFAULT_CANVAS_ID,
+  // ADR-0022 / #361: render the workspace's skill Records to `.claude/skills/` before the SDK
+  // scans it. Every turn flavor, deliberately: the tree the boot restore used to produce was
+  // flavor-independent too, and a dev-agent turn's protection is its PINNED skill list
+  // (turnFlavor), not the absence of the files.
+  materializeSkills: () => materializeSkills(),
   prepareDevAgent: (token, repo, chatId, sessionId) => prepareDevAgentTurn(token, repo, chatId, sessionId),
   runChat: E2E_MODE ? e2eRunChat : runChat,
   broadcast: broadcastChat,
@@ -1092,22 +1098,19 @@ export async function handleRequest(req: Request): Promise<Response> {
       return new Response(null, { status: 204 });
     }
     // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
-    // proxies here (never writes R2 itself; no second writer of skills.tar). Content only
-    // (ADR-0013): plain files under .claude/skills/<name>/, persisted by the skills sink.
+    // proxies here. Content only (ADR-0013): plain files under .claude/skills/<name>/.
+    // #361: the files are RECORDS now — `writeSkill` persists them before it touches disk, so
+    // a store failure fails this call (a 500 the MCP tool reports) rather than reporting
+    // success over an upload that evaporates at the next recycle. The wire contract is
+    // unchanged; only where the files land moved.
     const skillRoute = /^\/api\/skills\/([^/]+)$/.exec(path);
     if (skillRoute && req.method === 'PUT') {
       const name = SkillName.safeParse(decodeURIComponent(skillRoute[1] as string));
       const body = UploadSkillInput.safeParse(await req.json().catch(() => null));
       if (!name.success || !body.success) return json({ error: 'invalid skill upload' }, 400);
-      const dir = resolve(SKILLS_DIR, name.data);
-      for (const f of body.data.files) {
-        // Belt and braces on top of the contract's path rules: the resolved target must
-        // stay inside this skill's dir.
-        if (!resolve(dir, f.path).startsWith(`${dir}/`)) return json({ error: 'invalid file path' }, 400);
-      }
-      for (const f of body.data.files) {
-        await Bun.write(resolve(dir, f.path), f.content); // creates parent dirs
-      }
+      // The belt-and-braces resolve check that used to sit here moved into `writeSkill`, which
+      // is where a path becomes a filesystem location — materialization needs the same guard.
+      await writeSkill(name.data, body.data.files);
       await flushIfDirty('skills', SKILLS_DIR);
       return json({ ok: true, skill: name.data, files: body.data.files.length });
     }
