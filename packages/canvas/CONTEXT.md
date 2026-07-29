@@ -140,7 +140,7 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
 
 **Extension**: what the agent authors — hot-reloaded and persisted to R2:
 - **Component** (`src/canvas-components/<Name>.tsx`): an agent-authored React module placed on the canvas. Already in use.
-- **Custom handler** — **DROPPED** _(2026-07-29)_. An agent-authored backend handler at
+- **Custom handler** — **DROPPED** _(2026-07-29, removed in #357)_. An agent-authored backend handler at
   `server/custom/<name>.ts`, served by a separate extension-server process at
   `/api/custom/:handler`. Removed because it never had an authoring **door**: the tool surface
   has no `write_custom_handler`, and chat turns drop `Write`/`Edit` — so the only way to author

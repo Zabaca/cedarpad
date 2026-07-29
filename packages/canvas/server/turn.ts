@@ -209,7 +209,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
     deps.aborters.delete(chatId);
     // ADR 0004: stamp the (possibly new/forked) sessionId so resume + rehydrate find the JSONL.
     if (finalSessionId && finalSessionId !== sessionId) deps.stampSession(chatId, finalSessionId);
-    // ADR 0003: persist sessions/components/custom now that the turn settled.
+    // ADR 0003: persist sessions/components/skills now that the turn settled.
     await deps.onTurnComplete();
     if (finalSessionId) {
       // The race fix: let the row-at-start create settle before the settle-time upsert reads

@@ -81,8 +81,9 @@ exports:
   reads it (fallback `4511`); `scripts/dev.ts` derives the vite `/api` proxy
   target (`CANVAS_BRIDGE`) from it so the browser proxies to the bridge this
   stack started.
-- `CUSTOM_PORT` — extension server listen port (`= PORT + 2`). Derived here because
-  its `4512` default is a singleton two concurrent worktrees collide on.
+- `PORT + 2` — vacant. It was the extension server's slot until the custom-handler
+  feature was removed (#357); the later offsets kept their values so a worktree's
+  ports did not move.
 - `CANVAS_EDGE_PORT` — edge Worker (`wrangler dev`) listen port (`= PORT + 3`;
   `scripts/dev.ts` derives the vite `/v1` + `/api/auth` proxy target from it).
 - `E2E_BASE_URL` — `http://localhost:$PORT`, Playwright's `baseURL`.

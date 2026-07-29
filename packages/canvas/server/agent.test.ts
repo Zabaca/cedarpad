@@ -151,3 +151,31 @@ describe('the minting tools tell the agent to keep the ids they return (#327)', 
     expect(describeTool('place_component')).toMatch(/returns the ids? .*keep/is);
   });
 });
+
+// #357: the custom-handler feature is gone. It was only ever reachable through the shell —
+// no tool authored one — so the prompt was telling the agent it had a capability the
+// registered tool surface never gave it. The prompt must not name it, and must not name its
+// directory as a place the agent may author in.
+import { CANVAS_APPEND } from './agent.ts';
+
+describe('the system prompt does not offer a capability with no tool (#357)', () => {
+  test('nothing about custom handlers survives in the prompt', () => {
+    expect(CANVAS_APPEND).not.toMatch(/custom handler/i);
+    expect(CANVAS_APPEND).not.toContain('server/custom');
+    expect(CANVAS_APPEND).not.toContain('/api/custom');
+  });
+
+  test('the authoring boundary it shares a paragraph with is intact', () => {
+    // The neighbouring rule the removal must not damage: author ONLY through the registered
+    // tools, and never edit the core.
+    expect(CANVAS_APPEND).toContain('shared/components/');
+    expect(CANVAS_APPEND).toMatch(/do NOT modify the CORE/i);
+    expect(CANVAS_APPEND).toMatch(/bridge\.ts/);
+  });
+
+  test('no canvas tool offers to author a backend handler', () => {
+    const tools = createCanvasTools(createStore([])) as Array<{ name: string; description: string }>;
+    expect(tools.map((t) => t.name)).not.toContain('write_custom_handler');
+    for (const t of tools) expect(t.description).not.toMatch(/custom handler|server\/custom/i);
+  });
+});

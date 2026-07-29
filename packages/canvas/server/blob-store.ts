@@ -30,11 +30,6 @@ export const sharedComponentsKey = (ws: string): string => `workspaces/${ws}/sha
  * The platform base (src/canvas-components/) is read-only and stays image-only. */
 export const canvasDirsKey = (ws: string): string => `workspaces/${ws}/canvas-components.tar`;
 
-/** workspace-scoped custom-handler tarball: just server/custom/ (the agent's
- * authored backend handlers). Same model as the component library — extension
- * content, persisted; the core stays image-only. */
-export const customKey = (ws: string): string => `workspaces/${ws}/custom.tar`;
-
 // Session transcripts used to live here as `workspaces/<ws>/sessions.tar`. They are FILES, not
 // Records (CONTEXT.md → Record vs File), and since #356 each session is its own opaque object —
 // `transcript-store.ts` owns that key layout. The tar was a full replace of the whole
@@ -47,8 +42,8 @@ export const martKey = (ws: string, name: string): string => `workspaces/${ws}/w
 export const martSidecarKey = (ws: string, name: string): string => `workspaces/${ws}/warehouse/${name}.schema.json`;
 
 /** workspace-scoped skill library tarball: the package's `.claude/skills/` (user- or
- * agent-authored skill dirs + their supporting files). Extension content like
- * components/custom (ADR-0013); platform skills stay image-only at ~/.claude/skills. */
+ * agent-authored skill dirs + their supporting files). Extension content like the
+ * component library (ADR-0013); platform skills stay image-only at ~/.claude/skills. */
 export const skillsKey = (ws: string): string => `workspaces/${ws}/skills.tar`;
 
 /** workspace-scoped per-chat durable state (ADR 0004): the `chatId → ChatMeta` map,
@@ -170,14 +165,6 @@ export class BlobStore {
 
   async saveCanvasDirs(ws: string, bytes: Uint8Array): Promise<void> {
     await this.backend.put(canvasDirsKey(ws), bytes);
-  }
-
-  loadCustom(ws: string): Promise<Uint8Array | null> {
-    return this.backend.get(customKey(ws));
-  }
-
-  async saveCustom(ws: string, bytes: Uint8Array): Promise<void> {
-    await this.backend.put(customKey(ws), bytes);
   }
 
   loadSkills(ws: string): Promise<Uint8Array | null> {

@@ -1,7 +1,7 @@
-// One sink for every durable artifact (ADR 0003). Canvas, components, custom, and
-// skills each register as a Persistable; every save flows through one
+// One sink for every durable artifact (ADR 0003). Components, skills, and chat metadata
+// each register as a Persistable; every save flows through one
 // attempt → record-health → log wrapper so a silent failure (the class of bug that hid
-// the dead sessions watcher) is visible at /api/status for all four. Only the wrapper and
+// the dead sessions watcher) is visible at /api/status for all of them. Only the wrapper and
 // the health map are shared — each artifact keeps its own serialize (tar vs JSON) and guard.
 //
 // GUARDS ARE NOT OPTIONAL FOR FULL-REPLACE ARTIFACTS. This comment used to say "canvas

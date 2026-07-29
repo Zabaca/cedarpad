@@ -17,13 +17,9 @@ const ms = () => `+${Date.now() - t0}ms`;
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
-// The agent's backend extension: custom handlers (a flat dir of .ts), run by the
-// isolated extension server. Same persistence model as components — extension
-// content, image-only core (ADR 0002).
-const CUSTOM = `${ROOT}server/custom`;
 // Workspace skills (ADR-0013): user-/agent-authored skill dirs under the package's
 // .claude/skills, discovered by the SDK's 'project' source. Same persistence model as
-// components/custom. Platform skills live at ~/.claude/skills (image-only) instead.
+// components. Platform skills live at ~/.claude/skills (image-only) instead.
 const SKILLS = `${ROOT}.claude/skills`;
 const store = new BlobStore(selectBackend(`${ROOT}.persist`)); // R2_BUCKET set in-container
 console.log(
@@ -53,16 +49,6 @@ if (canvasDirs) {
   console.log(`[boot] ${ms()} per-canvas component dirs restored from R2`);
 }
 
-// Same for the custom-handler library (the agent's backend extension).
-const custom = await store.loadCustom(WORKSPACE).catch((err) => {
-  console.error('[boot] custom handlers load failed; using image seed:', err);
-  return null;
-});
-if (custom) {
-  await extractOverlay(custom, CUSTOM);
-  console.log(`[boot] ${ms()} custom handlers restored from R2`);
-}
-
 // Restore workspace skills. mkdir first: the dir won't exist in the image (skills are
 // workspace content, not baked) and extract needs it.
 await Bun.spawn(['mkdir', '-p', SKILLS]).exited;
@@ -80,7 +66,7 @@ if (skills) {
 // Boot used to download `sessions.tar` — 49,111,040 bytes of a workspace's whole history — to
 // serve whichever single session the human happened to open next.
 
-// Subsequent component / custom edits persist back to R2 at TURN-COMPLETION,
+// Subsequent component / skill edits persist back to R2 at TURN-COMPLETION,
 // in-process in the bridge (ADR 0003) — no fs.watch (its recursive mode threw EINVAL on
 // Linux and silently disabled the sessions sync, breaking resume across a recycle). The
 // boot restore above is the only filesystem work here now.
