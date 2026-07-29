@@ -137,25 +137,46 @@ export const ConversationPrOpenedInput = ConversationSettleInput.extend({
 export type ConversationPrOpenedInput = z.infer<typeof ConversationPrOpenedInput>;
 
 /**
- * Operations 6 and 7 — the **Record** verbs (ADR-0022). Component source stops being a
+ * Operations 6 to 12 — the **Record** verbs (ADR-0022). Component source stops being a
  * directory the container tars into R2 and becomes rows the edge owns; this is how the
  * container gets it there. Note what these are NOT: there is no `record.put`, no table, no
  * filter — they are component-shaped, exactly like the chat verbs above are chat-shaped, so
  * the surface stays behavioural and cannot decay into a SQL tunnel.
  *
  * The name is validated HERE as well as at the store, so a traversing name is a 400 at the
- * boundary rather than something the edge has to be trusted to notice. `canvasId` is
- * required: this slice carries the OWN tier only, and the shared tier gets its own verb
- * rather than a nullable field nobody can see the meaning of.
+ * boundary rather than something the edge has to be trusted to notice.
  *
- * These two break the "best-effort" rule that governs every operation above them, and
+ * **`canvasId` is required even for a shared-tier operation, and that is the security
+ * design.** The workspace shared library has no canvas of its own, so nulling the field
+ * would leave the edge's ownership check — "is this canvas in this workspace?" — with
+ * nothing to look up, and no check at all is what a check with nothing to check becomes.
+ * Instead the caller always names the canvas it is acting FROM, the edge verifies that
+ * canvas belongs to the named workspace exactly as it does for an own-tier write, and the
+ * shared tier's null canvas key is minted at the EDGE. A workspace's shared library is
+ * therefore reachable only by naming a canvas the registry places inside it — the container
+ * never sends the null and never picks the tier's key.
+ *
+ * Be precise about what that buys, though: it makes the shared tier exactly as protected as
+ * the own tier, and no more. Both are **consistency** checks — the bearer above is a constant
+ * with no workspace identity in it, so neither can stop a caller that names a real, coherent
+ * (workspace, canvas) pair it does not own. That is #374, and it is a property of the token,
+ * not of these verbs.
+ *
+ * These verbs break the "best-effort" rule that governs every operation above them, and
  * deliberately: a Component write that cannot be persisted must FAIL the tool call so the
  * agent can retry. Today's disk write succeeds, reports success, and can evaporate on the
  * next bad boot — a write that fails loudly beats one that lies.
  */
+/** Which of the workspace's two writable libraries an operation addresses. The platform
+ *  tier is absent by construction: it is image code, never a Record, and never written. */
+export const ComponentTier = z.enum(['own', 'shared']).default('own');
+export type ComponentTier = z.infer<typeof ComponentTier>;
+
 export const ComponentWriteInput = z.object({
   workspaceId: z.string().min(1),
+  /** The canvas the write is performed FROM — the entitlement proof, always a real canvas. */
   canvasId: z.string().min(1),
+  tier: ComponentTier,
   /** Attribution (`updated_by`), not authorization — the edge derives permission itself.
    *  Nullable because "we do not know who" is a real state (a container with no configured
    *  identity), and recording a placeholder that no user query will ever match would be a
@@ -173,9 +194,27 @@ export type ComponentWriteOutput = z.infer<typeof ComponentWriteOutput>;
 export const ComponentReadInput = z.object({
   workspaceId: z.string().min(1),
   canvasId: z.string().min(1),
+  tier: ComponentTier,
   name: ComponentName,
 });
 export type ComponentReadInput = z.infer<typeof ComponentReadInput>;
+
+/**
+ * Operations 9 and 10 — promote (own → shared) and adopt (shared → own). They name only the
+ * canvas and the Component:
+ * the tier is implicit in the verb, and the direction is what makes each one meaningful.
+ * They are verbs rather than "write here, delete there" precisely because a promote must be
+ * ONE change of tier — a lost half left placed instances resolving to a same-named platform
+ * component and rendering the wrong card, with no error anywhere.
+ */
+export const ComponentTierMoveInput = z.object({
+  workspaceId: z.string().min(1),
+  canvasId: z.string().min(1),
+  /** Attribution, as on a write — a promote is a write, and it records who made it. */
+  userId: z.string().min(1).nullable(),
+  name: ComponentName,
+});
+export type ComponentTierMoveInput = z.infer<typeof ComponentTierMoveInput>;
 
 /** `null` = no Record for that name in that tier. Absent is an ANSWER, not a failure —
  *  the caller must be able to fall through to the next tier without treating it as an error. */
@@ -215,7 +254,7 @@ export type ComponentHistoryOutput = z.infer<typeof ComponentHistoryOutput>;
 export type ComponentVersion = ComponentHistoryOutput['versions'][number];
 
 /**
- * Operations 9 and 10 — the **Workspace-skill** Record verbs (ADR-0022, #361). Same shape and
+ * Operations 11 and 12 — the **Workspace-skill** Record verbs (ADR-0022, #361). Same shape and
  * same reasons as the two above, with one difference that drives everything: a skill is a
  * DIRECTORY, so the key is two-level and the payload is a set of files. `upload_skill`'s
  * files-only wire contract is unchanged (PRD #354 story 23) — only where the files land moves.
@@ -297,6 +336,8 @@ export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('component.write'), input: ComponentWriteInput }),
   z.object({ op: z.literal('component.read'), input: ComponentReadInput }),
   z.object({ op: z.literal('component.history'), input: ComponentHistoryInput }),
+  z.object({ op: z.literal('component.promote'), input: ComponentTierMoveInput }),
+  z.object({ op: z.literal('component.adopt'), input: ComponentTierMoveInput }),
   z.object({ op: z.literal('skill.write'), input: SkillWriteInput }),
   z.object({ op: z.literal('skill.list'), input: SkillListInput }),
   z.object({ op: z.literal('data.write'), input: DataWriteInput }),

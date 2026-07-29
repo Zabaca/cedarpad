@@ -36,7 +36,7 @@ describe('componentUrl: per-canvas import path resolution', () => {
 // resolves own → shared (`@shared`) → platform base.
 describe('resolution order: own dir, then shared, then the platform base', () => {
   test('sharedComponentUrl → the workspace shared/components dir (the @shared source)', () => {
-    expect(sharedComponentUrl('KpiCard', 3, 1)).toBe('/shared/components/KpiCard.tsx?r=3&n=1');
+    expect(sharedComponentUrl('KpiCard', 3, 1, 'cv_1')).toBe('/shared/components/KpiCard.tsx?r=3&n=1&c=cv_1');
   });
 
   test('baseComponentUrl → the image-baked platform library', () => {
@@ -46,7 +46,7 @@ describe('resolution order: own dir, then shared, then the platform base', () =>
   test('componentUrls resolves own FIRST, shared SECOND, base LAST (default canvas)', () => {
     expect(componentUrls('KpiCard', 3, 1, 2, DEFAULT_CANVAS_ID, 4)).toEqual([
       '/src/canvas-default/components/KpiCard.tsx?r=3&n=1',
-      '/shared/components/KpiCard.tsx?r=3&n=2',
+      '/shared/components/KpiCard.tsx?r=3&n=2&c=default',
       '/src/canvas-components/KpiCard.tsx?r=3&n=4',
     ]);
   });
@@ -54,15 +54,19 @@ describe('resolution order: own dir, then shared, then the platform base', () =>
   test('a non-default canvas: own per-canvas dir first, same shared + base after', () => {
     expect(componentUrls('Chart', 7, 1, 2, 'abc', 3)).toEqual([
       '/src/canvas-abc/components/Chart.tsx?r=7&n=1',
-      '/shared/components/Chart.tsx?r=7&n=2',
+      '/shared/components/Chart.tsx?r=7&n=2&c=abc',
       '/src/canvas-components/Chart.tsx?r=7&n=3',
     ]);
   });
 
-  test('the shared and base candidates are canvas-agnostic (one source across canvases)', () => {
+  test('the shared and base candidates name ONE source across canvases', () => {
     const a = componentUrls('Chart', 1, 1, 1, 'A', 2);
     const b = componentUrls('Chart', 1, 1, 1, 'B', 2);
-    expect(a[1]).toBe(b[1] as string);
+    // The shared path is identical; only the `?c=` hint differs, because materializing a
+    // shared Record has to name a canvas to prove entitlement to the workspace's library.
+    expect((a[1] as string).split('?')[0]).toBe((b[1] as string).split('?')[0]);
+    expect(a[1]).toContain('c=A');
+    expect(b[1]).toContain('c=B');
     expect(a[2]).toBe(b[2] as string);
   });
 });

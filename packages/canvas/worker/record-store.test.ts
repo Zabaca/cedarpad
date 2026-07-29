@@ -154,6 +154,68 @@ describe.each(implementations)('RecordStore (%s)', (_name, make) => {
     });
   });
 
+  describe('moving a Record between tiers', () => {
+    // What `promote` is made of. The rule the incident wrote: a Record is in exactly ONE
+    // tier at every instant — never in both, and above all never in neither. A promote that
+    // lost the shared write while the own copy was already gone made placed instances fall
+    // through to a same-named PLATFORM component and render a plausible, wrong card.
+    test('a moved Record is live at the destination and gone from the source', async () => {
+      const store = make();
+      const w = ws();
+      const own = { workspaceId: w, canvasId: 'cv_1', name: 'Card' };
+      const shared = { workspaceId: w, canvasId: null, name: 'Card' };
+      await store.put({ ...own, kind: 'component' as const, source: 'v1', updatedBy: 'u_1' });
+
+      await store.move(own, shared, 'u_2');
+
+      expect(await store.get(own)).toBeNull();
+      expect((await store.get(shared))?.source).toBe('v1');
+    });
+
+    test('the move appends a version at the destination, attributed to whoever moved it', async () => {
+      const store = make();
+      const w = ws();
+      const own = { workspaceId: w, canvasId: 'cv_1', name: 'Card' };
+      const shared = { workspaceId: w, canvasId: null, name: 'Card' };
+      await store.put({ ...own, kind: 'component' as const, source: 'v1', updatedBy: 'u_1' });
+      await store.put({ ...own, kind: 'component' as const, source: 'v2', updatedBy: 'u_1' });
+
+      const moved = await store.move(own, shared, 'u_2');
+
+      // The history travels with the Record — a Component's past is the Component's, not the
+      // tier's — and the move itself is the newest entry, so "who promoted this" is on record.
+      expect(moved.rev).toBe(3);
+      expect((await store.listVersions(shared)).map((v) => [v.version, v.source, v.createdBy])).toEqual([
+        [3, 'v2', 'u_2'],
+        [2, 'v2', 'u_1'],
+        [1, 'v1', 'u_1'],
+      ]);
+      expect(await store.listVersions(own)).toEqual([]);
+    });
+
+    test('moving onto an occupied name is refused, and changes nothing', async () => {
+      const store = make();
+      const w = ws();
+      const own = { workspaceId: w, canvasId: 'cv_1', name: 'Card' };
+      const shared = { workspaceId: w, canvasId: null, name: 'Card' };
+      await store.put({ ...own, kind: 'component' as const, source: 'mine', updatedBy: null });
+      await store.put({ ...shared, kind: 'component' as const, source: 'theirs', updatedBy: null });
+
+      await expect(store.move(own, shared, null)).rejects.toThrow();
+      expect((await store.get(own))?.source).toBe('mine');
+      expect((await store.get(shared))?.source).toBe('theirs');
+    });
+
+    test('moving a Record that is not there is refused rather than creating one', async () => {
+      const store = make();
+      const w = ws();
+      await expect(
+        store.move({ workspaceId: w, canvasId: 'cv_1', name: 'Ghost' }, { workspaceId: w, canvasId: null, name: 'Ghost' }, null),
+      ).rejects.toThrow();
+      expect(await store.get({ workspaceId: w, canvasId: null, name: 'Ghost' })).toBeNull();
+    });
+  });
+
   describe('soft delete', () => {
     test('a deleted Record disappears from get and list, but its versions survive', async () => {
       const store = make();

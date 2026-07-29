@@ -76,8 +76,12 @@ async function canvasBelongsToWorkspace(db: Database, workspaceId: string, canva
  * so the check is that the workspace is REAL: the container names the workspace it is writing
  * for, and a forged or typo'd id must not quietly mint rows nobody can ever reach.
  *
- * NOTE FOR REVIEW: #359 introduces the same question for the shared Component tier
- * (`canvasId: null`). If it grew its own rule, these two should become one.
+ * The shared Component tier (#359) raised the same question and answered it WITHOUT needing
+ * this: a shared Component operation names the canvas it acts from, so the containment check
+ * above still applies and `tierCanvas` mints the null key here. Skills have no such canvas, so
+ * this stays the weaker of the two. Both are CONSISTENCY checks, not tenancy checks — the
+ * platform-RPC bearer is a constant with no workspace identity, so neither can stop a caller
+ * that names a real, coherent workspace it does not own (#374).
  *
  * The legacy `default` workspace has no `workspaces` row (it predates the registry, exactly as
  * the legacy `default` canvas does) and is therefore pinned by hand, like `canvasBelongsToWorkspace`.
@@ -86,6 +90,16 @@ async function workspaceExists(db: Database, workspaceId: string): Promise<boole
   if (workspaceId === DEFAULT_WORKSPACE_ID) return true;
   return (await getWorkspaceRecord(db, workspaceId)) !== null;
 }
+
+/**
+ * The Record key's canvas, minted HERE and never accepted from the container. The shared
+ * tier is `canvas_id NULL`, and null is precisely the value `canvasBelongsToWorkspace` cannot
+ * verify — so the container names a real canvas, that canvas is checked, and only then does
+ * the edge decide the operation addresses the workspace's shared library instead of the
+ * canvas's own. A caller cannot reach a workspace's shared library without naming a canvas
+ * the registry places inside it, which is exactly the check an own-tier write already passes.
+ */
+const tierCanvas = (tier: 'own' | 'shared', canvasId: string): string | null => (tier === 'shared' ? null : canvasId);
 
 /** `POST /api/platform-rpc` — the named operations, nothing else. */
 export async function handlePlatformRpc(request: Request, env: Env, deps: PlatformRpcDeps): Promise<Response> {
@@ -134,22 +148,32 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
   // rule and the non-empty rule are IN the contract, so a bad payload is a 400 here and never
   // something the store has to be trusted to catch. What is left is ownership, then the write.
   if (parsed.data.op === 'component.write') {
-    const { workspaceId, canvasId, userId, name, source } = parsed.data.input;
+    const { workspaceId, canvasId, tier, userId, name, source } = parsed.data.input;
     if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
       return Response.json({ error: 'forbidden' }, { status: 403 });
     }
     // Deliberately NOT caught: a store failure must reach the container as a non-2xx so the
     // tool call fails and the agent retries. Swallowing it here is the 2026-07-29 shape.
-    const { rev } = await componentStore(d1RecordStore(deps.db)).write({ workspaceId, canvasId, name, source, userId });
+    const { rev } = await componentStore(d1RecordStore(deps.db)).write({
+      workspaceId,
+      canvasId: tierCanvas(tier, canvasId),
+      name,
+      source,
+      userId,
+    });
     return Response.json({ rev } satisfies ComponentWriteOutput);
   }
 
   if (parsed.data.op === 'component.read') {
-    const { workspaceId, canvasId, name } = parsed.data.input;
+    const { workspaceId, canvasId, tier, name } = parsed.data.input;
     if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
       return Response.json({ error: 'forbidden' }, { status: 403 });
     }
-    const source = await componentStore(d1RecordStore(deps.db)).read({ workspaceId, canvasId, name });
+    const source = await componentStore(d1RecordStore(deps.db)).read({
+      workspaceId,
+      canvasId: tierCanvas(tier, canvasId),
+      name,
+    });
     return Response.json({ source } satisfies ComponentReadOutput);
   }
 
@@ -157,11 +181,15 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
   // answer before Records. Gated by the same ownership check as a read, because a history is
   // a read: the names in it are members of the workspace that owns the canvas.
   if (parsed.data.op === 'component.history') {
-    const { workspaceId, canvasId, name } = parsed.data.input;
+    const { workspaceId, canvasId, tier, name } = parsed.data.input;
     if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
       return Response.json({ error: 'forbidden' }, { status: 403 });
     }
-    const versions = await componentStore(d1RecordStore(deps.db)).history({ workspaceId, canvasId, name });
+    const versions = await componentStore(d1RecordStore(deps.db)).history({
+      workspaceId,
+      canvasId: tierCanvas(tier, canvasId),
+      name,
+    });
     return Response.json({ versions } satisfies ComponentHistoryOutput);
   }
 
@@ -183,6 +211,27 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
     if (!(await workspaceExists(deps.db, workspaceId))) return Response.json({ error: 'forbidden' }, { status: 403 });
     const files = await skillStore(d1SkillFileStore(deps.db)).tree(workspaceId);
     return Response.json({ files } satisfies SkillListOutput);
+  }
+
+  // Promote and adopt: the tier change itself, done at the edge so it is ONE operation on
+  // the rows rather than a write and a delete the container sequences and can half-finish.
+  if (parsed.data.op === 'component.promote' || parsed.data.op === 'component.adopt') {
+    const { op } = parsed.data;
+    const { workspaceId, canvasId, userId, name } = parsed.data.input;
+    if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
+      return Response.json({ error: 'forbidden' }, { status: 403 });
+    }
+    const store = componentStore(d1RecordStore(deps.db));
+    try {
+      const { rev } = await (op === 'component.promote' ? store.promote : store.adopt)({ workspaceId, canvasId, name, userId });
+      return Response.json({ rev } satisfies ComponentWriteOutput);
+    } catch (err) {
+      // Caught, unlike a write — but only to carry the REASON back. These refusals are things
+      // the agent must be able to read and act on ("a shared component of that name already
+      // exists", "this canvas does not own that Component"), and the answer is still a
+      // non-2xx, so the tool call fails exactly as loudly either way.
+      return Response.json({ error: (err as Error).message }, { status: 400 });
+    }
   }
 
   // The data-file verbs. Same shape as the Component ones — the name and the size cap are in

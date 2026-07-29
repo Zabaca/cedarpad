@@ -37,8 +37,12 @@ export function baseComponentUrl(module: string, rev: number, nonce: number): st
 // its BARE name — unchanged by promote — and the loader resolves own-dir first, then here.
 // So `promote` is a pure file MOVE with no store rewrite, and a component placed on another
 // canvas by the same bare name resolves to the one shared source.
-export function sharedComponentUrl(module: string, rev: number, nonce: number): string {
-  return `/shared/components/${module}.tsx?r=${rev}&n=${nonce}`;
+// `c` names the canvas asking. It is not part of resolution — the shared library is one per
+// workspace — but a shared module that has to be MATERIALIZED from its Record (ADR-0022) is
+// fetched through the edge, and the edge proves entitlement to a workspace's shared library
+// by checking a canvas the registry places inside it. So even a shared read names a canvas.
+export function sharedComponentUrl(module: string, rev: number, nonce: number, canvasId: string = DEFAULT_CANVAS_ID): string {
+  return `/shared/components/${module}.tsx?r=${rev}&n=${nonce}&c=${canvasId}`;
 }
 
 /** The URLs to try, in order, to resolve a placed module for a canvas: its own per-canvas
@@ -55,7 +59,7 @@ export function componentUrls(
 ): string[] {
   return [
     componentUrl(module, rev, ownNonce, canvasId),
-    sharedComponentUrl(module, rev, sharedNonce),
+    sharedComponentUrl(module, rev, sharedNonce, canvasId),
     baseComponentUrl(module, rev, baseNonce),
   ];
 }

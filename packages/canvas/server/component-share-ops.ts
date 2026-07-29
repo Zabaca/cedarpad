@@ -10,14 +10,14 @@ import { adoptSharedComponent, promoteComponent } from './components.ts';
 
 /** Move a component from a canvas's own dir into the shared library, then reload. Returns the
  * reload count (canvases that placed it and were rev-bumped). Reload fires only on a clean move. */
-export function promoteToShared(canvasId: string, module: string, reload: () => number): number {
-  promoteComponent(canvasId, module);
+export async function promoteToShared(canvasId: string, module: string, reload: () => number): Promise<number> {
+  await promoteComponent(canvasId, module);
   return reload();
 }
 
 /** Copy a shared component back into a canvas's own dir (diverge), then reload that canvas's
  * placed instances. Returns the reload count. Reload fires only on a clean copy. */
-export function adoptFromShared(canvasId: string, module: string, reload: () => number): number {
-  adoptSharedComponent(canvasId, module);
+export async function adoptFromShared(canvasId: string, module: string, reload: () => number): Promise<number> {
+  await adoptSharedComponent(canvasId, module);
   return reload();
 }

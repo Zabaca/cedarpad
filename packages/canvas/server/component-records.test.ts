@@ -2,13 +2,17 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import type { ComponentVersion } from '../shared/platform-rpc.ts';
+import { componentStore } from '../worker/component-store.ts';
+import { memRecordStore } from '../worker/record-store.ts';
 import {
+  adoptSharedComponent,
   type ComponentRecords,
   componentHistory,
   editComponent,
+  isShared,
   materializeComponent,
   materializeDataFile,
+  promoteComponent,
   readComponent,
   recordAuthor,
   writeComponent,
@@ -17,7 +21,9 @@ import {
 
 // Records (ADR-0022): a Component's source is a ROW, and the file vite compiles from is a
 // rendering of it. These tests drive the container half — the ordering rule (store first,
-// then disk), and materialization on a miss — against a fake store, so none of it needs D1.
+// then disk), tier resolution, and materialization on a miss — against the REAL policy layer
+// over the in-memory Record port, so none of it needs D1 and none of it re-implements the
+// rules it is checking. Only the network hop is faked.
 //
 // Built from the failure: on 2026-07-29 a write succeeded to disk, reported success, and was
 // gone after the next boot. "The store accepted it" is now the thing being asserted.
@@ -25,36 +31,59 @@ import {
 const CANVAS = 'cvrecordstest';
 const dirPath = fileURLToPath(new URL(`../src/canvas-${CANVAS}/`, import.meta.url));
 const filePath = (name: string) => `${dirPath}components/${name}.tsx`;
+const sharedDir = fileURLToPath(new URL('../shared/components/', import.meta.url));
+const sharedPath = (name: string) => `${sharedDir}${name}.tsx`;
+
+/** Shared-library files land in the real workspace library, so name them uniquely and sweep. */
+const SHARED_NAMES = ['Tmp_RecordsShared', 'MarkdownCard'];
 
 afterEach(() => {
   if (existsSync(dirPath)) rmSync(dirPath, { recursive: true, force: true });
+  for (const n of SHARED_NAMES) if (existsSync(sharedPath(n))) rmSync(sharedPath(n));
 });
 
-/** A store that remembers what it was told, and can be made to fail. */
-function fakeRecords(opts: { failWrite?: boolean; failRead?: boolean } = {}) {
+const WS = 'ws_records_test';
+
+/**
+ * The container's door to the store, wired to the REAL `ComponentStore` over the in-memory
+ * Record port — the same policy the edge runs, minus the HTTP hop. `failMove` reproduces the
+ * one failure that matters here: a promote the store refuses.
+ */
+function fakeRecords(opts: { failWrite?: boolean; failRead?: boolean; failMove?: boolean } = {}) {
+  const port = memRecordStore();
+  // Data files keep their own plain map: they are a different door with different rules
+  // (#360), and this file only needs them to round-trip, not to re-test that policy.
   const rows = new Map<string, string>();
-  const versions = new Map<string, ComponentVersion[]>();
+  const store = componentStore(
+    opts.failMove ? { ...port, move: async () => { throw new Error('the workspace store refused this write'); } } : port,
+  );
   const calls: string[] = [];
+  const key = (tier: 'own' | 'shared', canvasId: string, name: string) => ({
+    workspaceId: WS,
+    canvasId: tier === 'shared' ? null : canvasId,
+    name,
+  });
   const records: ComponentRecords = {
-    write: async (canvasId, name, source) => {
-      calls.push(`write ${canvasId}/${name}`);
+    write: async (tier, canvasId, module, source) => {
+      calls.push(`write ${tier} ${canvasId}/${module}`);
       if (opts.failWrite) throw new Error('the workspace store refused this write');
-      rows.set(`${canvasId}/${name}`, source);
-      // As the real store does: every write appends a version, attributed and stamped.
-      const prior = versions.get(`${canvasId}/${name}`) ?? [];
-      versions.set(`${canvasId}/${name}`, [
-        { version: prior.length + 1, createdAt: new Date(), createdBy: 'u_author' },
-        ...prior,
-      ]);
+      await store.write({ ...key(tier, canvasId, module), source, userId: 'u_author' });
     },
-    read: async (canvasId, name) => {
-      calls.push(`read ${canvasId}/${name}`);
-      if (opts.failRead) throw new Error('the workspace store is unreachable');
-      return rows.get(`${canvasId}/${name}`) ?? null;
+    read: async (tier, canvasId, module) => {
+      calls.push(`read ${tier} ${canvasId}/${module}`);
+      return await store.read(key(tier, canvasId, module));
     },
-    history: async (canvasId, name) => {
-      calls.push(`history ${canvasId}/${name}`);
-      return versions.get(`${canvasId}/${name}`) ?? [];
+    promote: async (canvasId, module) => {
+      calls.push(`promote ${canvasId}/${module}`);
+      await store.promote({ workspaceId: WS, canvasId, name: module, userId: 'u_author' });
+    },
+    adopt: async (canvasId, module) => {
+      calls.push(`adopt ${canvasId}/${module}`);
+      await store.adopt({ workspaceId: WS, canvasId, name: module, userId: 'u_author' });
+    },
+    history: async (tier, canvasId, module) => {
+      calls.push(`history ${tier} ${canvasId}/${module}`);
+      return await store.history(key(tier, canvasId, module));
     },
     writeData: async (canvasId, name, source) => {
       calls.push(`writeData ${canvasId}/${name}`);
@@ -67,15 +96,17 @@ function fakeRecords(opts: { failWrite?: boolean; failRead?: boolean } = {}) {
       return rows.get(`${canvasId}/${name}`) ?? null;
     },
   };
-  return { records, rows, calls };
+  /** What the store actually holds — the question every one of these tests is really asking. */
+  const stored = (tier: 'own' | 'shared', module: string, canvasId = CANVAS) => store.read(key(tier, canvasId, module));
+  return { records, stored, rows, calls };
 }
 
 describe('write_component persists a Record before it touches disk', () => {
   test('the source lands in the store, and the file is written as the HMR trigger', async () => {
-    const { records, rows } = fakeRecords();
+    const { records, stored } = fakeRecords();
     await writeComponent('Card', 'export default () => null;', CANVAS, records);
 
-    expect(rows.get(`${CANVAS}/Card`)).toBe('export default () => null;');
+    expect(await stored('own', 'Card')).toBe('export default () => null;');
     expect(readFileSync(filePath('Card'), 'utf8')).toBe('export default () => null;');
   });
 
@@ -115,7 +146,7 @@ describe('a Component survives the container losing its filesystem', () => {
     calls.length = 0;
 
     await materializeComponent('Card', CANVAS, records);
-    expect(calls).toEqual([`read ${CANVAS}/Card`]);
+    expect(calls).toEqual([`read own ${CANVAS}/Card`]);
     expect(existsSync(filePath('Other'))).toBe(false);
   });
 
@@ -150,14 +181,130 @@ describe('a Component survives the container losing its filesystem', () => {
   });
 });
 
+describe('the shared library is a Record too — own, then shared, then platform', () => {
+  const SH = 'Tmp_RecordsShared';
+
+  test('a shared Component resolves for a canvas that does not shadow it, after a recycle', async () => {
+    const { records } = fakeRecords();
+    await writeComponent(SH, 'own source', CANVAS, records);
+    await promoteComponent(CANVAS, SH, records);
+    rmSync(dirPath, { recursive: true, force: true });
+    rmSync(sharedPath(SH));
+
+    // Nothing on disk anywhere, and still every canvas in the workspace resolves it.
+    expect(await readComponent(SH, CANVAS, records)).toBe('own source');
+    expect(await readComponent(SH, 'cvsomeothercanvas', records)).toBe('own source');
+    expect(readFileSync(sharedPath(SH), 'utf8')).toBe('own source'); // materialized where vite looks
+  });
+
+  test("a canvas's own Component shadows a shared one of the same name", async () => {
+    const { records } = fakeRecords();
+    await writeComponent(SH, 'shared source', CANVAS, records);
+    await promoteComponent(CANVAS, SH, records);
+    await adoptSharedComponent(CANVAS, SH, records);
+    await writeComponent(SH, 'diverged', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+    rmSync(sharedPath(SH));
+
+    expect(await readComponent(SH, CANVAS, records)).toBe('diverged');
+    expect(await readComponent(SH, 'cvsomeothercanvas', records)).toBe('shared source');
+  });
+
+  test('editing a promoted Component writes back to the shared Record, not a new own copy', async () => {
+    const { records, stored } = fakeRecords();
+    await writeComponent(SH, 'const v = "v1";', CANVAS, records);
+    await promoteComponent(CANVAS, SH, records);
+    rmSync(dirPath, { recursive: true, force: true });
+    rmSync(sharedPath(SH));
+
+    await editComponent(SH, 'v1', 'v2', CANVAS, records);
+
+    expect(await stored('shared', SH)).toBe('const v = "v2";');
+    expect(await stored('own', SH)).toBeNull();
+  });
+
+  test('the tier a name lives in is decided by the Record, not by whether a file survived', async () => {
+    const { records } = fakeRecords();
+    await writeComponent(SH, 'v1', CANVAS, records);
+    await promoteComponent(CANVAS, SH, records);
+    rmSync(sharedPath(SH));
+
+    expect(await isShared(SH, CANVAS, records)).toBe(true);
+  });
+});
+
+describe('promote moves a Component to the shared library, atomically', () => {
+  const SH = 'Tmp_RecordsShared';
+
+  test('promote leaves no own-tier copy, and the shared library holds the source', async () => {
+    const { records, stored } = fakeRecords();
+    await writeComponent(SH, 'promote me', CANVAS, records);
+
+    await promoteComponent(CANVAS, SH, records);
+
+    expect(await stored('shared', SH)).toBe('promote me');
+    expect(await stored('own', SH)).toBeNull();
+    expect(existsSync(filePath(SH))).toBe(false); // MOVED, not copied
+    expect(readFileSync(sharedPath(SH), 'utf8')).toBe('promote me');
+  });
+
+  // The reported incident, end to end. `promote_component` reported success while the shared
+  // write never landed; because promote removes the own copy, resolution fell through to the
+  // read-only PLATFORM tier, where a same-named component rendered with entirely different
+  // props — three cards went blank with no error anywhere. A missing card is visible; a wrong
+  // card is not. So a promote the store refuses must leave the canvas exactly as it was.
+  test('a promote the store refuses does not fall through to the platform component of the same name', async () => {
+    const { records, stored } = fakeRecords({ failMove: true });
+    await writeComponent('MarkdownCard', '// my markdown card\n', CANVAS, records);
+
+    await expect(promoteComponent(CANVAS, 'MarkdownCard', records)).rejects.toThrow(/refused this write/);
+
+    expect(await stored('own', 'MarkdownCard')).toBe('// my markdown card\n');
+    expect(await stored('shared', 'MarkdownCard')).toBeNull();
+    // The resolution that actually renders the card: still the canvas's own component, NOT
+    // the platform module that happens to share its name.
+    expect(await readComponent('MarkdownCard', CANVAS, records)).toBe('// my markdown card\n');
+    // …and that is a real collision, not a hypothetical one.
+    expect(existsSync(fileURLToPath(new URL('../src/canvas-components/MarkdownCard.tsx', import.meta.url)))).toBe(true);
+  });
+
+  test('promote refuses a Component this canvas does not own, and a name the library holds', async () => {
+    const { records } = fakeRecords();
+    await expect(promoteComponent(CANVAS, 'Tmp_RecordsShared', records)).rejects.toThrow(/not in canvas/);
+
+    await writeComponent(SH, 'mine', CANVAS, records);
+    await promoteComponent(CANVAS, SH, records);
+    await adoptSharedComponent(CANVAS, SH, records);
+    await expect(promoteComponent(CANVAS, SH, records)).rejects.toThrow(/already exists/);
+  });
+
+  test('adopt copies the shared Component into this canvas and leaves the shared one intact', async () => {
+    const { records, stored } = fakeRecords();
+    await writeComponent(SH, 'shared source', CANVAS, records);
+    await promoteComponent(CANVAS, SH, records);
+    rmSync(dirPath, { recursive: true, force: true });
+
+    await adoptSharedComponent(CANVAS, SH, records);
+
+    expect(await stored('own', SH)).toBe('shared source');
+    expect(await stored('shared', SH)).toBe('shared source');
+    expect(readFileSync(filePath(SH), 'utf8')).toBe('shared source');
+  });
+
+  test('adopt refuses a Component the shared library does not hold', async () => {
+    const { records } = fakeRecords();
+    await expect(adoptSharedComponent(CANVAS, 'Tmp_RecordsShared', records)).rejects.toThrow(/no shared component/);
+  });
+});
+
 describe('edit_component applies against the stored source', () => {
   test('an edit after a recycle patches the Record, not a stale or missing file', async () => {
-    const { records, rows } = fakeRecords();
+    const { records, stored } = fakeRecords();
     await writeComponent('Card', 'const label = "v1";', CANVAS, records);
     rmSync(dirPath, { recursive: true, force: true });
 
     await editComponent('Card', 'v1', 'v2', CANVAS, records);
-    expect(rows.get(`${CANVAS}/Card`)).toBe('const label = "v2";');
+    expect(await stored('own', 'Card')).toBe('const label = "v2";');
   });
 });
 
@@ -280,7 +427,7 @@ describe('a Component materializes together with the data files it imports', () 
     calls.length = 0;
 
     await materializeComponent('Card', CANVAS, records);
-    expect(calls).toEqual([`read ${CANVAS}/Card`]);
+    expect(calls).toEqual([`read own ${CANVAS}/Card`]);
   });
 
   test('an import of a sibling the store has never held still materializes the Component', async () => {
@@ -297,5 +444,14 @@ describe('with no edge in front of the container, the filesystem is all there is
   test('write then read still round-trips through the file', async () => {
     await writeComponent('Card', 'v1', CANVAS, null);
     expect(await readComponent('Card', CANVAS, null)).toBe('v1');
+  });
+
+  test('promote is still the file move it always was', async () => {
+    const SH = 'Tmp_RecordsShared';
+    await writeComponent(SH, 'v1', CANVAS, null);
+    await promoteComponent(CANVAS, SH, null);
+
+    expect(existsSync(filePath(SH))).toBe(false);
+    expect(readFileSync(sharedPath(SH), 'utf8')).toBe('v1');
   });
 });

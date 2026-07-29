@@ -89,7 +89,7 @@ describe('PUT /api/components/:module — the one write #320 re-opens on this do
   // canvases — writing one leaves the bound, and only the bridge can see the tier.
   test('…but is refused a SHARED-tier module, though the route is identical', async () => {
     await writeComponent(SHARED, '// member source\n', CANVAS);
-    promoteComponent(CANVAS, SHARED);
+    await promoteComponent(CANVAS, SHARED);
     const res = await handleRequest(putSource(SHARED, guestCapabilities({ guestEditSource: true })));
     expect(res.status).toBe(403);
     expect(await readComponent(SHARED, CANVAS)).toBe('// member source\n');
