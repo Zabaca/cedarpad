@@ -68,13 +68,22 @@ export function ItemList() {
   const [search, setSearch] = useState("");
   const [debounced] = useDebouncedValue(search, 250);
   const [solvedOnly, setSolvedOnly] = useState(false);
-  const [pageSize, setPageSize] = useState(10);
-  const [page, setPage] = useState(1);
+  // Paging lives in the store so the page survives this list unmounting (view
+  // switches, synthesize returning to the library) — see `listPage` there.
+  const page = useAppStore((s) => s.listPage);
+  const setPage = useAppStore((s) => s.setListPage);
+  const pageSize = useAppStore((s) => s.listPageSize);
+  const setPageSize = useAppStore((s) => s.setListPageSize);
+  const syncListFilters = useAppStore((s) => s.syncListFilters);
 
   const workspaceNames = useWorkspaceNames();
 
   // Any filter change (incl. the workspace scope) returns to the first page.
-  useEffect(() => setPage(1), [debounced, solvedOnly, pageSize, scope, typeFilter]);
+  // Re-declaring the same filters on a remount deliberately keeps the page.
+  useEffect(
+    () => syncListFilters(JSON.stringify([debounced, solvedOnly, pageSize, scope, typeFilter])),
+    [syncListFilters, debounced, solvedOnly, pageSize, scope, typeFilter],
+  );
 
   // One unified, server-paged feed: observations and problems interleaved in a
   // single createdAt order, so pagination is consistent across page boundaries.
