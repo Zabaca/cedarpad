@@ -346,7 +346,8 @@ holds (container disk caps at 20 GB; `ceo`'s warehouse is 22.3 GiB). _Avoid_: "t
 
 **Connector**: a declared source that lands raw data in the warehouse. Slice 1 needs none:
 the workspace's own **Claude session JSONL is already in the same bucket**
-(`workspaces/<ws>/sessions.tar`, persisted so `resume` survives a recycle), so the first
+(`sessions/<session_id>/transcript.jsonl`, one object per session, persisted so `resume`
+survives a recycle), so the first
 source is a *read*, not an extraction — and third-party extraction secrets stay
 deferred. _Avoid_: "source" alone (ambiguous with a dbt `source`), "integration".
 
@@ -375,10 +376,10 @@ scheduler daemon — the edge cron is the evaluator. _Avoid_: "the pipeline run"
   freshness stamps and no way to tell they diverged.
 - **"session"** — the pipeline's first source is the Inbox's **Session** (a Claude
   conversation), already glossed above. A session-derived mart covers only turns that ran
-  **in the container** (canvas chats + dev-agent runs); local terminal sessions are not in
-  `sessions.tar`, so "cost per shipped PR" is a container-side figure. The **Console**
+  **in the container** (canvas chats + dev-agent runs); local terminal sessions are never
+  stored, so "cost per shipped PR" is a container-side figure. The **Console**
   (owner-only terminal, canvas [CONTEXT.md](./packages/canvas/CONTEXT.md)) is the one
-  container-side exception: its Claude sessions *do* land in `sessions.tar` — the sync is
+  container-side exception: its Claude sessions *do* get a stored Transcript — that sync is
   what makes `--resume` survive a container sleep — but the mart **excludes them by their
   pinned session id**. Operator poking has cost and no shipped output, so counting it would
   degrade "cost per shipped PR" precisely as the Console gets more use. Total container

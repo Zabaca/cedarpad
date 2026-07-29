@@ -3,7 +3,7 @@
 // reads it back from that exact cwd-scoped path (#133). Two facts about a session's JSONL are
 // needed all over the transcript/resume code: the EXACT path resume expects (restore + adopt
 // must land the file there), and a nesting-robust LOOKUP (`**/<sessionId>.jsonl`) for reading
-// history and for adoption. Both were re-inlined across transcript-r2.ts and
+// history and for adoption. Both were re-inlined across transcript-store.ts and
 // session-transcript.ts; concentrating them here means a change to the SDK's on-disk layout
 // touches one module.
 

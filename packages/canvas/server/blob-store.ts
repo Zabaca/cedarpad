@@ -30,10 +30,11 @@ export const sharedComponentsKey = (ws: string): string => `workspaces/${ws}/sha
  * The platform base (src/canvas-components/) is read-only and stays image-only. */
 export const canvasDirsKey = (ws: string): string => `workspaces/${ws}/canvas-components.tar`;
 
-/** workspace-scoped Claude session transcripts (~/.claude/projects), tarred. They
- * live outside the app subtree, so the overlay never captures them; without this a
- * recycle loses every session's JSONL and `resume` fails ("No conversation found"). */
-export const sessionsKey = (ws: string): string => `workspaces/${ws}/sessions.tar`;
+// Session transcripts used to live here as `workspaces/<ws>/sessions.tar`. They are FILES, not
+// Records (CONTEXT.md → Record vs File), and since #356 each session is its own opaque object —
+// `transcript-store.ts` owns that key layout. The tar was a full replace of the whole
+// ~/.claude/projects tree on every turn: 49,111,040 bytes in production against ~650 KB of
+// appends, re-downloaded at every cold boot.
 
 /** workspace-scoped mart parquet artifact (ADR-0017): `workspaces/<ws>/warehouse/<name>.parquet`.
  * The declared-schema sidecar lives next to it at `<name>.schema.json` (mart-contract.ts). */
@@ -144,7 +145,7 @@ export class BlobStore {
   }
 
   /** Does a blob exist? Existence ONLY — deliberately never the bytes. The empty-archive
-   *  guard (`persist-guards.ts`) asks this on every flush, and `sessions.tar` is tens of
+   *  guard (`persist-guards.ts`) asks this on every flush, and a tarball can be tens of
    *  megabytes; a `get` here would download it once per turn. */
   blobExists(key: string): Promise<boolean> {
     return this.backend.exists(key);
@@ -164,14 +165,6 @@ export class BlobStore {
 
   async saveCanvasDirs(ws: string, bytes: Uint8Array): Promise<void> {
     await this.backend.put(canvasDirsKey(ws), bytes);
-  }
-
-  loadSessions(ws: string): Promise<Uint8Array | null> {
-    return this.backend.get(sessionsKey(ws));
-  }
-
-  async saveSessions(ws: string, bytes: Uint8Array): Promise<void> {
-    await this.backend.put(sessionsKey(ws), bytes);
   }
 
   loadSkills(ws: string): Promise<Uint8Array | null> {

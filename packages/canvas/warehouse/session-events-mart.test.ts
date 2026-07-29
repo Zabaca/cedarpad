@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,16 +7,6 @@ import { MartSidecarSchema } from '../shared/mart-contract.ts';
 import { hasDuckdbCli, MART_NAME, materializeSessionEventsMart, readMartParquet } from './session-events-mart.ts';
 
 const FIXTURE_DIR = join(import.meta.dir, 'fixtures/sessions');
-
-/** Build a sessions.tar blob exactly the way the real container does (overlay.ts's
- * `tarSubtree`): `tar -cf - -C <dir> .`. Kept local (not imported) so this test doesn't need
- * `packages/canvas/server/overlay.ts`'s container-only assumptions. */
-async function tarFixture(): Promise<Uint8Array> {
-  const proc = Bun.spawn(['tar', '-cf', '-', '-C', FIXTURE_DIR, '.'], { stdout: 'pipe', stderr: 'pipe' });
-  const bytes = new Uint8Array(await new Response(proc.stdout).arrayBuffer());
-  if ((await proc.exited) !== 0) throw new Error(`tar failed: ${await new Response(proc.stderr).text()}`);
-  return bytes;
-}
 
 /** A unique, empty work dir per test — worktree-safe (CLAUDE.md §6): a parallel copy of this
  * test suite in another worktree/process gets its own dir, never a shared fixed /tmp path. */
@@ -41,10 +31,9 @@ if (!duckdbAvailable) {
 const maybeDescribe = duckdbAvailable ? describe : describe.skip;
 
 maybeDescribe('materializeSessionEventsMart — the first mart, end to end', () => {
-  test('transforms the fixture sessions.tar into a declared, schema-conformant mart', async () => {
+  test('transforms the fixture session transcripts into a declared, schema-conformant mart', async () => {
     await withWorkDir(async (workDir) => {
-      const tar = await tarFixture();
-      const { parquet, sidecar } = await materializeSessionEventsMart(tar, workDir);
+      const { parquet, sidecar } = await materializeSessionEventsMart(FIXTURE_DIR, workDir);
 
       expect(parquet.byteLength).toBeGreaterThan(0);
       expect(MartSidecarSchema.parse(sidecar).name).toBe(MART_NAME);
@@ -57,8 +46,7 @@ maybeDescribe('materializeSessionEventsMart — the first mart, end to end', () 
 
   test('reading the parquet back yields the expected rows and column types', async () => {
     await withWorkDir(async (workDir) => {
-      const tar = await tarFixture();
-      await materializeSessionEventsMart(tar, workDir);
+      await materializeSessionEventsMart(FIXTURE_DIR, workDir);
       const rows = await readMartParquet(join(workDir, `${MART_NAME}.parquet`));
 
       expect(rows).toHaveLength(3);
@@ -87,19 +75,16 @@ maybeDescribe('materializeSessionEventsMart — the first mart, end to end', () 
 
   test('excludes sidechain (subagent) turns from the fixture', async () => {
     await withWorkDir(async (workDir) => {
-      const tar = await tarFixture();
-      await materializeSessionEventsMart(tar, workDir);
+      await materializeSessionEventsMart(FIXTURE_DIR, workDir);
       const rows = await readMartParquet(join(workDir, `${MART_NAME}.parquet`));
       expect(rows.some((r) => r.input_tokens === 999)).toBe(false);
     });
   });
 
-  test('rerunning is idempotent: same source tar re-derives the same rows', async () => {
+  test('rerunning is idempotent: the same source transcripts re-derive the same rows', async () => {
     await withWorkDir(async (workDir) => {
-      const tar = await tarFixture();
-      const first = await materializeSessionEventsMart(tar, join(workDir, 'run1'));
-      mkdirSync(join(workDir, 'run1'), { recursive: true });
-      const second = await materializeSessionEventsMart(tar, join(workDir, 'run2'));
+      const first = await materializeSessionEventsMart(FIXTURE_DIR, join(workDir, 'run1'));
+      const second = await materializeSessionEventsMart(FIXTURE_DIR, join(workDir, 'run2'));
       expect(second.sidecar.rowCount).toBe(first.sidecar.rowCount);
 
       const rows1 = await readMartParquet(join(workDir, 'run1', `${MART_NAME}.parquet`));

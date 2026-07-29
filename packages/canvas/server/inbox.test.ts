@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { memBackend } from './blob-store.ts';
-import { projectDirForCwd, transcriptKey } from './transcript-r2.ts';
+import { projectDirForCwd, TranscriptStore, transcriptKey } from './transcript-store.ts';
 import { endTurn, openConversation, placeChatCard } from './inbox.ts';
 import type { PlatformRpc } from './platform-rpc-client.ts';
 import type { TurnEndInput } from '../shared/platform-rpc.ts';
@@ -162,16 +162,15 @@ describe('openConversation', () => {
     // The forwarded row (#261): three fields, arriving on a header — never read from a database.
     const conv = { id: 'conv-open-1', sessionId, ownerRef: null };
 
-    const getter = memBackend();
-    await getter.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
+    const blobs = memBackend();
+    await blobs.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
 
     const projectsDir = mkDir();
     const seeded: Array<[string, string]> = [];
     try {
       const { chatId } = await openConversation(
         {
-          getter,
-          projectsDir,
+          transcripts: new TranscriptStore(blobs, projectsDir),
           cwd,
           chatIdForSession: (sid) => (sid === sessionId ? 'shape:chat_home' : undefined),
           seedChatMeta: (cid, sid) => void seeded.push([cid, sid]),
@@ -194,16 +193,15 @@ describe('openConversation', () => {
     const sessionId = 'sess-open-2';
     const conv = { id: 'conv-open-2', sessionId, ownerRef: null };
 
-    const getter = memBackend();
-    await getter.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
+    const blobs = memBackend();
+    await blobs.put(transcriptKey(sessionId), new TextEncoder().encode('{"type":"user"}\n'));
 
     const projectsDir = mkDir();
     const seeded: Array<[string, string]> = [];
     try {
       const { chatId } = await openConversation(
         {
-          getter,
-          projectsDir,
+          transcripts: new TranscriptStore(blobs, projectsDir),
           cwd: '/workspace/app',
           chatIdForSession: () => undefined,
           seedChatMeta: (cid, sid) => void seeded.push([cid, sid]),
@@ -229,12 +227,12 @@ describe('openConversation', () => {
     const diskPath = join(projectsDir, projectDirForCwd(cwd), `${sessionId}.jsonl`);
     await Bun.write(diskPath, 'LIVE');
 
-    const getter = memBackend();
-    await getter.put(transcriptKey(sessionId), new TextEncoder().encode('STALE'));
+    const blobs = memBackend();
+    await blobs.put(transcriptKey(sessionId), new TextEncoder().encode('STALE'));
 
     try {
       await openConversation(
-        { getter, projectsDir, cwd, chatIdForSession: () => undefined, seedChatMeta: () => {} },
+        { transcripts: new TranscriptStore(blobs, projectsDir), cwd, chatIdForSession: () => undefined, seedChatMeta: () => {} },
         conv,
       );
       // The on-disk copy is authoritative for a warm/live session; restore must be skipped.

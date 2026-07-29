@@ -1058,12 +1058,14 @@ describe('PUT /api/skills/:name — workspace-skill upload (#177)', () => {
 // ungated shell. Its absence must look like every other unknown path — a 404 from the route
 // table — not a 502 from a proxy to a process nobody starts.
 describe('/api/status: the turn-completion artifacts (#357)', () => {
-  test('reports every surviving persist sink, and no custom-handler sink', async () => {
+  // #356 also took the `sessions` sink: a Transcript is a File stored per session, so it is
+  // written by the turn that touched it rather than tarred through this sink.
+  test('reports every surviving persist sink — no custom-handler sink, no sessions sink', async () => {
     const res = await handleRequest(new Request('http://localhost/api/status'));
 
     expect(res.status).toBe(200);
     const { artifacts } = (await res.json()) as { artifacts: Array<{ name: string }> };
-    expect(artifacts.map((a) => a.name).sort()).toEqual(['canvas-dirs', 'chatMeta', 'sessions', 'shared-components', 'skills']);
+    expect(artifacts.map((a) => a.name).sort()).toEqual(['canvas-dirs', 'chatMeta', 'shared-components', 'skills']);
   });
 });
 

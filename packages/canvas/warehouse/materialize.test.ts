@@ -1,17 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 
-import { memBackend } from '../server/blob-store.ts';
+import { type BlobBackend, memBackend } from '../server/blob-store.ts';
+import { transcriptKey } from '../server/transcript-store.ts';
 import { hasDuckdbCli } from './session-events-mart.ts';
 import { materializeWorkspace } from './materialize.ts';
 
 const FIXTURE_DIR = join(import.meta.dir, 'fixtures/sessions');
 
-async function tarFixture(): Promise<Uint8Array> {
-  const proc = Bun.spawn(['tar', '-cf', '-', '-C', FIXTURE_DIR, '.'], { stdout: 'pipe', stderr: 'pipe' });
-  const bytes = new Uint8Array(await new Response(proc.stdout).arrayBuffer());
-  if ((await proc.exited) !== 0) throw new Error(`tar failed: ${await new Response(proc.stderr).text()}`);
-  return bytes;
+/** Seed the fixture sessions as the per-session Transcript objects the container now writes —
+ * one object per session, which is the layout the warehouse reads since #356. */
+async function seedTranscripts(backend: BlobBackend): Promise<void> {
+  for await (const rel of new Bun.Glob('**/*.jsonl').scan({ cwd: FIXTURE_DIR })) {
+    const sessionId = rel.split('/').pop()!.replace('.jsonl', '');
+    await backend.put(transcriptKey(sessionId), await Bun.file(join(FIXTURE_DIR, rel)).bytes());
+  }
 }
 
 // A skip must be impossible to mistake for a pass (no CI runs `bun test` — a dev's local
@@ -25,15 +28,15 @@ if (!duckdbAvailable) {
 }
 const maybeDescribe = duckdbAvailable ? describe : describe.skip;
 
-maybeDescribe('materializeWorkspace — orchestration: sessions.tar in, mart + sidecar out', () => {
-  test('returns null when the workspace has no sessions.tar', async () => {
+maybeDescribe('materializeWorkspace — orchestration: per-session Transcripts in, mart + sidecar out', () => {
+  test('returns null when no session has a stored transcript', async () => {
     const backend = memBackend();
     expect(await materializeWorkspace(backend, 'ws-empty')).toBeNull();
   });
 
   test('writes the mart parquet and its sidecar under workspaces/<ws>/warehouse/', async () => {
     const backend = memBackend();
-    await backend.put('workspaces/ws-1/sessions.tar', await tarFixture());
+    await seedTranscripts(backend);
 
     const result = await materializeWorkspace(backend, 'ws-1');
     expect(result).toEqual({ rowCount: 3 });
