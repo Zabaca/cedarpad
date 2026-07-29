@@ -81,24 +81,24 @@ describe('PUT /api/components/:module — the one write #320 re-opens on this do
   test('a guest WITH guest_edit_source writes an OWN-tier module', async () => {
     const res = await handleRequest(putSource(OWN, guestCapabilities({ guestEditSource: true })));
     expect(res.status).not.toBe(403);
-    expect(readComponent(OWN, CANVAS)).toBe(SOURCE);
+    expect(await readComponent(OWN, CANVAS)).toBe(SOURCE);
   });
 
   // The residual risk #320 accepted is "arbitrary JS in a member's browser, BOUNDED TO THE
   // INVITED CANVAS". A shared module is the workspace's one source, imported by other
   // canvases — writing one leaves the bound, and only the bridge can see the tier.
   test('…but is refused a SHARED-tier module, though the route is identical', async () => {
-    writeComponent(SHARED, '// member source\n', CANVAS);
+    await writeComponent(SHARED, '// member source\n', CANVAS);
     promoteComponent(CANVAS, SHARED);
     const res = await handleRequest(putSource(SHARED, guestCapabilities({ guestEditSource: true })));
     expect(res.status).toBe(403);
-    expect(readComponent(SHARED, CANVAS)).toBe('// member source\n');
+    expect(await readComponent(SHARED, CANVAS)).toBe('// member source\n');
   });
 
   test('a member (no guest headers at all) is unaffected by any of this', async () => {
     const res = await handleRequest(putSource(SHARED, null));
     expect(res.status).not.toBe(403);
-    expect(readComponent(SHARED, CANVAS)).toBe(SOURCE);
+    expect(await readComponent(SHARED, CANVAS)).toBe(SOURCE);
   });
 });
 

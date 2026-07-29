@@ -1,9 +1,20 @@
 import type { Database } from '../web-poc/lib/db/client.ts';
 import { conversations } from '../web-poc/lib/db/index.ts';
 import { findOrCreateConversation } from '../web-poc/lib/db/find-or-create-conversation.ts';
-import { type ConversationStartOutput, PlatformRpcRequest, type TurnEndOutput, verifyPlatformRpcToken } from '../shared/platform-rpc.ts';
+import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
+import {
+  type ComponentReadOutput,
+  type ComponentWriteOutput,
+  type ConversationStartOutput,
+  PlatformRpcRequest,
+  type TurnEndOutput,
+  verifyPlatformRpcToken,
+} from '../shared/platform-rpc.ts';
+import { componentStore } from './component-store.ts';
 import type { Env } from './index.ts';
 import { makeAssignmentPushNotify, type PushSend, webPushSender } from './push-notify.ts';
+import { d1RecordStore } from './record-store.ts';
+import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 
 // The edge half of the platform RPC (ADR-0018). See `shared/platform-rpc.ts` for the contract
 // and for why this is a behavioural surface rather than a data-access one.
@@ -37,7 +48,20 @@ async function authorized(request: Request, env: Env): Promise<boolean> {
   return !!presented && (await verifyPlatformRpcToken(secret, presented));
 }
 
-/** `POST /api/platform-rpc` — the two named operations, nothing else. */
+/**
+ * Ownership for a Record write (ADR-0022): the named canvas must actually belong to the
+ * named workspace. The container says which workspace it is writing for; the EDGE decides
+ * whether that is true, because a payload the container composes cannot be its own
+ * authorization. The legacy `default` canvas has no registry row and is therefore pinned to
+ * the legacy `default` workspace by hand.
+ */
+async function canvasBelongsToWorkspace(db: Database, workspaceId: string, canvasId: string): Promise<boolean> {
+  if (canvasId === DEFAULT_CANVAS_ID) return workspaceId === DEFAULT_WORKSPACE_ID;
+  const row = await canvasRegistry.get(db, canvasId);
+  return row?.workspaceId === workspaceId;
+}
+
+/** `POST /api/platform-rpc` — the named operations, nothing else. */
 export async function handlePlatformRpc(request: Request, env: Env, deps: PlatformRpcDeps): Promise<Response> {
   if (!(await authorized(request, env))) return Response.json({ error: 'unauthorized' }, { status: 401 });
   // Parse at the boundary (CLAUDE.md §7): an unparseable body is a contract violation, not a
@@ -78,6 +102,29 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
     if (outcome === 'done') await conversations.markDone(deps.db, conv.id, summary);
     else await conversations.promote(deps.db, conv.id, question ?? summary);
     return Response.json({ conversationId: conv.id } satisfies TurnEndOutput);
+  }
+
+  // The Record verbs (ADR-0022). Validation already happened in the parse above — the name
+  // rule and the non-empty rule are IN the contract, so a bad payload is a 400 here and never
+  // something the store has to be trusted to catch. What is left is ownership, then the write.
+  if (parsed.data.op === 'component.write') {
+    const { workspaceId, canvasId, userId, name, source } = parsed.data.input;
+    if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
+      return Response.json({ error: 'forbidden' }, { status: 403 });
+    }
+    // Deliberately NOT caught: a store failure must reach the container as a non-2xx so the
+    // tool call fails and the agent retries. Swallowing it here is the 2026-07-29 shape.
+    const { rev } = await componentStore(d1RecordStore(deps.db)).write({ workspaceId, canvasId, name, source, userId });
+    return Response.json({ rev } satisfies ComponentWriteOutput);
+  }
+
+  if (parsed.data.op === 'component.read') {
+    const { workspaceId, canvasId, name } = parsed.data.input;
+    if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
+      return Response.json({ error: 'forbidden' }, { status: 403 });
+    }
+    const source = await componentStore(d1RecordStore(deps.db)).read({ workspaceId, canvasId, name });
+    return Response.json({ source } satisfies ComponentReadOutput);
   }
 
   const { conversationId, question } = parsed.data.input;

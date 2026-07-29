@@ -310,7 +310,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         { module: z.string().describe('Component name, e.g. "KpiCard" (no extension).') },
         async ({ module }) => {
           try {
-            return result({ text: readComponent(module, canvasId) });
+            return result({ text: await readComponent(module, canvasId) });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
           }
@@ -328,7 +328,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         },
         async ({ module, source }) => {
           try {
-            writeComponent(module, source, canvasId);
+            await writeComponent(module, source, canvasId);
             const reloaded = reloadAfterAuthor(module);
             return result({ text: `Wrote ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s)/canvas(es))` : ''}.` });
           } catch (e) {
@@ -346,7 +346,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         },
         async ({ module, old_string, new_string }) => {
           try {
-            editComponent(module, old_string, new_string, canvasId);
+            await editComponent(module, old_string, new_string, canvasId);
             const reloaded = reloadAfterAuthor(module);
             return result({ text: `Edited ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s)/canvas(es))` : ''}.` });
           } catch (e) {

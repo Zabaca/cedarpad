@@ -2,6 +2,8 @@ import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
+import { componentMaterializePlugin } from './server/materialize.ts';
+
 // The workspace-level shared component library (ADR-0007). A component authored in any
 // canvas dir imports a promoted module by reference — `import Foo from '@shared/Foo'` —
 // and `component-loader` dynamic-imports a placed shared instance from the same dir.
@@ -20,7 +22,10 @@ const EDGE = process.env.CANVAS_EDGE ?? 'http://localhost:4513';
 const PORT = Number(process.env.PORT ?? 4510);
 
 export default defineConfig({
-  plugins: [react()],
+  // ADR-0022: a request for an own-tier component module that has no file materializes it
+  // from its Record first, so a recycled container serves it rather than 404ing. Registered
+  // ahead of vite's transform middleware; a miss simply falls through to the next tier.
+  plugins: [react(), componentMaterializePlugin()],
   resolve: {
     // `@shared/<Name>` resolves to the workspace shared library, so a promoted module is
     // imported by reference (one live source) from any per-canvas dir.

@@ -152,8 +152,10 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
 
 A skill is **content-that-asks** — text the model reads. It is never a **capability** (a grant: tools, tokens, scopes, routing). Capabilities stay code-gated; no workspace data may confer one.
 
-**Record vs File — how workspace content persists** _(designed 2026-07-29, not yet built; see
-ADR-0022)_. The dividing question is **who owns the schema**:
+**Record vs File — how workspace content persists** _(ADR-0022; being built by #354. LIVE for
+the **own tier** of Components: write, read and on-demand materialization. The shared tier,
+data files, skills and per-session Transcripts are still Files, in later slices.)_ The dividing
+question is **who owns the schema**:
 
 - A **Record** is content whose shape *we* define, authored only through our own tools —
   **Components**, their **data files**, and **Workspace skills** (already a files-only
@@ -173,8 +175,15 @@ platform code to workspace data and break the **gated-layer rule**. So resolutio
 `own → shared` (rows) `→ base` (the image), and the edge learns the base tier from a
 **build-time manifest** rather than the container's disk.
 
-_Avoid_: "we tar the workspace" (the tar is gone), or treating the filesystem as the durable
-copy — that inversion is what destroyed every own-tier component on 2026-07-29.
+A Record write crosses the container/edge boundary as a **domain verb** on the platform RPC
+(`component.write` / `component.read`), never a generic row op — the RPC is a behavioural
+contract, not a SQL tunnel — and the **edge** validates the name and ownership-checks the
+canvas rather than trusting the container's payload. Ordering is **store first, then disk**:
+a write that cannot be persisted fails the tool call, and the file it then writes is only an
+HMR trigger.
+
+_Avoid_: "we tar the workspace" (the tar is gone for the own tier), or treating the filesystem
+as the durable copy — that inversion is what destroyed every own-tier component on 2026-07-29.
 
 **External MCP** (the agent consuming outside tool servers) follows the same line. The **MCP registry** (code, PR-gated, global) is the catalog of approved remote HTTP servers — the trust decision that cedarpad may talk to an endpoint at all. **Enablement** is per-workspace and is an act of owner consent (v1: paste a per-workspace bearer token at connect time; later: an OAuth dance — a registry entry declares its auth kind). **Token custody is edge-side**: per-workspace credentials live in the worker's DB, are attached as a header on the proxied `/send`, and are used for that turn only — the container and R2 never store them (the ADR-0008 dev-agent git-token pattern). A workspace that hasn't connected a server gets no tools, no token, and no connection attempt; an unreachable server degrades that turn's toolset, never fails the turn. Chat flavor only; dev-agent turns get no external MCP servers.
 
