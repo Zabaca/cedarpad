@@ -7,7 +7,7 @@
 import * as React from 'react';
 
 import { requestFork, setActiveChat } from '../src/agent-link';
-import { EFFORTS, ensureSession, getSnapshot, interrupt, type McpSelection, MODELS, openStream, type PendingImage, send, setEffort, setMcpSelection, setModel, subscribe } from './chat-store';
+import { EFFORTS, ensureSession, getSnapshot, interrupt, type McpSelection, MODELS, openStream, type PendingImage, send, setEffort, setMcpSelection, setModel, subscribe, takeFirstPrompt } from './chat-store';
 import { useGuestScope } from './guest-scope';
 import { MarkdownMessage } from './MarkdownMessage';
 
@@ -153,6 +153,14 @@ export function ChatView({ chatId, title, onDock }: { chatId: string; title: str
   React.useEffect(() => {
     requestAnimationFrame(() => scroller.current?.scrollTo({ top: scroller.current.scrollHeight }));
   }, [snap.items.length, snap.status, snap.busy]);
+  // A chat started from the canvas starter carries its opening prompt armed on the shape
+  // id: fire it as the first turn the moment this card's stream is live. `takeFirstPrompt`
+  // is claim-once, so a remount (or a second card on the same chat) never re-sends it.
+  React.useEffect(() => {
+    if (!snap.subscribed || readOnly) return;
+    const first = takeFirstPrompt(chatId);
+    if (first) void send(chatId, first, []);
+  }, [chatId, snap.subscribed, readOnly]);
 
   const addImageFile = (file: File) => {
     const reader = new FileReader();

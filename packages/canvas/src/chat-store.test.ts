@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { type ChatEvent, isChatFrame } from '../shared/chat-wire.ts';
 import type { ChatSnapshot } from '../shared/chat-store';
-import { beatTargets, connectionTarget, ensureSession, forkSession, getSnapshot, interrupt, isSubscribed, openStream, routeChatFrame, send, setCanvasOverride, setConnectionTarget, subscribe } from '../shared/chat-store';
+import { armFirstPrompt, beatTargets, connectionTarget, ensureSession, forkSession, getSnapshot, interrupt, isSubscribed, openStream, routeChatFrame, send, setCanvasOverride, setConnectionTarget, subscribe, takeFirstPrompt } from '../shared/chat-store';
 import { aliveUrl } from './idle.ts';
 
 /** Serialize a wire frame the way the bridge does: a ChatEvent tagged with its chatId. */
@@ -639,5 +639,32 @@ describe('409 turn_in_flight → re-queue; rehydrate carries busy', () => {
     } finally {
       h.restore();
     }
+  });
+});
+
+// The canvas chat starter (CEDA-189MC6) types the opening prompt BEFORE the chat exists,
+// so it can't send: send() no-ops until the session is subscribed. The prompt is armed
+// against the shape id and claimed by the chat's view once its stream is live.
+describe('armed first prompt', () => {
+  test('an armed prompt is claimed exactly once', () => {
+    armFirstPrompt('chat_armed', 'build me a kanban');
+    expect(takeFirstPrompt('chat_armed')).toBe('build me a kanban');
+    expect(takeFirstPrompt('chat_armed')).toBe(''); // a remount must not re-send it
+  });
+
+  test('a chat with nothing armed claims nothing', () => {
+    expect(takeFirstPrompt('chat_unarmed')).toBe('');
+  });
+
+  test('arming is per chat — one chat never claims another’s prompt', () => {
+    armFirstPrompt('chat_a', 'prompt a');
+    armFirstPrompt('chat_b', 'prompt b');
+    expect(takeFirstPrompt('chat_b')).toBe('prompt b');
+    expect(takeFirstPrompt('chat_a')).toBe('prompt a');
+  });
+
+  test('an empty prompt arms nothing (a bare "New chat" still starts empty)', () => {
+    armFirstPrompt('chat_empty', '');
+    expect(takeFirstPrompt('chat_empty')).toBe('');
   });
 });

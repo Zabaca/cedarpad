@@ -114,6 +114,24 @@ export function setCanvasOverride(chatId: string, canvasId: string): void {
   canvasOverrides.set(chatId, canvasId);
 }
 
+// First prompt (#CEDA-189MC6): the canvas chat-starter types a prompt BEFORE the chat
+// exists, so the prompt can't be sent inline — `send` no-ops until the session is
+// `subscribed`, which only happens once the card mounts and its stream opens. The prompt
+// is armed against the shape id here and claimed by the chat's own view when it connects.
+const firstPrompts = new Map<string, string>();
+
+/** Arm `text` as the first turn of a chat that hasn't opened its stream yet. */
+export function armFirstPrompt(chatId: string, text: string): void {
+  if (text) firstPrompts.set(chatId, text);
+}
+
+/** Claim a chat's armed first prompt (once — a second call returns ''). */
+export function takeFirstPrompt(chatId: string): string {
+  const text = firstPrompts.get(chatId) ?? '';
+  firstPrompts.delete(chatId);
+  return text;
+}
+
 /** Per-chat bridge headers: the pad-URL stamp, superseded by an explicit canvas override. */
 function chatHeaders(chatId: string, headers?: HeadersInit): Record<string, string> {
   const id = canvasOverrides.get(chatId);
