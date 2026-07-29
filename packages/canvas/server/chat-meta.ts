@@ -56,7 +56,7 @@ export class ChatMetaStore {
   }
 
   /** Adapter so chatMeta persists through the ADR-0003 PersistSink like sessions/components/
-   *  custom — one attempt→record-health→log wrapper, visible at /api/status, instead of the
+   *  skills — one attempt→record-health→log wrapper, visible at /api/status, instead of the
    *  ad-hoc `save().catch(log)` calls at each mutation site. No guard: config isn't
    *  data-loss-critical like the canvas. */
   persistable(): Persistable<Record<string, ChatMeta>> {

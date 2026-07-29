@@ -1053,6 +1053,16 @@ describe('PUT /api/skills/:name — workspace-skill upload (#177)', () => {
 // and chat turns drop Write/Edit), so the route only ever served files put there by the
 // ungated shell. Its absence must look like every other unknown path — a 404 from the route
 // table — not a 502 from a proxy to a process nobody starts.
+describe('/api/status: the turn-completion artifacts (#357)', () => {
+  test('reports every surviving persist sink, and no custom-handler sink', async () => {
+    const res = await handleRequest(new Request('http://localhost/api/status'));
+
+    expect(res.status).toBe(200);
+    const { artifacts } = (await res.json()) as { artifacts: Array<{ name: string }> };
+    expect(artifacts.map((a) => a.name).sort()).toEqual(['canvas-dirs', 'chatMeta', 'sessions', 'shared-components', 'skills']);
+  });
+});
+
 describe('/api/custom/* is not a route (#357)', () => {
   test('a handler path 404s exactly like any other unknown /api path', async () => {
     const removed = await handleRequest(new Request('http://localhost/api/custom/hello'));
