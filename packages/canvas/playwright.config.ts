@@ -7,6 +7,9 @@ import { defineConfig, devices } from '@playwright/test';
 const port = process.env.PORT ?? '4510';
 const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${port}`;
 
+/** The one spec that mutates the vite root's filesystem — see the `cold-container` project. */
+const COLD_CONTAINER = /component-cold-container\.spec\.ts/;
+
 export default defineConfig({
   testDir: './e2e/specs',
   globalSetup: './e2e/globalSetup.ts',
@@ -25,7 +28,19 @@ export default defineConfig({
     // seeding that membership writes the live D1 — which the edge Worker holds open. So it
     // happens exactly once, before anything else runs, rather than per test.
     { name: 'setup', testMatch: /.*\.setup\.ts/ },
-    { name: 'chromium', testIgnore: /.*\.setup\.ts/, dependencies: ['setup'], use: { ...devices['Desktop Chrome'] } },
+    { name: 'chromium', testIgnore: [/.*\.setup\.ts/, COLD_CONTAINER], dependencies: ['setup'], use: { ...devices['Desktop Chrome'] } },
+    // Alone, and last. `component-cold-container` deletes a canvas's materialized directory to
+    // simulate a fresh container — and vite answers an unlink under its root by broadcasting a
+    // full reload to EVERY connected client, not just this spec's. Run beside the others and it
+    // reloads their browsers mid-test (it took `canvas-page-memory` down, reproducibly). CI
+    // already runs one worker, so this only bites locally; depending on `chromium` makes the
+    // isolation explicit rather than a property of the worker count.
+    {
+      name: 'cold-container',
+      testMatch: COLD_CONTAINER,
+      dependencies: ['chromium'],
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
   webServer: {
     // The canvas dev stack (vite + bun bridge + edge Worker). Inherits PORT / CANVAS_BRIDGE_PORT

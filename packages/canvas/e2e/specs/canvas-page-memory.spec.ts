@@ -42,6 +42,21 @@ test('a reload returns to the page you were on, with that page camera', async ({
   });
   await page.waitForTimeout(600); // the view is saved on a 200ms debounce off the session listener
 
+  // Wait for the ROOM to hold the new page before reloading. The restore looks the remembered
+  // id up among the pages the document came back with, so a reload that beats the page's own
+  // sync finds nothing to restore and lands on page one — a race this spec lost intermittently
+  // while asserting nothing about the behaviour under test.
+  await expect
+    .poll(
+      async () => {
+        const read = await owner.post(`/api/canvas-sync/${canvasId}/mutate`, { data: { op: 'read' } });
+        const state = (await read.json()) as { pages?: Array<{ id: string }> };
+        return (state.pages ?? []).map((p) => p.id);
+      },
+      { timeout: 15_000 },
+    )
+    .toContain(secondPageId);
+
   await openPad(page, canvasId);
 
   expect(await page.evaluate(() => (window as any).__canvasEditor.getCurrentPageId() as string)).toBe(secondPageId);
