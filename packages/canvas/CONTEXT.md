@@ -156,7 +156,9 @@ A skill is **content-that-asks** — text the model reads. It is never a **capab
 **Records**: **both writable tiers** of Components — own and shared — with write, read,
 version history, restore-to-version, on-demand materialization, promote and adopt (#355, #358,
 #359, #362), their **data files** (#360), and **Workspace skills** (#361); the three-tier
-**listing** is served from Records plus the build-time platform manifest (#363). LIVE as
+**listing** is served from Records plus the build-time platform manifest (#363). The surviving
+workspace content is moved in by the **backfill** (#365) — an allowlist of four files, not a
+directory sweep, because the archives are otherwise e2e residue. LIVE as
 **Files**: per-session **Transcripts** (#356) — that is their permanent home, not a staging
 post.)_ The dividing
 question is **who owns the schema**:
@@ -272,7 +274,10 @@ whichever of N users is calling"). Unset ⇒ **null**, never the `'default'` pla
 Inbox call sites fall back to: a version row is the permanent answer to "who changed this",
 and a name no user query will ever match is a history that *looks* attributed and is not.
 Per-turn attribution needs the edge-attested initiator (`x-inbox-assign`) threaded to the
-authoring tools; it is not built.
+authoring tools; it is not built. The **backfill** (#365) writes with **no** author for the
+same reason: a migration is not a person, and a synthetic id in a column typed as a user id
+would be exactly the history that looks attributed and is not. Its provenance is the version
+row itself — v1, stamped at the time the backfill ran.
 
 **Deleting a canvas is a soft delete; the purge is a separate act.** `DELETE /api/canvases/:id`
 soft-deletes the canvas's **own tier** — Components *and* their data files, which are the same

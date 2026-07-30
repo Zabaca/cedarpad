@@ -42,8 +42,21 @@ held at the time of loss. Verified: none of the three import a sibling data file
 so restoring them does not depend on [#360](https://github.com/Zabaca/cedarpad/issues/360).
 They were own-tier on the Hudson Standup canvas.
 
-| File | Bytes |
-| --- | --- |
-| `AudioMeeting.tsx` | 13,410 |
-| `ChatRoom.tsx` | 16,076 |
-| `ComponentCatalog.tsx` | 6,463 |
+Two of the three are byte-identical to what was recovered. `ComponentCatalog.tsx`
+is **not**: as recovered it fetched `/api/custom/component-catalog`, a custom handler
+destroyed in the same flush and a feature since removed ([#357](https://github.com/Zabaca/cedarpad/issues/357)),
+so restoring those bytes unchanged would have put back a card that throws on mount.
+The handler was a thin proxy, so #365 repointed the two calls at its live targets —
+the now edge-served `GET /api/components` ([#363](https://github.com/Zabaca/cedarpad/issues/363))
+and the bridge's `POST /api/components/place` — and changed nothing else. The diff is
+in the #365 PR; the pre-repoint bytes (6,463) are in this file's git history.
+
+| File | Bytes | sha256 (first 16) | Fidelity |
+| --- | --- | --- | --- |
+| `AudioMeeting.tsx` | 13,410 | `eac89ecdfd6c6d2f` | as recovered |
+| `ChatRoom.tsx` | 16,076 | `96e443566b60eab1` | as recovered |
+| `ComponentCatalog.tsx` | 6,947 | `e68a1618c4351f71` | recovered, then repointed (#365) |
+
+The lengths and hashes above are **pinned** in `packages/canvas/server/record-migration.ts`
+and checked before anything is written: the migration refuses to run against bytes it was
+not shown. Editing a file here without updating that pin fails the check, by design.

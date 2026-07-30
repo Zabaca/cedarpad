@@ -21,7 +21,6 @@ import {
 import { componentCatalog } from './component-catalog.ts';
 import { componentStore } from './component-store.ts';
 import { dataStore } from './data-store.ts';
-import type { Env } from './index.ts';
 import { makeAssignmentPushNotify, type PushSend, webPushSender } from './push-notify.ts';
 import { d1RecordStore } from './record-store.ts';
 import { d1SkillFileStore } from './skill-file-store.ts';
@@ -30,6 +29,16 @@ import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 
 // The edge half of the platform RPC (ADR-0018). See `shared/platform-rpc.ts` for the contract
 // and for why this is a behavioural surface rather than a data-access one.
+
+/**
+ * The slice of the Worker env this route reads. Declared here rather than imported from
+ * `./index.ts` on purpose: the Worker entrypoint typechecks only under the worker tsconfig
+ * (`@cloudflare/workers-types`), so importing its `Env` would drag the whole entrypoint into
+ * the program of any node-side caller that drives this handler directly — which the #365
+ * migration does, deliberately, so that its local dry run goes through the REAL edge handler
+ * rather than a stand-in. `Env` still satisfies this.
+ */
+export type PlatformRpcEnv = { BETTER_AUTH_SECRET?: string; WEB_ORIGIN?: string };
 
 /** The collaborators the operations need. Default-parameter seam (as `bridge.ts` uses), so
  * tests drive the real handler against an in-memory platform data layer. */
@@ -44,7 +53,7 @@ export interface PlatformRpcDeps {
 /** The production wiring, minus the platform-data-layer client (the caller passes the one the
  * edge already builds — this module stays free of `web-poc/worker/runtime.ts`, so a bun test
  * can import it without the workerd-only libSQL client coming along). */
-export function platformRpcDeps(env: Env, db: Database): PlatformRpcDeps {
+export function platformRpcDeps(env: PlatformRpcEnv, db: Database): PlatformRpcDeps {
   return {
     db,
     send: webPushSender(env as unknown as Record<string, string | undefined>),
@@ -53,7 +62,7 @@ export function platformRpcDeps(env: Env, db: Database): PlatformRpcDeps {
 }
 
 /** Bearer check: the caller must present the token derived from the shared trust root. */
-async function authorized(request: Request, env: Env): Promise<boolean> {
+async function authorized(request: Request, env: PlatformRpcEnv): Promise<boolean> {
   const secret = env.BETTER_AUTH_SECRET;
   if (!secret) return false;
   const presented = request.headers.get('authorization')?.replace(/^Bearer /, '');
@@ -105,7 +114,7 @@ async function workspaceExists(db: Database, workspaceId: string): Promise<boole
 const tierCanvas = (tier: 'own' | 'shared', canvasId: string): string | null => (tier === 'shared' ? null : canvasId);
 
 /** `POST /api/platform-rpc` — the named operations, nothing else. */
-export async function handlePlatformRpc(request: Request, env: Env, deps: PlatformRpcDeps): Promise<Response> {
+export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, deps: PlatformRpcDeps): Promise<Response> {
   if (!(await authorized(request, env))) return Response.json({ error: 'unauthorized' }, { status: 401 });
   // Parse at the boundary (CLAUDE.md §7): an unparseable body is a contract violation, not a
   // dispatchable operation.
