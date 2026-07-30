@@ -64,6 +64,11 @@ export function ComponentsStage({ workspaceId }: { workspaceId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  // Which row is showing a live preview. ON DEMAND, one at a time, and never on load:
+  // components are compiled by vite IN THE CONTAINER, so rendering one wakes it. Browsing
+  // this list has to stay free — a grid of live thumbnails would wake and compile all of
+  // them to draw pictures nobody asked for.
+  const [preview, setPreview] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -136,6 +141,17 @@ export function ComponentsStage({ workspaceId }: { workspaceId: string }) {
                 >
                   {e.instances.length} placed
                 </button>
+                {/* `unresolved` has no source to compile, so there is nothing to preview. */}
+                {e.tier !== 'unresolved' && (
+                  <button
+                    type="button"
+                    className="cmp-preview"
+                    onClick={() => setPreview(preview === key ? null : key)}
+                    title="Render this component (wakes the workspace container)"
+                  >
+                    {preview === key ? 'Hide' : 'Preview'}
+                  </button>
+                )}
                 {/* Built-ins ship with the image, not as workspace rows — there is nothing
                     here that could delete one, so offering the button would only ever 400. */}
                 {e.tier !== 'base' && (
@@ -144,6 +160,22 @@ export function ComponentsStage({ workspaceId }: { workspaceId: string }) {
                   </button>
                 )}
               </div>
+              {preview === key && (
+                <div className="cmp-preview-frame">
+                  {/* The pad renders it (`?preview=`), because vite in the container is what
+                      compiles a component — the edge cannot. An own-tier Component previews
+                      on ITS canvas; shared and base resolve the same from any, so those use
+                      the default one. That means the frame resolves the module exactly as a
+                      card on that canvas would. */}
+                  <iframe
+                    title={`${e.name} preview`}
+                    src={`/w/${encodeURIComponent(workspaceId)}/canvas/${encodeURIComponent(e.canvasId ?? 'default')}/pad?preview=${encodeURIComponent(e.name)}`}
+                  />
+                  <div className="cmp-preview-note">
+                    Rendered with no placement data — a component that expects props shows empty or errors here.
+                  </div>
+                </div>
+              )}
               {open === key && (
                 <ul className="cmp-instances">
                   {e.instances.map((i) => (

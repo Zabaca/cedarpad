@@ -20,6 +20,8 @@ import { ComponentGallery } from './ComponentGallery';
 import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './SidePanel';
 import { createCanvasAssetStore, syncUri } from './canvas-sync';
 import { cameraKey, pageToSend, restorablePage } from './current-page';
+import { previewModule } from './component-preview';
+import { ComponentPreview } from './ComponentPreview';
 import { wireCanvasStream } from './canvas-stream';
 import { createCanvasTLSchema } from './tl-schema';
 import { createCanvasUserStore } from './presence';
@@ -218,7 +220,18 @@ function freeSpot(editor: Editor, x: number, y: number): { x: number; y: number 
   return { x, y: ty };
 }
 
+// Preview mode (`?preview=<Module>`): render that one module and nothing else — no tldraw,
+// no room, no chat. It is the Components stage asking "what does this look like", and
+// mounting a canvas to answer that would open a socket for nothing.
+//
+// Resolved at MODULE scope, not in a hook: the URL cannot change without a reload, and an
+// early return inside `App` would sit ahead of its other hooks — legal only by accident,
+// because the condition happens never to change between renders.
+const PREVIEW_MODULE = typeof window === 'undefined' ? null : previewModule(window.location.search);
+
 export default function App() {
+  if (PREVIEW_MODULE) return <ComponentPreview module={PREVIEW_MODULE} canvasId={activeCanvasId()} />;
+
   // Component-scoped guest (PRD #221)? Resolve BEFORE mounting tldraw: that guest renders
   // one component fullscreen and nothing else. undefined = probe in flight (render nothing
   // for a beat); null/canvas-guest/member = the normal canvas below.
