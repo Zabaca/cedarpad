@@ -86,7 +86,7 @@ export interface McpToolDeps {
    * serveWorkspace + coordsForWorkspace in worker/mcp-server.ts; stubbed in tests. */
   proxySend: (workspaceId: string, chatId: string, message: string, canvasId?: string) => Promise<Response>;
   /** Proxy a skill upload to the bridge's PUT /api/skills/:name — the bridge is the single
-   * writer of the workspace skills tree (the edge never writes skills.tar itself). */
+   * writer of the workspace skills tree (the edge never renders skill files itself). */
   proxySkill: (workspaceId: string, name: string, input: UploadSkillFiles) => Promise<Response>;
   /** Generic bridge proxy (MCP full access): a request into the workspace's container
    * (wakes it if asleep). Wired to serveWorkspace + coordsForWorkspace in mcp-server.ts. */

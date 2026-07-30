@@ -231,6 +231,21 @@ describe('TranscriptStore', () => {
     expect(await store.materialize('sess-new', '/workspace/app')).toBeNull();
   });
 
+  // FAIL-OPEN MUST NOT RETURN (#366). With the tarball sinks retired this is the ONLY restore
+  // path left in the container, and it is the one place the 2026-07-29 root cause could grow
+  // back: a read that failed, was swallowed, and became the new truth. "Nowhere" (the test
+  // above) and "the read failed" are different answers and must stay different — a storage
+  // failure has to reach the turn, which fails visibly, rather than resuming a conversation
+  // with no history and calling that a fresh session.
+  test('a storage failure while materializing THROWS — a failed read never passes as an empty history', async () => {
+    await withProjectsDir(async (projectsDir) => {
+      const blobs = { ...memBackend(), get: async () => { throw new Error('R2 unreachable'); } };
+      const store = new TranscriptStore(blobs, projectsDir);
+
+      expect(store.materialize('sess-mine', '/workspace/app')).rejects.toThrow('R2 unreachable');
+    });
+  });
+
   // The warehouse (ADR-0017 mart_session_events) used to read the whole sessions.tar; with one
   // object per session its source is this listing.
   test('listSessions names every stored session, and nothing else in the bucket', async () => {
