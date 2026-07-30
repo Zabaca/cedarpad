@@ -233,10 +233,12 @@ async function materializeInto(
   module: string,
   canvasId: string,
   records: ComponentRecords | null,
+  seen: Set<string> = new Set(),
 ): Promise<string | null> {
   if (!records) return null;
   const dir = tier === 'shared' ? SHARED_DIR : ownDir(canvasId);
   const file = fileIn(dir, module); // validates the name before we ask anything
+  seen.add(`${tier}/${module}`);
   const source = await records.read(tier, canvasId, module);
   if (source === null) return null;
   mkdirSync(dir, { recursive: true });
@@ -246,6 +248,15 @@ async function materializeInto(
   for (const sibling of dataSiblingImports(source)) {
     if (existsSync(`${ownDir(canvasId)}${sibling}`)) continue;
     await materializeDataFile(sibling, canvasId, records);
+  }
+  // …and the same for the MODULES it imports, for exactly the same reason. A Component that
+  // nothing places — a kit of shared bits its neighbours import — is never requested over
+  // HTTP, so the middleware never materializes it: it can only arrive with its importer.
+  for (const sibling of componentSiblingImports(source, tier)) {
+    if (seen.has(`${sibling.tier}/${sibling.module}`)) continue;
+    const dir = sibling.tier === 'shared' ? SHARED_DIR : ownDir(canvasId);
+    if (existsSync(`${dir}${sibling.module}.tsx`)) continue;
+    await materializeInto(sibling.tier, sibling.module, canvasId, records, seen);
   }
   return source;
 }
@@ -473,6 +484,24 @@ export async function materializeDataFile(
 function dataSiblingImports(source: string): string[] {
   const re = /['"]\.\/([A-Za-z][A-Za-z0-9_-]*\.(?:json|csv|txt|md))(?:\?[^'"]*)?['"]/g;
   return [...new Set([...source.matchAll(re)].map((m) => m[1] as string))];
+}
+
+/**
+ * Pure: the Component modules a source imports, and the tier each resolves in — `./Kit` in the
+ * importer's own tier, `@shared/Kit` in the workspace library (the vite alias).
+ *
+ * The data-sibling rule applied to code. A relative import is resolved from disk during
+ * transform, so a kit module that is only ever imported — never placed on a canvas, so never
+ * fetched, so never materialized by the middleware — has to travel with whatever imports it.
+ */
+function componentSiblingImports(source: string, tier: ComponentTier): Array<{ tier: ComponentTier; module: string }> {
+  const own = /['"]\.\/([A-Za-z][A-Za-z0-9_-]*)(?:\.tsx)?['"]/g;
+  const shared = /['"]@shared\/([A-Za-z][A-Za-z0-9_-]*)(?:\.tsx)?['"]/g;
+  const found = [
+    ...[...source.matchAll(own)].map((m) => ({ tier, module: m[1] as string })),
+    ...[...source.matchAll(shared)].map((m) => ({ tier: 'shared' as const, module: m[1] as string })),
+  ];
+  return [...new Map(found.map((s) => [`${s.tier}/${s.module}`, s])).values()];
 }
 
 /** Per-line edit: replace a unique `oldStr` occurrence with `newStr`. Reads through

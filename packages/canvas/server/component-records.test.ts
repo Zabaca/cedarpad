@@ -470,6 +470,58 @@ describe('a Component materializes together with the data files it imports', () 
   });
 });
 
+describe('a Component materializes together with the Components it imports', () => {
+  // The 2026-07-30 breakage: every card on a canvas came back "Failed to fetch dynamically
+  // imported module" after a deploy. The cards' Records were intact — what was missing was the
+  // KIT each of them imported (`./FredrinComputeKit`), a Component nothing places, so nothing
+  // ever requested it over HTTP and nothing materialized it. Same mechanism as the data
+  // siblings above: vite resolves a relative import against the FILESYSTEM.
+  test('materializing a Component brings the sibling module it imports with it', async () => {
+    const { records } = fakeRecords();
+    await writeComponent('Kit', 'export const T = 1;', CANVAS, records);
+    await writeComponent('Card', 'import { T } from "./Kit";\n', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+
+    await materializeComponent('Card', CANVAS, records);
+
+    expect(readFileSync(filePath('Kit'), 'utf8')).toBe('export const T = 1;');
+  });
+
+  test('an `@shared/` import is followed into the workspace library', async () => {
+    const { records } = fakeRecords();
+    await writeComponent('Tmp_RecordsShared', 'export const T = 2;', CANVAS, records);
+    await promoteComponent(CANVAS, 'Tmp_RecordsShared', records);
+    await writeComponent('Card', 'import { T } from "@shared/Tmp_RecordsShared";\n', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+    rmSync(sharedPath('Tmp_RecordsShared'));
+
+    await materializeComponent('Card', CANVAS, records);
+
+    expect(readFileSync(sharedPath('Tmp_RecordsShared'), 'utf8')).toBe('export const T = 2;');
+  });
+
+  test('two Components that import each other terminate instead of recursing forever', async () => {
+    const { records } = fakeRecords();
+    await writeComponent('Kit', 'import { C } from "./Card";\nexport const T = 1;', CANVAS, records);
+    await writeComponent('Card', 'import { T } from "./Kit";\nexport const C = 2;', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+
+    await materializeComponent('Card', CANVAS, records);
+
+    expect(readFileSync(filePath('Kit'), 'utf8')).toContain('export const T = 1;');
+  });
+
+  test('an import of a Component the store has never held still materializes the importer', async () => {
+    // The base tier is image code, not a Record, so `./`-importing a platform module reads as a
+    // miss here — and must stay a miss, not an error that keeps the importer off disk.
+    const { records } = fakeRecords();
+    await writeComponent('Card', 'import { T } from "./Ghost";\n', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+
+    expect(await materializeComponent('Card', CANVAS, records)).toContain('./Ghost');
+  });
+});
+
 describe('a Component can be put back the way it was', () => {
   // User story 2, and the slice that would have made 2026-07-29 a five-minute fix: recovery
   // through the same door as every other Component action, rather than production credentials
