@@ -225,12 +225,18 @@ export function attachBatchToChat(
   if (!chat) return made;
   const positioned = opts.preservePosition ? made : tuckBesideChat(store, made, chatId);
   const linked = [...positioned, ...linkRootsToChat(positioned, chatId)];
-  // The turn's shapes land on the page the chat card is on. The agent never chooses a
-  // page and has no tool to name one: the chat IS the location, the same way it is
-  // already the anchor the batch is positioned against. A batch tucked beside a card on
-  // page two that landed on page one would be positioned relative to something it cannot
-  // see. `chat.page` is undefined on a single-page canvas, which leaves the batch exactly
-  // as it was before pages existed.
+  // The turn's shapes land on the page the chat card is on: the chat IS the location, the
+  // same way it is already the anchor the batch is positioned against. A batch tucked beside
+  // a card on page two that landed on page one would be positioned relative to something it
+  // cannot see. `chat.page` is undefined on a single-page canvas, which leaves the batch
+  // exactly as it was before pages existed.
+  //
+  // The agent CAN now name a page (`list_pages`/`select_page`, and a `page` on a written
+  // shape), which it could not when this rule was written — but the rule is unchanged and
+  // deliberately so. `select_page` moves a VIEW; it does not move the conversation, and it
+  // must not silently redirect where this batch lands. Writing to another page stays an
+  // explicit per-shape `page`, so "where the agent drew" is never a consequence of what the
+  // human happened to be looking at when the turn ran.
   return chat.page ? linked.map((s) => ({ ...s, page: chat.page })) : linked;
 }
 

@@ -106,10 +106,11 @@ its creator); MCP enforces the same rules via the token's user. _Avoid_: an
 rows (derive it at read time via the canvas edge), or treating private as an ACL
 (it is a binary creator-only flag, not per-member sharing).
 
-Containment: **workspace → canvas → shapes**, with **chat** shapes living on the
+Containment: **workspace → canvas → page → shapes**, with **chat** shapes living on the
 canvas like any other shape; a chat's `ChatMeta` and transcript live *beside* the canvas,
-server-owned, not inside canvas state. (The tldraw **pages** layer was removed — see
-[ADR 0007](../../docs/adr/0007-workspace-platform-topology.md).)
+server-owned, not inside canvas state. (The tldraw **pages** layer was removed under
+[ADR 0007](../../docs/adr/0007-workspace-platform-topology.md) and CAME BACK with the real
+`TLSocketRoom` in #344 — tldraw owns page records again, so the canvas does have pages.)
 
 **Console** _([ADR-0021](../../docs/adr/0021-the-console-is-an-operator-surface.md),
 designed 2026-07-29, not yet built)_: the **owner-only** drop-down terminal (Quake-style,
@@ -387,13 +388,39 @@ A `CanvasShape` is one of:
   `orderByParent`). Re-parenting an existing shape into a frame on another client is
   not yet propagated over sync (the create path on reload is correct; live
   cross-client re-parent is deferred).
-- **A canvas has no pages.** A top-level shape carries no tldraw parent (tldraw
-  parents it to the canvas itself); only a frame child carries one. Canvases
-  persisted before the pages layer was removed still hold a `pages` array and a
-  per-shape `pageId`; both are **dropped in `CanvasPersistence.load()`**, the one place
-  a stored blob becomes a `CanvasState`, so no R2 migration is needed. A `pageId` that
-  survived into the live store would defeat `canon()` change detection for that shape
-  on every sync frame — which is why the strip is at the boundary and not left implicit.
+- **A canvas HAS pages** (#344). Every shape may carry an optional **`page`** (a tldraw
+  `page:...` id), and the read path reports the canvas's pages as an ordered
+  `CanvasState.pages` of `{id, name}` (`worker/canvas-mutate.ts`). Two rules carry the
+  feature:
+  - **Absent means the FIRST page.** `pages[0]` is the page the switcher opens on, so a
+    shape with no `page` reads and writes exactly as it did before pages existed — which
+    is nearly every shape on nearly every canvas. A shape's page is resolved by walking up
+    through any containing frames, since a framed shape's `parentId` is the frame.
+  - **An unknown page is REFUSED, never redirected.** Quietly landing a write on the
+    default page is the failure that looks like data loss: the human asked for page 3, the
+    agent said it wrote, and nothing is there.
+  Page NAMES are the human's — neither stable nor unique — so resolving one to an id is
+  `shared/canvas-pages.ts`, at the tool layer, and an ambiguous name is refused with the
+  candidates rather than resolved to the first match. The room itself speaks ids only.
+- **Which page you are LOOKING at is not document state.** It is per-client tldraw
+  instance state, so it cannot travel over sync. `select_page` (both agent surfaces) moves
+  one person's editor over the bridge's SSE plane, addressed by the edge-stamped
+  `x-canvas-viewer` — **presentation only, never an authorization input**: writes still
+  authorize as `CONTAINER_PRINCIPAL`, and the bridge stays identity-blind for every other
+  purpose. Absent viewer (a guest, whose per-browser id never reaches the edge; a cron
+  kick; any dev-agent run) means the capability is **withheld**, not widened — a fan-out
+  with no viewer moves nobody, never everybody. _Avoid_: reading that header to decide
+  whether something is allowed, and any "move everyone" fallback.
+  - **The edge is its only writer, on every path.** It is set on a send and on the canvas
+    stream subscribe, and **set-or-DELETED** everywhere else — in `worker/index.ts` for the
+    authenticated and guest paths, and again in `worker/inbox-bridge.ts`, which returns
+    *before* index.ts's strip block. Miss one and a member can aim an agent at a
+    colleague's screen.
+  - **The result counts DELIVERY, not application** (`asked`, not `moved`): the leg is
+    fire-and-forget and a browser declines a page it has not synced yet. Only `asked: 0`
+    is certain. Agent-facing wording says "asked … to switch", never "switched".
+  - **Absent pages ≠ one page.** `CanvasState.pages` is optional, and a store that reports
+    none has said *nothing* — never render that as "this canvas has a single page".
 - `id` is shared verbatim with the tldraw shape id (`shape:...`). Agent-created
   ids are minted `shape:agent_N`.
 - `color` ∈ `black, grey, blue, green, red, orange, yellow, violet` (a subset of

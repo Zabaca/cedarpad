@@ -83,8 +83,10 @@ export async function openRemoteCanvasStore(
   return {
     getState(): CanvasState {
       // The room's clock, not the mirror's local counter: the version an agent observes
-      // has to be the one the room and every browser client agree on.
-      return live(() => ({ version: state.version, shapes: mirror.getState().shapes }));
+      // has to be the one the room and every browser client agree on. Pages come from the
+      // room's answer for the same reason and one more: the mirror is `createStore`, which
+      // has no page concept, so rebuilding it from `next.shapes` would drop them.
+      return live(() => ({ version: state.version, shapes: mirror.getState().shapes, pages: state.pages }));
     },
     upsert(shapes: CanvasShape[]): number {
       return live(() => {

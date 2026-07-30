@@ -104,11 +104,20 @@ export const CanvasMutation = z.discriminatedUnion('op', [
 ]);
 export type CanvasMutation = z.infer<typeof CanvasMutation>;
 
+/** The canvas's pages, ordered as the page switcher shows them. Names are tldraw's, so
+ *  they are neither unique nor id-like — resolving one to an id is `shared/canvas-pages.ts`,
+ *  never this module: the room speaks ids only. */
+export const CanvasPageSchema = z.object({ id: Id, name: z.string() });
+
 /** Every op answers with the room's post-state, so the caller never needs a second
  *  round trip to refresh its mirror. `version` is the room's document clock. */
 export const CanvasMutationResult = z.object({
   version: z.number(),
   shapes: z.array(CanvasShapeSchema),
+  // Optional on the WIRE for the same reason it is optional on `CanvasState`, and for one
+  // more: a room answered by an older worker has no `pages` key, and a read must not start
+  // failing to parse mid-rollout.
+  pages: z.array(CanvasPageSchema).optional(),
 });
 export type CanvasMutationResult = z.infer<typeof CanvasMutationResult>;
 

@@ -20,6 +20,8 @@ import {
   DeleteShapesInput,
   ListCanvasesInput,
   ListComponentsInput,
+  ListPagesInput,
+  SelectPageInput,
   ListInboxInput,
   PlaceComponentInput,
   ReadCanvasInput,
@@ -218,6 +220,24 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         inputSchema: ReadCanvasInput.shape,
       },
       async (input) => text(await tools.readCanvas(input)),
+    );
+    server.registerTool(
+      'list_pages',
+      {
+        description:
+          "List a canvas's pages, in the order the page switcher shows them. The first is the DEFAULT page — where a shape written with no page lands. Call this before select_page (or before writing to a named page), since page names are the human's and neither stable nor unique.",
+        inputSchema: ListPagesInput.shape,
+      },
+      async (input) => text(await tools.listPages(input)),
+    );
+    server.registerTool(
+      'select_page',
+      {
+        description:
+          "Ask YOUR OWN open tabs on this canvas to switch to a page — takes the page name as the human says it, or a page: id. This changes only what you are looking at: it does not modify the canvas, and it does not move anyone else's screen. `asked` counts the views the request reached, NOT views confirmed changed, so report it as asking rather than as done; asked: 0 means you have no tab open on this canvas and nobody saw anything at all.",
+        inputSchema: SelectPageInput.shape,
+      },
+      async (input) => text(await tools.selectPage(input)),
     );
     server.registerTool(
       'list_components',

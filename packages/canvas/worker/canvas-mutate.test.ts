@@ -149,6 +149,48 @@ describe('pages', () => {
   });
 });
 
+// Until now the read path knew a page's id but threw its NAME away, which left every
+// caller able to write to a page it had no way to name. A page reference from a human is
+// a name ("the Roadmap page"), so the name has to survive the read for anything to
+// resolve it.
+describe('pages are readable, by name', () => {
+  test('a fresh canvas reports its one page, named as the switcher shows it', async () => {
+    const read = await applyMutation(room(), { op: 'read' });
+    expect(read.pages).toEqual([{ id: 'page:page', name: 'Page 1' }]);
+  });
+
+  test('every page is reported, in the switcher\'s own order rather than record order', async () => {
+    const r = room();
+    // Put the LATER page in first: ordering must come from the fractional index, not from
+    // the order the records happen to sit in the snapshot.
+    await r.updateStore((ctx) => {
+      ctx.put({ id: 'page:z', typeName: 'page', name: 'Zebra', index: 'a3', meta: {} } as never);
+      ctx.put({ id: 'page:m', typeName: 'page', name: 'Middle', index: 'a2', meta: {} } as never);
+    });
+    expect((await applyMutation(r, { op: 'read' })).pages).toEqual([
+      { id: 'page:page', name: 'Page 1' },
+      { id: 'page:m', name: 'Middle' },
+      { id: 'page:z', name: 'Zebra' },
+    ]);
+  });
+
+  test('pages[0] is the page an omitted `page` field means', async () => {
+    const r = room();
+    await r.updateStore((ctx) => ctx.put({ id: 'page:two', typeName: 'page', name: 'Page 2', index: 'a2', meta: {} } as never));
+    const after = await applyMutation(r, { op: 'upsert', shapes: [rect] });
+    // The shape named no page, so it reads back with none — and the page it actually
+    // landed on is the one the caller can now identify without guessing.
+    expect(after.shapes[0]).not.toHaveProperty('page');
+    expect(after.pages?.[0]?.id).toBe('page:page');
+  });
+
+  test('a write answers with the pages too, so a caller never needs a second read', async () => {
+    const after = await applyMutation(room(), { op: 'upsert', shapes: [rect] });
+    expect(after.pages).toEqual([{ id: 'page:page', name: 'Page 1' }]);
+    expect(CanvasMutationResult.safeParse(after).success).toBe(true);
+  });
+});
+
 // Guideline 7: the contract is the boundary, and a field the schema does not name is
 // STRIPPED there — silently, and only in the process that crosses it. Every unit test
 // above would still pass with `page` missing from the zod schema, because they call
@@ -162,5 +204,15 @@ describe('the page survives the contract', () => {
   test('and a result carrying a paged shape parses back', () => {
     const parsed = CanvasMutationResult.parse({ version: 1, shapes: [{ ...rect, page: 'page:two' }] });
     expect(parsed.shapes[0]?.page).toBe('page:two');
+  });
+
+  test('the page LIST survives the contract as well as the per-shape page', () => {
+    const parsed = CanvasMutationResult.parse({ version: 1, shapes: [], pages: [{ id: 'page:two', name: 'Roadmap' }] });
+    expect(parsed.pages).toEqual([{ id: 'page:two', name: 'Roadmap' }]);
+  });
+
+  test('a result from a worker that predates pages still parses', () => {
+    // `pages` is optional on the wire so a read does not start failing mid-rollout.
+    expect(CanvasMutationResult.parse({ version: 1, shapes: [] }).pages).toBeUndefined();
   });
 });

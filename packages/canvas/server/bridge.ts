@@ -20,7 +20,7 @@ import {
   skillsKey,
 } from './blob-store.ts';
 import { refuseEmptyTarball } from './persist-guards.ts';
-import { type ScreenshotChannel, createScreenshotChannels } from './screenshot-channel.ts';
+import { type CanvasSubscriber, type ScreenshotChannel, createScreenshotChannels } from './screenshot-channel.ts';
 import { createChatHub } from './chat-hub.ts';
 import { sseComment } from './sse.ts';
 import { ChatMetaStore } from './chat-meta.ts';
@@ -35,6 +35,7 @@ import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
   BRIDGE_ROUTES,
   CANVAS_ID_HEADER,
+  CANVAS_VIEWER_HEADER,
   CreateShapesBody,
   DEV_AGENT_GIT_TOKEN_HEADER,
   DEV_AGENT_REPO_HEADER,
@@ -50,6 +51,7 @@ import {
   LIVEKIT_API_SECRET_HEADER,
   LIVEKIT_URL_HEADER,
   PlaceComponentBody,
+  SelectPageBody,
   UpdateShapesBody,
   WriteComponentBody,
   WriteDataBody,
@@ -271,13 +273,16 @@ async function readBody(req: Request): Promise<Record<string, unknown>> {
 /** The canvas SSE stream, reduced to the screenshot round-trip (#297): the document travels
  *  over the sync WebSocket now, so this carries `screenshot` frames and nothing else. It
  *  opens with a comment frame rather than a state prime — there is no state here to prime. */
-function canvasStream(channel: ScreenshotChannel): Response {
+function canvasStream(channel: ScreenshotChannel, viewer: string | null): Response {
   const clients = channel.clients;
-  let self: ReadableStreamDefaultController;
+  let self: CanvasSubscriber;
   const stream = new ReadableStream({
     start(controller) {
-      self = controller;
-      clients.add(controller);
+      // The subscriber record — not the bare controller — is what the set holds now, so a
+      // `page` frame can be addressed at one person. `viewer` is whatever the edge stamped
+      // and null for a guest; see CANVAS_VIEWER_HEADER.
+      self = { controller, viewer };
+      clients.add(self);
       markAlive();
       ensureReaper();
       controller.enqueue(sseComment('subscribed')); // opens + flushes the stream
@@ -569,6 +574,7 @@ const turnDeps: TurnDeps = {
   flavor: turnFlavor,
   // The agent's view_canvas round-trip, over the canvas's screenshot SSE channel (#297).
   requestScreenshot: (canvasId) => screenshotChannels.get(canvasId).requestScreenshot,
+  selectPage: (canvasId) => screenshotChannels.get(canvasId).selectPage,
   // #310: the chat agent draws into the room, like every other canvas write since #305.
   // Indirected through the mutable `openCanvasRoom` so `setCanvasRoomOpener` swaps it in tests.
   openCanvasRoom: (canvasId) => openCanvasRoom(canvasId),
@@ -702,8 +708,8 @@ export function setTurnRunChat(fn: TurnDeps['runChat']): () => void {
  * Conversation (an inbox reply must never link a chat to the Default canvas by default).
  * `devAgentGitToken` (edge-minted, per dev-agent send) arms the `open_pr` tool for THIS turn
  * only — see prepareDevAgentTurn. The lifecycle itself lives in `server/turn.ts`. */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string, mcpTokens?: Record<string, string>, devAgentRepo?: string, assignTo?: string, mcpDisallowed?: string[]): void {
-  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo, mcpDisallowedTools: mcpDisallowed }, turnDeps);
+function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string, mcpTokens?: Record<string, string>, devAgentRepo?: string, assignTo?: string, mcpDisallowed?: string[], viewer?: string): void {
+  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo, mcpDisallowedTools: mcpDisallowed, viewer }, turnDeps);
 }
 
 // The dev-agent run's prompt — this IS the workflow now (ADR-0011: the harness dissolved
@@ -913,7 +919,19 @@ export async function handleRequest(req: Request): Promise<Response> {
     // The screenshot channel (#297): `GET /api/canvas/stream` is no longer part of the sync
     // plane — it carries the agent's view_canvas ask and nothing else.
     if (path === '/api/canvas/stream' && req.method === 'GET') {
-      return canvasStream(screenshotChannels.get(canvasIdFrom(req, url)));
+      return canvasStream(screenshotChannels.get(canvasIdFrom(req, url)), req.headers.get(CANVAS_VIEWER_HEADER));
+    }
+    // Ask ONE viewer's editor to switch page (never a document mutation — see SelectPageBody).
+    // The viewer is the edge-stamped header, never the body: a client that could name its
+    // own target could move somebody else's screen. Absent header ⇒ nobody is targeted,
+    // and `asked: 0` says so rather than quietly reading as success.
+    if (path === BRIDGE_ROUTES.selectPage && req.method === 'POST') {
+      const parsed = SelectPageBody.safeParse(await readBody(req));
+      if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
+      const asked = screenshotChannels
+        .get(canvasIdFrom(req, url))
+        .selectPage(parsed.data.pageId, req.headers.get(CANVAS_VIEWER_HEADER));
+      return json({ asked });
     }
     if (path === BRIDGE_ROUTES.deleteShapes && req.method === 'POST') {
       const parsed = DeleteShapesBody.safeParse(await readBody(req));
@@ -1184,6 +1202,10 @@ export async function handleRequest(req: Request): Promise<Response> {
       // The send's HUMAN INITIATOR (shared inbox, CONTEXT.md), stamped by the edge proxies:
       // assigns the Conversation at birth / claims-if-unassigned on a reply.
       const assignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
+      // WHOSE SCREEN this turn may move (presentation only — see CANVAS_VIEWER_HEADER). Read
+      // separately from assignTo even though the edge stamps both from the same session: they
+      // answer different questions, and only this one is allowed near a person's viewport.
+      const viewer = req.headers.get(CANVAS_VIEWER_HEADER) ?? undefined;
       // Belt on top of the edge gate: a guest turn is a PLAIN chat turn on the link's canvas —
       // never a dev-agent turn, never armed with the workspace's external-MCP tokens.
       dispatchChatTurn(
@@ -1200,6 +1222,11 @@ export async function handleRequest(req: Request): Promise<Response> {
         guestCanvas ? undefined : devAgentRepo,
         assignTo,
         guestCanvas ? undefined : mcpDisallowedTools(mcpSelection),
+        // A guest is never a select_page target: their per-browser identity lives in
+        // localStorage and never reaches the edge, so there is no id here to match a
+        // subscriber against. Explicit rather than incidental — it must stay undefined
+        // even if the edge later learns to stamp something for guests.
+        guestCanvas ? undefined : viewer,
       );
       return json({ ok: true }, 202);
     }

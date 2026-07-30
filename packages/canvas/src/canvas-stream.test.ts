@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import { respondToScreenshot } from './canvas-stream.ts';
+import { respondToScreenshot, respondToSelectPage } from './canvas-stream.ts';
 
 describe('respondToScreenshot', () => {
   test('renders the canvas and replies with the data URL, tagged with the request id', async () => {
@@ -44,5 +44,34 @@ describe('respondToScreenshot', () => {
     await respondToScreenshot('not json', async () => 'x', () => replies.push(1));
     await respondToScreenshot(JSON.stringify({ nope: true }), async () => 'x', () => replies.push(1));
     expect(replies).toEqual([]);
+  });
+});
+
+// The second rider (`select_page`). Unlike the screenshot leg nothing blocks on this, so
+// the tests are about what it must NOT do: act on a frame it cannot trust, or on a page
+// this client has not synced yet.
+describe('respondToSelectPage', () => {
+  const has = (ids: string[]) => (id: string) => ids.includes(id);
+
+  test('switches to the page the bridge named', () => {
+    const moved: string[] = [];
+    respondToSelectPage(JSON.stringify({ pageId: 'page:two' }), (p) => moved.push(p), has(['page:page', 'page:two']));
+    expect(moved).toEqual(['page:two']);
+  });
+
+  // The frame and the tldraw store arrive over DIFFERENT transports (this SSE stream and
+  // the sync socket), so a page created moments ago can be named before this client has
+  // it. Calling setCurrentPage on an unknown id is what throws inside tldraw.
+  test('ignores a page this client has not synced yet rather than throwing', () => {
+    const moved: string[] = [];
+    expect(() => respondToSelectPage(JSON.stringify({ pageId: 'page:ghost' }), (p) => moved.push(p), has(['page:page']))).not.toThrow();
+    expect(moved).toEqual([]);
+  });
+
+  test('a malformed frame moves nothing', () => {
+    const moved: string[] = [];
+    respondToSelectPage('not json', (p) => moved.push(p), () => true);
+    respondToSelectPage(JSON.stringify({ nope: true }), (p) => moved.push(p), () => true);
+    expect(moved).toEqual([]);
   });
 });

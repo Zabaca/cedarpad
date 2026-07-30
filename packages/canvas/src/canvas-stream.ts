@@ -7,6 +7,9 @@
 //   - the agent's screenshot round-trip (`view_canvas`): the bridge asks, the browser
 //     renders a PNG with tldraw and POSTs it back. `/api/canvas/screenshot` is explicitly
 //     not part of the sync plane (#297).
+//   - `select_page`: the bridge moves THIS viewer's editor to a page. Which page you are
+//     looking at is per-client tldraw instance state, not document state, so it cannot
+//     travel over sync — the whole point is that it moves one person and not the others.
 //
 // Presence used to be the second rider; #293 moved it onto the sync protocol's own
 // presence channel, which is where it belongs. One rider left is not a reason to fold
@@ -52,6 +55,28 @@ export async function respondToScreenshot(
   }
 }
 
+/**
+ * Move this editor to a page the bridge named. Editor-free and separately testable for the
+ * same reason `respondToScreenshot` is, minus the reply: nothing downstream blocks on this,
+ * so the whole failure budget is "the human's view did not move".
+ *
+ * A page id this browser does not have is IGNORED, not an error to surface. The frame and
+ * the tldraw store arrive over two different transports (this SSE stream and the sync
+ * socket), so a page created moments ago can legitimately be named before this client has
+ * synced it — a transient race, not a bug worth shouting about.
+ */
+export function respondToSelectPage(data: string, setPage: (pageId: string) => void, hasPage: (pageId: string) => boolean): void {
+  let pageId: string;
+  try {
+    const parsed = JSON.parse(data) as { pageId?: unknown };
+    if (typeof parsed.pageId !== 'string') return;
+    pageId = parsed.pageId;
+  } catch {
+    return;
+  }
+  if (hasPage(pageId)) setPage(pageId);
+}
+
 /** Render the whole current page as a PNG data URL, or null when there is nothing on it. */
 async function renderCanvasPng(editor: Editor): Promise<string | null> {
   const ids = [...editor.getCurrentPageShapeIds()];
@@ -74,6 +99,13 @@ export function wireCanvasStream(editor: Editor): () => void {
     const es = new EventSource(withCanvasParam(`${API}/canvas/stream`));
     es.addEventListener('screenshot', (e) => {
       void respondToScreenshot((e as MessageEvent).data as string, () => renderCanvasPng(editor), postScreenshot);
+    });
+    es.addEventListener('page', (e) => {
+      respondToSelectPage(
+        (e as MessageEvent).data as string,
+        (pageId) => editor.setCurrentPage(pageId as Parameters<Editor['setCurrentPage']>[0]),
+        (pageId) => editor.getPages().some((p) => p.id === pageId),
+      );
     });
     return es;
   });

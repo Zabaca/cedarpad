@@ -15,7 +15,7 @@ import type { TLSocketRoom } from '@tldraw/sync-core';
 import type { TLRecord } from '@tldraw/tlschema';
 
 import type { CanvasMutation, CanvasMutationResult } from '../shared/canvas-mutation.ts';
-import type { CanvasShape } from '../src/shapes.ts';
+import type { CanvasPage, CanvasShape } from '../src/shapes.ts';
 import { arrowBindingId, buildArrowBindings, buildShapeRecord, plaintextOf, UnbuildableShapeError } from '../src/tl-record-builder.ts';
 import type { ArrowBindingsView } from '../src/tldraw-conventions.ts';
 import { fromTldrawShape } from '../src/tldraw-conventions.ts';
@@ -31,9 +31,22 @@ export class MutationRejected extends Error {}
 
 const records = (room: Room): AnyRecord[] => room.getCurrentSnapshot().documents.map((d) => d.state as AnyRecord);
 
-/** The room's document clock is the version: monotonic, persisted in DO SQLite, and
- *  therefore (unlike the in-memory counter it replaces) stable across a restart. */
-const versionOf = (room: Room): number => room.getCurrentSnapshot().documentClock ?? 0;
+/**
+ * The room's whole post-state, from a SINGLE snapshot.
+ *
+ * `getCurrentSnapshot()` materialises every record in the document, so it is the expensive
+ * call here — and this runs on every mutation AND on every reopen between agent tool calls
+ * (server/turn-canvas-store.ts), which makes it the hot path. Shapes, pages, and the
+ * document clock therefore all come off one read rather than one apiece.
+ *
+ * The clock IS the version: monotonic, persisted in DO SQLite, and therefore (unlike the
+ * in-memory counter it replaces) stable across a restart.
+ */
+function stateOf(room: Room): CanvasMutationResult {
+  const snap = room.getCurrentSnapshot();
+  const all = snap.documents.map((d) => d.state as AnyRecord);
+  return { version: snap.documentClock ?? 0, shapes: shapesFrom(all), pages: orderedPages(all) };
+}
 
 /** Arrow id → which terminals are bound, read off the room's binding records. Sync-core
  *  stores bindings as plain records and has no binding logic; resolving them is ours. */
@@ -66,7 +79,12 @@ function assetSrcs(all: AnyRecord[]): Map<string, string> {
 /** The room's shape records, decoded back into the simplified model the agent reads.
  *  Ordered by id so reads are deterministic — the same guarantee `createStore` gives. */
 export function readShapes(room: Room): CanvasShape[] {
-  const all = records(room);
+  return shapesFrom(records(room));
+}
+
+/** As {@link readShapes}, over records already in hand — so a caller that also needs the
+ *  pages or the clock does not pay for a second snapshot. */
+function shapesFrom(all: AnyRecord[]): CanvasShape[] {
   const bindings = bindingViews(all);
   const assets = assetSrcs(all);
   const byId = new Map(all.map((r) => [String(r.id), r]));
@@ -93,18 +111,19 @@ export function readShapes(room: Room): CanvasShape[] {
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-/** The canvas's pages in tldraw's own order. `index` is the fractional index the page
- *  switcher sorts by, so the FIRST of these is the page a human opens the canvas on —
- *  which is what makes it the right default for a shape that names no page. Falling back
- *  to record order (and then to sync-core's `page:page`) keeps a room with a malformed or
- *  absent page record answerable rather than throwing on read. */
-function orderedPages(all: AnyRecord[]): string[] {
+/** The canvas's pages in tldraw's own order — also what the read path reports, so a caller
+ *  can turn a human's page NAME into the id the write path takes. `index` is the fractional
+ *  index the page switcher sorts by, so the FIRST of these is the page a human opens the
+ *  canvas on — which is what makes it the right default for a shape that names no page.
+ *  Falling back to record order (and then to sync-core's `page:page`) keeps a room with a
+ *  malformed or absent page record answerable rather than throwing on read. */
+function orderedPages(all: AnyRecord[]): CanvasPage[] {
   const pages = all.filter((r) => r.typeName === 'page');
   pages.sort((a, b) => String(a.index ?? '').localeCompare(String(b.index ?? '')));
-  return pages.map((p) => String(p.id));
+  return pages.map((p) => ({ id: String(p.id), name: String(p.name ?? '') }));
 }
 
-const firstPageId = (all: AnyRecord[]): string => orderedPages(all)[0] ?? 'page:page';
+const firstPageId = (all: AnyRecord[]): string => orderedPages(all)[0]?.id ?? 'page:page';
 
 /**
  * The page a shape sits on, walking up through any frames that contain it.
@@ -140,7 +159,7 @@ export async function applyMutation(room: Room, mutation: CanvasMutation): Promi
   if (mutation.op !== 'read') {
     const all = records(room);
     const pageId = firstPageId(all);
-    const pages = new Set(orderedPages(all));
+    const pages = new Set(orderedPages(all).map((p) => p.id));
     const existing = new Map(all.filter((r) => r.typeName === 'shape').map((r) => [String(r.id), r as TLRecord]));
     try {
       await room.updateStore((ctx) => {
@@ -200,5 +219,5 @@ export async function applyMutation(room: Room, mutation: CanvasMutation): Promi
       throw new MutationRejected(e instanceof UnbuildableShapeError ? e.message : `tldraw rejected the record: ${(e as Error).message}`);
     }
   }
-  return { version: versionOf(room), shapes: readShapes(room) };
+  return stateOf(room);
 }
