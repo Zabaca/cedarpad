@@ -308,4 +308,38 @@ describe.each(implementations)('RecordStore (%s)', (_name, make) => {
       expect(await store.get(key)).toBeNull();
     });
   });
+
+  describe('purge', () => {
+    test('purging reclaims a soft-deleted Record together with its history', async () => {
+      const store = make();
+      const key = { workspaceId: ws(), canvasId: 'cv_1', name: 'Card' };
+      await store.put({ ...key, kind: 'component' as const, source: 'v1', updatedBy: null });
+      await store.put({ ...key, kind: 'component' as const, source: 'v2', updatedBy: null });
+      await store.softDelete(key);
+
+      expect(await store.purgeDeleted(key.workspaceId)).toBe(1);
+      // The versions go WITH the row. They hold the same source text, so keeping them would
+      // reclaim nothing — and they would be a history nothing can restore from.
+      expect(await store.listVersions(key)).toEqual([]);
+      // And the name is free again: a later write starts a new Record at rev 1.
+      expect((await store.put({ ...key, kind: 'component' as const, source: 'new', updatedBy: null })).rev).toBe(1);
+    });
+
+    test('purging leaves every live Record — and every other workspace — untouched', async () => {
+      const store = make();
+      const [w, other] = [ws(), ws()];
+      await store.put({ workspaceId: w, canvasId: 'cv_1', name: 'Gone', kind: 'component', source: 'g', updatedBy: null });
+      await store.put({ workspaceId: w, canvasId: 'cv_2', name: 'Live', kind: 'component', source: 'l', updatedBy: null });
+      await store.put({ workspaceId: w, canvasId: null, name: 'Shared', kind: 'component', source: 's', updatedBy: null });
+      await store.put({ workspaceId: other, canvasId: 'cv_1', name: 'Buried', kind: 'component', source: 'b', updatedBy: null });
+      await store.softDelete({ workspaceId: w, canvasId: 'cv_1', name: 'Gone' });
+      await store.softDelete({ workspaceId: other, canvasId: 'cv_1', name: 'Buried' });
+
+      expect(await store.purgeDeleted(w)).toBe(1);
+      expect((await store.list({ workspaceId: w, canvasId: 'cv_2' })).map((r) => r.name)).toEqual(['Live']);
+      expect((await store.list({ workspaceId: w, canvasId: null })).map((r) => r.name)).toEqual(['Shared']);
+      // Another workspace's trash is not this workspace's to empty.
+      expect((await store.listVersions({ workspaceId: other, canvasId: 'cv_1', name: 'Buried' })).length).toBe(1);
+    });
+  });
 });

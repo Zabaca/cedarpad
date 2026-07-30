@@ -274,6 +274,19 @@ and a name no user query will ever match is a history that *looks* attributed an
 Per-turn attribution needs the edge-attested initiator (`x-inbox-assign`) threaded to the
 authoring tools; it is not built.
 
+**Deleting a canvas is a soft delete; the purge is a separate act.** `DELETE /api/canvases/:id`
+soft-deletes the canvas's **own tier** — Components *and* their data files, which are the same
+family of Record and would otherwise be orphans nothing lists. The **shared library** is
+`canvas_id NULL` and belongs to the workspace, so it is never in a canvas's scope; **Workspace
+skills** are workspace-scoped too and are untouched. Nothing about a canvas deletion reclaims
+anything: `POST /api/workspaces/:id/records/purge` is a request of its own, **owner-only**, and
+it acts only on rows that were already deleted — it takes their **versions with them**, because
+the versions hold the same source and a history whose Record is gone is one nothing can restore
+from. That asymmetry is the design: delete must be honest in both directions, and before this
+*nothing* removed a deleted canvas's components — the source survived by accident and leaked
+forever — while a hard cascade would have made one click destroy source permanently, the exact
+shape of 2026-07-29.
+
 _Avoid_: "we tar the workspace" (the tar is gone for the own tier), or treating the filesystem
 as the durable copy — that inversion is what destroyed every own-tier component on 2026-07-29.
 

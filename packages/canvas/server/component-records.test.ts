@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { componentCatalog } from '../worker/component-catalog.ts';
 import { componentStore } from '../worker/component-store.ts';
+import { deleteCanvasRecords } from '../worker/record-reclaim.ts';
 import { memRecordStore } from '../worker/record-store.ts';
 import {
   adoptSharedComponent,
@@ -113,7 +114,7 @@ function fakeRecords(opts: { failWrite?: boolean; failRead?: boolean; failMove?:
   };
   /** What the store actually holds — the question every one of these tests is really asking. */
   const stored = (tier: 'own' | 'shared', module: string, canvasId = CANVAS) => store.read(key(tier, canvasId, module));
-  return { records, stored, rows, calls };
+  return { records, stored, rows, calls, port };
 }
 
 describe('write_component persists a Record before it touches disk', () => {
@@ -553,6 +554,25 @@ describe('a Component can be put back the way it was', () => {
     // that recovered nothing — the shape this whole ADR exists to remove.
     await writeComponent('Card', 'v1', CANVAS, null);
     await expect(restoreComponent('Card', 1, CANVAS, null)).rejects.toThrow(/no version history/);
+  });
+});
+
+describe('a deleted canvas stops being rendered at all', () => {
+  // User story 18. Before Records, NOTHING removed a deleted canvas's component directory:
+  // the registry row went, the source stayed, and it leaked forever with no way to reclaim it.
+  // The two halves of the fix meet here — the Record is soft-deleted, and there is no boot
+  // restore — so a container that has lost its tree has nothing to put back.
+  test('a Component whose canvas was deleted does not materialize into a fresh container', async () => {
+    const { records, port } = fakeRecords();
+    await writeComponent('Card', 'export default () => null;', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true }); // the recycle: the rendering is gone
+
+    await deleteCanvasRecords(port, { workspaceId: WS, canvasId: CANVAS });
+
+    expect(await materializeComponent('Card', CANVAS, records)).toBeNull();
+    expect(existsSync(filePath('Card'))).toBe(false);
+    // And the history is still there, which is what makes the deletion recoverable.
+    expect((await records.history('own', CANVAS, 'Card')).map((v) => v.version)).toEqual([1]);
   });
 });
 

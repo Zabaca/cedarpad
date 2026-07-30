@@ -7,7 +7,7 @@
 // The port is intentionally dumb — no tier resolution, no name validation, no ownership.
 // Those are policy and live in `component-store.ts` above it.
 
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, isNull } from 'drizzle-orm';
 
 import type { Database } from '../web-poc/lib/db/index.ts';
 import { componentRecordVersions, componentRecords } from '../web-poc/lib/db/schema.ts';
@@ -46,9 +46,10 @@ export type RecordScope = { workspaceId: string; canvasId: string | null };
  * not a courtesy of its callers, because the 2026-07-29 loss was a full replace with no
  * history and a caller that forgets is exactly how that comes back.
  *
- * Deletion is always SOFT here: `softDelete` hides a Record from `get`/`list` while its
- * versions survive. Reclaiming rows is an explicit purge, which this port deliberately
- * does not offer — one click must never destroy source.
+ * Deletion is SOFT by default: `softDelete` hides a Record from `get`/`list` while its
+ * versions survive. `purgeDeleted` is the one destructive verb, and it is deliberately a
+ * SEPARATE operation on ALREADY-DELETED rows — one click must never destroy source, so
+ * nothing that deletes can reclaim, and reclaiming names no Record a caller still has.
  */
 export interface RecordStore {
   /** Create or overwrite a Record, bumping `rev` and appending a version. Undeletes. */
@@ -82,6 +83,16 @@ export interface RecordStore {
   softDelete(key: RecordKey): Promise<void>;
   /** Hide every Record in one tier — what deleting a canvas does to its own tier. */
   softDeleteScope(scope: RecordScope): Promise<void>;
+  /**
+   * Permanently remove every ALREADY soft-deleted Record in a workspace, versions included,
+   * and answer how many rows went. The only destructive verb in the port.
+   *
+   * It takes the versions with the rows on purpose: they hold the same source text, so
+   * keeping them would reclaim nothing, and a history whose Record is gone is one nothing
+   * can restore from. Purge is the point at which the source stops existing — that is what
+   * makes it the deliberate half of a deletion that is otherwise always recoverable.
+   */
+  purgeDeleted(workspaceId: string): Promise<number>;
 }
 
 /** Map key: the three coordinates, with a sentinel for the shared tier's null canvas. */
@@ -139,6 +150,16 @@ export const memRecordStore = (): RecordStore => {
       for (const [id, row] of rows) {
         if (id.startsWith(scopeOf(scope)) && row.deletedAt === null) rows.set(id, { ...row, deletedAt: new Date() });
       }
+    },
+    purgeDeleted: async (workspaceId) => {
+      let purged = 0;
+      for (const [id, row] of [...rows]) {
+        if (row.workspaceId !== workspaceId || row.deletedAt === null) continue;
+        rows.delete(id);
+        versions.delete(id);
+        purged += 1;
+      }
+      return purged;
     },
   };
 };
@@ -257,6 +278,21 @@ export const d1RecordStore = (db: Database): RecordStore => {
             isNull(componentRecords.deletedAt),
           ),
         );
+    },
+
+    purgeDeleted: async (workspaceId) => {
+      const doomed = await db
+        .select()
+        .from(componentRecords)
+        .where(and(eq(componentRecords.workspaceId, workspaceId), isNotNull(componentRecords.deletedAt)));
+      for (const row of doomed) {
+        // History first, then the row. An interruption then leaves a still-soft-deleted Record
+        // whose history is short — which a re-run finds and finishes — rather than versions no
+        // row points at, which no purge would ever see again.
+        await db.delete(componentRecordVersions).where(versionKeyWhere(row));
+        await db.delete(componentRecords).where(keyWhere(row));
+      }
+      return doomed.length;
     },
   };
 };

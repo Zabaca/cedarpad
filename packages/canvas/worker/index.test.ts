@@ -287,6 +287,20 @@ describe('invitations dispatch (#179)', () => {
   });
 });
 
+// ADR-0022 decision 9: the purge is a door of its own, behind the gate and owner-only.
+// Routing proof only — what it reclaims lives in shell.test.ts / record-store.test.ts.
+describe('record purge dispatch (#364)', () => {
+  test('/api/workspaces/:id/records/purge dispatches to the owner-only purge, never proxied', async () => {
+    workspaceRecord = { id: 'ws_abc' }; // visible to the caller, but NOT owned by them
+    const res = await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/workspaces/ws_abc/records/purge', { method: 'POST' }),
+      env,
+    );
+    expect(res.status).toBe(403); // routed + owner-checked, not 404/405/login
+    expect(served).toEqual([]);
+  });
+});
+
 // PRD #220 slice 2: the share-links API is edge-only and behind the gate. Routing proof
 // only — the handler's member checks/mint/revoke behavior lives in share-links-api.test.ts.
 describe('share-links dispatch (#220)', () => {
