@@ -1,9 +1,14 @@
 name: e2e
 
-# No push trigger on main: a squash merge produces the same tree the pull_request
-# run already validated, so the post-merge run is a duplicate. workflow_dispatch
-# stays for manual re-runs (e.g. after a runner or dependency change).
+# The push trigger on main is NOT a duplicate of the pull_request run, so do not
+# remove it. Roughly 45% of commits on main here are pushed directly and never
+# open a PR (checked against the commits/pulls API over the last 60 commits), so
+# dropping this trigger would leave nearly half of main with no e2e coverage at
+# all. Dropping it was proposed to save billed minutes; that argument no longer
+# applies now that this runs on a self-hosted runner, where the minutes are free.
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
