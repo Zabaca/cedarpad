@@ -1,13 +1,21 @@
 name: e2e
 
+# No push trigger on main: a squash merge produces the same tree the pull_request
+# run already validated, so the post-merge run is a duplicate. workflow_dispatch
+# stays for manual re-runs (e.g. after a runner or dependency change).
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# A force-push supersedes the run it interrupts; cancel it rather than pay for both.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ryzen]
+    timeout-minutes: 20
     env:
       CI: 'true'
     defaults:
@@ -24,8 +32,11 @@ jobs:
         run: bun install --frozen-lockfile
         working-directory: .
 
+      # No --with-deps: the system libraries are provisioned once on the runner host,
+      # not per run, and apt-get on that host is currently wedged. ~/.cache/ms-playwright
+      # persists between runs, so this is usually a no-op cache hit.
       - name: Install Playwright browser
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install chromium
 
       - name: Run e2e
         run: bun run test:e2e
