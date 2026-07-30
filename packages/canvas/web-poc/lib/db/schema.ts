@@ -838,6 +838,11 @@ export const conversations = sqliteTable(
     index("conversations_user_idx").on(t.userId),
     index("conversations_status_idx").on(t.status),
     index("conversations_last_activity_idx").on(t.lastActivity),
+    // The inbox watermark's index (#383). `max(updated_at) where workspace_id = ?` is the
+    // one query a connected badge stream runs on a quiet tick, so it must be a seek to the
+    // end of one workspace's range — not a scan, which would cost exactly as many rows as
+    // the full inbox read it exists to avoid.
+    index("conversations_workspace_updated_idx").on(t.workspaceId, t.updatedAt),
   ],
 );
 

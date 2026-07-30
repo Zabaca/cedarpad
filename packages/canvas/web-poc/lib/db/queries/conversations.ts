@@ -48,6 +48,11 @@ export async function create(
       repo: input.repo ?? null,
       summary: input.summary ?? null,
       lastMessagePreview: input.lastMessagePreview ?? null,
+      // Stamped rather than left to the column default (#383). That default is
+      // `unixepoch() * 1000` — seconds scaled up — and the inbox watermark compares
+      // `max(updated_at)` for equality, so a chat born in the same second as the previous
+      // change would leave the watermark untouched and never reach the badge.
+      updatedAt: now(),
     })
     .returning();
   if (!row) throw new Error("create: insert returned no row");
@@ -107,7 +112,15 @@ export async function list(
     .orderBy(desc(conversations.lastActivity));
 }
 
-/** Update helper: apply a patch to one row and return it (null if missing). */
+/**
+ * Update helper: apply a patch to one row and return it (null if missing).
+ *
+ * Every patch stamps `updated_at`. That column is what the inbox WATERMARK
+ * (`queries/inbox-watermark.ts`, #383) reads, so a transition that leaves
+ * `last_activity` alone — close, reopen, assign, a visibility flip — still has to be
+ * visible to a badge stream that is only allowed one cheap query per tick. Left
+ * unstamped it would read as "nothing changed" and the badge would go stale.
+ */
 async function patch(
   db: Database,
   id: string,
@@ -115,7 +128,7 @@ async function patch(
 ): Promise<ConversationRow | null> {
   const [row] = await db
     .update(conversations)
-    .set(values)
+    .set({ ...values, updatedAt: now() })
     .where(eq(conversations.id, id))
     .returning();
   return row ?? null;
@@ -205,7 +218,7 @@ export async function setOwnerRef(db: Database, id: string, ownerRef: string): P
 export async function attachCanvas(db: Database, id: string, canvasId: string): Promise<ConversationRow | null> {
   await db
     .update(conversations)
-    .set({ canvasId })
+    .set({ canvasId, updatedAt: now() })
     .where(and(eq(conversations.id, id), isNull(conversations.canvasId)));
   return get(db, id);
 }
@@ -216,7 +229,7 @@ export async function attachCanvas(db: Database, id: string, canvasId: string): 
 export async function attachRepo(db: Database, id: string, repo: string): Promise<ConversationRow | null> {
   await db
     .update(conversations)
-    .set({ repo })
+    .set({ repo, updatedAt: now() })
     .where(and(eq(conversations.id, id), isNull(conversations.repo)));
   return get(db, id);
 }

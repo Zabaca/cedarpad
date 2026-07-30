@@ -1,0 +1,1 @@
+CREATE INDEX `conversations_workspace_updated_idx` ON `conversations` (`workspace_id`,`updated_at`);

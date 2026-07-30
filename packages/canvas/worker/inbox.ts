@@ -4,7 +4,8 @@ import { getWorkspace, setInboxReadAt } from '../web-poc/lib/db/queries/workspac
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
-import { orderInbox, unseenCount, viewToListOpts, type InboxItem } from './inbox-view.ts';
+import { inboxBadgeSource } from './inbox-badge.ts';
+import { orderInbox, viewToListOpts, type InboxItem } from './inbox-view.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
 import { resolveDevAgentRepo } from './github-connection.ts';
 import { mergePullRequest } from './pr-merge.ts';
@@ -105,29 +106,28 @@ export async function handleInboxApi(
   }
 
   // GET /api/inbox/events — SSE: pushes the caller's nav-badge count ({count, readAt})
-  // whenever it changes, so every open Shell updates live (no client polling). The edge
-  // watches the platform D1 (writes come from both the edge and container bridges — no pub/sub bus
-  // yet), so latency is one INBOX_EVENTS_INTERVAL_MS tick. Per-user: visibility-filtered.
+  // whenever it changes, so every open Shell updates live. Per-user: visibility-filtered.
+  //
+  // The edge still WATCHES the platform D1 rather than being told (writes come from both
+  // the edge and the container bridges), but the tick no longer recomputes the badge — it
+  // asks `inboxBadgeSource` for a cheap watermark first and only reads the inbox when
+  // something moved (#383). Latency is unchanged at one INBOX_EVENTS_INTERVAL_MS tick;
+  // what changes is that a quiet tick costs one indexed row instead of ~14.
   if (id === 'events' && !action) {
     if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
     const workspaceId = await activeWorkspaceId(request, database, user);
     if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
     const enc = new TextEncoder();
+    const source = inboxBadgeSource(database, workspaceId, user.id);
     let timer: ReturnType<typeof setInterval> | null = null;
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
-        let last = -1;
         const tick = async () => {
           try {
-            const items = await visibleInbox(database, workspaceId, user.id, viewToListOpts(null));
-            const readAt = await inboxReadAt(database, workspaceId, user.id);
-            const count = unseenCount(items, readAt);
-            if (count !== last) {
-              last = count;
-              controller.enqueue(enc.encode(`data: ${JSON.stringify({ count, readAt })}\n\n`));
-            } else {
-              controller.enqueue(enc.encode(': keep-alive\n\n')); // detects a gone client
-            }
+            const badge = await source.poll();
+            // A tick with nothing to say still writes: the comment frame is what detects a
+            // client that went away (the enqueue below throws once nobody is reading).
+            controller.enqueue(enc.encode(badge ? `data: ${JSON.stringify(badge)}\n\n` : ': keep-alive\n\n'));
           } catch {
             // Client disconnected (enqueue threw) or a read failed: stop the loop.
             if (timer) clearInterval(timer);
