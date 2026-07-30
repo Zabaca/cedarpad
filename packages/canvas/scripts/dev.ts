@@ -42,8 +42,13 @@ const bridge = Bun.spawn(bridgeArgs, {
 // not the `bunx` shim, so `bunx` ENOENTs and the dev stack dies on boot.
 const web = Bun.spawn(['bun', 'run', 'dev:web'], {
   stdio: ['inherit', 'inherit', 'inherit'],
-  // Point vite's proxies at the bridge and edge ports this stack is using.
-  env: { ...process.env, CANVAS_BRIDGE: BRIDGE, CANVAS_EDGE: EDGE },
+  // Point vite's proxies at the bridge and edge ports this stack is using — and hand it the
+  // SAME `PLATFORM_RPC_ORIGIN` the bridge gets. Vite is the second process that talks to the
+  // Record store (ADR-0022): its materialize middleware answers a module miss by fetching the
+  // Record. Without this it has no store at all, so `componentRecordStore` is null, the
+  // middleware no-ops, and local dev silently cannot materialize anything — which is why a
+  // materialization bug could only ever be found in production.
+  env: { ...process.env, CANVAS_BRIDGE: BRIDGE, CANVAS_EDGE: EDGE, ...(edge ? { PLATFORM_RPC_ORIGIN: EDGE } : {}) },
 });
 
 let shuttingDown = false;
