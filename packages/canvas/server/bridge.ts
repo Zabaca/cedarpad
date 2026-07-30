@@ -64,7 +64,7 @@ import { adoptSession, TranscriptStore } from './transcript-store.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, createCanvasTools, parseCanvasImages, runChat } from './agent.ts';
 import { MCP_TOKENS_HEADER, McpSelectionSchema, applyMcpSelection, decodeMcpTokens, mcpDisallowedTools } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
-import { isShared, listComponentDetails, listComponents, readComponent, writeComponent, writeDataFile } from './components.ts';
+import { isShared, listComponentDetails, readComponent, writeComponent, writeDataFile } from './components.ts';
 import { readGuestCapabilities, type GuestCapabilities } from '../shared/guest-capabilities.ts';
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
@@ -987,7 +987,10 @@ export async function handleRequest(req: Request): Promise<Response> {
       const cid = canvasIdFrom(req, url);
       // `details` (name/description/tier) feeds the gallery; `components` stays for
       // existing consumers of the bare name list.
-      return json({ components: listComponents(cid), details: listComponentDetails(cid) });
+      // Local dev / no-edge only in practice: the EDGE answers this route now (#363) and
+      // never proxies the GET here. Kept so `bun run dev` without the Worker still lists.
+      const details = await listComponentDetails(cid);
+      return json({ components: details.map((d) => d.name), details });
     }
     // Data files (write_data parity): non-executable siblings a component can import.
     // Same write + blunt-bump + sink-flush contract as the module PUT below.

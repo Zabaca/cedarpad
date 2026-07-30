@@ -13,6 +13,7 @@ import { DATA_MAX_BYTES } from '../shared/bridge-wire.ts';
 import { PushPayload } from '../shared/push-contract.ts';
 import {
   ComponentHistoryOutput,
+  ComponentListOutput,
   ComponentReadOutput,
   ComponentRestoreOutput,
   ComponentWriteOutput,
@@ -570,6 +571,35 @@ describe('platform RPC: component.history', () => {
 
     // History is a read of someone else's workspace unless the same ownership rule gates it.
     const res = await rpc({ op: 'component.history', input: { workspaceId: 'ws_intruder', canvasId, name: 'Card' } }, { db });
+    expect(res.status).toBe(403);
+  });
+});
+
+// The listing verb (#363). The container asks rather than reading its own directories, because
+// after a recycle those directories are empty while the Records are not — and because only the
+// edge can put the image-only PLATFORM tier in the same answer.
+describe('platform RPC: component.list', () => {
+  test('answers all three tiers at once, each labelled with the tier it resolves in', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_a');
+    const write = (tier: 'own' | 'shared', name: string, source: string) =>
+      rpc({ op: 'component.write', input: { workspaceId: 'ws_a', canvasId, tier, userId: 'u_1', name, source } }, { db });
+    await write('own', 'OwnCard', '// Mine.\n');
+    await write('shared', 'SharedCard', '// The workspace copy.\n');
+
+    const res = await rpc({ op: 'component.list', input: { workspaceId: 'ws_a', canvasId } }, { db });
+    expect(res.status).toBe(200);
+    const { components } = ComponentListOutput.parse(await res.json());
+    expect(components).toContainEqual({ name: 'OwnCard', description: 'Mine.', tier: 'own' });
+    expect(components).toContainEqual({ name: 'SharedCard', description: 'The workspace copy.', tier: 'shared' });
+    // The platform tier comes from the manifest bundled with the worker — no filesystem.
+    expect(components.find((c) => c.name === 'BarChart')?.tier).toBe('base');
+  });
+
+  test('the edge refuses a canvas that does not belong to the named workspace', async () => {
+    const db = await freshDb();
+    const canvasId = await registerCanvas(db, 'ws_owner');
+    const res = await rpc({ op: 'component.list', input: { workspaceId: 'ws_intruder', canvasId } }, { db });
     expect(res.status).toBe(403);
   });
 });

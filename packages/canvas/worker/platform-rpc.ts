@@ -5,6 +5,7 @@ import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import {
   type ComponentHistoryOutput,
+  type ComponentListOutput,
   type ComponentReadOutput,
   type ComponentRestoreOutput,
   type ComponentWriteOutput,
@@ -17,6 +18,7 @@ import {
   type TurnEndOutput,
   verifyPlatformRpcToken,
 } from '../shared/platform-rpc.ts';
+import { componentCatalog } from './component-catalog.ts';
 import { componentStore } from './component-store.ts';
 import { dataStore } from './data-store.ts';
 import type { Env } from './index.ts';
@@ -216,6 +218,20 @@ export async function handlePlatformRpc(request: Request, env: Env, deps: Platfo
     });
     if (!restored) return Response.json({ error: 'no such version' }, { status: 404 });
     return Response.json({ rev: restored.rev } satisfies ComponentRestoreOutput);
+  }
+
+  // "What can this canvas place?" — all three tiers in one answer (#363). The container asks
+  // rather than reading its own directories because, after a recycle, those directories are
+  // empty while the Records are not: a disk-only listing would report a library the workspace
+  // still has, and the next turn would author a duplicate of everything in it. It also keeps
+  // the container's answer and the edge's the SAME answer, from one implementation.
+  if (parsed.data.op === 'component.list') {
+    const { workspaceId, canvasId } = parsed.data.input;
+    if (!(await canvasBelongsToWorkspace(deps.db, workspaceId, canvasId))) {
+      return Response.json({ error: 'forbidden' }, { status: 403 });
+    }
+    const components = await componentCatalog(d1RecordStore(deps.db), { workspaceId, canvasId });
+    return Response.json({ components } satisfies ComponentListOutput);
   }
 
   // The Workspace-skill verbs (#361). Same rules as the Component pair above — the contract

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { componentCatalog } from '../worker/component-catalog.ts';
 import { componentStore } from '../worker/component-store.ts';
 import { memRecordStore } from '../worker/record-store.ts';
 import {
@@ -10,6 +11,8 @@ import {
   componentHistory,
   editComponent,
   isShared,
+  listComponentDetails,
+  listComponents,
   materializeComponent,
   materializeDataFile,
   promoteComponent,
@@ -89,6 +92,13 @@ function fakeRecords(opts: { failWrite?: boolean; failRead?: boolean; failMove?:
     restore: async (tier, canvasId, module, version) => {
       calls.push(`restore ${tier} ${canvasId}/${module}@${version}`);
       return (await store.restore({ ...key(tier, canvasId, module), version, userId: 'u_author' }))?.rev ?? null;
+    },
+    // The edge's own answer, over the same port and the same real platform manifest — so
+    // "the container and the edge agree about the library" is a property under test rather
+    // than a claim.
+    list: async (canvasId) => {
+      calls.push(`list ${canvasId}`);
+      return await componentCatalog(port, { workspaceId: WS, canvasId });
     },
     writeData: async (canvasId, name, source) => {
       calls.push(`writeData ${canvasId}/${name}`);
@@ -174,6 +184,21 @@ describe('a Component survives the container losing its filesystem', () => {
     rmSync(dirPath, { recursive: true, force: true });
 
     expect(await readComponent('KpiCard', CANVAS, records)).toBe('// shadowed\n');
+  });
+
+  // PRD #354 story 11. The listing is what the agent avoids duplicates with, and after a
+  // recycle the own dir is empty while the Records are not — a disk-only listing would report
+  // an empty library and the next turn would author a second copy of everything.
+  test('list_components still lists the canvas library after the filesystem is gone', async () => {
+    const { records } = fakeRecords();
+    await writeComponent('Card', '// A card.\n', CANVAS, records);
+    rmSync(dirPath, { recursive: true, force: true });
+
+    const details = await listComponentDetails(CANVAS, records);
+    expect(details).toContainEqual({ name: 'Card', description: 'A card.', tier: 'own' });
+    // …and the platform tier is still in the same answer, with its label.
+    expect(details.find((d) => d.name === 'KpiCard')?.tier).toBe('base');
+    expect(await listComponents(CANVAS, records)).toEqual(details.map((d) => d.name));
   });
 
   test('a file already on disk is served without asking the store', async () => {

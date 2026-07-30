@@ -12,8 +12,8 @@ describe('leadingComment', () => {
 });
 
 describe('listComponentDetails', () => {
-  test('platform modules carry a description and the base tier', () => {
-    const bar = listComponentDetails().find((c) => c.name === 'BarChart');
+  test('platform modules carry a description and the base tier', async () => {
+    const bar = (await listComponentDetails()).find((c) => c.name === 'BarChart');
     expect(bar?.tier).toBe('base');
     expect(bar?.description).toContain('bar chart');
   });

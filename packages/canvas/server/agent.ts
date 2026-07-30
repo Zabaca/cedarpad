@@ -325,7 +325,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         "List the reusable component modules this canvas can place: its own dir, the workspace shared library, and the platform library. These are real React files you can read, edit, compose, and place on the canvas.",
         {},
         async () => {
-          const mods = listComponents(canvasId);
+          const mods = await listComponents(canvasId);
           return result({ text: mods.length ? `Components:\n${mods.join('\n')}` : 'No components yet. write_component to create one.' });
         },
       ),

@@ -21,12 +21,12 @@ const cleanupShared = () => {
 };
 
 describe('component file CRUD', () => {
-  test('list includes the platform seed library — on EVERY canvas (ADR-0014)', () => {
-    const mods = listComponents();
+  test('list includes the platform seed library — on EVERY canvas (ADR-0014)', async () => {
+    const mods = await listComponents();
     expect(mods).toContain('KpiCard');
     expect(mods).toContain('Dashboard');
     // The MarkdownCard incident: a non-default canvas must see the platform tier too.
-    expect(listComponents('cv_somewhere_else')).toContain('MarkdownCard');
+    expect(await listComponents('cv_somewhere_else')).toContain('MarkdownCard');
   });
 
   test('read returns source (platform base resolves for any canvas); missing throws', async () => {
@@ -137,7 +137,7 @@ describe('shared library: promote (move) + adopt (copy-back to diverge)', () => 
       expect(await isShared(SH)).toBe(true);
       // Reads span own + shared, so a canvas still sees the promoted module by bare name.
       expect(await readComponent(SH)).toContain('promote me');
-      expect(listComponents()).toContain(SH);
+      expect(await listComponents()).toContain(SH);
     } finally {
       cleanupShared();
     }

@@ -10,6 +10,7 @@ import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
 import { handleConnectorSecretsApi } from './connector-secrets.ts';
 import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo, workspaceRepoSet } from './github-connection.ts';
 import { handleAdminApi } from './admin.ts';
+import { handleComponentsApi } from './components-api.ts';
 import { handleMembersApi } from './members.ts';
 import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
@@ -52,6 +53,7 @@ import {
   readWorkspaceCookie,
 } from './shell-routing.ts';
 import {
+  BRIDGE_ROUTES,
   CANVAS_ID_HEADER,
   CHAT_KIND_HEADER,
   DEV_AGENT_CHAT_KIND,
@@ -865,6 +867,22 @@ export default {
 
     const workspaceId = selected ?? DEFAULT_WORKSPACE_ID;
     const coords = coordsForWorkspace(workspaceId);
+
+    // The component LIBRARY LISTING (ADR-0022, #363) — edge-served like the marts above, and
+    // for the same reason: reading it must never wake (or bill) a container. Own and shared
+    // are Records the edge owns; the platform tier comes from the manifest bundled with this
+    // worker. Canvas-scoped by `x-canvas-id`, the same selection contract the bridge uses, so
+    // the pad's gallery/palette and an in-canvas catalog card reach it unchanged. Only the
+    // GET moves: every write below still belongs to the bridge, the single writer of the
+    // container filesystem.
+    if (url.pathname === BRIDGE_ROUTES.components && request.method === 'GET') {
+      return handleComponentsApi(
+        createDbForWorker(env as unknown as Bindings),
+        user,
+        workspaceId,
+        request.headers.get(CANVAS_ID_HEADER) ?? DEFAULT_CANVAS_ID,
+      );
+    }
 
     // Force the container to recycle so a freshly deployed image takes effect (CF
     // keeps the in-use instance on the old image until it idle-sleeps). The next

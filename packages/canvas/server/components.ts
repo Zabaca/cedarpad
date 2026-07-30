@@ -29,7 +29,8 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { assertDataFileName, assertDataFileSource, COMPONENT_NAME_RE } from '../shared/bridge-wire.ts';
-import type { ComponentTier, ComponentVersion } from '../shared/platform-rpc.ts';
+import { leadingComment } from '../shared/component-description.ts';
+import type { ComponentCatalogEntry, ComponentTier, ComponentVersion } from '../shared/platform-rpc.ts';
 import { loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
 
 const DEFAULT_CANVAS_ID = 'default';
@@ -75,6 +76,11 @@ export interface ComponentRecords {
    *  revision — null when there is no such version. A VERSION number goes out; the source is
    *  read and re-put on the store's own side and never comes back through here. */
   restore(tier: ComponentTier, canvasId: string, module: string, version: number): Promise<number | null>;
+  /** The whole library this canvas can see — own and shared Records plus the PLATFORM tier,
+   *  which the edge knows from its build-time manifest — each entry labelled with the tier it
+   *  resolves in. THROWS when the store is unreachable: an empty library is what makes an
+   *  agent author a duplicate of everything, so it must never stand in for "could not ask". */
+  list(canvasId: string): Promise<ComponentInfo[]>;
   /** Move the Component from this canvas into the shared library — one change of tier, so it
    *  can never end up in both libraries or in neither. THROWS with the store's reason. */
   promote(canvasId: string, module: string): Promise<void>;
@@ -122,6 +128,7 @@ function containerRecords(): ComponentRecords | null {
     history: (tier, canvasId, module) => rpc.componentHistory({ workspaceId, canvasId, tier, name: module }),
     restore: (tier, canvasId, module, version) =>
       rpc.componentRestore({ workspaceId, canvasId, tier, userId, name: module, version }),
+    list: (canvasId) => rpc.componentList({ workspaceId, canvasId }),
     promote: async (canvasId, module) => void (await rpc.componentPromote({ workspaceId, canvasId, userId, name: module })),
     adopt: async (canvasId, module) => void (await rpc.componentAdopt({ workspaceId, canvasId, userId, name: module })),
     writeData: async (canvasId, name, source) => void (await rpc.dataWrite({ workspaceId, canvasId, userId, name, source })),
@@ -139,34 +146,47 @@ function namesIn(dir: string): string[] {
     .map((f) => f.replace(/\.tsx$/, ''));
 }
 
-/** Names (no extension) of every module a canvas can see: own dir ∪ shared lib ∪ platform base. */
-export function listComponents(canvasId: string = DEFAULT_CANVAS_ID): string[] {
-  return [...new Set([...namesIn(ownDir(canvasId)), ...namesIn(SHARED_DIR), ...namesIn(BASE_DIR)])].sort();
+/** Names (no extension) of every module a canvas can see: own tier, then the workspace
+ *  shared library, then the platform base. */
+export async function listComponents(
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<string[]> {
+  return (await listComponentDetails(canvasId, records)).map((c) => c.name);
 }
 
-// Pure: the leading line-comment (or block-comment) of a module's source, as one
-// line — agents open components with a describing comment, which the gallery shows
-// as the card description. Empty string when there is none.
-export function leadingComment(source: string): string {
-  const lines = source.split('\n');
-  const out: string[] = [];
-  for (const raw of lines) {
-    const l = raw.trim();
-    if (out.length === 0 && l === '') continue;
-    if (l.startsWith('//')) out.push(l.replace(/^\/\/\s?/, ''));
-    else if (out.length === 0 && l.startsWith('/*')) out.push(l.replace(/^\/\*+\s?/, '').replace(/\*+\/\s*$/, ''));
-    else if (out.length > 0 && (l.startsWith('*') || l.endsWith('*/'))) out.push(l.replace(/^\*+\s?/, '').replace(/\*+\/\s*$/, ''));
-    else break;
-  }
-  return out.join(' ').replace(/\s+/g, ' ').trim().slice(0, 240);
-}
+// The description extractor moved to `shared/component-description.ts` (#363): the EDGE now
+// derives the same descriptions from Record sources, and it cannot import a module that pulls
+// in `node:fs`. Re-exported here so this file stays the container's one component door.
+export { leadingComment };
 
-export type ComponentInfo = { name: string; description: string; tier: 'own' | 'shared' | 'base' };
+/** One line of the library. The contract's type, not a mirror of it (CLAUDE.md §7): the edge
+ *  composes this answer and the container renders it, so a second declaration here could
+ *  drift from the one on the wire. */
+export type ComponentInfo = ComponentCatalogEntry;
 
-/** listComponents enriched with each module's first-comment description + tier. */
-export function listComponentDetails(canvasId: string = DEFAULT_CANVAS_ID): ComponentInfo[] {
+/**
+ * The library this canvas can see: every module's name, its first-comment description, and
+ * the TIER it resolves in (own beats shared beats base, ADR-0014 precedence unchanged).
+ *
+ * The STORE answers it (#363), not the directories. After a recycle the own and shared dirs
+ * are empty while their Records are not, and a disk-only listing would report a library the
+ * workspace still has — which is precisely what the agent avoids duplicates with, so it would
+ * author a second copy of everything. The edge answers all three tiers from one place: the two
+ * writable ones as Records, the platform tier from its build-time manifest. Asking it also
+ * means the container and the edge give the SAME answer, from one implementation.
+ *
+ * With no edge in front of this process (local dev without the Worker, the unit suite) the
+ * filesystem is all there is, exactly as it was before ADR-0022.
+ */
+export async function listComponentDetails(
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<ComponentInfo[]> {
+  if (records) return await records.list(canvasId);
   const own = ownDir(canvasId);
-  return listComponents(canvasId).map((name) => {
+  const names = [...new Set([...namesIn(own), ...namesIn(SHARED_DIR), ...namesIn(BASE_DIR)])].sort();
+  return names.map((name) => {
     const dir = existsSync(fileIn(own, name)) ? own : existsSync(fileIn(SHARED_DIR, name)) ? SHARED_DIR : BASE_DIR;
     let description = '';
     try {
