@@ -26,6 +26,7 @@ import { d1RecordStore } from './record-store.ts';
 import { d1SkillFileStore } from './skill-file-store.ts';
 import { skillStore } from './skill-store.ts';
 import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { notifyInboxChanged } from './workspace-events.ts';
 
 // The edge half of the platform RPC (ADR-0018). See `shared/platform-rpc.ts` for the contract
 // and for why this is a behavioural surface rather than a data-access one.
@@ -38,7 +39,14 @@ import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
  * migration does, deliberately, so that its local dry run goes through the REAL edge handler
  * rather than a stand-in. `Env` still satisfies this.
  */
-export type PlatformRpcEnv = { BETTER_AUTH_SECRET?: string; WEB_ORIGIN?: string };
+export type PlatformRpcEnv = {
+  BETTER_AUTH_SECRET?: string;
+  WEB_ORIGIN?: string;
+  /** The per-workspace events hub (#383). Structurally typed, not `DurableObjectNamespace`,
+   *  for the same reason the whole env slice is declared here: this module has node-side
+   *  callers whose TS program carries no `@cloudflare/workers-types`. */
+  WORKSPACE_EVENTS?: import('./workspace-events.ts').WorkspaceEventsHub;
+};
 
 /** The collaborators the operations need. Default-parameter seam (as `bridge.ts` uses), so
  * tests drive the real handler against an in-memory platform data layer. */
@@ -48,6 +56,17 @@ export interface PlatformRpcDeps {
   send: PushSend | null;
   /** Shell origin a notification click should open. */
   origin: string;
+  /**
+   * Ring a workspace's events hub (#383). Every container-side conversation write arrives
+   * through this handler, so this is where the whole agent path is covered — the human
+   * path is covered at its own call sites in `inbox.ts` and `inbox-bridge.ts`, because a
+   * badge that moved for agents and not for humans would look fixed and be worse.
+   *
+   * A dep rather than a direct binding read, for the same reason `send` is one: this
+   * module is driven directly by node-side callers (the #365 migration) that hold no
+   * Worker env at all.
+   */
+  notify: (workspaceId: string) => Promise<void>;
 }
 
 /** The production wiring, minus the platform-data-layer client (the caller passes the one the
@@ -58,6 +77,7 @@ export function platformRpcDeps(env: PlatformRpcEnv, db: Database): PlatformRpcD
     db,
     send: webPushSender(env as unknown as Record<string, string | undefined>),
     origin: (env.WEB_ORIGIN ?? '').replace(/\/$/, ''),
+    notify: (workspaceId) => notifyInboxChanged(env.WORKSPACE_EVENTS, workspaceId),
   };
 }
 
@@ -121,8 +141,22 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
   const parsed = PlatformRpcRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: 'invalid request' }, { status: 400 });
 
+  // Each of the four conversation operations below rings the workspace's events hub after
+  // its row work lands (#383), so an open Shell's badge follows an agent turn within a hub
+  // hop instead of a poll interval. `ring` never throws (`notifyInboxChanged` swallows) —
+  // and it is deliberately caught here as well, because `notify` is a DEP and a test or a
+  // node-side caller could supply one that does.
+  const ring = async (workspaceId: string) => {
+    try {
+      await deps.notify(workspaceId);
+    } catch {
+      /* the doorbell is not the signal — the row is already written */
+    }
+  };
+
   if (parsed.data.op === 'conversation.start') {
     const conv = await findOrCreateConversation(deps.db, parsed.data.input);
+    await ring(conv.workspaceId);
     return Response.json({ conversationId: conv.id } satisfies ConversationStartOutput);
   }
 
@@ -132,6 +166,7 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
   if (parsed.data.op === 'conversation.settle') {
     const conv = await findOrCreateConversation(deps.db, parsed.data.input);
     await conversations.markActivity(deps.db, conv.id);
+    await ring(conv.workspaceId);
     return new Response(null, { status: 200 });
   }
 
@@ -142,6 +177,7 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
     const { prUrl, ...identity } = parsed.data.input;
     const conv = await findOrCreateConversation(deps.db, identity);
     await conversations.recordPr(deps.db, conv.id, prUrl);
+    await ring(conv.workspaceId);
     return new Response(null, { status: 200 });
   }
 
@@ -153,6 +189,7 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
     const conv = await findOrCreateConversation(deps.db, { ...identity, summary });
     if (outcome === 'done') await conversations.markDone(deps.db, conv.id, summary);
     else await conversations.promote(deps.db, conv.id, question ?? summary);
+    await ring(conv.workspaceId);
     return Response.json({ conversationId: conv.id } satisfies TurnEndOutput);
   }
 

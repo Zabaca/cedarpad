@@ -98,7 +98,12 @@
       // One instance per canvas, hosting that canvas's tldraw sync room (ADR-0019, #288).
       // Unlike Sandbox/Warehouse this is NOT a container class — it is a plain SQLite-backed
       // DO, and its SQLite tables ARE the room's persistence.
-      { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" }
+      { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" },
+      // One instance per WORKSPACE, the fan-out point for "this workspace's inbox changed"
+      // (#383). Not a container class and — unlike CanvasSyncRoom — it stores NOTHING: it
+      // holds subscriber sockets and forwards a topic, so the badge is pushed instead of
+      // polled without a second copy of the inbox existing anywhere.
+      { "class_name": "WorkspaceEvents", "name": "WORKSPACE_EVENTS" }
     ]
   },
   // Native R2 binding (ADR-0017, #238): the edge Worker (workerd) reads mart parquet and
@@ -147,7 +152,12 @@
     // CanvasSyncRoom (#288). new_SQLITE_classes is required, not optional here: the room's
     // documents/tombstones/clock live in this DO's SQLite tables (sync-core's
     // SQLiteSyncStorage), so a KV-backed class would have nowhere to put them.
-    { "tag": "v3", "new_sqlite_classes": ["CanvasSyncRoom"] }
+    { "tag": "v3", "new_sqlite_classes": ["CanvasSyncRoom"] },
+    // WorkspaceEvents (#383) — its own tag, per wrangler's one-entry-per-class-introduced
+    // convention. `new_sqlite_classes` even though the hub persists nothing: it is the
+    // current default backend for a new class, and declaring the KV one would pin a
+    // deprecated storage engine to a class that will never use either.
+    { "tag": "v4", "new_sqlite_classes": ["WorkspaceEvents"] }
   ],
   // Preview environment (zbc: `apply preview canvas` -> `wrangler deploy --env
   // preview`). A SEPARATE worker `agent-canvas-preview` in the same account, on a
@@ -207,7 +217,12 @@
           // Redeclared verbatim from the top level (#288) — named envs inherit no
           // durable_objects. Preview gets its OWN room instances: DO storage is per-worker,
           // not shared like Turso/R2/D1 are.
-          { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" }
+          { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" },
+          // Redeclared verbatim from the top level (#383), same reason. Preview gets its own
+          // hubs — which is the right isolation even though it shares production's D1: a
+          // preview tab and a production tab watching the same workspace are two streams,
+          // and each re-reads the rows for itself anyway.
+          { "class_name": "WorkspaceEvents", "name": "WORKSPACE_EVENTS" }
         ]
       },
       // Preview shares production's mart bucket too, matching Turso/waitlist D1 sharing.
@@ -231,7 +246,8 @@
       "migrations": [
         { "tag": "v1", "new_sqlite_classes": ["Sandbox"] },
         { "tag": "v2", "new_sqlite_classes": ["Warehouse"] },
-        { "tag": "v3", "new_sqlite_classes": ["CanvasSyncRoom"] }
+        { "tag": "v3", "new_sqlite_classes": ["CanvasSyncRoom"] },
+        { "tag": "v4", "new_sqlite_classes": ["WorkspaceEvents"] }
       ]
     }
   }

@@ -3,6 +3,7 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { ChatView } from '../../shared/ChatView';
 import { setCanvasOverride } from '../../shared/chat-store';
 import { DOCK_CHAT, parseDockMessage } from '../../shared/dock-messages';
+import { readInboxBadgeFrame } from '../../shared/workspace-events';
 import { DOCK_MEMORY_KEY, DOCK_WIDTH_KEY, type DockMemory, type DockedChat, parseDockMemory, parseDockWidth, serializeDockMemory } from './canvas-dock';
 import { clampWidth, MAX_PANE_WIDTH, MIN_PANE_WIDTH } from './inbox/inbox-panes';
 import { canvasFromUrl, urlWithCanvas } from './canvas-url';
@@ -200,6 +201,8 @@ function MemberShell() {
   // Inbox nav badge, pushed over SSE (/api/inbox/events → {count}). The read mark is
   // WORKSPACE-SHARED (read-for-all): opening the Inbox stamps it server-side, so every
   // member's badge clears — and the same stream delivers that clear to other open Shells.
+  // Since #383 the stream is driven by the workspace's events hub rather than a 10s timer,
+  // so a change reaches this badge in about the time one D1 read takes.
   const [inboxUnseen, setInboxUnseen] = useState(0);
   // The previous pushed count: null until the first frame lands, so a page load with
   // existing unread never dings — only a count RISING while the tab is open does.
@@ -209,15 +212,14 @@ function MemberShell() {
   useEffect(() => {
     const es = new EventSource('/api/inbox/events');
     es.onmessage = (e) => {
-      try {
-        const { count } = JSON.parse(e.data) as { count: number };
-        const prev = unseenPrev.current;
-        unseenPrev.current = count;
-        setInboxUnseen(count);
-        if (prev !== null && count > prev && stageRef.current !== 'inbox') chime();
-      } catch {
-        /* malformed frame: keep the current badge */
-      }
+      // Parsed through the shared contract (CLAUDE.md §7) — the same module the edge
+      // encodes with. A malformed frame reads as null and leaves the badge as it was.
+      const badge = readInboxBadgeFrame(e.data);
+      if (!badge) return;
+      const prev = unseenPrev.current;
+      unseenPrev.current = badge.count;
+      setInboxUnseen(badge.count);
+      if (prev !== null && badge.count > prev && stageRef.current !== 'inbox') chime();
     };
     return () => es.close();
   }, []);
