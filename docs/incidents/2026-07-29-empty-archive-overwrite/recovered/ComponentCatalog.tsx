@@ -1,8 +1,15 @@
 // A live browser over this canvas's component library, placeable on the canvas itself.
-// Lists every module (own dir + shared lib + platform lib, via GET /api/custom/component-catalog
-// which proxies the bridge's /api/components), lets you search/filter, and click "+ Add" to
-// drop a fresh instance onto the canvas (POST proxies /api/components/place) — no agent
-// round-trip needed. Placements cascade in a grid to the right of wherever this catalog sits.
+// Lists every module (own + shared + platform tier, via GET /api/components), lets you
+// search/filter, and click "+ Add" to drop a fresh instance onto the canvas (POST
+// /api/components/place) — no agent round-trip needed. Placements cascade in a grid to the
+// right of wherever this catalog sits.
+//
+// REPOINTED DURING RESTORATION (#365). As recovered, both calls went to
+// /api/custom/component-catalog — a custom handler destroyed in the same 2026-07-29 flush
+// that took this component, and a feature since removed (#357). It was a thin proxy, so this
+// calls its two targets directly: the listing is now edge-served and canvas-scoped by the
+// x-canvas-id header this component already sent (#363), and placement is the bridge route
+// the platform gallery uses. Nothing else about the recovered source changed.
 //
 // The x-canvas-id header is derived from window.location.pathname (mirrors src/active-canvas.ts's
 // canvasIdFromPath) since this component isn't handed a canvasId prop directly.
@@ -28,8 +35,8 @@ function activeCanvasId(): string {
   return m?.[1] ?? 'default';
 }
 
-async function api(method: 'GET' | 'POST', body?: unknown) {
-  const res = await fetch('/api/custom/component-catalog', {
+async function api(path: string, method: 'GET' | 'POST', body?: unknown) {
+  const res = await fetch(path, {
     method,
     headers: { 'content-type': 'application/json', 'x-canvas-id': activeCanvasId() },
     body: body ? JSON.stringify(body) : undefined,
@@ -54,7 +61,7 @@ export default function ComponentCatalog({
 
   const load = () => {
     setError(null);
-    api('GET')
+    api('/api/components', 'GET')
       .then((json) => setModules(Array.isArray(json.components) ? (json.components as string[]) : []))
       .catch((e) => setError((e as Error).message));
   };
@@ -81,7 +88,7 @@ export default function ComponentCatalog({
     const x = anchorX + (col + 1) * (CELL_W + GUTTER);
     const y = anchorY + row * (CELL_H + GUTTER);
     try {
-      await api('POST', { module, x, y, w: CELL_W, h: CELL_H });
+      await api('/api/components/place', 'POST', { module, x, y, w: CELL_W, h: CELL_H });
       setData?.({ placedCount: placedCount + 1 });
       setToast(`Added ${module}`);
     } catch (e) {
