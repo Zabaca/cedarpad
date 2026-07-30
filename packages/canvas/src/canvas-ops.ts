@@ -6,6 +6,7 @@ import type { ArrowShape, CanvasShape } from './shapes';
 import { SHAPE_SIZE_DEFAULTS } from './shapes';
 import type { CanvasStore } from './store';
 import { normalizeShape } from './normalize';
+import { shapesOnPage } from './current-page';
 import type { DataSource } from '../shared/mart-contract';
 
 export interface OpResult {
@@ -144,10 +145,24 @@ function redactForRead(s: CanvasShape): CanvasShape | Record<string, unknown> {
   return { ...rest, src: `<image data${size}; call read_image("${s.id}") to view>` };
 }
 
-export function readOp(store: CanvasStore): OpResult {
-  const shapes = store.getState().shapes;
-  if (shapes.length === 0) return { text: 'The canvas is empty.' };
-  return { text: `${shapes.length} shape(s):\n${JSON.stringify(shapes.map(redactForRead), null, 2)}` };
+export function readOp(store: CanvasStore, page?: string): OpResult {
+  const state = store.getState();
+  const pages = state.pages ?? [];
+  let shapes: CanvasShape[];
+  try {
+    shapes = shapesOnPage(state.shapes, pages, page);
+  } catch (e) {
+    return { text: `Error: ${(e as Error).message}`, isError: true };
+  }
+  // The page preamble appears ONLY on a canvas that actually has more than one page.
+  // Everywhere else there is nothing to choose between, and a line saying so would spend
+  // tokens on every read of every single-page canvas — which is nearly all of them.
+  const header =
+    pages.length > 1
+      ? `Pages: ${pages.map((p) => `${p.id} (${p.name})`).join(', ')}${page ? ` — showing ${page} only.` : ' — showing ALL of them; pass `page` to read just one.'}\n`
+      : '';
+  if (shapes.length === 0) return { text: `${header}${page ? `Page ${page} is empty.` : 'The canvas is empty.'}` };
+  return { text: `${header}${shapes.length} shape(s):\n${JSON.stringify(shapes.map(redactForRead), null, 2)}` };
 }
 
 /** The `src` of an image shape, or null if not an image / not found / no pixels. Since

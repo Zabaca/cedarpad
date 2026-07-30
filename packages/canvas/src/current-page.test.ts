@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { cameraKey, pageToSend, restorablePage } from './current-page';
+import { cameraKey, pageToSend, restorablePage, shapesOnPage } from './current-page';
+import type { CanvasShape } from './shapes';
 
 describe('pageToSend', () => {
   test('names the page when it is not the first one', () => {
@@ -31,6 +32,35 @@ describe('restorablePage', () => {
 
   test('nothing stored means nothing to restore', () => {
     expect(restorablePage(null, ['page:one'])).toBeUndefined();
+  });
+});
+
+describe('shapesOnPage', () => {
+  const box = (id: string, page?: string): CanvasShape => ({ id, type: 'rectangle', x: 0, y: 0, w: 1, h: 1, color: 'black', text: '', ...(page ? { page } : {}) });
+  const pages = [
+    { id: 'page:one', name: 'Page 1' },
+    { id: 'page:two', name: 'Page 2' },
+  ];
+  const shapes = [box('shape:a'), box('shape:b', 'page:two'), box('shape:c', 'page:one')];
+
+  test('naming no page keeps everything, so existing readers are unchanged', () => {
+    expect(shapesOnPage(shapes, pages, undefined)).toEqual(shapes);
+  });
+
+  test('the first page collects the shapes that name no page', () => {
+    // ABSENT MEANS THE FIRST PAGE (src/shapes.ts). A filter that matched only the explicit
+    // id would report page one as empty on every canvas written before pages existed.
+    expect(shapesOnPage(shapes, pages, 'page:one').map((s) => s.id)).toEqual(['shape:a', 'shape:c']);
+  });
+
+  test('a later page collects only what names it', () => {
+    expect(shapesOnPage(shapes, pages, 'page:two').map((s) => s.id)).toEqual(['shape:b']);
+  });
+
+  test('a page the canvas does not have is refused, not answered as empty', () => {
+    // Same rule the write path already follows: an empty answer is indistinguishable from
+    // "your shapes are gone", so say which pages exist instead.
+    expect(() => shapesOnPage(shapes, pages, 'page:nope')).toThrow(/page:one.*page:two/s);
   });
 });
 

@@ -38,3 +38,33 @@ export function restorablePage<Id extends string>(remembered: string | null | un
 export function cameraKey(canvasId: string, pageId: string): string {
   return `${canvasId}::${pageId}`;
 }
+
+/**
+ * The shapes on one page, for a reader that asked for one.
+ *
+ * This exists because a whole canvas is too big to hand an agent: an unfiltered read of a
+ * busy board overruns the MCP response limit, and the workaround agents found for
+ * themselves — dump it to a file and read the file back — costs a round trip and still
+ * reads everything.
+ *
+ * `page` undefined means "no filter", which is what every existing caller does, so their
+ * answer is unchanged.
+ *
+ * @throws when `page` names a page the canvas does not have. Answering an empty list would
+ * be indistinguishable from the page being empty, and the write path already refuses an
+ * unknown page for the same reason (worker/canvas-mutate.ts).
+ */
+export function shapesOnPage<S extends { page?: string }>(
+  shapes: readonly S[],
+  pages: readonly { id: string; name: string }[],
+  page: string | undefined,
+): S[] {
+  if (!page) return [...shapes];
+  if (!pages.some((p) => p.id === page)) {
+    throw new Error(`no page "${page}" on this canvas — it has ${pages.map((p) => `${p.id} (${p.name})`).join(', ')}`);
+  }
+  // ABSENT MEANS THE FIRST PAGE, so page one has to collect the unmarked shapes as well as
+  // the ones naming it — otherwise it reads as empty on every canvas predating pages.
+  const isFirst = pages[0]?.id === page;
+  return shapes.filter((s) => s.page === page || (isFirst && s.page === undefined));
+}

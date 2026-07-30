@@ -31,6 +31,35 @@ describe('canvas ops (the agent tool logic)', () => {
     expect(readOp(s).text).toContain('1 shape(s)');
   });
 
+  test('read names the pages and can narrow to one, leaving a single-page canvas unchanged', () => {
+    const pages = [
+      { id: 'page:one', name: 'Page 1' },
+      { id: 'page:two', name: 'Page 2' },
+    ];
+    const inner = createStore();
+    createShapesOp(inner, [{ type: 'rectangle', x: 0, y: 0, text: 'on one' }]);
+    createShapesOp(inner, [{ type: 'rectangle', x: 0, y: 0, text: 'on two', page: 'page:two' }]);
+    const multi = { ...inner, getState: () => ({ ...inner.getState(), pages }) };
+
+    // Unfiltered still reads everything — plus the page list, which is the only way the
+    // agent can learn a page id to ask for.
+    const all = readOp(multi).text;
+    expect(all).toContain('2 shape(s)');
+    expect(all).toContain('page:two (Page 2)');
+
+    const one = readOp(multi, 'page:two').text;
+    expect(one).toContain('1 shape(s)');
+    expect(one).toContain('on two');
+    expect(one).not.toContain('on one');
+
+    // A page the canvas lacks is refused rather than answered as empty.
+    expect(readOp(multi, 'page:nope')).toMatchObject({ isError: true });
+
+    // A single-page canvas gains no page preamble at all: absent means the first page, so
+    // there is nothing to choose between and nothing worth spending tokens on.
+    expect(readOp(inner).text.startsWith('2 shape(s)')).toBe(true);
+  });
+
   test('read_canvas exposes a component\'s load/render status to the agent', () => {
     // The reason the status feature exists: the agent must be able to SEE that a
     // component it placed failed to come up. Status lives on the model (lifted from

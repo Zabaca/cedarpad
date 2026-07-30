@@ -15,7 +15,7 @@ import type { TLSocketRoom } from '@tldraw/sync-core';
 import type { TLRecord } from '@tldraw/tlschema';
 
 import type { CanvasMutation, CanvasMutationResult } from '../shared/canvas-mutation.ts';
-import type { CanvasShape } from '../src/shapes.ts';
+import type { CanvasPage, CanvasShape } from '../src/shapes.ts';
 import { arrowBindingId, buildArrowBindings, buildShapeRecord, plaintextOf, UnbuildableShapeError } from '../src/tl-record-builder.ts';
 import type { ArrowBindingsView } from '../src/tldraw-conventions.ts';
 import { fromTldrawShape } from '../src/tldraw-conventions.ts';
@@ -105,6 +105,15 @@ function orderedPages(all: AnyRecord[]): string[] {
 }
 
 const firstPageId = (all: AnyRecord[]): string => orderedPages(all)[0] ?? 'page:page';
+
+/** The room's pages as the contract carries them: id + human name, in the switcher's order.
+ *  This is the ONLY place a caller can learn a page id, which is what makes writing to a
+ *  named page possible at all — the ids are opaque and nothing else hands one out. */
+export function readPages(room: Room): CanvasPage[] {
+  const all = records(room);
+  const byId = new Map(all.filter((r) => r.typeName === 'page').map((r) => [String(r.id), r]));
+  return orderedPages(all).map((id) => ({ id, name: String(byId.get(id)?.name ?? '') }));
+}
 
 /**
  * The page a shape sits on, walking up through any frames that contain it.
@@ -200,5 +209,5 @@ export async function applyMutation(room: Room, mutation: CanvasMutation): Promi
       throw new MutationRejected(e instanceof UnbuildableShapeError ? e.message : `tldraw rejected the record: ${(e as Error).message}`);
     }
   }
-  return { version: versionOf(room), shapes: readShapes(room) };
+  return { version: versionOf(room), shapes: readShapes(room), pages: readPages(room) };
 }

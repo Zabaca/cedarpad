@@ -249,9 +249,9 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
   return [
       tool(
         'read_canvas',
-        'Read every shape on the canvas, including the ones the human drew. Returns id, type, geometry, text, and color for each. Call this before editing so you know what exists and where the free space is.',
-        {},
-        async () => result(readOp(store)),
+        'Read the shapes on the canvas, including the ones the human drew. Returns id, type, geometry, text, and color for each. Call this before editing so you know what exists and where the free space is. A canvas can have MORE THAN ONE PAGE: when it does, the answer opens with the list of pages and reads all of them — pass `page` to read just one, which you should do whenever the canvas is large enough that a full read would be unwieldy.',
+        { page: z.string().optional().describe('A page id from the `Pages:` line of a previous read. Omit to read every page.') },
+        async ({ page }) => result(readOp(store, page)),
       ),
       tool(
         'read_connected',

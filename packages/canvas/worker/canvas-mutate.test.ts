@@ -118,6 +118,20 @@ describe('pages', () => {
     expect(rec.parentId).toBe('page:two');
   });
 
+  test('every read names the canvas pages, in the order a human sees them', async () => {
+    const r = room();
+    await withSecondPage(r);
+    const read = await applyMutation(r, { op: 'read' });
+    // A `page` id is opaque and nothing else hands one out. Without this, an agent asked to
+    // write to "page 2" has no way to learn what to name — and no way to know a canvas has
+    // more than one page at all.
+    expect(read.pages).toEqual([
+      { id: 'page:page', name: 'Page 1' },
+      { id: 'page:two', name: 'Page 2' },
+    ]);
+    expect(CanvasMutationResult.safeParse(read).success).toBe(true);
+  });
+
   test('shapes on different pages come back distinguishable rather than flattened together', async () => {
     const r = room();
     await withSecondPage(r);

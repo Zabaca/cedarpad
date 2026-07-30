@@ -73,6 +73,39 @@ describe('bridge canvas writes go to the room', () => {
     expect(await res.json()).toMatchObject({ shapes: [{ id: 'shape:from-room' }] });
   });
 
+  test('GET /api/canvas?page= narrows to one page, and refuses a page the canvas lacks', async () => {
+    // A multi-page room, which `createStore` cannot model — pages belong to a tldraw room.
+    const pages = [
+      { id: 'page:one', name: 'Page 1' },
+      { id: 'page:two', name: 'Page 2' },
+    ];
+    const inner = createStore([
+      { id: 'shape:unmarked', type: 'note', color: 'black', x: 0, y: 0, text: 'no page field' },
+      { id: 'shape:on-two', type: 'note', color: 'black', x: 0, y: 0, text: 'page two', page: 'page:two' },
+    ]);
+    setCanvasRoomOpener(async () => ({
+      getState: () => ({ ...inner.getState(), pages }),
+      upsert: inner.upsert,
+      remove: inner.remove,
+      clear: inner.clear,
+      flush: async () => {},
+    }));
+    const get = (q = '') => handleRequest(new Request(`http://localhost/api/canvas${q}`, { headers: { 'x-canvas-id': 'room-canvas' } }));
+
+    // Page one collects the shape that names NO page — absent means the first page.
+    expect(await (await get('?page=page:one')).json()).toMatchObject({ shapes: [{ id: 'shape:unmarked' }] });
+    expect(await (await get('?page=page:two')).json()).toMatchObject({ shapes: [{ id: 'shape:on-two' }] });
+
+    // No filter: both, exactly as before this existed.
+    expect(((await (await get()).json()) as { shapes: unknown[] }).shapes).toHaveLength(2);
+
+    // An unknown page is the CALLER's mistake, and answering an empty list would look
+    // identical to the page being empty — so 400, naming the pages that do exist.
+    const bad = await get('?page=page:nope');
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toMatchObject({ error: expect.stringContaining('page:two') });
+  });
+
   test('place_component, update_shapes and delete all write to the room', async () => {
     const room = fakeRoom();
     await handleRequest(post('/api/components/place', { module: 'Thing', x: 0, y: 0, w: 100, h: 100 }));
