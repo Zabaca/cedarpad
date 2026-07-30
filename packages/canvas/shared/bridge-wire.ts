@@ -30,6 +30,22 @@ export const GUEST_CANVAS_HEADER = 'x-guest-canvas';
  *  edge next to `x-guest-canvas` and parsed by the bridge with `readGuestCapabilities`.
  *  Present ⟺ the request is a guest's; the edge always writes it, so a client cannot. */
 export const GUEST_CAPS_HEADER = 'x-guest-caps';
+/**
+ * WHO is asking, for PRESENTATION-ONLY targeting — whose open editor a `select_page` moves.
+ *
+ * NEVER an authorization input. The bridge is deliberately identity-blind: an agent write is
+ * the container acting on behalf of whoever's agent is running, and it authorizes as
+ * `CONTAINER_PRINCIPAL` (shared/canvas-mutation.ts) no matter who this names. Reaching for
+ * this header to decide whether something is ALLOWED would give a presentation hint the
+ * weight of a credential — the edge is the only gate, and it has already run.
+ *
+ * Stamped by the edge from the resolved session and overwritten on every proxy, so a client
+ * cannot claim to be someone else. ABSENT means "no identifiable viewer": a guest (whose
+ * per-browser identity lives in localStorage and never reaches the edge, src/identity.ts),
+ * or an unattributed run like the dev-agent. Absent is NOT a wildcard — a fan-out with no
+ * viewer targets nobody, so the failure mode is "nothing moved", never "everyone moved".
+ */
+export const CANVAS_VIEWER_HEADER = 'x-canvas-viewer';
 /** A send with no subscriber by design (MCP / inbox), bypassing the subscribe-before-send guard. */
 export const HEADLESS_SEND_HEADER = 'x-headless-send';
 /** Edge-minted GitHub installation token for a dev-agent turn — per-request custody, never persisted. */
@@ -231,4 +247,13 @@ export const BRIDGE_ROUTES = {
   deleteShapes: '/api/canvas/delete',
   components: '/api/components',
   componentsPlace: '/api/components/place',
+  selectPage: '/api/canvas/select-page',
 } as const;
+
+/** Move a viewer's OPEN EDITOR to a page. Not a canvas mutation: nothing about the
+ *  document changes, only which page one person is looking at — which is why it is a
+ *  route of its own rather than an op on the mutation contract. `pageId` is already
+ *  resolved (`shared/canvas-pages.ts` did that at the tool layer); the bridge never
+ *  sees a page NAME. */
+export const SelectPageBody = z.object({ pageId: z.string().min(1) });
+export type SelectPageBody = z.infer<typeof SelectPageBody>;

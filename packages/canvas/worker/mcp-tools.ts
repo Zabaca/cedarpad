@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   BRIDGE_ROUTES,
   CANVAS_ID_HEADER,
+  CANVAS_VIEWER_HEADER,
   ComponentName,
   CreateShapesBody,
   DataFileName,
@@ -11,7 +12,9 @@ import {
   WriteComponentBody,
   WriteDataBody,
 } from '../shared/bridge-wire.ts';
+import { resolvePageRef } from '../shared/canvas-pages.ts';
 import { SkillName, UploadSkillInput as UploadSkillFiles } from '../shared/skills-wire.ts';
+import type { CanvasPage } from '../src/shapes.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { listVisibleCanvases, listVisibleConversations, resolveCanvas, resolveConversationByOwnerRef } from './access.ts';
@@ -69,6 +72,9 @@ export const ReadCanvasPageInput = ReadCanvasInput.extend({
   page: z.string().min(1).optional(),
 });
 export const ListComponentsInput = ReadCanvasInput;
+/** `page` takes a NAME as the human says it, or a `page:` id — `resolvePageRef` accepts
+ *  both, so the caller never has to know which one it is holding. */
+export const SelectPageInput = ReadCanvasInput.extend({ page: z.string().min(1) });
 export const ReadComponentInput = ReadCanvasInput.extend({ module: ComponentName });
 // canvas_id is REQUIRED here (unlike the read paths' default-canvas fallback): a write
 // silently landing in the default canvas's own dir when the caller meant a specific one
@@ -290,6 +296,34 @@ export function buildMcpTools(deps: McpToolDeps) {
       // the whole canvas across this hop, and the hop is what the response limit measures.
       const path = input.page ? `${BRIDGE_ROUTES.canvas}?page=${encodeURIComponent(input.page)}` : BRIDGE_ROUTES.canvas;
       return bridgeJson(ws.id, path, { headers });
+    },
+
+    /**
+     * Ask the TOKEN USER's own open tabs on this canvas to switch to a page. Presentation
+     * only: the document does not change, and nobody else's screen moves — a canvas is a
+     * shared surface, and yanking a colleague's view because someone else's agent asked is
+     * an act they never consented to.
+     *
+     * `asked` counts the views the request REACHED, not the views that changed: the leg is
+     * fire-and-forget and a browser still declines a page it has not synced yet. 0 is the
+     * certain fact — that user has no tab open here (or is on a different canvas) — and it
+     * is reported rather than swallowed.
+     */
+    async selectPage(input: z.infer<typeof SelectPageInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      const state = (await bridgeJson(ws.id, BRIDGE_ROUTES.canvas, { headers })) as { pages?: CanvasPage[] };
+      // Resolve HERE, at the edge: the bridge takes an id only, so a name never reaches a
+      // layer whose job is structure rather than naming.
+      const pageId = resolvePageRef(state.pages ?? [], input.page);
+      const res = (await bridgeJson(ws.id, BRIDGE_ROUTES.selectPage, {
+        method: 'POST',
+        // The viewer is the OAuth token's user — this proxy is a synthetic request the edge
+        // builds, so worker/index.ts's browser-path stamping never ran for it.
+        headers: { ...headers, [CANVAS_VIEWER_HEADER]: deps.userId },
+        body: { pageId },
+      })) as { asked: number };
+      return { page_id: pageId, asked: res.asked };
     },
 
     // The component library over the wire: the same list/read/write the in-canvas agent

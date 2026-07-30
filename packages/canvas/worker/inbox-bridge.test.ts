@@ -20,6 +20,7 @@ let conv: ConversationRow | null = null;
 let workspaceMembers: string[] = [];
 let served: SandboxCoords[] = [];
 let servedAssigns: Array<string | null> = [];
+let servedViewers: Array<string | null> = [];
 let servedTokens: Array<string | null> = [];
 let servedCanvasIds: Array<string | null> = [];
 let servedRepos: Array<string | null> = [];
@@ -49,6 +50,7 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedRepos.push(req.headers.get('x-dev-agent-repo'));
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     servedAssigns.push(req.headers.get('x-inbox-assign'));
+    servedViewers.push(req.headers.get('x-canvas-viewer'));
     servedConversations.push(req.headers.get('x-inbox-conversation'));
     servedPairings.push(req.headers.get('x-inbox-canvas-pairing'));
     return new Response('proxied');
@@ -185,6 +187,18 @@ const proxy = (method: string, subPath: string, convId = 'conv_1') =>
     async (_env, _db, _ws, requested) => ({ installationId: 'inst_1', repoFullName: requested ?? 'Zabaca/cedarpad' }),
   );
 
+/** As `proxy`, but with client-supplied headers — for the forged-header tests below. */
+const proxyWithHeaders = (method: string, subPath: string, headers: Record<string, string>, convId = 'conv_1') =>
+  handleInboxBridge(
+    new Request(`https://poc.cedarpad.com/inbox/${convId}/bridge${subPath}`, { method, headers }),
+    {} as never,
+    user,
+    convId,
+    subPath,
+    mint,
+    async (_env, _db, _ws, requested) => ({ installationId: 'inst_1', repoFullName: requested ?? 'Zabaca/cedarpad' }),
+  );
+
 // Let the fire-and-forget flip (a microtask) settle before asserting.
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
@@ -194,6 +208,7 @@ beforeEach(() => {
   workspaceMembers = ['u_1'];
   served = [];
   servedAssigns = [];
+  servedViewers = [];
   servedTokens = [];
   servedCanvasIds = [];
   servedRepos = [];
@@ -635,5 +650,28 @@ describe('handleInboxBridge: the workspace’s external-MCP tokens ride the send
     mcpTokensByWorkspace = { ws_a: { ledgerbot: 'tok_a' } };
     await proxy('GET', '/api/chat/chat_1/transcript');
     expect(servedMcpTokenHeaders).toEqual([null]);
+  });
+});
+
+// This proxy returns from worker/index.ts BEFORE its strip-and-stamp block, so every
+// edge-owned header has to be handled here or not at all. x-canvas-viewer decides whose
+// screen `select_page` may move; a client-sent one riding through meant a member could
+// point an agent at a COLLEAGUE's open canvas.
+describe('handleInboxBridge: x-canvas-viewer is set-or-deleted, never passed through', () => {
+  test('a forged viewer on a SEND is overwritten with the gated user, not honoured', async () => {
+    await proxyWithHeaders('POST', '/api/chat/chat_home/send', { 'x-canvas-viewer': 'u_victim' });
+    expect(servedViewers).toEqual(['u_1']);
+  });
+
+  test('a forged viewer on a READ is deleted outright — reads move nobody', async () => {
+    await proxyWithHeaders('GET', '/api/chat/chat_home/transcript', { 'x-canvas-viewer': 'u_victim' });
+    expect(servedViewers).toEqual([null]);
+  });
+
+  test('an ordinary send still carries the initiator, so select_page works from the Inbox', async () => {
+    // The other half of the same bug: before this, the Inbox stamped nothing and the tool
+    // silently did not exist for any Inbox conversation.
+    await proxy('POST', '/api/chat/chat_home/send');
+    expect(servedViewers).toEqual(['u_1']);
   });
 });

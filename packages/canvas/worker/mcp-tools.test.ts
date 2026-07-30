@@ -240,6 +240,39 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(bridgeCalls[0]?.path).toBe('/api/canvas');
   });
 
+  test('select_page resolves the name at the EDGE and posts the id, stamped with the token user as viewer', async () => {
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'Nav' });
+    bridgeResponses = {
+      '/api/canvas': { version: 3, shapes: [], pages: [{ id: 'page:page', name: 'Page 1' }, { id: 'page:two', name: 'Roadmap' }] },
+      '/api/canvas/select-page': { asked: 1 },
+    };
+    bridgeCalls = [];
+
+    expect(await tools.selectPage({ workspace_id: WS, canvas_id: board.id, page: 'Roadmap' })).toEqual({ page_id: 'page:two', asked: 1 });
+
+    const post = bridgeCalls.find((c) => c.path === '/api/canvas/select-page');
+    // The bridge is handed an ID — a page NAME never reaches it.
+    expect(post?.body).toEqual({ pageId: 'page:two' });
+    // The viewer is the OAuth token's user: this proxy is a synthetic request, so the
+    // edge's browser-path stamping never ran and the tool must supply it itself.
+    expect(post?.headers['x-canvas-viewer']).toBe('u_1');
+  });
+
+  test('select_page refuses an unknown page instead of moving the viewer somewhere arbitrary', async () => {
+    bridgeResponses = { '/api/canvas': { version: 3, shapes: [], pages: [{ id: 'page:page', name: 'Page 1' }] } };
+    bridgeCalls = [];
+    await expect(tools.selectPage({ workspace_id: WS, page: 'Sprint 12' })).rejects.toThrow(/Sprint 12/);
+    expect(bridgeCalls.some((c) => c.path === '/api/canvas/select-page')).toBe(false);
+  });
+
+  test('select_page reports asked: 0 rather than dressing up "nobody was looking" as success', async () => {
+    bridgeResponses = {
+      '/api/canvas': { version: 3, shapes: [], pages: [{ id: 'page:page', name: 'Page 1' }, { id: 'page:two', name: 'Roadmap' }] },
+      '/api/canvas/select-page': { asked: 0 },
+    };
+    expect(await tools.selectPage({ workspace_id: WS, page: 'page:two' })).toEqual({ page_id: 'page:two', asked: 0 });
+  });
+
   test('read_transcript restores the session (inbox open) then returns the full settled events — the user’s own conversations only', async () => {
     const chatId = 'mcp_full_transcript';
     const conv = await conversations.create(database, {

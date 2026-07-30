@@ -16,6 +16,7 @@ import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 import { notifyInboxChanged } from './workspace-events.ts';
 import {
   CANVAS_ID_HEADER,
+  CANVAS_VIEWER_HEADER,
   DEV_AGENT_GIT_TOKEN_HEADER,
   DEV_AGENT_REPO_HEADER,
   INBOX_CONVERSATION_HEADER,
@@ -176,6 +177,16 @@ export async function handleInboxBridge(
   // the bridge assigns the Conversation at birth / claims-if-unassigned on a reply. Overwrites
   // any client-sent value (the gated user is the truth); reads never carry it.
   if (isChatSend) proxied.headers.set(INBOX_ASSIGN_HEADER, user.id);
+
+  // WHOSE SCREEN a turn started here may move (presentation only — see CANVAS_VIEWER_HEADER).
+  // SET-OR-DELETE, the same discipline as the two headers below: this proxy returns before
+  // worker/index.ts's strip-and-stamp block, so without the delete a client-sent value rode
+  // straight through and a member could point `select_page` at a COLLEAGUE's open canvas.
+  // Deliberately separate from INBOX_ASSIGN_HEADER above even though both are `user.id`:
+  // that one answers who OWNS the conversation and is free to diverge, and a change to
+  // assignment must never become a change to whose screen an agent can move.
+  proxied.headers.delete(CANVAS_VIEWER_HEADER);
+  if (isChatSend) proxied.headers.set(CANVAS_VIEWER_HEADER, user.id);
 
   // Canvas pairing: the Inbox surface is not a pad, so its ChatView stamps no x-canvas-id.
   // A linked Conversation's SEND gets the stamp from its row instead, so the resumed turn

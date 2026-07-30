@@ -29,6 +29,7 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
       calls.push('materializeSkills');
     },
     requestScreenshot: () => async () => null,
+    selectPage: () => () => 0,
     openCanvasRoom: async () => {
       calls.push('openCanvasRoom');
       return fakeRoomStore();

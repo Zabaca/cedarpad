@@ -8,6 +8,7 @@ import { type McpHttpServerConfig, type SDKUserMessage, createSdkMcpServer, quer
 import { z } from 'zod';
 
 import { DATA_MAX_BYTES } from '../shared/bridge-wire.ts';
+import { resolvePageRef } from '../shared/canvas-pages.ts';
 import { SHAPE_COLORS } from '../src/shapes.ts';
 import { DataSourceSchema, type MartSidecar } from '../shared/mart-contract.ts';
 import type { CanvasStore } from '../src/store.ts';
@@ -106,6 +107,20 @@ export type OpenPr = (input: { title: string; body: string; commitMessage: strin
  * agent gets a `send_message` tool; absent (tests, non-bridge contexts) ⇒ omitted. */
 export type SendToChat = (targetChatId: string, message: string, canvasId?: string) => { ok: true } | { ok: false; error: string };
 
+/**
+ * The `select_page` tool body (bridge binds it — it holds the canvas's SSE subscribers).
+ * Asks the TURN'S INITIATOR's open editors to switch page, and returns how many streams the
+ * ask REACHED — delivery, not application (the browser still declines a page it has not
+ * synced). 0 is the certain answer: nobody was even asked.
+ *
+ * The viewer is ALREADY BOUND by the binder, which is the point of the seam's shape: the
+ * bridge read the edge-stamped identity and closed over it, so agent.ts and canvas-ops.ts
+ * never handle a user id and cannot accidentally treat one as authorization. Absent
+ * (tests, dev-agent turns, any turn with no identifiable initiator) ⇒ the tool is omitted
+ * rather than broadcasting to everyone.
+ */
+export type SelectPage = (pageId: string) => number;
+
 /** The `list_marts` tool body (bridge binds it — it holds the workspace's BlobStore). Marts
  * live only in R2, never on the container filesystem, so WITHOUT this seam the agent has no
  * way to learn a mart exists or what columns it has: it can only guess a name at
@@ -173,6 +188,29 @@ export function sendMessageOp(
   return `Delivered to ${chat_id}; its turn is running. The reply appears in that chat card — poll read_canvas/read_connected if you need it.`;
 }
 
+/** The `select_page` tool body. The refusals are the interesting part: an unresolvable name
+ *  and a viewer with no open tab are DIFFERENT failures, and collapsing them would let the
+ *  agent report success for either. Neither wording claims the view actually changed —
+ *  see {@link SelectPage}: the channel reports delivery, and the browser is still free to
+ *  decline a page it has not synced. */
+export function selectPageOp(store: CanvasStore, selectPage: SelectPage, page: string): OpResult {
+  const pages = store.getState().pages ?? [];
+  let pageId: string;
+  try {
+    pageId = resolvePageRef(pages, page);
+  } catch (e) {
+    return { text: (e as Error).message, isError: true };
+  }
+  const name = pages.find((p) => p.id === pageId)?.name ?? pageId;
+  // 0 is not an error — the ask was well-formed, the human just has no tab open here. It IS
+  // reported, because "switched you to Roadmap" when nothing moved is the failure that costs
+  // the human a confusing minute figuring out why their screen looks the same.
+  if (selectPage(pageId) === 0) {
+    return { text: `Nothing moved: nobody with an open view of this canvas matched you, so the switch to ${JSON.stringify(name)} was not shown to anyone. Tell the human they can switch to it themselves in the page switcher.` };
+  }
+  return { text: `Asked your open view(s) to switch to ${JSON.stringify(name)} (${pageId}). The canvas itself is unchanged and nobody else's view moved. Say you have switched them over, not that you have verified it — this is a one-way message to their browser, so if they say they are still on the old page, believe them.` };
+}
+
 /** The Inbox-list line for an end_turn call: the given summary, else derived from the
  *  question (the Stop-gate-nudged path routinely supplies question-only calls — a required
  *  summary made those fail schema validation and retry, doubling end_turn in the transcript). */
@@ -206,7 +244,7 @@ const isTurnStore = (s: CanvasStore): s is TurnCanvasStore => typeof (s as TurnC
  * tools are what most need it: the next `read_canvas` then answers from a mirror taken after the
  * previous tool call, which is how a human's mid-turn edit becomes visible to the agent.
  */
-export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset) {
+export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
   const settle = <T extends { handler: (args: never, extra: never) => Promise<{ isError?: boolean }> }>(def: T): T => {
     if (!isTurnStore(store)) return def;
     const inner = def.handler;
@@ -227,18 +265,18 @@ export function createCanvasTools(store: CanvasStore, captureView?: CaptureView,
       },
     };
   };
-  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts, fetchAsset).map(settle);
+  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts, fetchAsset, selectPage).map(settle);
 }
 
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset) {
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
   return createSdkMcpServer({
     name: 'canvas',
     version: '0.1.0',
-    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts, fetchAsset),
+    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts, fetchAsset, selectPage),
   });
 }
 
-function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset) {
+function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -518,6 +556,19 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
             ),
           ]
         : []),
+      // Pages. `read_canvas` already names them (its `Pages:` preamble), so there is no
+      // list tool here — only the one thing a read cannot do. `select_page` is seam-gated
+      // because moving a screen needs to know WHOSE, and only the bridge knows that.
+      ...(selectPage
+        ? [
+            tool(
+              'select_page',
+              "Switch the human you are talking to over to another page of this canvas — give the page name as they say it, or a page: id. This moves ONLY their view: it changes nothing on the canvas and moves nobody else looking at it. Note that your own chat card stays where it is, so switching them away from it may take this conversation off their screen — prefer it when they asked to be shown something elsewhere, not as a way to tidy up after yourself. It is a one-way message to their browser, not a confirmed change: if it reports nobody was moved, say so instead of claiming you switched them.",
+              { page: z.string().min(1).describe("The page name as the human says it, or a page: id from read_canvas's Pages: line.") },
+              async ({ page }) => result(selectPageOp(store, selectPage, page)),
+            ),
+          ]
+        : []),
       // The turn's mandatory terminal (ADR-0012): present only when the bridge injected the inbox
       // seam. Declares the ending — needs_human promotes to the Inbox + notifies; done records
       // completion. Either way the agent then STOPS — this tool NEVER blocks for a reply.
@@ -577,7 +628,7 @@ export type { ChatEvent } from '../shared/chat-wire.ts';
 // run commands on this machine, so keep the bridge bound to localhost / a trusted LAN.
 // Exported for the prompt test (#357): what the prompt promises the agent must match the
 // tools it actually has, so the claim is asserted rather than reviewed by eye.
-export const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and have canvas tools (mcp__canvas__*): read_canvas, read_connected (call with no args to get YOUR own connected subgraph — the shapes arrow-linked to your chat card, each with full state — since shapes you create are auto-linked back to you), read_image (see a screenshot/photo the human pasted onto the canvas; read_canvas/read_connected list image shapes but redact the pixels), view_canvas, create_shapes, update_shapes, delete_shapes, clear_canvas, align_shapes (primitives: rectangle, ellipse, text, note, arrow in colors ${SHAPE_COLORS.join(', ')}; page coordinates, visible area roughly x 0..1000 y 0..700). Plus a reusable COMPONENT library: list_components / read_component / write_component / edit_component author real React files in this canvas's own component dir (with the workspace shared library and the read-only platform library as fallbacks), write_data authors sibling data files (.json/.csv/.txt/.md) a component can import, component_history says who changed a module and when (use it when the human asks what happened to a component, or before overwriting one you did not write) with restore_component putting one back to a version it lists (the fix for a bad edit — it appends a revision rather than rewinding, so it erases nothing and is itself undoable), and place_component / set_component_data render instances on the canvas with a \`data\` props object. \`list_marts\` shows this workspace's materialized warehouse MARTS — their columns, meaning, and freshness. CALL IT FIRST, like list_components, whenever the human asks for an operational KPI, a live table, or anything that should reflect current reality rather than a point-in-time snapshot; then pass \`data_source: {kind:'mart', name:'<a name list_marts returned>'}\` instead of a static \`data\` snapshot — the component then renders the mart's current rows with NO further tool call needed to stay fresh, and the canvas shows the mart's "as of"/row-count itself so nobody mistakes it for live-live. A component names a mart, never a URL or endpoint — there is no fetch/poll capability, so don't reach for one. NEVER invent a mart name: an unknown one renders an EMPTY component that looks like "no data yet", so if list_marts returns nothing (or nothing that fits), use static \`data\` and say so. A mart's description may narrow what it actually covers — read it, and put that caveat on the card's label rather than titling it more broadly than the data supports. Static \`data\` (or write_data files) is still the right choice for anything point-in-time, illustrative, or not backed by a mart. These registered tools are the ONLY way to author component and data files — the generic Write/Edit tools are disabled in chat. Components compose (import each other) and take data — prefer them over hand-placed primitives for charts/tables/cards/dashboards/diagrams. Components you author also receive a \`setData(patch)\` prop that persists their own state (merges into the instance data, syncs to everyone, survives reload); use real controls (button/input/select/[role=button]) so clicks reach the component instead of dragging the shape. They also receive \`currentUser\` (\`{id, name?, email?, color, kind: 'user'|'guest'}\`, null-ish until resolved) — the viewer's identity — and \`setDisplayName(name)\` (persists a GUEST's chosen name browser-wide; no-op for logged-in users). For anything attributing actions to a person (comments, votes, Q&A), prefer \`currentUser.name\`/\`currentUser.id\` and only fall back to asking for a name (via setDisplayName) when it is unset — never ask per-component. ALWAYS \`list_components\` FIRST before authoring anything — the library already has many components and creating a duplicate (e.g. a new "Markdown" when "MarkdownCard" exists) is a mistake. If one already fits the request, \`place_component\` it (or \`edit_component\` to extend it); \`read_component\` a close match for its conventions; only \`write_component\` a NEW module when nothing suitable exists. When unsure whether something exists, list and read before writing. Use all of this to visualize, diagram, or build whatever the human asks — e.g. read files and draw the architecture, or build a data-driven dashboard, on the canvas.
+export const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and have canvas tools (mcp__canvas__*): read_canvas, read_connected (call with no args to get YOUR own connected subgraph — the shapes arrow-linked to your chat card, each with full state — since shapes you create are auto-linked back to you), read_image (see a screenshot/photo the human pasted onto the canvas; read_canvas/read_connected list image shapes but redact the pixels), view_canvas, select_page (when a canvas has several PAGES, read_canvas lists them and this switches the human you are talking to over to one — by the name they use; it moves only their view, never the canvas and never anyone else, and your own chat card does not follow them), create_shapes, update_shapes, delete_shapes, clear_canvas, align_shapes (primitives: rectangle, ellipse, text, note, arrow in colors ${SHAPE_COLORS.join(', ')}; page coordinates, visible area roughly x 0..1000 y 0..700). Plus a reusable COMPONENT library: list_components / read_component / write_component / edit_component author real React files in this canvas's own component dir (with the workspace shared library and the read-only platform library as fallbacks), write_data authors sibling data files (.json/.csv/.txt/.md) a component can import, component_history says who changed a module and when (use it when the human asks what happened to a component, or before overwriting one you did not write) with restore_component putting one back to a version it lists (the fix for a bad edit — it appends a revision rather than rewinding, so it erases nothing and is itself undoable), and place_component / set_component_data render instances on the canvas with a \`data\` props object. \`list_marts\` shows this workspace's materialized warehouse MARTS — their columns, meaning, and freshness. CALL IT FIRST, like list_components, whenever the human asks for an operational KPI, a live table, or anything that should reflect current reality rather than a point-in-time snapshot; then pass \`data_source: {kind:'mart', name:'<a name list_marts returned>'}\` instead of a static \`data\` snapshot — the component then renders the mart's current rows with NO further tool call needed to stay fresh, and the canvas shows the mart's "as of"/row-count itself so nobody mistakes it for live-live. A component names a mart, never a URL or endpoint — there is no fetch/poll capability, so don't reach for one. NEVER invent a mart name: an unknown one renders an EMPTY component that looks like "no data yet", so if list_marts returns nothing (or nothing that fits), use static \`data\` and say so. A mart's description may narrow what it actually covers — read it, and put that caveat on the card's label rather than titling it more broadly than the data supports. Static \`data\` (or write_data files) is still the right choice for anything point-in-time, illustrative, or not backed by a mart. These registered tools are the ONLY way to author component and data files — the generic Write/Edit tools are disabled in chat. Components compose (import each other) and take data — prefer them over hand-placed primitives for charts/tables/cards/dashboards/diagrams. Components you author also receive a \`setData(patch)\` prop that persists their own state (merges into the instance data, syncs to everyone, survives reload); use real controls (button/input/select/[role=button]) so clicks reach the component instead of dragging the shape. They also receive \`currentUser\` (\`{id, name?, email?, color, kind: 'user'|'guest'}\`, null-ish until resolved) — the viewer's identity — and \`setDisplayName(name)\` (persists a GUEST's chosen name browser-wide; no-op for logged-in users). For anything attributing actions to a person (comments, votes, Q&A), prefer \`currentUser.name\`/\`currentUser.id\` and only fall back to asking for a name (via setDisplayName) when it is unset — never ask per-component. ALWAYS \`list_components\` FIRST before authoring anything — the library already has many components and creating a duplicate (e.g. a new "Markdown" when "MarkdownCard" exists) is a mistake. If one already fits the request, \`place_component\` it (or \`edit_component\` to extend it); \`read_component\` a close match for its conventions; only \`write_component\` a NEW module when nothing suitable exists. When unsure whether something exists, list and read before writing. Use all of this to visualize, diagram, or build whatever the human asks — e.g. read files and draw the architecture, or build a data-driven dashboard, on the canvas.
 
 BOUNDARY (important): you may author ONLY through the component/data tools (which write per-canvas \`src/canvas-<id>/components/\` dirs and the workspace \`shared/components/\` library — both persist across restarts and hot-reload). There is no backend-handler capability: a component cannot get a server-side route of its own, so do not plan around one. Do NOT modify the CORE: the app shell, \`src/canvas-components/\` (the read-only platform library), anything else in \`src/\`, or anything in \`server/\` (especially \`bridge.ts\`). The core is image-only — edits there will NOT persist and can break the live canvas for everyone.
 
@@ -711,6 +762,10 @@ export async function* runChat(
   // an image shape's pixels live behind the edge's asset route, so WITHOUT this `read_image` can
   // only serve the legacy inline data URLs. Absent (tests) ⇒ exactly that, and it says so.
   fetchAsset?: FetchAsset,
+  // Page-navigation seam (bridge-bound: it holds the canvas's SSE subscribers AND has already
+  // closed over the turn's initiator). Present ⇒ the agent gets `select_page` and can move the
+  // person it is talking to. Absent ⇒ omitted — never a broadcast fallback.
+  selectPage?: SelectPage,
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn; end_turn reads it lazily
   // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
@@ -725,7 +780,7 @@ export async function* runChat(
         return text;
       }
     : undefined;
-  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr, sendToChat, listMarts, fetchAsset);
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr, sendToChat, listMarts, fetchAsset, selectPage);
   const stopGate = endTurnSeam
     ? makeStopGate(
         () => turnEnded,
