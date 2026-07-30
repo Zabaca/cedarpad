@@ -157,8 +157,14 @@ A skill is **content-that-asks** — text the model reads. It is never a **capab
 version history, restore-to-version, on-demand materialization, promote and adopt (#355, #358,
 #359, #362), their **data files** (#360), and **Workspace skills** (#361); the three-tier
 **listing** is served from Records plus the build-time platform manifest (#363). The surviving
-workspace content is moved in by the **backfill** (#365) — an allowlist of four files, not a
-directory sweep, because the archives are otherwise e2e residue. LIVE as
+workspace content is moved in by the **backfill** (#365) — an allowlist of five files, not a
+directory sweep, because the archives are otherwise e2e residue. The allowlist is **checked
+against the archives** rather than trusted: every run enumerates every source archive and
+refuses to write while anything in one is in neither the plan nor the not-migrated list. That
+is not belt-and-braces — the first version of the list was stale within four hours, when a
+Component authored in production landed in an archive the plan did not mention. A pinned hash
+proves the bytes of a file we know about; only an enumeration proves we know about all of
+them. LIVE as
 **Files**: per-session **Transcripts** (#356) — that is their permanent home, not a staging
 post.)_ The dividing
 question is **who owns the schema**:

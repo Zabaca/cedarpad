@@ -60,8 +60,10 @@ export function tarEntries(bytes: Uint8Array): TarEntry[] {
 }
 
 /** Placeholder files that keep an empty dir in git but carry no workspace content — an
- *  archive holding only these is still semantically empty. */
-const PLACEHOLDERS = new Set(['.gitkeep', '.gitignore']);
+ *  archive holding only these is still semantically empty. Exported so the #365 migration's
+ *  archive survey filters exactly what this guard ignores: two definitions of "content" would
+ *  eventually disagree, and the disagreement would be a file nobody migrated. */
+export const PLACEHOLDERS = new Set(['.gitkeep', '.gitignore']);
 
 /** Does this tarball carry real content? Directory entries and placeholders don't count:
  *  a tar of three empty `canvas-<id>/components/` dirs is exactly what the 2026-07-29
