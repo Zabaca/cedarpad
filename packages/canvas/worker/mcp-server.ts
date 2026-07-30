@@ -13,6 +13,7 @@ import { mintDevAgentGitToken } from './github-app.ts';
 import { resolveDevAgentRepo } from './github-connection.ts';
 import { discoverJobs } from './repo-jobs.ts';
 import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { notifyInboxChanged } from './workspace-events.ts';
 import {
   AssignConversationInput,
   CreateCanvasInput,
@@ -20,11 +21,10 @@ import {
   DeleteShapesInput,
   ListCanvasesInput,
   ListComponentsInput,
-  ListPagesInput,
   SelectPageInput,
   ListInboxInput,
   PlaceComponentInput,
-  ReadCanvasInput,
+  ReadCanvasPageInput,
   ReadComponentInput,
   ReadConversationInput,
   ReadTranscriptInput,
@@ -67,6 +67,8 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
     const tools = buildMcpTools({
       db,
       userId: session.userId,
+      // #383: an MCP write reaches the badge the same way an Inbox click does.
+      notify: (workspaceId) => notifyInboxChanged(env.WORKSPACE_EVENTS, workspaceId),
       // The same proxied-send path every chat send takes: x-mcp-tokens attached (train 2),
       // the workspace's coords resolved, the container woken if asleep. Plain chat flavor —
       // no dev-agent token is ever minted here.
@@ -87,8 +89,8 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         });
         return serveWorkspace(await withMcpTokensHeader(target, env, workspaceId), env, coordsForWorkspace(workspaceId));
       },
-      // The bridge is the single writer of the skills tree — PUT lands there, the sink
-      // persists to skills.tar, and the next chat turn discovers the skill.
+      // The bridge is the single writer of the skills tree — PUT lands there, `writeSkill`
+      // persists the Records (#361) before the files, and the next chat turn discovers it.
       proxySkill: (workspaceId, name, input) => {
         const target = new Request(`${new URL(req.url).origin}/api/skills/${encodeURIComponent(name)}`, {
           method: 'PUT',
@@ -216,19 +218,10 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'read_canvas',
       {
         description:
-          "Read a canvas's full state directly — every shape with id, type, geometry, text, and component data. Omit canvas_id for the workspace's default canvas.",
-        inputSchema: ReadCanvasInput.shape,
+          "Read a canvas's shapes — id, type, geometry, text, and component data — plus `pages`, the canvas's pages in order. Omit canvas_id for the workspace's default canvas. A canvas can have MORE THAN ONE PAGE and this reads all of them by default; pass `page` (an id from `pages`) to read just one. Do that whenever the canvas is large — an unfiltered read of a busy canvas can exceed the response limit.",
+        inputSchema: ReadCanvasPageInput.shape,
       },
       async (input) => text(await tools.readCanvas(input)),
-    );
-    server.registerTool(
-      'list_pages',
-      {
-        description:
-          "List a canvas's pages, in the order the page switcher shows them. The first is the DEFAULT page — where a shape written with no page lands. Call this before select_page (or before writing to a named page), since page names are the human's and neither stable nor unique.",
-        inputSchema: ListPagesInput.shape,
-      },
-      async (input) => text(await tools.listPages(input)),
     );
     server.registerTool(
       'select_page',
@@ -280,7 +273,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'create_shapes',
       {
         description:
-          'Create primitive shapes on a canvas (types: rectangle, ellipse, text, note, arrow; page coordinates, visible area roughly x 0..1000 y 0..700). Fields per shape: type (required), x, y, w, h, text, color; arrows take x1/y1/x2/y2 or startShapeId/endShapeId to bind to shapes. Call read_canvas first to see what exists and where the free space is. Returns the id of every shape it created — ids are opaque and unguessable, so KEEP them if you intend to update, delete, or bind an arrow to these shapes later.',
+          'Create primitive shapes on a canvas (types: rectangle, ellipse, text, note, arrow; page coordinates, visible area roughly x 0..1000 y 0..700). Fields per shape: type (required), x, y, w, h, text, color; arrows take x1/y1/x2/y2 or startShapeId/endShapeId to bind to shapes. Each shape may also take `page` (an id from read_canvas\'s `pages`) to put it on a page other than the first — omit it for the first page. Call read_canvas first to see what exists and where the free space is. Returns the id of every shape it created — ids are opaque and unguessable, so KEEP them if you intend to update, delete, or bind an arrow to these shapes later.',
         inputSchema: CreateShapesInput.shape,
       },
       async (input) => text(await tools.createShapes(input)),
@@ -303,7 +296,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'place_component',
       {
         description:
-          'Render an instance of a component module on a canvas at (x, y), sized w×h (default 360×260), with `data` passed to it as props. Returns the id of the instance it placed — ids are opaque and unguessable, so KEEP it if you intend to move or re-data that instance later. Pass an existing component shape id to move/retarget/re-data that instance instead.',
+          'Render an instance of a component module on a canvas at (x, y), sized w×h (default 360×260), with `data` passed to it as props. Pass `page` (an id from read_canvas\'s `pages`) to place it on a page other than the first. Returns the id of the instance it placed — ids are opaque and unguessable, so KEEP it if you intend to move or re-data that instance later. Pass an existing component shape id to move/retarget/re-data that instance instead.',
         inputSchema: PlaceComponentInput.shape,
       },
       async (input) => text(await tools.placeComponent(input)),

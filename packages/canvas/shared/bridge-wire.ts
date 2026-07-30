@@ -166,6 +166,10 @@ export const PlaceComponentBody = z.object({
   w: z.number().optional(),
   h: z.number().optional(),
   data: z.record(z.unknown()).optional(),
+  /** Which page to land on. Absent means the canvas's first page (src/shapes.ts), so every
+   *  existing caller is unchanged. Without this the palette could only ever place onto page
+   *  one, whatever page the human was looking at. */
+  page: z.string().min(1).optional(),
   /** #239 / ADR-0017: a component names a mart, never a URL — this IS the boundary. */
   dataSource: DataSourceSchema.optional(),
 });

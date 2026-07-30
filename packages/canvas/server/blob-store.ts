@@ -5,6 +5,10 @@
 // canvas = board. (The canvas-state data-loss guard that used to sit above this in
 // `canvas-persistence.ts` went with the old sync plane — ADR-0019 / #297. The canvas key
 // and its READER stay: the retained blobs are the cutover's import source.)
+//
+// NOTHING HERE HOLDS WORKSPACE CONTENT any more (#366, ADR-0022). What is left is chat meta,
+// the retained canvas-state blobs, and the warehouse's mart artifacts — plus the raw backend,
+// which `transcript-store.ts` uses for its own per-session keys.
 
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -20,16 +24,14 @@ const SIDECAR_SUFFIX = '.schema.json';
 export const canvasStateKey = (ws: string, canvas: string): string =>
   `workspaces/${ws}/canvases/${canvas}/canvas-state.json`;
 
-/** workspace-scoped SHARED component library tarball: shared/components/ — the promote
- * target (ADR-0014). Without this, promote MOVES a file out of persistence and a restart
- * deletes the component entirely. */
-export const sharedComponentsKey = (ws: string): string => `workspaces/${ws}/shared-components.tar`;
-
-/** workspace-scoped per-canvas component dirs tarball: every src/canvas-<id>/components/
- * (default included — ADR-0014 uniform canvas dirs), tarred with their src-relative paths.
- * The platform base (src/canvas-components/) is read-only and stays image-only. */
-export const canvasDirsKey = (ws: string): string => `workspaces/${ws}/canvas-components.tar`;
-
+// Workspace CONTENT used to live here as three tarballs — `shared-components.tar`,
+// `canvas-components.tar` and `skills.tar`. Components, their data files and Workspace skills
+// are Records in D1 now (ADR-0022), and #366 removed the keys with the sinks that wrote them:
+// each save was a full replace of one key, so an empty source tree could — and on 2026-07-29
+// did — delete a workspace's authored content in a single flush. The objects are still in the
+// bucket, frozen, as the pre-migration rollback; the only code that names them is the backfill's
+// read-only survey (`record-migration.ts`), which spells its own keys out for that reason.
+//
 // Session transcripts used to live here as `workspaces/<ws>/sessions.tar`. They are FILES, not
 // Records (CONTEXT.md → Record vs File), and since #356 each session is its own opaque object —
 // `transcript-store.ts` owns that key layout. The tar was a full replace of the whole
@@ -40,11 +42,6 @@ export const canvasDirsKey = (ws: string): string => `workspaces/${ws}/canvas-co
  * The declared-schema sidecar lives next to it at `<name>.schema.json` (mart-contract.ts). */
 export const martKey = (ws: string, name: string): string => `workspaces/${ws}/warehouse/${name}.parquet`;
 export const martSidecarKey = (ws: string, name: string): string => `workspaces/${ws}/warehouse/${name}.schema.json`;
-
-/** workspace-scoped skill library tarball: the package's `.claude/skills/` (user- or
- * agent-authored skill dirs + their supporting files). Extension content like the
- * component library (ADR-0013); platform skills stay image-only at ~/.claude/skills. */
-export const skillsKey = (ws: string): string => `workspaces/${ws}/skills.tar`;
 
 /** workspace-scoped per-chat durable state (ADR 0004): the `chatId → ChatMeta` map,
  * one JSON blob for the whole workspace. Replaces browser `localStorage` as the home for
@@ -142,37 +139,6 @@ export class BlobStore {
   async loadCanvasState(ws: string, canvas: string): Promise<CanvasState | null> {
     const bytes = await this.backend.get(canvasStateKey(ws, canvas));
     return bytes === null ? null : (JSON.parse(dec.decode(bytes)) as CanvasState);
-  }
-
-  /** Does a blob exist? Existence ONLY — deliberately never the bytes. The empty-archive
-   *  guard (`persist-guards.ts`) asks this on every flush, and a tarball can be tens of
-   *  megabytes; a `get` here would download it once per turn. */
-  blobExists(key: string): Promise<boolean> {
-    return this.backend.exists(key);
-  }
-
-  loadSharedComponents(ws: string): Promise<Uint8Array | null> {
-    return this.backend.get(sharedComponentsKey(ws));
-  }
-
-  async saveSharedComponents(ws: string, bytes: Uint8Array): Promise<void> {
-    await this.backend.put(sharedComponentsKey(ws), bytes);
-  }
-
-  loadCanvasDirs(ws: string): Promise<Uint8Array | null> {
-    return this.backend.get(canvasDirsKey(ws));
-  }
-
-  async saveCanvasDirs(ws: string, bytes: Uint8Array): Promise<void> {
-    await this.backend.put(canvasDirsKey(ws), bytes);
-  }
-
-  loadSkills(ws: string): Promise<Uint8Array | null> {
-    return this.backend.get(skillsKey(ws));
-  }
-
-  async saveSkills(ws: string, bytes: Uint8Array): Promise<void> {
-    await this.backend.put(skillsKey(ws), bytes);
   }
 
   async loadChatMeta(ws: string): Promise<Record<string, ChatMeta> | null> {

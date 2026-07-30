@@ -10,22 +10,15 @@ import { resolve } from 'node:path';
 import type { CanvasState } from '../src/shapes.ts';
 import { bumpAllComponents, createShapesOp, nextComponentRev, placeComponentOp, updateShapesOp } from '../src/canvas-ops.ts';
 import type { OpResult } from '../src/canvas-ops.ts';
+import { shapesOnPage } from '../src/current-page.ts';
 import { canvasAssetFetcher, canvasRoomOpener } from './canvas-room.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
-import {
-  BlobStore,
-  canvasDirsKey,
-  selectBackend,
-  sharedComponentsKey,
-  skillsKey,
-} from './blob-store.ts';
-import { refuseEmptyTarball } from './persist-guards.ts';
+import { BlobStore, selectBackend } from './blob-store.ts';
 import { type CanvasSubscriber, type ScreenshotChannel, createScreenshotChannels } from './screenshot-channel.ts';
 import { createChatHub } from './chat-hub.ts';
 import { sseComment } from './sse.ts';
 import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
-import { maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
 import type { PlatformRpc } from './platform-rpc-client.ts';
 import { isLocalhostEdge, loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
@@ -71,7 +64,7 @@ import { readGuestCapabilities, type GuestCapabilities } from '../shared/guest-c
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
-import { SKILLS_DIR, materializeSkills, writeSkill } from './skills.ts';
+import { materializeSkills, writeSkill } from './skills.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
 import { createHuddleSupervisor } from './huddle-supervisor.ts';
 
@@ -132,8 +125,9 @@ const notify: Notify = async (conversationId, question) => {
 
 // Workspace blob storage: local disk in dev, R2 in the container (selected by env). It no
 // longer holds canvas state — ADR-0019 / #297 deleted that writer, and the retained
-// `canvas-state.json` blobs are read only by the cutover script (#295). What is left here
-// is the component/skill/session tarballs, chat meta, transcripts and marts.
+// `canvas-state.json` blobs are read only by the cutover script (#295). Nor workspace
+// content: the tarballs went with their sinks in #366 and Components, data files and skills
+// are Records in D1. What is left here is chat meta, per-session transcripts, and marts.
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
 const DEFAULT_CANVAS_ID = process.env.CANVAS_ID ?? 'default';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
@@ -192,68 +186,35 @@ try {
   console.error('[chatmeta] load failed; starting empty:', err);
 }
 
-// The file-tar artifacts that the dead fs.watch left silent (ADR 0003). Each registers
-// as a Persistable through one sink so all of them report health at /api/status; saved at
-// turn-completion (sessions always; components/skills on a max-mtime dirty-check). Canvas keeps
-// its own onChange trigger + health below. R2 in the container only — locally these files
-// already live on disk and the session JSONL is read in place.
-const COMPONENTS_DIR = `${PKG_ROOT}src/canvas-components`;
-// ADR-0014: component writes land in per-canvas own dirs (src/canvas-<id>/components/)
-// or the shared library (shared/components/) — the platform base (COMPONENTS_DIR) is
-// read-only at runtime, so its legacy tar is restored at boot but never flushed again.
-const SRC_ROOT = `${PKG_ROOT}src`;
-const SHARED_COMPONENTS_DIR = `${PKG_ROOT}shared/components`;
 const SESSIONS_DIR = `${process.env.HOME ?? '/root'}/.claude/projects`;
 // #356: session Transcripts are FILES (CONTEXT.md → Record vs File) — one opaque object per
 // session, NOT a tar of this dir. The store is the only thing that reads or writes them: a turn
 // puts the one session it touched, a resume fetches the one session it needs, boot fetches none.
 const transcripts = new TranscriptStore(blobBackend, SESSIONS_DIR);
-// Workspace skills (ADR-0013): user-/agent-authored skill dirs, discovered by the SDK's
-// 'project' source. Since #361 their truth is a ROW (`server/skills.ts`) and this tree is a
-// RENDERING of it, materialized before each turn; the tar below is the legacy sink, retired
-// with the others in #366.
+
+// THE TARBALL SINKS ARE GONE (#366, ADR-0022). `shared-components`, `canvas-dirs` and `skills`
+// each tarred a directory tree over ONE R2 key at turn completion — a full replace, which made
+// every flush the write half of a read-modify-write whose read happened at boot. On 2026-07-29
+// a boot that restored nothing flushed an empty tree over the only copy and destroyed every
+// own-tier Component, every custom handler and every workspace skill at once. The empty-archive
+// guard that shipped after it went too, because it guarded a write path that no longer exists:
+// Components, their data files and Workspace skills are Records in D1, written one row at a
+// time through the platform RPC, and the filesystem is a rendering of them.
+//
+// `chatMeta` is the one Persistable left, and it is not workspace content: it is the per-chat
+// `{sessionId, model, effort}` map, written whole as JSON rather than snapshotted off a
+// directory, so an empty source tree is not a state it can have. The sink stays for it — the
+// health it reports at /api/status is what makes a silent save failure visible, which is the
+// class of bug that hid the dead sessions watcher.
 const sink = new PersistSink();
-// EVERY tar artifact carries the empty-archive guard (persist-guards.ts). Each of these
-// saves is a FULL REPLACE of one R2 key, so an empty source tree flushed after a boot that
-// failed to restore destroys the artifact workspace-wide with no second copy — that is
-// exactly the 2026-07-29 loss (all own-tier components, all custom handlers, all workspace
-// skills, in one flush). The guard refuses to write an empty archive over an existing blob
-// and records `skipped` at /api/status. Do not register a tar artifact without it.
-const nonEmpty = (name: string, key: string) => refuseEmptyTarball(name, () => blobStore.blobExists(key));
-sink.register({ name: 'shared-components', serialize: () => tarSubtree(SHARED_COMPONENTS_DIR), guard: nonEmpty('shared-components', sharedComponentsKey(WORKSPACE)), save: (b) => blobStore.saveSharedComponents(WORKSPACE, b as Uint8Array) });
-sink.register({ name: 'canvas-dirs', serialize: () => tarCanvasDirs(SRC_ROOT), guard: nonEmpty('canvas-dirs', canvasDirsKey(WORKSPACE)), save: (b) => blobStore.saveCanvasDirs(WORKSPACE, b as Uint8Array) });
-sink.register({ name: 'skills', serialize: () => tarSubtree(SKILLS_DIR), guard: nonEmpty('skills', skillsKey(WORKSPACE)), save: (b) => blobStore.saveSkills(WORKSPACE, b as Uint8Array) });
 sink.register(chatMeta.persistable());
 
-const savedMtime: Record<'shared-components' | 'canvas-dirs' | 'skills', number> = {
-  'shared-components': 0,
-  'canvas-dirs': 0,
-  skills: 0,
-};
-async function flushIfDirty(name: keyof typeof savedMtime, dir: string): Promise<void> {
-  const m = await (name === 'canvas-dirs' ? maxMtimeCanvasDirs(dir) : maxMtimeMs(dir));
-  if (m <= savedMtime[name]) return; // a draw-only turn left the library untouched
-  savedMtime[name] = m;
-  await sink.flush(name);
-}
-
-/** Both component trees a write may have landed in (own dir or shared) — the mtime
- * guard makes the untouched one a no-op. */
-async function flushComponentTrees(): Promise<void> {
-  await flushIfDirty('canvas-dirs', SRC_ROOT);
-  await flushIfDirty('shared-components', SHARED_COMPONENTS_DIR);
-}
-
-/** ADR 0003 turn-completion batch. chatMeta persists always (dev + prod, for resume +
- *  cross-device rehydrate); the file-tar artifacts persist to R2 in the container only. */
+/** ADR 0003 turn-completion batch — chatMeta, in dev and prod alike, for resume and
+ *  cross-device rehydrate. Nothing else: Records persist at author time through their own
+ *  write path (a store failure fails the tool call), and the turn's Transcript is put as one
+ *  object after settle — see `turnDeps.backupTranscript`. */
 async function onTurnComplete(): Promise<void> {
   await sink.flush('chatMeta');
-  if (!process.env.R2_BUCKET) return;
-  // Transcripts are NOT in this batch any more (#356). The turn puts its own session, one
-  // object, after settle — see `turnDeps.backupTranscript`. This sink used to tar the whole
-  // ~/.claude/projects tree here on every turn: 49,111,040 bytes measured in production.
-  await flushComponentTrees();
-  await flushIfDirty('skills', SKILLS_DIR);
 }
 
 const json = (body: unknown, status = 200) =>
@@ -880,9 +841,17 @@ export async function handleRequest(req: Request): Promise<Response> {
       // this process's stale copy while every browser looks at a different canvas.
       try {
         const store = await openCanvasRoom(canvasIdFrom(req, url));
-        return json(store.getState() satisfies CanvasState);
+        const state = store.getState();
+        // `?page=` narrows the answer to one page. A whole canvas is more than an agent's
+        // response budget on a busy board — the failure it fixes is a read that overruns
+        // the MCP limit, whose only workaround was dumping the canvas to a file. The PAGE
+        // LIST is always returned in full: it is how the caller learns what to ask for.
+        const page = url.searchParams.get('page') ?? undefined;
+        return json({ ...state, shapes: shapesOnPage(state.shapes, state.pages ?? [], page) } satisfies CanvasState);
       } catch (e) {
-        return json({ error: (e as Error).message }, 502);
+        // An unknown page is the caller's mistake, not the room's — 400, with the list.
+        const message = (e as Error).message;
+        return json({ error: message }, message.startsWith('no page ') ? 400 : 502);
       }
     }
     // Public build stamp (#74): the SHA baked into this container image, and NOTHING
@@ -1025,7 +994,6 @@ export async function handleRequest(req: Request): Promise<Response> {
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
-      await flushComponentTrees();
       return inRoom(canvasId, (store) => ({ ok: true, name, reloaded: bumpAllComponents(store, nextComponentRev(store)) }));
     }
     const componentRoute = /^\/api\/components\/([^/]+)$/.exec(path);
@@ -1053,7 +1021,6 @@ export async function handleRequest(req: Request): Promise<Response> {
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
-      await flushComponentTrees();
       // A shared module used to bump every open canvas; that fan-out went with the session
       // registry (#297, see promote above). The caller's canvas reloads either way.
       return inRoom(canvasId, (store) => ({ ok: true, module, reloaded: bumpAllComponents(store, nextComponentRev(store)) }));
@@ -1137,7 +1104,6 @@ export async function handleRequest(req: Request): Promise<Response> {
       // The belt-and-braces resolve check that used to sit here moved into `writeSkill`, which
       // is where a path becomes a filesystem location — materialization needs the same guard.
       await writeSkill(name.data, body.data.files);
-      await flushIfDirty('skills', SKILLS_DIR);
       return json({ ok: true, skill: name.data, files: body.data.files.length });
     }
     const chatRoute = /^\/api\/chat\/([^/]+)\/send$/.exec(path);

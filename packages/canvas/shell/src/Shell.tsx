@@ -3,12 +3,15 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { ChatView } from '../../shared/ChatView';
 import { setCanvasOverride } from '../../shared/chat-store';
 import { DOCK_CHAT, parseDockMessage } from '../../shared/dock-messages';
+import { readInboxBadgeFrame } from '../../shared/workspace-events';
 import { DOCK_MEMORY_KEY, DOCK_WIDTH_KEY, type DockMemory, type DockedChat, parseDockMemory, parseDockWidth, serializeDockMemory } from './canvas-dock';
 import { clampWidth, MAX_PANE_WIDTH, MIN_PANE_WIDTH } from './inbox/inbox-panes';
 import { canvasFromUrl, urlWithCanvas } from './canvas-url';
 import { InboxStage } from './inbox/Inbox';
 import { JobsStage } from './jobs/Jobs';
 import { SettingsStage } from './settings/Settings';
+import { ComponentsStage } from './components/Components';
+import { applyCanvasOrder, moved } from './canvas-order';
 import { type Stage, stageFromUrl } from './stage';
 import { createStageMemory } from './stage-memory';
 
@@ -93,6 +96,18 @@ function IconSettings() {
 }
 
 // A play-in-a-square glyph for Jobs (trigger a background-agent run).
+function IconComponents() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="7.5" height="7.5" rx="1.5" />
+      <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" />
+      <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" />
+      <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
+    </svg>
+  );
+}
+
 function IconJobs() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -200,6 +215,8 @@ function MemberShell() {
   // Inbox nav badge, pushed over SSE (/api/inbox/events → {count}). The read mark is
   // WORKSPACE-SHARED (read-for-all): opening the Inbox stamps it server-side, so every
   // member's badge clears — and the same stream delivers that clear to other open Shells.
+  // Since #383 the stream is driven by the workspace's events hub rather than a 10s timer,
+  // so a change reaches this badge in about the time one D1 read takes.
   const [inboxUnseen, setInboxUnseen] = useState(0);
   // The previous pushed count: null until the first frame lands, so a page load with
   // existing unread never dings — only a count RISING while the tab is open does.
@@ -209,15 +226,14 @@ function MemberShell() {
   useEffect(() => {
     const es = new EventSource('/api/inbox/events');
     es.onmessage = (e) => {
-      try {
-        const { count } = JSON.parse(e.data) as { count: number };
-        const prev = unseenPrev.current;
-        unseenPrev.current = count;
-        setInboxUnseen(count);
-        if (prev !== null && count > prev && stageRef.current !== 'inbox') chime();
-      } catch {
-        /* malformed frame: keep the current badge */
-      }
+      // Parsed through the shared contract (CLAUDE.md §7) — the same module the edge
+      // encodes with. A malformed frame reads as null and leaves the badge as it was.
+      const badge = readInboxBadgeFrame(e.data);
+      if (!badge) return;
+      const prev = unseenPrev.current;
+      unseenPrev.current = badge.count;
+      setInboxUnseen(badge.count);
+      if (prev !== null && badge.count > prev && stageRef.current !== 'inbox') chime();
     };
     return () => es.close();
   }, []);
@@ -240,6 +256,7 @@ function MemberShell() {
           </Suspense>
         </div>
       )}
+      {stage === 'components' && <ComponentsStage workspaceId={registry.workspaceId} />}
       {stage === 'inbox' && <InboxStage workspaceId={registry.workspaceId} />}
       {stage === 'jobs' && <JobsStage />}
       {stage === 'settings' && <SettingsStage workspaceId={registry.workspaceId} />}
@@ -351,6 +368,7 @@ function Rail({
       </button>
       {railBtn('inbox', 'Inbox', <IconInbox />, stage === 'inbox' ? 0 : inboxUnseen)}
       {railBtn('canvas', 'Canvases', <IconCanvases />)}
+      {railBtn('components', 'Components', <IconComponents />)}
       {railBtn('notebook', 'Notebook', <IconNotebook />)}
       {railBtn('jobs', 'Jobs', <IconJobs />)}
       <div className="lp-rail-bottom">
@@ -487,6 +505,10 @@ type Registry = {
   workspaceId: string;
   canvases: CanvasEntry[];
   setCanvases: React.Dispatch<React.SetStateAction<CanvasEntry[]>>;
+  /** The hand-arranged picker order (shell/src/canvas-order.ts). A HINT: it can name
+   *  deleted canvases and will not know about ones created since it was written. */
+  canvasOrder: string[];
+  setCanvasOrder: React.Dispatch<React.SetStateAction<string[]>>;
   reload: () => Promise<void>;
   loaded: boolean;
 };
@@ -494,21 +516,23 @@ type Registry = {
 function useCanvasRegistry(): Registry {
   const [workspaceId, setWorkspaceId] = useState('');
   const [canvases, setCanvases] = useState<CanvasEntry[]>([]);
+  const [canvasOrder, setCanvasOrder] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const reload = useCallback(async () => {
     const r = await fetch('/api/canvases', { credentials: 'same-origin' }).catch(() => null);
     if (!r?.ok) return; // edge offline — leave the list as-is
-    const d = (await r.json()) as { workspaceId: string; canvases: CanvasEntry[] };
+    const d = (await r.json()) as { workspaceId: string; canvases: CanvasEntry[]; canvasOrder?: string[] };
     setWorkspaceId(d.workspaceId);
     setCanvases(d.canvases);
+    setCanvasOrder(d.canvasOrder ?? []);
     setLoaded(true);
   }, []);
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  return { workspaceId, canvases, setCanvases, reload, loaded };
+  return { workspaceId, canvases, setCanvases, canvasOrder, setCanvasOrder, reload, loaded };
 }
 
 /** Dock memory minus one canvas's slot (undock / the docked card was deleted). */
@@ -516,7 +540,11 @@ const withoutDock = (d: DockMemory, canvasId: string): DockMemory =>
   Object.fromEntries(Object.entries(d).filter(([k]) => k !== canvasId));
 
 function CanvasStage({ registry }: { registry: Registry }) {
-  const { workspaceId: wsId, canvases, setCanvases, reload: load, loaded } = registry;
+  const { workspaceId: wsId, canvases, setCanvases, canvasOrder, setCanvasOrder, reload: load, loaded } = registry;
+  // Which row is being dragged, and which it is currently over — the only state a native
+  // HTML5 drag needs beyond the list itself.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
   // The selected canvas is a URL, so a reload/back-button lands back on the same open canvas.
   const [selected, setSelected] = useState<string | null>(() => canvasFromUrl(window.location.search));
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -589,7 +617,37 @@ function CanvasStage({ registry }: { registry: Registry }) {
   // The list always offers the legacy Default canvas (no registry row) so you can return to it.
   // Locked rows (ADR-0016 — someone else's private canvas, owner-only metadata) are never
   // pickable; they surface in Settings' manage list instead.
-  const canvasList: CanvasEntry[] = [{ id: DEFAULT_CANVAS_ID, name: 'Default' }, ...canvases.filter((c) => !c.locked)];
+  // The order is applied HERE, after Default is synthesized in — that is the whole reason
+  // it is an id array rather than a sort column: `default` has no registry row, so the
+  // server could not place it, but the client can because by this point it is just an id.
+  const canvasList: CanvasEntry[] = applyCanvasOrder(canvasOrder, [
+    { id: DEFAULT_CANVAS_ID, name: 'Default' },
+    ...canvases.filter((c) => !c.locked),
+  ]);
+
+  // Reorder by drag. The new arrangement is applied LOCALLY FIRST and then persisted: a
+  // dropped row that snaps back while a fetch is in flight reads as a failed drag, and the
+  // list is small enough that re-fetching to confirm would be the slower, worse answer.
+  // A failed write reloads, which restores the server's order rather than leaving the
+  // screen disagreeing with the database.
+  const reorder = (fromId: string, toId: string) => {
+    const ids = canvasList.map((c) => c.id);
+    const from = ids.indexOf(fromId);
+    const to = ids.indexOf(toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = moved(ids, from, to);
+    setCanvasOrder(next);
+    void fetch('/api/canvases', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ order: next }),
+    })
+      .then((r) => {
+        if (!r.ok) void load();
+      })
+      .catch(() => void load());
+  };
 
   // A URL can name a canvas that no longer exists (deleted elsewhere, stale bookmark). Only
   // clear it once the registry has actually loaded — clearing before then would drop a valid
@@ -675,8 +733,33 @@ function CanvasStage({ registry }: { registry: Registry }) {
           {canvasList.map((c) => (
             <li
               key={c.id}
-              className={`page-row${c.id === selected ? ' active' : ''}`}
+              className={`page-row${c.id === selected ? ' active' : ''}${dragId === c.id ? ' dragging' : ''}${overId === c.id && dragId !== c.id ? ' drop-target' : ''}`}
               onClick={() => setSelected(c.id)}
+              // Native HTML5 drag — the list is a dozen rows, so a drag library would be
+              // more code and more behaviour than the feature is.
+              draggable={editingId !== c.id}
+              onDragStart={(e) => {
+                setDragId(c.id);
+                e.dataTransfer.effectAllowed = 'move';
+                // Firefox starts no drag at all without data set on the transfer.
+                e.dataTransfer.setData('text/plain', c.id);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault(); // the default is "reject the drop"
+                e.dataTransfer.dropEffect = 'move';
+                setOverId(c.id);
+              }}
+              onDragLeave={() => setOverId((id) => (id === c.id ? null : id))}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragId) reorder(dragId, c.id);
+                setDragId(null);
+                setOverId(null);
+              }}
+              onDragEnd={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
             >
               {editingId === c.id ? (
                 <input

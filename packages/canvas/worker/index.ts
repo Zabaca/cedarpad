@@ -11,6 +11,7 @@ import { handleConnectorSecretsApi } from './connector-secrets.ts';
 import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo, workspaceRepoSet } from './github-connection.ts';
 import { handleAdminApi } from './admin.ts';
 import { handleComponentsApi } from './components-api.ts';
+import { handleComponentInventory, INVENTORY_PATH } from './component-inventory-api.ts';
 import { handleMembersApi } from './members.ts';
 import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
@@ -25,6 +26,7 @@ import { handleInboxApi } from './inbox.ts';
 import { handlePushApi } from './push.ts';
 import { PLATFORM_RPC_PATH } from '../shared/platform-rpc.ts';
 import { handlePlatformRpc, platformRpcDeps } from './platform-rpc.ts';
+import { notifyInboxChanged } from './workspace-events.ts';
 import { handleMcpReadApi, handleMcpTokenApi } from './mcp-tokens-api.ts';
 import { probeMcpTools } from './mcp-probe.ts';
 import { MCP_REGISTRY } from '../server/mcp-registry.ts';
@@ -91,6 +93,11 @@ export class Warehouse extends BaseSandbox {}
 // Durable Object classes off the entrypoint module's exports.
 export { CanvasSyncRoom } from './canvas-sync-do.ts';
 
+// The per-workspace events hub (#383), re-exported for the same reason. Like
+// CanvasSyncRoom it is a plain class, not a container class — but unlike it, it has no
+// storage at all: the hub keeps no state, so its whole job is fan-out.
+export { WorkspaceEvents } from './workspace-events-do.ts';
+
 export interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
   Warehouse: DurableObjectNamespace<Warehouse>;
@@ -101,6 +108,14 @@ export interface Env {
   // carries no `DurableObjectBranded` marker. Nothing calls it by RPC — the only traffic
   // is `stub.fetch` with the WebSocket upgrade — so the plain stub type is exactly right.
   CANVAS_SYNC: DurableObjectNamespace;
+  // One Durable Object per WORKSPACE (#383), the fan-out point for "something in this
+  // workspace's inbox changed". Addressed via `idFromName(workspaceEventsName(workspaceId))`
+  // — see worker/workspace-events.ts. Plain-class stub type for the same reason as
+  // CANVAS_SYNC above. Declared here as present (it is, in both the deployed and the
+  // generated local-dev config); the helpers still tolerate its absence, because unit
+  // tests drive these handlers with a bare env and a missing hub must cost a late badge
+  // rather than a failed write.
+  WORKSPACE_EVENTS: DurableObjectNamespace;
   // Workers static-assets binding for the Notebook SPA build (web-poc/dist, PRD #49
   // slice #58). Served under /notebook AFTER the edge session gate — it's app content,
   // so an unauthenticated hit gets the login, never the SPA.
@@ -657,7 +672,9 @@ export default {
     }
     const canvasApiMatch = /^\/api\/canvases\/([^/]+)$/.exec(url.pathname);
     if (canvasApiMatch) {
-      return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user, canvasApiMatch[1]);
+      return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user, canvasApiMatch[1], (ws) =>
+        notifyInboxChanged(env.WORKSPACE_EVENTS, ws),
+      );
     }
 
     // Huddles (ADR-0017): join mints a canvas-scoped LiveKit room token at the edge
@@ -902,6 +919,19 @@ export default {
         workspaceId,
         request.headers.get(CANVAS_ID_HEADER) ?? DEFAULT_CANVAS_ID,
       );
+    }
+
+    // The workspace-wide Component inventory (the Components stage). Spans canvases, which
+    // is the whole point: the palette and gallery above are scoped to the canvas you have
+    // open, so a Component generated on another canvas is invisible until you go looking.
+    if (url.pathname === INVENTORY_PATH) {
+      // `?workspace=` wins over the cookie, matching `/api/canvases`. The rail knows which
+      // workspace it is showing; the cookie is a separate piece of state that can lag it,
+      // and an inventory answered for a DIFFERENT workspace than the one on screen would
+      // put the wrong Components in front of a delete button. Access is re-checked inside
+      // either way, so naming a workspace is never a way into one.
+      const named = url.searchParams.get('workspace');
+      return handleComponentInventory(request, env, createDbForWorker(env as unknown as Bindings), user, named || workspaceId);
     }
 
     // Force the container to recycle so a freshly deployed image takes effect (CF

@@ -33,9 +33,12 @@ let skillUploads: Array<{ workspaceId: string; name: string; files: number }> = 
 let bridgeCalls: Array<{ workspaceId: string; path: string; method: string; headers: Record<string, string>; body?: unknown }> = [];
 // Canned bridge responses by path — set per test; unset paths 404.
 let bridgeResponses: Record<string, unknown> = {};
+/** Which workspaces the tools rang the events hub for (#383). */
+const rung: string[] = [];
 const tools = buildMcpTools({
   db: database,
   userId: 'u_1',
+  notify: async (workspaceId) => void rung.push(workspaceId),
   proxySend: async (workspaceId, chatId, message, canvasId) => {
     sends.push({ workspaceId, chatId, message, canvasId });
     return new Response(JSON.stringify({ ok: true }), { status: 202 });
@@ -220,19 +223,21 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     await expect(tools.readCanvas({ workspace_id: WS, canvas_id: 'cv_ghost' })).rejects.toThrow(/canvas/);
   });
 
-  test('list_pages answers from the canvas read, and empty when the room predates pages', async () => {
+  test('read_canvas narrows to one page at the BRIDGE, so the whole canvas never crosses this hop', async () => {
     const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'Paged' });
-    bridgeResponses = { '/api/canvas': { version: 3, shapes: [], pages: [{ id: 'page:page', name: 'Page 1' }, { id: 'page:two', name: 'Roadmap' }] } };
-    expect(await tools.listPages({ workspace_id: WS, canvas_id: board.id })).toEqual({
-      pages: [{ id: 'page:page', name: 'Page 1' }, { id: 'page:two', name: 'Roadmap' }],
-    });
+    bridgeCalls = [];
+    bridgeResponses = { '/api/canvas?page=page%3Atwo': { version: 1, shapes: [], pages: [] } };
 
-    // `pages` is optional on the wire, so a room answered by an older worker must read as
-    // "no pages known", never crash the tool.
-    bridgeResponses = { '/api/canvas': { version: 3, shapes: [] } };
-    expect(await tools.listPages({ workspace_id: WS })).toEqual({ pages: [] });
+    await tools.readCanvas({ workspace_id: WS, canvas_id: board.id, page: 'page:two' });
+    // Filtering after the response arrives would still drag every shape across this hop —
+    // and the hop is exactly what the MCP response limit measures.
+    expect(bridgeCalls[0]?.path).toBe('/api/canvas?page=page%3Atwo');
 
-    await expect(tools.listPages({ workspace_id: OTHER_WS })).rejects.toThrow(/not found/);
+    // No page named: the request is byte-identical to what it always was.
+    bridgeCalls = [];
+    bridgeResponses = { '/api/canvas': { version: 1, shapes: [] } };
+    await tools.readCanvas({ workspace_id: WS, canvas_id: board.id });
+    expect(bridgeCalls[0]?.path).toBe('/api/canvas');
   });
 
   test('select_page resolves the name at the EDGE and posts the id, stamped with the token user as viewer', async () => {
@@ -449,6 +454,21 @@ describe('assign_conversation — advisory assignment over MCP (full parity)', (
 
     const cleared = await tools.assignConversation({ chat_id: 'mcp_assign', user_id: null });
     expect(cleared.assigned_to).toBeNull();
+  });
+
+  // #383: MCP is a third writer of the conversations table, alongside the edge routes and
+  // the container's platform RPC. A claim made from an agent has to reach the badge like
+  // one made from the Inbox does.
+  test('an MCP assignment rings the conversation’s workspace events hub', async () => {
+    rung.length = 0;
+    await tools.assignConversation({ chat_id: 'mcp_assign', user_id: 'u_2' });
+    expect(rung).toEqual([WS]);
+  });
+
+  test('a REFUSED assignment rings nothing', async () => {
+    rung.length = 0;
+    await expect(tools.assignConversation({ chat_id: 'mcp_assign', user_id: 'u_ghost' })).rejects.toThrow();
+    expect(rung).toEqual([]);
   });
 
   test('a non-member target errors; a conversation outside the user’s workspaces errors', async () => {

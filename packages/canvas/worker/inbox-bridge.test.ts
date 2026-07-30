@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { GateUser } from './auth-gate.ts';
+import { workspaceEventsName } from '../shared/workspace-events.ts';
 import { DEV_AGENT_KIND } from '../server/dev-agent-workflow.ts';
 import { LEGACY_SANDBOX_ID, type SandboxCoords } from './sandbox-resolver.ts';
 
@@ -222,6 +223,73 @@ beforeEach(() => {
   mintCalls = 0;
   mintResult = 'ghs_minted';
   mcpTokensByWorkspace = {};
+});
+
+// #383: the proxy's THREE conversation writes each ring the workspace's events hub, so a
+// human replying, opening a thread, or pairing a chat with a canvas updates every open
+// Shell's badge as fast as an agent's turn does.
+describe('handleInboxBridge: the proxy’s row writes ring the workspace events hub', () => {
+  const rung: string[] = [];
+  const hubEnv = {
+    WORKSPACE_EVENTS: {
+      idFromName: (name: string) => ({ name }),
+      get: ({ name }: { name: string }) => ({
+        fetch: async () => {
+          rung.push(name);
+          return new Response(null, { status: 204 });
+        },
+      }),
+    },
+  } as never;
+  const withHub = (method: string, subPath: string, convId = 'conv_1') =>
+    handleInboxBridge(
+      new Request(`https://poc.cedarpad.com/inbox/${convId}/bridge${subPath}`, {
+        method,
+        ...(subPath.endsWith('/attach-canvas') ? { body: '{}', headers: { 'content-type': 'application/json' } } : {}),
+      }),
+      hubEnv,
+      user,
+      convId,
+      subPath,
+      mint,
+      async (_env, _db, _ws, requested) => ({ installationId: 'inst_1', repoFullName: requested ?? 'Zabaca/cedarpad' }),
+    );
+
+  beforeEach(() => {
+    rung.length = 0;
+  });
+
+  test('a chat SEND — the human answering', async () => {
+    await withHub('POST', '/api/chat/chat_home/send');
+    await settle();
+    expect(rung).toEqual([workspaceEventsName('default')]);
+  });
+
+  test('the open-conversation GET — opening a thread clears its unread', async () => {
+    await withHub('GET', '/api/inbox/conv_1/chat');
+    await settle();
+    expect(rung).toEqual([workspaceEventsName('default')]);
+  });
+
+  test('attach-canvas — the chat→canvas edge a private canvas hides it by', async () => {
+    await withHub('POST', '/api/inbox/conv_1/attach-canvas');
+    await settle();
+    expect(rung).toEqual([workspaceEventsName('default')]);
+  });
+
+  test('a plain transcript read rings nothing — no row changed', async () => {
+    await withHub('GET', '/api/chat/chat_home/transcript');
+    await settle();
+    expect(rung).toEqual([]);
+  });
+
+  test('the hub rung is the CONVERSATION’s workspace', async () => {
+    conv = row({ workspaceId: 'ws_other' });
+    workspaceMembers = ['u_1'];
+    await withHub('POST', '/api/chat/chat_home/send');
+    await settle();
+    expect(rung).toEqual([workspaceEventsName('ws_other')]);
+  });
 });
 
 describe('handleInboxBridge: the inbox triage flip on a proxied send', () => {

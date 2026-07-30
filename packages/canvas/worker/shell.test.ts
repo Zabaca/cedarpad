@@ -44,6 +44,101 @@ beforeAll(async () => {
 
 // The Canvas app's registry API (ADR-0007, #54): GET/POST/PATCH/DELETE scoped to the
 // active workspace (the cs_workspace cookie), mirroring handleWorkspacesApi.
+// #383: the canvas registry is not the conversations table, but a canvas's visibility
+// DOMINATES the visibility of every chat linked to it (ADR-0016) — so a flip or a delete
+// changes what an inbox badge counts. The watermark tick cannot see the canvases table at
+// all (there is no `updated_at` on it), which makes the hub the only thing that carries
+// these; missing them would leave a badge that is wrong until the next chat changes.
+describe('handleCanvasesApi — the two canvas changes an inbox badge depends on', () => {
+  const recorder = () => {
+    const rung: string[] = [];
+    return { rung, notify: async (workspaceId: string) => void rung.push(workspaceId) };
+  };
+
+  test('flipping a canvas private rings its workspace', async () => {
+    const { rung, notify } = recorder();
+    const created = await readJson(
+      await handleCanvasesApi(
+        new Request('https://x/api/canvases', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'Hidden' }),
+        }),
+        database,
+        USER,
+        undefined,
+        notify,
+      ),
+    );
+    rung.length = 0;
+
+    const res = await handleCanvasesApi(
+      new Request(`https://x/api/canvases/${created.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ visibility: 'private' }),
+      }),
+      database,
+      USER,
+      created.id,
+      notify,
+    );
+    expect(res.status).toBe(200);
+    expect(rung).toEqual(['default']);
+  });
+
+  test('deleting a canvas rings its workspace — its chats become visible again', async () => {
+    const { rung, notify } = recorder();
+    const created = await readJson(
+      await handleCanvasesApi(
+        new Request('https://x/api/canvases', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'Doomed' }),
+        }),
+        database,
+        USER,
+      ),
+    );
+    const res = await handleCanvasesApi(
+      new Request(`https://x/api/canvases/${created.id}`, { method: 'DELETE' }),
+      database,
+      USER,
+      created.id,
+      notify,
+    );
+    expect(res.status).toBe(204);
+    expect(rung).toEqual(['default']);
+  });
+
+  test('a rename rings nothing — a name changes no visibility', async () => {
+    const { rung, notify } = recorder();
+    const created = await readJson(
+      await handleCanvasesApi(
+        new Request('https://x/api/canvases', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'Before' }),
+        }),
+        database,
+        USER,
+      ),
+    );
+    await handleCanvasesApi(
+      new Request(`https://x/api/canvases/${created.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'After' }),
+      }),
+      database,
+      USER,
+      created.id,
+      notify,
+    );
+    expect(rung).toEqual([]);
+  });
+});
+
 describe('handleCanvasesApi — list/create scoped to the active workspace', () => {
   test('GET with no cookie scopes to the default workspace', async () => {
     await canvasRegistry.create(database, { workspaceId: 'default', name: 'Home' });
@@ -353,5 +448,48 @@ describe('handleCanvasesApi — GET ?workspace= override (the Inbox attach panel
     // Created in the COOKIE scope (default), not the query-named workspace.
     const inWs = await readJson(await handleCanvasesApi(new Request(`https://x/api/canvases?workspace=${ws.id}`), database, USER));
     expect(inWs.canvases.map((c: { id: string }) => c.id)).not.toContain(made.id);
+  });
+});
+
+// The picker's hand-arranged order (a JSON array of canvas ids on the workspace). Stored
+// whole rather than as a sort column per canvas, because the legacy `default` canvas has
+// no registry row and a per-row column could never place it.
+describe('handleCanvasesApi — the canvas picker order', () => {
+  const get = () => handleCanvasesApi(new Request('https://x/api/canvases'), database, USER);
+  const put = (order: string[]) =>
+    handleCanvasesApi(
+      new Request('https://x/api/canvases', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ order }),
+      }),
+      database,
+      USER,
+    );
+
+  test('a workspace that has never reordered reports no order at all', async () => {
+    // Which is what makes the list read as `created_at` ascending, exactly as before.
+    expect((await readJson(await get())).canvasOrder).toEqual([]);
+  });
+
+  test('the order round-trips, and rides along with the list it orders', async () => {
+    expect((await put(['default', 'cv_b', 'cv_a'])).status).toBe(200);
+    const body = await readJson(await get());
+    // One round trip: no window in which the rows have arrived but their arrangement has not.
+    expect(body.canvasOrder).toEqual(['default', 'cv_b', 'cv_a']);
+    expect(Array.isArray(body.canvases)).toBe(true);
+  });
+
+  test('`default` may be placed like any other canvas', async () => {
+    // It has no registry row — the whole reason the order is an id array — so the API must
+    // not validate ids against the registry.
+    await put(['cv_a', 'default']);
+    expect((await readJson(await get())).canvasOrder).toEqual(['cv_a', 'default']);
+  });
+
+  test('a malformed order is refused rather than stored', async () => {
+    await put(['cv_a']);
+    expect((await put([123 as never])).status).toBe(400);
+    expect((await readJson(await get())).canvasOrder).toEqual(['cv_a']);
   });
 });

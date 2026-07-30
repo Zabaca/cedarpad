@@ -230,3 +230,16 @@ export async function transferWorkspaceOwnership(
     .onConflictDoNothing();
   return true;
 }
+
+/**
+ * Set the canvas picker's hand-arranged order for a workspace: a JSON array of canvas ids.
+ *
+ * The array is stored VERBATIM, including ids of canvases the caller can see and this
+ * function does not check. That is deliberate — the order is a hint, not a permission: it
+ * grants nothing, and readers already drop unknown ids (shell/src/canvas-order.ts). Making
+ * it authoritative would mean a member who cannot see a private canvas could reorder it out
+ * of existence for its owner.
+ */
+export async function setCanvasOrder(db: Database, workspaceId: string, order: string[]): Promise<void> {
+  await db.update(workspaces).set({ canvasOrder: JSON.stringify(order) }).where(eq(workspaces.id, workspaceId));
+}

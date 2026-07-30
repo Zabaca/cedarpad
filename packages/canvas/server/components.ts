@@ -221,10 +221,12 @@ function baseFile(module: string): string | null {
 
 /**
  * Write a Record's source to the file vite compiles from, and return it; null when that tier
- * holds no such Component. This is the ONLY restore path there is — ADR-0022 decision 5
- * deletes boot restore rather than guarding it, so there can be no "boot restored nothing"
- * bug. One Component per call: a cold container pays for what is asked for, never for the
- * whole library.
+ * holds no such Component. This is the ONLY way a component file ever appears on disk —
+ * ADR-0022 decision 5 deletes boot restore rather than guarding it, so there can be no "boot
+ * restored nothing" bug. That claim was aspirational until #366 actually removed the restore
+ * from `scripts/container-start.ts`; `server/boot-contract.test.ts` is what keeps it true.
+ * One Component per call: a cold container pays for what is asked for, never for the whole
+ * library.
  */
 async function materializeInto(
   tier: ComponentTier,

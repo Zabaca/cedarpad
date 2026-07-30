@@ -19,6 +19,9 @@ import { ComponentFullscreenOverlay } from './ComponentFullscreen';
 import { ComponentGallery } from './ComponentGallery';
 import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './SidePanel';
 import { createCanvasAssetStore, syncUri } from './canvas-sync';
+import { cameraKey, pageToSend, restorablePage } from './current-page';
+import { previewModule } from './component-preview';
+import { ComponentPreview } from './ComponentPreview';
 import { wireCanvasStream } from './canvas-stream';
 import { createCanvasTLSchema } from './tl-schema';
 import { createCanvasUserStore } from './presence';
@@ -112,11 +115,16 @@ function panelComponents(slots: PanelSlots): TLComponents {
   };
 }
 
-// Persist the camera (pan + zoom) PER CANVAS across reloads, so a canvas returns to
-// where you left it rather than the default center. Canvas shapes live in the
-// in-memory bridge, so the camera is the one piece of view state the client owns.
-// Stored as a { canvasId -> {x,y,z} } map.
+// Persist the view — WHICH PAGE, and the camera on it — across reloads, so a canvas
+// returns to where you left it rather than the default center of page one. The document
+// itself is the room's (ADR-0019); this is the view state the client owns.
+//
+// Both are keyed per canvas AND per page. tldraw scopes the camera to a page, so one
+// entry per canvas would restore page one's viewport onto page two. The page id itself
+// lives in tldraw's `session` scope, which `useSync` does not persist and no
+// `persistenceKey` covers — so nothing remembers it unless we do.
 const CAM_KEY = 'agent-canvas:cameras';
+const PAGE_KEY = 'agent-canvas:pages';
 
 type Cam = { x: number; y: number; z: number };
 type CamMap = Record<string, Cam>;
@@ -134,9 +142,23 @@ function loadCameras(): CamMap {
 const isCam = (c: unknown): c is Cam =>
   !!c && typeof c === 'object' && ['x', 'y', 'z'].every((k) => Number.isFinite((c as Record<string, unknown>)[k]));
 
-function applyCamera(editor: Editor, cams: CamMap, key: string): void {
-  const c = cams[key];
+function applyCamera(editor: Editor, cams: CamMap, key: string, legacyKey: string): void {
+  // `legacyKey` is the pre-page bare canvas id. Entries written before the camera map
+  // gained a page dimension still describe the first page, so they are honored once and
+  // then rewritten under the composite key by the save listener below.
+  const c = cams[key] ?? cams[legacyKey];
   if (isCam(c)) editor.setCamera({ x: c.x, y: c.y, z: c.z }, { immediate: true });
+}
+
+/** The remembered page per canvas: a { canvasId -> pageId } map. */
+function loadPages(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(PAGE_KEY);
+    const o = raw ? (JSON.parse(raw) as unknown) : null;
+    return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
 }
 
 // A strictly-increasing chat number that never reuses a value. Seeded above both
@@ -198,7 +220,18 @@ function freeSpot(editor: Editor, x: number, y: number): { x: number; y: number 
   return { x, y: ty };
 }
 
+// Preview mode (`?preview=<Module>`): render that one module and nothing else — no tldraw,
+// no room, no chat. It is the Components stage asking "what does this look like", and
+// mounting a canvas to answer that would open a socket for nothing.
+//
+// Resolved at MODULE scope, not in a hook: the URL cannot change without a reload, and an
+// early return inside `App` would sit ahead of its other hooks — legal only by accident,
+// because the condition happens never to change between renders.
+const PREVIEW_MODULE = typeof window === 'undefined' ? null : previewModule(window.location.search);
+
 export default function App() {
+  if (PREVIEW_MODULE) return <ComponentPreview module={PREVIEW_MODULE} canvasId={activeCanvasId()} />;
+
   // Component-scoped guest (PRD #221)? Resolve BEFORE mounting tldraw: that guest renders
   // one component fullscreen and nothing else. undefined = probe in flight (render nothing
   // for a beat); null/canvas-guest/member = the normal canvas below.
@@ -382,20 +415,33 @@ function CanvasApp() {
       });
       const unJsonPaste = wirePasteCapture(editor);
 
-      // Per-canvas camera: restore the one we land on, then save (debounced) on move.
-      const camKey = activeCanvasId();
+      // Restore the view: PAGE FIRST, then the camera. The order is load-bearing — the
+      // camera we want belongs to the restored page, so applying it before the page switch
+      // would set page one's viewport and then navigate away from it.
+      const canvasKey = activeCanvasId();
+      const pages = loadPages();
       const cameras = loadCameras();
-      applyCamera(editor, cameras, camKey);
+      const wanted = restorablePage(
+        pages[canvasKey],
+        editor.getPages().map((p) => p.id),
+      );
+      if (wanted) editor.setCurrentPage(wanted);
+      applyCamera(editor, cameras, cameraKey(canvasKey, editor.getCurrentPageId()), canvasKey);
 
       let camTimer: ReturnType<typeof setTimeout> | null = null;
       const uncam = editor.store.listen(
         () => {
           if (camTimer) clearTimeout(camTimer);
           camTimer = setTimeout(() => {
+            // Read the page on every save, not once at mount: switching pages is exactly
+            // the event this has to notice, and it arrives on this same session listener.
+            const pageId = editor.getCurrentPageId();
             const c = editor.getCamera();
-            cameras[camKey] = { x: c.x, y: c.y, z: c.z };
+            cameras[cameraKey(canvasKey, pageId)] = { x: c.x, y: c.y, z: c.z };
+            pages[canvasKey] = pageId;
             try {
               localStorage.setItem(CAM_KEY, JSON.stringify(cameras));
+              localStorage.setItem(PAGE_KEY, JSON.stringify(pages));
             } catch {
               /* storage full/unavailable: skip */
             }
@@ -502,6 +548,11 @@ function CanvasApp() {
           viewportCenter={() => {
             const b = editorRef.current?.getViewportPageBounds();
             return b ? { x: b.midX, y: b.midY } : { x: 500, y: 350 };
+          }}
+          currentPage={() => {
+            const editor = editorRef.current;
+            if (!editor) return undefined;
+            return pageToSend(editor.getPages().map((p) => p.id), editor.getCurrentPageId());
           }}
           onClose={() => setGalleryOpen(false)}
         />

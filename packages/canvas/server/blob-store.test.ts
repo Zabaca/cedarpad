@@ -10,7 +10,6 @@ import {
   canvasStateKey,
   fsBackend,
   memBackend,
-  skillsKey,
 } from './blob-store.ts';
 
 const sampleState = (): CanvasState => ({ version: 3, shapes: [] });
@@ -28,8 +27,25 @@ describe('blob keys', () => {
     expect(canvasStateKey('ws1', 'c1')).toEqual('workspaces/ws1/canvases/c1/canvas-state.json');
   });
 
-  test('B2c skillsKey', () => {
-    expect(skillsKey('ws1')).toEqual('workspaces/ws1/skills.tar');
+  // #366: `sharedComponentsKey`, `canvasDirsKey` and `skillsKey` are gone. The archives they
+  // named are frozen in the bucket as the pre-migration rollback, but nothing in the running
+  // system may name them — the migration's read-only survey spells its own keys out
+  // (`record-migration.ts`), the way #357 did when the custom-handler feature went.
+  test('B2c the store offers no door to a workspace content archive', () => {
+    const store = new BlobStore(memBackend()) as unknown as Record<string, unknown>;
+    for (const door of [
+      'loadSharedComponents',
+      'saveSharedComponents',
+      'loadCanvasDirs',
+      'saveCanvasDirs',
+      'loadSkills',
+      'saveSkills',
+      // The existence probe existed only so the empty-archive guard could ask "is there
+      // something on the other side to destroy?" — there is no full-replace write left to ask.
+      'blobExists',
+    ]) {
+      expect(store[door]).toBeUndefined();
+    }
   });
 });
 
@@ -61,13 +77,6 @@ describe('BlobStore', () => {
     };
     const store = new BlobStore(broken);
     expect(store.loadCanvasState('ws1', 'c1')).rejects.toThrow(/backend down/);
-  });
-
-  test('B6c workspace-skill bytes round-trip (ADR-0013)', async () => {
-    const store = new BlobStore(memBackend());
-    const bytes = new Uint8Array([4, 2, 0, 128]);
-    await store.saveSkills('ws1', bytes);
-    expect(await store.loadSkills('ws1')).toEqual(bytes);
   });
 
   test('B8 listMarts returns every mart sidecar in the workspace, parsed', async () => {

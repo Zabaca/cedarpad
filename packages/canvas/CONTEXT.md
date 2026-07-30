@@ -72,6 +72,58 @@ conversation claims it for that user, deliberately. _Avoid_: scoping Inbox reads
 `user_id`, repurposing `user_id` as the assignee, or making assignment exclusive
 (assignee-only reply). _(Decided 2026-07-15.)_
 
+**Workspace events hub** _(#383, decided 2026-07-29)_: one Durable Object per workspace,
+addressed `idFromName(workspaceEventsName(workspaceId))`, whose only job is **fan-out**.
+Every writer of a Conversation — the Inbox routes, the chat proxy, inbound MCP, and the
+container's platform RPC — rings it after its write commits; every open `/api/inbox/events`
+stream is subscribed to it and re-reads D1 when it hears. It exists because Workers are
+stateless per isolate: a subscriber held on isolate A cannot be reached by a write landing
+on isolate B, so a badge could only ever be *polled*, and polling it cost 1.6M D1 rows a
+day. `CanvasSyncRoom` is the shape it copies but not a place to put it (that is keyed per
+*canvas*; an inbox spans them), and `Sandbox`/`Warehouse` are the right scope with the
+wrong lifecycle — compute containers built to sleep.
+
+**The hub is a dumb notifier, not a cache.** It says *"something in your inbox changed"*
+and holds **no count and no rows**; the subscriber re-reads. That is ADR-0022 applied to a
+notifier — a second copy of the truth diverges, needs invalidation, and goes stale
+invisibly, whereas a hub holding nothing can only be *late*. The contract
+(`shared/workspace-events.ts`) makes that structural: the wire message is a topic and
+nothing else, so a count cannot ride it. Transport to the browser stays **SSE** (one-way,
+already spoken by the client); the SSE body is held by the *Worker*, and the hub holds only
+hibernatable WebSockets from those Workers — DO hibernation is WebSocket-only, so a hub
+holding the SSE bodies itself would stay resident for as long as any tab anywhere had the
+app open. Two timers survive and neither is a recompute: a 30s keep-alive that reads
+nothing (departed-client detection, which the old tick did as a side effect) and a
+5-minute watermark re-check, because ringing the hub is best-effort by construction.
+
+**Notices are coalesced, leading edge first** _(#383 follow-up)_. Pushing removed a bound
+polling had for free: a 10s tick cost the same 8,640 recomputes a day per tab however busy
+the workspace got, whereas a recompute per notice makes cost proportional to the **write
+rate**, which nothing caps — concurrent turns settling, or an agent sending across chats in
+a loop, multiply straight into D1, and the watermark cannot damp it because the notified
+path skips the watermark by design. So the first notice recomputes *immediately* (the
+sub-second latency is the point and is not traded away) and further notices inside a 500 ms
+window collapse into **one trailing** recompute — dropping that trailing one would turn a
+cost fix into a badge that is silently wrong until the safety net, so it is pinned by its
+own test. Steady-state ceiling: one recompute per window per tab (≈2/s), measured at 28
+rows for a 20-notice burst against 280 un-coalesced. Recomputes are also chained so two
+never overlap: a slow earlier read resolving after a fast later one would write the older
+count last. The damping lives in the **Worker**, not the hub — that is where the expensive
+recompute is, it needs no protocol change, and it keeps the hub holding nothing. This is
+the *second* time this lesson has been learned here: live presence used to ride "the
+throttled `event: presence` SSE frames", and #293 moved presence onto tldraw sync (which
+throttles internally), deleting the bespoke transport and taking the throttle with it.
+_Avoid_: a trailing-only debounce (it adds the window to every badge's latency), or putting
+the damping in the DO as the primary fix. Next limit if tab counts grow: `fanOut` is
+`O(sockets)` with a `JSON.stringify` per notice.
+The **watermark** (`queries/inbox-watermark.ts`) is that cheap probe: one statement,
+`max(updated_at)` over the workspace's conversations plus its shared read mark, both
+indexed point lookups — a change detector, never a stored answer. _Avoid_: giving the hub
+a count "to save a query", or wiring only `handlePlatformRpc` — that covers the container's
+writes and leaves a badge that moves for agents and not for humans, which looks fixed and
+is worse than polling. Presence, cross-chat delivery, and "a Component changed, reload it"
+are the natural next topics; none are built.
+
 **Open PR (a Conversation's PR state)** _(decided 2026-07-29)_: a dev-agent Conversation
 that has called `open_pr` **carries the PR it opened** — `pr_url` on the row, stamped by
 the container reporting the tool's result back through the platform RPC (the edge owns the
@@ -139,7 +191,8 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
 - **Render Pad**: the container-served frontend — `App.tsx`, `sync.ts`, `ComponentShape`, the tldraw canvas + chat. The navigation chrome (rail, canvas selector) now lives in the edge **Shell SPA** (`shell/`, PRD #103), which iframes this pad. _Avoid_: calling a canvas-component part of the "pad".
 - **Bridge** (a.k.a. **bridge core**): the single stateful backend process — the `CanvasStore`, persistence, the agent runner, the core `/api/*` routes. The authoritative owner of canvas state.
 
-**Extension**: what the agent authors — hot-reloaded and persisted to R2:
+**Extension**: what the agent authors — hot-reloaded and persisted as **Records in D1**
+(ADR-0022; the R2 tarballs and the sinks that wrote them were retired in #366):
 - **Component** (`src/canvas-components/<Name>.tsx`): an agent-authored React module placed on the canvas. Already in use.
 - **Custom handler** — **DROPPED** _(2026-07-29, removed in #357)_. An agent-authored backend handler at
   `server/custom/<name>.ts`, served by a separate extension-server process at
@@ -153,7 +206,7 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
 
 A skill is **content-that-asks** — text the model reads. It is never a **capability** (a grant: tools, tokens, scopes, routing). Capabilities stay code-gated; no workspace data may confer one.
 
-**Record vs File — how workspace content persists** _(ADR-0022; being built by #354. LIVE as
+**Record vs File — how workspace content persists** _(ADR-0022, delivered by #354. LIVE as
 **Records**: **both writable tiers** of Components — own and shared — with write, read,
 version history, restore-to-version, on-demand materialization, promote and adopt (#355, #358,
 #359, #362), their **data files** (#360), and **Workspace skills** (#361); the three-tier
@@ -167,7 +220,9 @@ Component authored in production landed in an archive the plan did not mention. 
 proves the bytes of a file we know about; only an enumeration proves we know about all of
 them. LIVE as
 **Files**: per-session **Transcripts** (#356) — that is their permanent home, not a staging
-post.)_ The dividing
+post. FINISHED by **#366**, which removed the machinery the whole workstream existed to
+replace: the boot restore, the three remaining tarball sinks, their archive keys and load/save
+methods, and the empty-archive guard.)_ The dividing
 question is **who owns the schema**:
 
 - A **Record** is content whose shape *we* define, authored only through our own tools —
@@ -186,6 +241,27 @@ question is **who owns the schema**:
   fetches none**. Granularity is the point — the retired `sessions.tar` re-uploaded the whole
   workspace's history every turn (49,111,040 bytes measured in production against ~650 KB of
   appends) and re-downloaded it at every cold boot.
+
+**Boot fetches nothing** (#366, ADR-0022 decision 5). `scripts/container-start.ts` starts the
+dev stack and does no filesystem work at all: a Component materializes when vite asks for the
+module, a data file comes down with the Component that imports it, the skill tree is rendered
+once per turn before the SDK scans it, and a Transcript is fetched by the turn that resumes it.
+Deleting the step deletes the failure mode instead of guarding it — there can be no "boot
+restored nothing" bug where there is no boot restore, which is why the **empty-archive guard**
+went with it rather than outliving the write path it protected. It also removes an inversion:
+resolution is **file-first** (the file answers for free on a warm container, the Record answers
+after a recycle), and that is only correct while a file exists *because* materialization put it
+there. A tarball landing on disk at boot would shadow a newer Record on every cold boot.
+`server/boot-contract.test.ts` keeps the restore deleted.
+
+**Fail-open must not return.** The root cause of 2026-07-29 was a read that failed, was
+swallowed, and became the new truth. So: `TranscriptStore.materialize` — the one restore path
+left — throws on a storage failure rather than answering "no history", and "nowhere" and "the
+read failed" stay different answers; `TranscriptStore.put` writes nothing when the local JSONL
+is absent, so a missing file can never overwrite a good object; and `materializeSkills` is the
+one deliberate exception, degrading a turn to platform skills only, which is safe *because* it
+writes nothing — the rows are untouched. A restore that cannot read must fail loudly, never
+quietly agree that the workspace is empty.
 
 The **platform tier stays image-only** and is neither: it is deploy-gated code, identical for
 every workspace, versioned with the image that expects it. Making it a Record would demote
@@ -299,8 +375,9 @@ from. That asymmetry is the design: delete must be honest in both directions, an
 forever — while a hard cascade would have made one click destroy source permanently, the exact
 shape of 2026-07-29.
 
-_Avoid_: "we tar the workspace" (the tar is gone for the own tier), or treating the filesystem
-as the durable copy — that inversion is what destroyed every own-tier component on 2026-07-29.
+_Avoid_: "we tar the workspace" (there is no tar — the sinks, their keys and the boot restore
+were all removed in #366), or treating the filesystem as the durable copy — that inversion is
+what destroyed every own-tier component on 2026-07-29.
 
 **External MCP** (the agent consuming outside tool servers) follows the same line. The **MCP registry** (code, PR-gated, global) is the catalog of approved remote HTTP servers — the trust decision that cedarpad may talk to an endpoint at all. **Enablement** is per-workspace and is an act of owner consent (v1: paste a per-workspace bearer token at connect time; later: an OAuth dance — a registry entry declares its auth kind). **Token custody is edge-side**: per-workspace credentials live in the worker's DB, are attached as a header on the proxied `/send`, and are used for that turn only — the container and R2 never store them (the ADR-0008 dev-agent git-token pattern). A workspace that hasn't connected a server gets no tools, no token, and no connection attempt; an unreachable server degrades that turn's toolset, never fails the turn. Chat flavor only; dev-agent turns get no external MCP servers.
 
@@ -359,6 +436,33 @@ never learned the document moved.
 - Dev runs both with `bun run dev` (bridge :4511, vite :4510; vite proxies
   `/api/*` → bridge).
 
+**Push plane** ([ADR-0023](../../docs/adr/0023-push-planes-split-by-volume-and-ownership.md)):
+a channel the server pushes over. There is more than one, deliberately and boundedly — **a
+new plane is justified only by a difference in message VOLUME or in who OWNS the state, never
+by a new feature.** High-volume ephemeral streams get a direct path (turn output from the
+container; canvas ops over sync); low-volume state-change notifications share one broker per
+durability tier (the per-workspace events hub, at the edge). Within a plane, multiplex by
+topic — one stream per client, not one per feature.
+
+The deciding question is **who owns the state, not what the state is about**. The Inbox looks
+like a counterexample and is the proof: it is *about* chats, but a **Conversation** is an
+edge-owned D1 row that outlives every **turn** in it, so its badge pushes from the edge, while
+an opened conversation's `<ChatView>` speaks the container's chat plane. Same screen, two
+planes, two owners. The tiebreaker: **anything that must survive the container sleeping cannot
+live on the chat plane.**
+
+Two obligations come with the hub plane. Notices are **thin** — a topic, never data; the
+subscriber re-reads D1, so there is no second copy to diverge (the contract is `.strip()`ped
+so a count cannot ride the wire). And notices must be **coalesced**: push makes cost
+proportional to write rate, which is unbounded, where polling was bounded by a fixed tick.
+_Avoid_: a per-feature `/api/*/events` endpoint, or routing turn tokens through the hub to
+reach one connection — tidier, and practically worse.
+
+> Live presence (#212) was a bespoke heartbeat with **throttled** SSE frames; #293 moved it
+> onto sync and deleted the transport — taking the throttle with it, and the hub was built
+> without one until review caught it. **Transport-specific safety machinery dies with its
+> transport.** That is why this rule lives here and not only beside a socket.
+
 ## The simplified shape model (`src/shapes.ts`)
 
 The agent and the bridge speak a **simplified** model, deliberately smaller than
@@ -399,9 +503,13 @@ A `CanvasShape` is one of:
   - **An unknown page is REFUSED, never redirected.** Quietly landing a write on the
     default page is the failure that looks like data loss: the human asked for page 3, the
     agent said it wrote, and nothing is there.
+  Reads may narrow to one page (`read_canvas`'s `page`, filtered at the BRIDGE via
+  `shapesOnPage` so a busy board never crosses the hop the MCP response limit measures).
+  Page ids are opaque and nothing else hands one out, which is why every read reports them.
   Page NAMES are the human's — neither stable nor unique — so resolving one to an id is
   `shared/canvas-pages.ts`, at the tool layer, and an ambiguous name is refused with the
-  candidates rather than resolved to the first match. The room itself speaks ids only.
+  candidates rather than resolved to the first match. The room itself speaks ids only, and
+  so does the `page` FILTER: only `select_page` takes a name today.
 - **Which page you are LOOKING at is not document state.** It is per-client tldraw
   instance state, so it cannot travel over sync. `select_page` (both agent surfaces) moves
   one person's editor over the bridge's SSE plane, addressed by the edge-stamped
@@ -419,8 +527,9 @@ A `CanvasShape` is one of:
   - **The result counts DELIVERY, not application** (`asked`, not `moved`): the leg is
     fire-and-forget and a browser declines a page it has not synced yet. Only `asked: 0`
     is certain. Agent-facing wording says "asked … to switch", never "switched".
-  - **Absent pages ≠ one page.** `CanvasState.pages` is optional, and a store that reports
-    none has said *nothing* — never render that as "this canvas has a single page".
+  - **Absent pages ≠ one page.** `CanvasState.pages` is optional because the in-memory
+    store models none; a state that reports none has said *nothing* about how many exist —
+    never render that as "this canvas has a single page".
 - `id` is shared verbatim with the tldraw shape id (`shape:...`). Agent-created
   ids are minted `shape:agent_N`.
 - `color` ∈ `black, grey, blue, green, red, orange, yellow, violet` (a subset of
@@ -581,8 +690,8 @@ auto-approved (`bypassPermissions`). Unsandboxed — see the security note below
 (`disallowedTools`): a plain Write drops an unregistered file — unserved, never
 hot-reloaded, invisible to `list_components` (the QABoard incident) — so
 component and data files may only be authored through the registered tools
-(`write_component`/`edit_component`/`write_data`, which bump revs and flush the
-components sink). Dev-agent turns keep the full preset (worktree edits are their
+(`write_component`/`edit_component`/`write_data`, which persist the Record and
+bump the rev). Dev-agent turns keep the full preset (worktree edits are their
 job). Bash remains, so this steers the model rather than sandboxing it.
 
 The agent's "thinking" and replies to the human are its normal chat text — not a

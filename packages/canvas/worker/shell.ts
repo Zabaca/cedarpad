@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
-import { createWorkspace, getWorkspace, listWorkspaces } from '../web-poc/lib/db/queries/workspaces.ts';
+import { createWorkspace, getWorkspace, listWorkspaces, setCanvasOrder } from '../web-poc/lib/db/queries/workspaces.ts';
+import { parseCanvasOrder } from '../shell/src/canvas-order.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
@@ -55,6 +56,8 @@ export async function handleWorkspacesApi(request: Request, env: Env, user: Gate
 // owner — the manage-not-read list (name + creator, never openable). Selectors must
 // exclude locked rows.
 const CreateCanvasInput = z.object({ name: z.string().trim().min(1).max(100) });
+/** The picker order. Bounded so a bad client cannot write an unbounded blob into the row. */
+const CanvasOrderInput = z.object({ order: z.array(z.string().min(1)).max(500) });
 const PatchCanvasInput = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   visibility: z.enum(['workspace', 'private']).optional(),
@@ -97,6 +100,14 @@ export async function handleCanvasesApi(
   database: Database,
   user: GateUser,
   canvasId?: string,
+  /**
+   * Ring the workspace's events hub (#383). Only the two changes an INBOX depends on use
+   * it: a canvas's visibility dominates that of every chat linked to it (ADR-0016), so a
+   * flip or a delete changes what a badge counts. A rename does not, and neither does a
+   * create (a new canvas has no chats). Default-parameter seam, as elsewhere in this
+   * package; the route in worker/index.ts binds the real hub.
+   */
+  notify: (workspaceId: string) => Promise<void> = async () => {},
 ): Promise<Response> {
   const selected = readWorkspaceCookie(request.headers.get('cookie')) ?? DEFAULT_WORKSPACE_ID;
   const activeWs = await getWorkspace(database, selected, user.id);
@@ -136,9 +147,21 @@ export async function handleCanvasesApi(
       const canvases: CanvasView[] = rows
         .filter((c) => !canvasHiddenFrom(c, user.id) || listOwner)
         .map(view);
-      return Response.json({ workspaceId: listWorkspaceId, canvases });
+      // The hand-arranged picker order rides along with the list it orders — one round
+      // trip, and no window in which the rows have arrived but their arrangement has not.
+      return Response.json({ workspaceId: listWorkspaceId, canvases, canvasOrder: parseCanvasOrder(listWs?.canvasOrder) });
     }
     if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
+    // PUT on the COLLECTION sets that order. Deliberately not `/api/canvases/order`, which
+    // the per-canvas route below would swallow — its `([^/]+)` would read "order" as a
+    // canvas id and 404. Any member may reorder: it is shared workspace furniture, the same
+    // standing every member has to create a canvas.
+    if (request.method === 'PUT') {
+      const parsed = CanvasOrderInput.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return Response.json({ error: 'invalid order' }, { status: 400 });
+      await setCanvasOrder(database, workspaceId, parsed.data.order);
+      return Response.json({ ok: true });
+    }
     if (request.method === 'POST') {
       const parsed = CreateCanvasInput.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return Response.json({ error: 'invalid name' }, { status: 400 });
@@ -170,6 +193,7 @@ export async function handleCanvasesApi(
       const flipped = await canvasRegistry.setVisibility(database, canvasId, parsed.data.visibility);
       if (!flipped) return Response.json({ error: 'canvas not found' }, { status: 404 });
       existing.visibility = flipped.visibility;
+      await notify(existing.workspaceId);
     }
     if (parsed.data.name) {
       // Renaming a private canvas is reading-adjacent: creator only (the owner's
@@ -188,6 +212,9 @@ export async function handleCanvasesApi(
     // `canvasId` came off the URL and was just proved to belong to this workspace, so the
     // scope always names a canvas — the shared library (`canvas_id NULL`) is unreachable here.
     await deleteCanvasRecords(d1RecordStore(database), { workspaceId: existing.workspaceId, canvasId });
+    // The chats that lived on it are no longer hidden by it (ADR-0016) — an inbox badge
+    // can move without a single conversation row changing.
+    await notify(existing.workspaceId);
     return new Response(null, { status: 204 });
   }
   return new Response('method not allowed', { status: 405 });

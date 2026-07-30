@@ -528,6 +528,16 @@ export const workspaces = sqliteTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     repo: text("repo"),
+    /**
+     * The canvas picker's hand-arranged order: a JSON array of canvas ids.
+     *
+     * One array here rather than a sort column on `canvases`, because the legacy `default`
+     * canvas has no registry row — a per-row column could never place it. Null/absent means
+     * "never reordered", which reads as `created_at` ascending, so nothing changes for a
+     * workspace that has not touched it. Consumers treat it as a HINT: it can name deleted
+     * canvases and will not know about newly created ones (shell/src/canvas-order.ts).
+     */
+    canvasOrder: text("canvas_order"),
     // Repository connection (ADR-0015): the workspace's GitHub App installation and the
     // owner-selected repos in scope for this workspace's agents. The App identity stays
     // platform env; these are workspace config. Null installation ⇒ not connected (the
@@ -838,6 +848,11 @@ export const conversations = sqliteTable(
     index("conversations_user_idx").on(t.userId),
     index("conversations_status_idx").on(t.status),
     index("conversations_last_activity_idx").on(t.lastActivity),
+    // The inbox watermark's index (#383). `max(updated_at) where workspace_id = ?` is the
+    // one query a connected badge stream runs on a quiet tick, so it must be a seek to the
+    // end of one workspace's range — not a scan, which would cost exactly as many rows as
+    // the full inbox read it exists to avoid.
+    index("conversations_workspace_updated_idx").on(t.workspaceId, t.updatedAt),
   ],
 );
 

@@ -65,8 +65,13 @@ export const ReadCanvasInput = z.object({
   workspace_id: z.string().min(1),
   canvas_id: z.string().min(1).optional(),
 });
+/** Reading a canvas may narrow to ONE page. Only `read_canvas` takes this — the other tools
+ *  built on `ReadCanvasInput` address a library or a set of ids, neither of which is
+ *  page-scoped. */
+export const ReadCanvasPageInput = ReadCanvasInput.extend({
+  page: z.string().min(1).optional(),
+});
 export const ListComponentsInput = ReadCanvasInput;
-export const ListPagesInput = ReadCanvasInput;
 /** `page` takes a NAME as the human says it, or a `page:` id — `resolvePageRef` accepts
  *  both, so the caller never has to know which one it is holding. */
 export const SelectPageInput = ReadCanvasInput.extend({ page: z.string().min(1) });
@@ -89,11 +94,16 @@ export interface McpToolDeps {
   db: Database;
   /** The OAuth access token's user — the human this connection acts as. */
   userId: string;
+  /** Ring a workspace's events hub (#383). MCP is a third writer of the conversations
+   *  table, next to the edge routes and the container's platform RPC, so a claim made from
+   *  an agent has to reach every open Shell's badge like one made from the Inbox does. A
+   *  dep rather than a binding read, matching every other outward call here. */
+  notify: (workspaceId: string) => Promise<void>;
   /** Proxy a chat send into the workspace's bridge (wakes the container). Wired to
    * serveWorkspace + coordsForWorkspace in worker/mcp-server.ts; stubbed in tests. */
   proxySend: (workspaceId: string, chatId: string, message: string, canvasId?: string) => Promise<Response>;
   /** Proxy a skill upload to the bridge's PUT /api/skills/:name — the bridge is the single
-   * writer of the workspace skills tree (the edge never writes skills.tar itself). */
+   * writer of the workspace skills tree (the edge never renders skill files itself). */
   proxySkill: (workspaceId: string, name: string, input: UploadSkillFiles) => Promise<Response>;
   /** Generic bridge proxy (MCP full access): a request into the workspace's container
    * (wakes it if asleep). Wired to serveWorkspace + coordsForWorkspace in mcp-server.ts. */
@@ -217,6 +227,7 @@ export function buildMcpTools(deps: McpToolDeps) {
         throw new Error(`assignee is not a workspace member: ${input.user_id}`);
       }
       const updated = await conversations.assign(deps.db, row.id, input.user_id);
+      await deps.notify(row.workspaceId);
       return conversationView(updated ?? row);
     },
 
@@ -278,19 +289,13 @@ export function buildMcpTools(deps: McpToolDeps) {
     },
 
     /** Read a canvas's full state (every shape) directly — no agent turn needed. */
-    async readCanvas(input: z.infer<typeof ReadCanvasInput>) {
+    async readCanvas(input: z.infer<typeof ReadCanvasPageInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, BRIDGE_ROUTES.canvas, { headers });
-    },
-
-    /** The canvas's pages, in the order the page switcher shows them. `pages[0]` is where
-     *  a shape written with no `page` lands, which is the other half of what this answers. */
-    async listPages(input: z.infer<typeof ListPagesInput>) {
-      const ws = await requireWorkspace(input.workspace_id);
-      const headers = await canvasHeader(ws.id, input.canvas_id);
-      const state = (await bridgeJson(ws.id, BRIDGE_ROUTES.canvas, { headers })) as { pages?: CanvasPage[] };
-      return { pages: state.pages ?? [] };
+      // The filter runs at the BRIDGE, not here: narrowing after the fact would still drag
+      // the whole canvas across this hop, and the hop is what the response limit measures.
+      const path = input.page ? `${BRIDGE_ROUTES.canvas}?page=${encodeURIComponent(input.page)}` : BRIDGE_ROUTES.canvas;
+      return bridgeJson(ws.id, path, { headers });
     },
 
     /**

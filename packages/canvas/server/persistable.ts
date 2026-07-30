@@ -1,16 +1,19 @@
-// One sink for every durable artifact (ADR 0003). Components, skills, and chat metadata
-// each register as a Persistable; every save flows through one
+// One sink for every durable artifact (ADR 0003). Every save flows through one
 // attempt → record-health → log wrapper so a silent failure (the class of bug that hid
-// the dead sessions watcher) is visible at /api/status for all of them. Only the wrapper and
-// the health map are shared — each artifact keeps its own serialize (tar vs JSON) and guard.
+// the dead sessions watcher) is visible at /api/status. Only the wrapper and the health map
+// are shared — each artifact keeps its own serialize and guard.
 //
-// GUARDS ARE NOT OPTIONAL FOR FULL-REPLACE ARTIFACTS. This comment used to say "canvas
-// keeps its degraded/empty-write protection" — that guard was deleted with the old sync
-// plane (ADR-0019 / #297, see blob-store.ts), the sentence was left behind, and for a
-// while it read as though something here was still protecting the tars. Nothing was. On
-// 2026-07-29 an empty flush destroyed every own-tier component, custom handler and
-// workspace skill. Every tar artifact now registers `refuseEmptyTarball`
-// (persist-guards.ts); a new one must too.
+// ONE ARTIFACT USES THIS NOW: `chatMeta` (#366). The tar artifacts — components, skills,
+// custom handlers, sessions — are all gone, because a full-replace snapshot of a directory
+// is the shape that destroyed every own-tier Component, every custom handler and every
+// workspace skill on 2026-07-29: a boot that restored nothing tarred an empty tree over the
+// only copy. Workspace content is Records in D1 now, written a row at a time.
+//
+// SO DO NOT REGISTER A FULL-REPLACE SNAPSHOT HERE. A `Persistable` whose `serialize` reads a
+// directory tree re-creates that failure, and the `refuseEmptyTarball` guard that used to
+// stand on it was removed with the write path it guarded (ADR-0022). `chatMeta` is safe for
+// the opposite reason: it serializes an in-memory map that this process owns, so "empty" is
+// a state it holds, not a state it failed to read.
 
 export type SaveResult = 'none' | 'ok' | 'skipped' | 'failed';
 

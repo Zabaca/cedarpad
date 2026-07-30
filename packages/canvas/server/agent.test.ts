@@ -249,7 +249,7 @@ describe('restore_component is a registered canvas tool', () => {
 // Pages. The canvas has had them since #344, but the agent could only write to one by id —
 // with no way to learn an id, and no way to act on the human's word for it. These two ops
 // are that door, and the interesting behaviour is entirely in how they REFUSE.
-import { listPagesOp, selectPageOp } from './agent.ts';
+import { selectPageOp } from './agent.ts';
 import type { CanvasPage } from '../src/shapes.ts';
 
 /** A store that knows about pages — `createStore` deliberately does not (it is the pure
@@ -261,33 +261,6 @@ const TWO: CanvasPage[] = [
   { id: 'page:page', name: 'Page 1' },
   { id: 'page:two', name: 'Roadmap' },
 ];
-
-describe('listPagesOp: what the agent learns about pages', () => {
-  test('names every page, marks the default, and gives the ids a write needs', () => {
-    const { text } = listPagesOp(pagedStore(TWO));
-    expect(text).toContain('"Roadmap"');
-    expect(text).toContain('page:two');
-    // Which one an omitted `page` means is the other half of the question being asked.
-    expect(text).toMatch(/"Page 1".*default page/);
-  });
-
-  // Listing "1. Page 1" to an agent that then offers the human a page switch they cannot
-  // use is worse than saying nothing — so a single-page canvas answers the real question.
-  test('a single-page canvas says there is nothing to switch between', () => {
-    expect(listPagesOp(pagedStore([{ id: 'page:page', name: 'Page 1' }])).text).toContain('single page');
-  });
-
-  // ABSENT IS NOT ONE. A store that reports no pages at all (a room answered before pages
-  // were on the wire; a plain createStore, which has no page concept) has told us nothing —
-  // and "this canvas has a single page" about a five-page canvas is a false statement the
-  // model cannot tell was a guess.
-  test('a store that reports no pages says so, instead of claiming there is one', () => {
-    const { text } = listPagesOp(createStore([]));
-    expect(text).not.toContain('single page');
-    expect(text).toMatch(/did not report its pages/);
-    expect(text).toMatch(/do not assume/i);
-  });
-});
 
 describe('selectPageOp: the select_page tool body', () => {
   test('resolves the human\'s word for the page and moves them', () => {
@@ -321,15 +294,13 @@ describe('selectPageOp: the select_page tool body', () => {
   });
 });
 
-describe('select_page is seam-gated, list_pages is not', () => {
+describe('select_page is seam-gated', () => {
   const names = (tools: unknown) => (tools as Array<{ name: string }>).map((t) => t.name);
 
   // No bound viewer ⇒ no tool at all. The alternative — offering it and moving everyone —
   // is the outcome the whole viewer-threading exists to avoid.
   test('without the seam the agent is not offered select_page', () => {
-    const tools = names(createCanvasTools(createStore([])));
-    expect(tools).toContain('list_pages');
-    expect(tools).not.toContain('select_page');
+    expect(names(createCanvasTools(createStore([])))).not.toContain('select_page');
   });
 
   test('with the seam bound it appears', () => {

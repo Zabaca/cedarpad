@@ -8,7 +8,7 @@ import type { CanvasShape } from './shapes';
 const rect: CanvasShape = { id: 'shape:r', type: 'rectangle', x: 1, y: 2, w: 30, h: 40, color: 'blue', text: 'hi' };
 
 /** A stand-in room: it parses the contract (both ends, one schema) and keeps a map. */
-function fakeRoom(seed: CanvasShape[] = []) {
+function fakeRoom(seed: CanvasShape[] = [], pages?: Array<{ id: string; name: string }>) {
   const shapes = new Map(seed.map((s) => [s.id, s]));
   const sent: CanvasMutation[] = [];
   let version = 0;
@@ -19,7 +19,7 @@ function fakeRoom(seed: CanvasShape[] = []) {
     if (m.op === 'remove') for (const id of m.ids) shapes.delete(id);
     if (m.op === 'clear') shapes.clear();
     if (m.op !== 'read') version += 1;
-    const body: CanvasMutationResult = { version, shapes: [...shapes.values()].sort((a, b) => a.id.localeCompare(b.id)) };
+    const body: CanvasMutationResult = { version, shapes: [...shapes.values()].sort((a, b) => a.id.localeCompare(b.id)), ...(pages ? { pages } : {}) };
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   return { post: post as unknown as typeof fetch, sent };
@@ -31,6 +31,23 @@ describe('openRemoteCanvasStore', () => {
     const store = await openRemoteCanvasStore('/api/canvas-sync/c1/mutate', room.post);
     expect(store.getState().shapes).toEqual([rect]);
     expect(room.sent).toEqual([{ op: 'read' }]);
+  });
+
+  test('the room’s pages reach the agent, before and after a flush', async () => {
+    const pages = [
+      { id: 'page:page', name: 'Page 1' },
+      { id: 'page:two', name: 'Page 2' },
+    ];
+    const room = fakeRoom([rect], pages);
+    const store = await openRemoteCanvasStore('/api/canvas-sync/c1/mutate', room.post);
+    // Pages are the ROOM's — the mirror is built from shapes alone, so dropping them here
+    // would leave every page-aware read in the container blind to the pages that exist,
+    // with nothing failing to say so.
+    expect(store.getState().pages).toEqual(pages);
+
+    store.upsert([{ ...rect, id: 'shape:s' }]);
+    await store.flush();
+    expect(store.getState().pages).toEqual(pages);
   });
 
   test('the existing agent ops run against it unchanged, and flush lands them on the room', async () => {

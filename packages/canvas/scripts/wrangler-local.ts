@@ -17,10 +17,21 @@ const WRANGLER = fileURLToPath(new URL('../node_modules/.bin/wrangler', import.m
 /** The origin the browser uses — the vite dev server (with-worktree-port.sh sets PORT). */
 export const webOrigin = () => `http://localhost:${process.env.PORT ?? 4510}`;
 
-/** E2E ONLY (#276): where the edge should proxy a workspace request, since local dev runs no
- *  container. Null outside e2e, so a plain `bun run dev` emits no stand-in at all. */
-export const localBridgeOrigin = () =>
-  process.env.E2E_MODE === '1' ? `http://localhost:${process.env.CANVAS_BRIDGE_PORT ?? 4511}` : null;
+/**
+ * E2E ONLY (#276): where the edge should proxy a workspace request, since local dev runs no
+ * container. Null outside e2e, so a plain `bun run dev` emits no stand-in at all.
+ *
+ * VITE, not the bridge — the container exposes ONE port and vite is what listens on it,
+ * proxying `/api` to the bridge beside it (vite.config.ts). Pointing this at the bridge
+ * matched the API routes but not the pad HTML, so the Shell's canvas stage 404'd on
+ * `/w/:ws/canvas/:id/pad` locally while every API call worked. e2e never noticed: Playwright
+ * loads the pad from vite directly and opens no Shell iframe.
+ *
+ * No loop: the edge answers `/api/auth`, `/api/canvas-sync`, `/v1` and `/api/guest-session`
+ * itself, well before anything reaches the workspace proxy — so the routes vite would send
+ * BACK to the edge never travel this way.
+ */
+export const localContainerOrigin = () => (process.env.E2E_MODE === '1' ? webOrigin() : null);
 
 /** Spawn wrangler with this worktree's dev config and state dir bolted on.
  *
@@ -28,7 +39,7 @@ export const localBridgeOrigin = () =>
  * NODE, where `Bun` is undefined. */
 export async function spawnWrangler(args: string[]) {
   const stateDir = localD1StateDir();
-  const config = await writeDevWorkerConfig(stateDir, webOrigin(), localBridgeOrigin());
+  const config = await writeDevWorkerConfig(stateDir, webOrigin(), localContainerOrigin());
   // wrangler looks for `.dev.vars` next to the config file; ours is generated into the
   // state dir, so point it at the package's real one (the bridge reads the same file).
   const devVars = fileURLToPath(new URL('../web-poc/.dev.vars', import.meta.url));

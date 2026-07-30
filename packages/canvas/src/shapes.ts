@@ -246,8 +246,7 @@ export const SHAPE_SIZE_DEFAULTS = {
   embed: { w: 480, h: 270 },
 } as const satisfies Partial<Record<ShapeType, { w: number; h: number }>>;
 
-/** A tldraw page, as the read path reports it. `id` is the page's record id
- *  (`page:...`) — the same value a shape's `page` field carries. */
+/** One page of a canvas, in tldraw's own order. `id` is what a write puts in `page`. */
 export interface CanvasPage {
   id: string;
   name: string;
@@ -257,9 +256,14 @@ export interface CanvasState {
   /** Monotonic counter, bumped on every mutation. Drives client reconciliation. */
   version: number;
   shapes: CanvasShape[];
-  /** The canvas's pages, in the order the page switcher shows them — so `pages[0]` is
-   *  the one a shape with no `page` field lives on. OPTIONAL because the pure in-memory
-   *  `createStore` has no page concept at all; the room read path always fills it. */
+  /**
+   * The canvas's pages, first-to-last. Optional because pages are a property of a tldraw
+   * ROOM, and the in-memory store (src/store.ts) has none — absent means "this state came
+   * from something that does not model pages", not "this canvas has one page".
+   *
+   * A `page` id is opaque and nothing else hands one out, so without this an agent asked to
+   * work on "page 2" has nothing to name.
+   */
   pages?: CanvasPage[];
 }
 
