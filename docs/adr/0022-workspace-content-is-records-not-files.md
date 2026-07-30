@@ -1,7 +1,8 @@
 # Workspace content is Records, not a filesystem we snapshot
 
-Status: **proposed** (design, grill session 2026-07-29). Not built. Motivated by the data
-loss of the same day (see Consequences). Vocabulary: canvas
+Status: **accepted and delivered** (design, grill session 2026-07-29; built by PRD #354,
+slices #355–#366; the backfill ran in production 2026-07-29 and was verified byte-for-byte).
+Motivated by the data loss of the same day (see Consequences). Vocabulary: canvas
 [CONTEXT.md](../../packages/canvas/CONTEXT.md) — **Record vs File**.
 
 Agent-authored workspace content — **Components**, their **data files**, and **Workspace
@@ -23,8 +24,10 @@ production workspace were destroyed in a single flush. Two were unrecoverable. T
    and continued.
 
 A boot that restored nothing came up with an empty tree, and the next write tarred that empty
-tree over the only copy. An empty-archive guard now blocks that specific shape, but it is a
-seatbelt on a design that keeps generating this class of bug.
+tree over the only copy. An empty-archive guard blocked that specific shape for one day, but it
+was a seatbelt on a design that keeps generating this class of bug.
+_(#366 removed all three: the boot restore, the sinks, and the guard. The guard outlived the
+write path it protected by exactly as long as it took to delete the write path.)_
 
 The tar is not the bug. The bug is the **inversion**: the container filesystem was the
 authoritative copy and R2 a periodic snapshot of it, which means **a failed read can become a
@@ -75,7 +78,9 @@ and permanent. That asymmetry is the entire point.
    median), which makes "restore this component" a product feature rather than an incident
    procedure — and finally records **who** changed a component, which nothing does today.
 
-5. **Materialization is on demand; there is no boot restore.** A vite middleware resolves
+5. **Materialization is on demand; there is no boot restore.** _(Built: the middleware in
+   #355, the boot restore actually removed in #366 — until then the claim was aspirational and
+   the 2026-07-29 mechanism was intact in production.)_ A vite middleware resolves
    `/src/canvas-<id>/components/<Name>.tsx` by querying D1 on a miss, writing the file, then
    serving. This **deletes** the failure mode rather than guarding it: there can be no
    "boot restored nothing" bug where there is no boot restore. It also drops the restore-and-write
@@ -83,6 +88,14 @@ and permanent. That asymmetry is the entire point.
    `componentUrls()` walks own → shared → base, so a 404 is already normal and expected; and
    `component-loader.ts` already retries with backoff, so a transient miss lands in a window
    the client handles.
+
+   A second reason emerged during #366, and it is the stronger one. Resolution is **file-first**
+   — `isShared` checks `existsSync` before consulting the store, and the tier walk is own file →
+   own Record → shared file → shared Record → platform. That is only correct while a file exists
+   *because* materialization put it there from a Record. With a boot restore in place a stale
+   tarball would shadow a NEWER Record on every cold boot, which inverts "the row is the truth"
+   for exactly the containers most likely to be serving after an incident. Removing the restore
+   is what makes file-first a cache hit rather than a stale answer.
 
 6. **Custom handlers are dropped**, not migrated. They never had an authoring door — no
    `write_custom_handler` exists in the 18-tool surface, and chat turns drop `Write`/`Edit`, so
@@ -146,6 +159,37 @@ and permanent. That asymmetry is the entire point.
   bytes holding exactly the image seed, i.e. the boot restore + flush round-tripped the image's
   own file rather than clearing it. Whatever remains of this hypothesis has to be re-tested
   against `skills.tar`; the `custom.tar` half of it is disproven.
+  _Resolved (#366) — the hypothesis is disproven on both halves, and its premise was wrong._
+  It required a restore that SUCCEEDS and clears a directory the image populated. For
+  `skills.tar` no such directory can exist: `packages/canvas/.claude` is named in
+  `.dockerignore` ("Workspace skills are workspace CONTENT … never image content"), and the
+  Dockerfile's build context is the repo root, so the image ships **zero** files at
+  `SKILLS_DIR`. There was never an image seed there to clear. Nor is the archive empty —
+  #365's enumeration of production found exactly one content entry in it,
+  `zz-test-skill-b7acb8fa/` (24 bytes, e2e residue), which is a faithful snapshot of what the
+  container's disk held. Both archives therefore round-tripped rather than cleared, and no
+  tier's image content was ever at risk: `extractCanvasDirs` excluded the platform base by
+  construction, and the only image file under a restored path was `shared/components/.gitkeep`.
+  What was real is the ordinary wipe-then-extract semantics of the extractor — destructive only
+  when handed an archive that a **failed** flush had already emptied, which is the known
+  2026-07-29 mechanism and not a second bug. No repair is needed, and the archives stay in the
+  bucket, so the evidence remains re-checkable.
 - **What this does NOT fix**: the swallowed restore failure in `container-start.ts` is removed
   by decision 5 rather than repaired, so any *remaining* restore path (transcripts) must not
   reintroduce fail-open.
+  _Audited (#366)_: `TranscriptStore.materialize` is the only restore path left, and a storage
+  failure propagates out of it into the turn, which fails visibly — "nowhere" (null) and "the
+  read failed" (throw) are different answers, pinned by a test. `TranscriptStore.put` writes
+  nothing when the local JSONL is absent, so an absent read can never become a destructive
+  write. `materializeSkills` swallows deliberately and is safe for the opposite reason: it
+  writes nothing, so a failure costs a turn its workspace skills and touches no stored state.
+  The one swallow worth naming is `backupTranscript`, which logs and continues on a failed PUT
+  — a durability gap, not an inversion: the previous object and the live local JSONL both
+  survive it.
+- **The archives are kept, not deleted** (#366). Retiring the sinks is the fix; deleting the
+  objects is a separate act nothing here requires, and a bad trade. ~50 MB, under a cent a
+  month, and they are the pre-migration rollback plus the only copy of two pre-#356 session
+  transcripts and the `MartSessionSummary` evidence #381 needs. The danger was the write path:
+  a frozen object that no code names cannot overwrite anything. The one code path that may
+  still read them is the backfill's read-only survey (`server/record-migration.ts`), which
+  spells its own keys out for that reason.

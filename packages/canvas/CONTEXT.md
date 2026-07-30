@@ -138,7 +138,8 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
 - **Render Pad**: the container-served frontend — `App.tsx`, `sync.ts`, `ComponentShape`, the tldraw canvas + chat. The navigation chrome (rail, canvas selector) now lives in the edge **Shell SPA** (`shell/`, PRD #103), which iframes this pad. _Avoid_: calling a canvas-component part of the "pad".
 - **Bridge** (a.k.a. **bridge core**): the single stateful backend process — the `CanvasStore`, persistence, the agent runner, the core `/api/*` routes. The authoritative owner of canvas state.
 
-**Extension**: what the agent authors — hot-reloaded and persisted to R2:
+**Extension**: what the agent authors — hot-reloaded and persisted as **Records in D1**
+(ADR-0022; the R2 tarballs and the sinks that wrote them were retired in #366):
 - **Component** (`src/canvas-components/<Name>.tsx`): an agent-authored React module placed on the canvas. Already in use.
 - **Custom handler** — **DROPPED** _(2026-07-29, removed in #357)_. An agent-authored backend handler at
   `server/custom/<name>.ts`, served by a separate extension-server process at
@@ -152,7 +153,7 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
 
 A skill is **content-that-asks** — text the model reads. It is never a **capability** (a grant: tools, tokens, scopes, routing). Capabilities stay code-gated; no workspace data may confer one.
 
-**Record vs File — how workspace content persists** _(ADR-0022; being built by #354. LIVE as
+**Record vs File — how workspace content persists** _(ADR-0022, delivered by #354. LIVE as
 **Records**: **both writable tiers** of Components — own and shared — with write, read,
 version history, restore-to-version, on-demand materialization, promote and adopt (#355, #358,
 #359, #362), their **data files** (#360), and **Workspace skills** (#361); the three-tier
@@ -166,7 +167,9 @@ Component authored in production landed in an archive the plan did not mention. 
 proves the bytes of a file we know about; only an enumeration proves we know about all of
 them. LIVE as
 **Files**: per-session **Transcripts** (#356) — that is their permanent home, not a staging
-post.)_ The dividing
+post. FINISHED by **#366**, which removed the machinery the whole workstream existed to
+replace: the boot restore, the three remaining tarball sinks, their archive keys and load/save
+methods, and the empty-archive guard.)_ The dividing
 question is **who owns the schema**:
 
 - A **Record** is content whose shape *we* define, authored only through our own tools —
@@ -185,6 +188,27 @@ question is **who owns the schema**:
   fetches none**. Granularity is the point — the retired `sessions.tar` re-uploaded the whole
   workspace's history every turn (49,111,040 bytes measured in production against ~650 KB of
   appends) and re-downloaded it at every cold boot.
+
+**Boot fetches nothing** (#366, ADR-0022 decision 5). `scripts/container-start.ts` starts the
+dev stack and does no filesystem work at all: a Component materializes when vite asks for the
+module, a data file comes down with the Component that imports it, the skill tree is rendered
+once per turn before the SDK scans it, and a Transcript is fetched by the turn that resumes it.
+Deleting the step deletes the failure mode instead of guarding it — there can be no "boot
+restored nothing" bug where there is no boot restore, which is why the **empty-archive guard**
+went with it rather than outliving the write path it protected. It also removes an inversion:
+resolution is **file-first** (the file answers for free on a warm container, the Record answers
+after a recycle), and that is only correct while a file exists *because* materialization put it
+there. A tarball landing on disk at boot would shadow a newer Record on every cold boot.
+`server/boot-contract.test.ts` keeps the restore deleted.
+
+**Fail-open must not return.** The root cause of 2026-07-29 was a read that failed, was
+swallowed, and became the new truth. So: `TranscriptStore.materialize` — the one restore path
+left — throws on a storage failure rather than answering "no history", and "nowhere" and "the
+read failed" stay different answers; `TranscriptStore.put` writes nothing when the local JSONL
+is absent, so a missing file can never overwrite a good object; and `materializeSkills` is the
+one deliberate exception, degrading a turn to platform skills only, which is safe *because* it
+writes nothing — the rows are untouched. A restore that cannot read must fail loudly, never
+quietly agree that the workspace is empty.
 
 The **platform tier stays image-only** and is neither: it is deploy-gated code, identical for
 every workspace, versioned with the image that expects it. Making it a Record would demote
@@ -298,8 +322,9 @@ from. That asymmetry is the design: delete must be honest in both directions, an
 forever — while a hard cascade would have made one click destroy source permanently, the exact
 shape of 2026-07-29.
 
-_Avoid_: "we tar the workspace" (the tar is gone for the own tier), or treating the filesystem
-as the durable copy — that inversion is what destroyed every own-tier component on 2026-07-29.
+_Avoid_: "we tar the workspace" (there is no tar — the sinks, their keys and the boot restore
+were all removed in #366), or treating the filesystem as the durable copy — that inversion is
+what destroyed every own-tier component on 2026-07-29.
 
 **External MCP** (the agent consuming outside tool servers) follows the same line. The **MCP registry** (code, PR-gated, global) is the catalog of approved remote HTTP servers — the trust decision that cedarpad may talk to an endpoint at all. **Enablement** is per-workspace and is an act of owner consent (v1: paste a per-workspace bearer token at connect time; later: an OAuth dance — a registry entry declares its auth kind). **Token custody is edge-side**: per-workspace credentials live in the worker's DB, are attached as a header on the proxied `/send`, and are used for that turn only — the container and R2 never store them (the ADR-0008 dev-agent git-token pattern). A workspace that hasn't connected a server gets no tools, no token, and no connection attempt; an unreachable server degrades that turn's toolset, never fails the turn. Chat flavor only; dev-agent turns get no external MCP servers.
 
@@ -554,8 +579,8 @@ auto-approved (`bypassPermissions`). Unsandboxed — see the security note below
 (`disallowedTools`): a plain Write drops an unregistered file — unserved, never
 hot-reloaded, invisible to `list_components` (the QABoard incident) — so
 component and data files may only be authored through the registered tools
-(`write_component`/`edit_component`/`write_data`, which bump revs and flush the
-components sink). Dev-agent turns keep the full preset (worktree edits are their
+(`write_component`/`edit_component`/`write_data`, which persist the Record and
+bump the rev). Dev-agent turns keep the full preset (worktree edits are their
 job). Bash remains, so this steers the model rather than sandboxing it.
 
 The agent's "thinking" and replies to the human are its normal chat text — not a

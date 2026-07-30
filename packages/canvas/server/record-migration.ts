@@ -299,9 +299,10 @@ export function tarEntries(bytes: Uint8Array): TarEntry[] {
  *  behind. */
 export const PLACEHOLDERS = new Set(['.gitkeep', '.gitignore']);
 
-/** Archives written by `tarSubtree` prefix entries with `./`; `tarCanvasDirs` does not. One
- *  spelling, so a plan path and an archive entry are comparable by equality rather than by a
- *  suffix match that could quietly claim the wrong file. */
+/** The two writers that produced these archives disagreed about a leading `./`: the
+ *  whole-subtree tar emitted it, the per-canvas-dirs tar did not. One spelling here, so a plan
+ *  path and an archive entry are comparable by equality rather than by a suffix match that
+ *  could quietly claim the wrong file. */
 const normalize = (path: string): string => path.replace(/^\.?\//, '');
 
 /** One entry of a tarball that actually carries content, with its payload. Directory entries

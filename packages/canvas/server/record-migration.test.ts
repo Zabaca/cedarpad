@@ -284,7 +284,7 @@ describe('surveying the archives', () => {
     expect(survey.residue).toHaveLength(5);
   });
 
-  test('directory entries and .gitkeep are not content — the same rule tarHasContent applies', async () => {
+  test('directory entries and .gitkeep are not content — an empty dir is not something left behind', async () => {
     const survey = await surveyArchives(fakeSources(), synthetic());
     const paths = [...survey.planned, ...survey.residue, ...survey.unrecognised].map((e) => e.path);
 

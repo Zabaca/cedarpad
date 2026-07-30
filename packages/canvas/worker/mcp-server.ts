@@ -85,8 +85,8 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         });
         return serveWorkspace(await withMcpTokensHeader(target, env, workspaceId), env, coordsForWorkspace(workspaceId));
       },
-      // The bridge is the single writer of the skills tree — PUT lands there, the sink
-      // persists to skills.tar, and the next chat turn discovers the skill.
+      // The bridge is the single writer of the skills tree — PUT lands there, `writeSkill`
+      // persists the Records (#361) before the files, and the next chat turn discovers it.
       proxySkill: (workspaceId, name, input) => {
         const target = new Request(`${new URL(req.url).origin}/api/skills/${encodeURIComponent(name)}`, {
           method: 'PUT',
