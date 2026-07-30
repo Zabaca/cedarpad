@@ -28,14 +28,16 @@
 // apply. A migration that reached past them with SQL would prove nothing about the store it
 // is migrating into, and would be the one write in the system with no history.
 //
-// The tarballs are never written and never deleted (#366 retires them): until then they are
-// the rollback.
+// THE TARBALLS ARE NEVER WRITTEN AND NEVER DELETED. #366 retired the sinks that wrote them
+// and every key that named them, so this module is the last code in the repo that can read a
+// content archive — read-only, invoked by hand, never on a runtime path. The objects stay in
+// the bucket as the pre-migration rollback and as the only copy of several things (#381's
+// evidence, two pre-#356 session transcripts); a frozen object nothing writes is inert, and
+// the danger was always the write path.
 
 import { createHash } from 'node:crypto';
 
 import type { PlatformRpc } from './platform-rpc-client.ts';
-import { canvasDirsKey, sharedComponentsKey, skillsKey } from './blob-store.ts';
-import { PLACEHOLDERS, tarEntries } from './persist-guards.ts';
 
 /** The legacy production workspace — `worker/shell-routing.ts` DEFAULT_WORKSPACE_ID. */
 export const MIGRATION_WORKSPACE = 'default';
@@ -68,12 +70,20 @@ export const MIGRATION_WORKSPACE = 'default';
  */
 export const HUDSON_STANDUP_CANVAS = 'cv_edd9bab6-8bae-4a7a-a694-9abfa9965db9';
 
-export const SHARED_ARCHIVE_KEY = sharedComponentsKey(MIGRATION_WORKSPACE);
-export const CANVAS_ARCHIVE_KEY = canvasDirsKey(MIGRATION_WORKSPACE);
-export const SKILLS_ARCHIVE_KEY = skillsKey(MIGRATION_WORKSPACE);
-/** #357 removed the custom-handler feature and its key constant with it. The OBJECT is still
- *  in the bucket, and an enumeration that skipped it would be precisely the blind spot the
- *  survey exists to close, so the key is spelled out here rather than dropped. */
+/**
+ * The four archives, spelled out rather than imported.
+ *
+ * #357 set the precedent when it removed the custom-handler feature and its key constant with
+ * it: the OBJECT is still in the bucket, and an enumeration that skipped it would be precisely
+ * the blind spot the survey exists to close. #366 then retired the other three sinks and their
+ * keys for the same reason in reverse — nothing in the RUNNING system may name a content
+ * archive, because naming one is how a full-replace write gets written again. This module is
+ * the exception and states why: it only ever READS them, the archives are frozen as the
+ * pre-migration rollback, and a survey that cannot name what it is surveying is not a survey.
+ */
+export const SHARED_ARCHIVE_KEY = `workspaces/${MIGRATION_WORKSPACE}/shared-components.tar`;
+export const CANVAS_ARCHIVE_KEY = `workspaces/${MIGRATION_WORKSPACE}/canvas-components.tar`;
+export const SKILLS_ARCHIVE_KEY = `workspaces/${MIGRATION_WORKSPACE}/skills.tar`;
 export const CUSTOM_ARCHIVE_KEY = `workspaces/${MIGRATION_WORKSPACE}/custom.tar`;
 
 /**
@@ -209,8 +219,8 @@ export interface UnmigratedEntry {
 }
 
 /** Everything else the archives hold, and why it stays there. Directory entries and
- *  placeholders (`.gitkeep`) are not listed: they are not content, exactly as `tarHasContent`
- *  judges them, and the survey filters them before it classifies anything. */
+ *  placeholders (`.gitkeep`) are not listed: they are not content, and the survey filters them
+ *  before it classifies anything. */
 export const NOT_MIGRATED: readonly UnmigratedEntry[] = [
   {
     key: SHARED_ARCHIVE_KEY,
@@ -253,16 +263,52 @@ export interface ResolvedRecord {
   source: string;
 }
 
+/** A tar entry the survey cares about: its path and whether it holds file content. */
+export interface TarEntry {
+  name: string;
+  size: number;
+  /** POSIX typeflag: '0'/'\0' regular file, '5' directory, 'L' GNU long name, … */
+  type: string;
+}
+
+const BLOCK = 512;
+const decoder = new TextDecoder();
+const field = (b: Uint8Array, from: number, to: number): string =>
+  decoder.decode(b.slice(from, to)).replace(/\0.*$/s, '').trim();
+
+/** Parse POSIX tar headers. Tolerant by design: a malformed or truncated archive yields the
+ *  entries read so far rather than throwing, so one unreadable object cannot abort a survey
+ *  whose whole job is to report what it found. (It lived in `persist-guards.ts` until #366
+ *  retired the empty-archive guard; this is its last remaining caller.) */
+export function tarEntries(bytes: Uint8Array): TarEntry[] {
+  const out: TarEntry[] = [];
+  let off = 0;
+  while (off + BLOCK <= bytes.length) {
+    const name = field(bytes, off, off + 100);
+    if (!name) break; // end-of-archive zero block
+    const size = Number.parseInt(field(bytes, off + 124, off + 136) || '0', 8);
+    if (!Number.isFinite(size) || size < 0) break;
+    out.push({ name, size, type: field(bytes, off + 156, off + 157) || '0' });
+    off += BLOCK + Math.ceil(size / BLOCK) * BLOCK;
+  }
+  return out;
+}
+
+/** Files that keep an empty dir in git but carry no workspace content — an archive holding
+ *  only these is semantically empty, and the survey must not report one as something left
+ *  behind. */
+export const PLACEHOLDERS = new Set(['.gitkeep', '.gitignore']);
+
 /** Archives written by `tarSubtree` prefix entries with `./`; `tarCanvasDirs` does not. One
  *  spelling, so a plan path and an archive entry are comparable by equality rather than by a
  *  suffix match that could quietly claim the wrong file. */
 const normalize = (path: string): string => path.replace(/^\.?\//, '');
 
 /** One entry of a tarball that actually carries content, with its payload. Directory entries
- *  and placeholders are excluded — the same judgement `tarHasContent` makes, deliberately
- *  shared, so the survey and the empty-archive guard can never disagree about what is in an
- *  archive. The offset of each payload is the sum of the headers and padded bodies before it,
- *  which is exactly the walk `tarEntries` already does. */
+ *  and placeholders are excluded: a tar of empty `canvas-<id>/components/` dirs carries no
+ *  content, and that is exactly the shape the 2026-07-29 flush wrote. The offset of each
+ *  payload is the sum of the headers and padded bodies before it, which is exactly the walk
+ *  `tarEntries` already does. */
 export function tarContents(bytes: Uint8Array): Array<{ path: string; bytes: number; body: Uint8Array }> {
   const out: Array<{ path: string; bytes: number; body: Uint8Array }> = [];
   let offset = 0;

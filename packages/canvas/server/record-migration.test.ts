@@ -25,6 +25,7 @@ import {
   prepareMigration,
   resolveSources,
   surveyArchives,
+  tarEntries,
   verifyMigration,
 } from './record-migration.ts';
 
@@ -89,8 +90,8 @@ beforeEach(async () => {
 
 // --- the sources ------------------------------------------------------------------------
 
-/** Build a POSIX tar in memory, as `persist-guards.test.ts` does — the real header layout,
- *  so the extractor is exercised rather than stubbed. */
+/** Build a POSIX tar in memory — the real header layout, so the extractor is exercised
+ *  rather than stubbed. */
 function tar(entries: Array<{ name: string; body?: string; type?: string }>): Uint8Array {
   const blocks: Uint8Array[] = [];
   for (const e of entries) {
@@ -186,6 +187,34 @@ const synthetic = () =>
   MIGRATION_PLAN.map((p) => ({ ...p, sha256: createHash('sha256').update(filler(p.name), 'utf8').digest('hex') }));
 
 // --- tests --------------------------------------------------------------------------------
+
+// The tar header parser the survey walks archives with. It moved here from `persist-guards.ts`
+// when #366 retired the empty-archive guard; these are the guard's parser tests, kept because
+// the survey is now the thing that depends on them. Tolerance is the point: this reads
+// production objects nobody can re-create, so a malformed or truncated one must yield what it
+// read rather than abort the enumeration.
+describe('tarEntries', () => {
+  test('reads names, sizes and typeflags; stops at the end block', () => {
+    const bytes = tar([
+      { name: 'canvas-default/components/', type: '5' },
+      { name: 'canvas-default/components/KpiCard.tsx', body: 'export default 1' },
+    ]);
+    expect(tarEntries(bytes)).toEqual([
+      { name: 'canvas-default/components/', size: 0, type: '5' },
+      { name: 'canvas-default/components/KpiCard.tsx', size: 16, type: '0' },
+    ]);
+  });
+
+  test('a truncated archive yields what it read, never throws', () => {
+    const full = tar([{ name: 'a/X.tsx', body: 'x'.repeat(600) }]);
+    expect(() => tarEntries(full.slice(0, 700))).not.toThrow();
+    expect(tarEntries(full.slice(0, 700))[0]?.name).toBe('a/X.tsx');
+  });
+
+  test('garbage bytes do not throw', () => {
+    expect(() => tarEntries(new Uint8Array(2048).fill(0xff))).not.toThrow();
+  });
+});
 
 describe('the allowlist', () => {
   test('names the five surviving artefacts and nothing else', () => {
