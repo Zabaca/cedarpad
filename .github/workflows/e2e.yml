@@ -12,7 +12,11 @@ on:
   pull_request:
   workflow_dispatch:
 
-# A force-push supersedes the run it interrupts; cancel it rather than pay for both.
+# A force-push supersedes the run it interrupts, so cancel the old one. The point is
+# freeing the single self-hosted runner, not saving money: these minutes are not billed.
+# Note this also cancels an in-flight main run when pushes land close together. That
+# costs attribution, not coverage, because a run on main tests the tip and the tip
+# already contains the commit whose run was cancelled.
 concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
