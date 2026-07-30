@@ -25,6 +25,7 @@ let served: SandboxCoords[] = [];
 let servedReqs: Array<{ path: string; method: string }> = [];
 let servedMcpTokenHeaders: Array<string | null> = [];
 let servedGuestCanvasHeaders: Array<string | null> = [];
+let servedViewerHeaders: Array<string | null> = [];
 // The dev-agent arming pair the fall-through stamps when a same-origin send DECLARES the
 // dev-agent kind (there is no Conversation row yet — see the `x-chat-kind` describe below).
 let servedDevAgentHeaders: Array<{ token: string | null; repo: string | null; kind: string | null }> = [];
@@ -53,6 +54,7 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedReqs.push({ path: u.pathname + u.search, method: req.method });
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     servedGuestCanvasHeaders.push(req.headers.get('x-guest-canvas'));
+    servedViewerHeaders.push(req.headers.get('x-canvas-viewer'));
     servedDevAgentHeaders.push({
       token: req.headers.get('x-dev-agent-git-token'),
       repo: req.headers.get('x-dev-agent-repo'),
@@ -365,6 +367,18 @@ describe('guest session gate (#220)', () => {
     expect(served).toEqual([resolve({ id: 'ws_g' })]);
     // The edge OVERWRITES the confinement header — a client-sent value never survives.
     expect(servedGuestCanvasHeaders).toEqual(['cv_g']);
+  });
+
+  // A guest has no addressable identity — their per-browser id lives in localStorage and
+  // never reaches the edge — so there is nothing truthful to stamp. The guest proxy returns
+  // before the authenticated strip block, so a client-sent value would otherwise ride
+  // through and let a guest name a MEMBER as the target of a page switch.
+  test('a guest cannot forge x-canvas-viewer: the edge deletes it on the way in', async () => {
+    session = null;
+    shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
+    servedViewerHeaders = [];
+    await guestFetch('/w/ws_g/canvas/cv_g/pad', { headers: { 'x-canvas-viewer': 'u_member' } });
+    expect(servedViewerHeaders).toEqual([null]);
   });
 
   test('the Shell SPA serves in guest mode; canvas API proxies only when addressed to the guest canvas', async () => {
@@ -1011,6 +1025,25 @@ describe('a same-origin send declaring the dev-agent chat kind is armed at the e
     resolveDevAgentRepoImpl = () => Promise.resolve(null);
     await SEND({ 'x-chat-kind': 'dev-agent', 'x-dev-agent-git-token': 'ghs_forged', 'x-dev-agent-repo': 'evil/repo' });
     expect(servedDevAgentHeaders).toEqual([{ token: null, repo: null, kind: null }]);
+  });
+
+  // x-canvas-viewer decides whose screen select_page may move. The edge is its only writer:
+  // stamped on a send (and the canvas stream), stripped everywhere else, and a client-sent
+  // value always loses — a member must not be able to aim an agent at a colleague's view.
+  test('a CLIENT-SENT viewer never reaches the container; the edge stamps the gated user instead', async () => {
+    resolveDevAgentRepoImpl = () => Promise.resolve(null);
+    servedViewerHeaders = [];
+    await SEND({ 'x-canvas-viewer': 'u_victim' });
+    expect(servedViewerHeaders).toEqual(['u_1']);
+  });
+
+  test('a non-send request carries no viewer at all, even when the client supplies one', async () => {
+    servedViewerHeaders = [];
+    await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/chat/chat_1/transcript', { headers: { 'x-canvas-viewer': 'u_victim' } }),
+      env,
+    );
+    expect(servedViewerHeaders).toEqual([null]);
   });
 
   test('a workspace with no connected repo proxies the send unarmed rather than failing it', async () => {

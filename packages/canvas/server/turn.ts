@@ -47,6 +47,14 @@ export interface TurnInput {
    * selection — appended to the SDK disallowedTools for chat turns. Wholly-disabled servers
    * never appear here; their tokens were already dropped at the send. */
   mcpDisallowedTools?: string[];
+  /** WHOSE SCREEN this turn may move, from the edge-stamped x-canvas-viewer header — the
+   * human who sent the message. PRESENTATION ONLY: it arms `select_page` and nothing else,
+   * and must never gate a capability (see CANVAS_VIEWER_HEADER). Deliberately separate from
+   * `assignTo`, which happens to hold the same id today but answers a different question
+   * (who OWNS the conversation) and is free to diverge — a change to assignment semantics
+   * must not silently redirect somebody's screen. Absent on a guest send, a cron kick, and
+   * every dev-agent run ⇒ `select_page` is not offered at all. */
+  viewer?: string;
 }
 
 /** The stable collaborators a turn sequences. bridge.ts binds each to its singleton; every one
@@ -61,6 +69,10 @@ export interface TurnDeps {
   /** The active canvas's screenshot round-trip (`view_canvas`) — the one rider left on the
    *  bridge's SSE stream after #297 (server/screenshot-channel.ts). */
   requestScreenshot: (canvasId: string) => CaptureView;
+  /** Move ONE viewer's open editors to a page on this canvas, returning how many streams it
+   *  reached (server/screenshot-channel.ts). The turn partially applies its own `viewer`
+   *  before handing it down, so nothing below this line ever holds an identity. */
+  selectPage: (canvasId: string) => (pageId: string, viewer: string | null) => number;
   /** Open a store on the canvas's Durable-Object-hosted ROOM (ADR-0019, #310). Since #297
    *  there is no in-process store to fall back to: this is where canvas state lives. */
   openCanvasRoom: (canvasId: string) => Promise<RemoteCanvasStore>;
@@ -135,7 +147,7 @@ export interface TurnDeps {
  * first await) so a concurrent /send sees the in-flight turn.
  */
 export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<void> {
-  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo, mcpDisallowedTools } = input;
+  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo, mcpDisallowedTools, viewer } = input;
   const ac = new AbortController();
   deps.aborters.set(chatId, ac);
   const flavor = deps.flavor(devAgentGitToken);
@@ -204,6 +216,13 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // Reading a pasted screenshot is a CANVAS capability — chat turns only, and scoped to
       // the SAME canvas the store was opened on just above.
       flavor.kind === 'chat' ? deps.fetchAsset?.(activeCanvasId) : undefined,
+      // Moving a view is a CANVAS capability, and additionally needs to know WHOSE view. The
+      // viewer is bound HERE and nowhere lower, so the tool below cannot be pointed at anyone
+      // but this turn's initiator. No viewer (guest send, cron kick, dev-agent run) ⇒ no tool:
+      // the capability disappears rather than degrading into "move everybody".
+      flavor.kind === 'chat' && viewer
+        ? (pageId: string) => deps.selectPage(activeCanvasId)(pageId, viewer)
+        : undefined,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
       // Row-at-start: index the session the moment its id lands (the init event). Tracked (not

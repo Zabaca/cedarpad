@@ -57,6 +57,7 @@ import {
 import {
   BRIDGE_ROUTES,
   CANVAS_ID_HEADER,
+  CANVAS_VIEWER_HEADER,
   CHAT_KIND_HEADER,
   DEV_AGENT_CHAT_KIND,
   DEV_AGENT_GIT_TOKEN_HEADER,
@@ -509,6 +510,11 @@ export default {
             const guestProxied = new Request(request);
             guestProxied.headers.set(GUEST_CANVAS_HEADER, guest.canvasId);
             guestProxied.headers.set(GUEST_CAPS_HEADER, JSON.stringify(caps));
+            // A guest is never an addressable viewer: their per-browser identity lives in
+            // localStorage and never reaches the edge, so there is nothing truthful to stamp.
+            // DELETED rather than left alone — this path returns before the strip block below,
+            // and a guest must not be able to name a member as the target of a page switch.
+            guestProxied.headers.delete(CANVAS_VIEWER_HEADER);
             return serveWorkspace(guestProxied, env, coordsForWorkspace(guest.workspaceId));
           }
         }
@@ -954,16 +960,24 @@ export default {
     // not inbox-adopted) gets the workspace's connected external-MCP tokens exactly like the
     // Inbox proxy does (worker/inbox-bridge.ts) — same header, same "no tokens ⇒ untouched".
     const isChatSend = request.method === 'POST' && IS_CHAT_SEND.test(url.pathname);
+    // The canvas SSE subscribe — the one request whose IDENTITY the bridge has to remember,
+    // because `select_page` addresses a frame at one subscriber later (server/screenshot-channel.ts).
+    const isCanvasStream = request.method === 'GET' && url.pathname === '/api/canvas/stream';
     // The edge-owned headers below are answers the edge alone writes, so a client-sent copy of
     // any of them must never survive into the container — on ANY request, not only a send.
     // Cloning is skipped entirely when the client sent none (the overwhelmingly common case).
-    const forged = [CHAT_KIND_HEADER, DEV_AGENT_GIT_TOKEN_HEADER, DEV_AGENT_REPO_HEADER];
+    const forged = [CHAT_KIND_HEADER, DEV_AGENT_GIT_TOKEN_HEADER, DEV_AGENT_REPO_HEADER, CANVAS_VIEWER_HEADER];
     const asksDevAgent = isChatSend && request.headers.get(CHAT_KIND_HEADER) === DEV_AGENT_CHAT_KIND;
     let proxied = request;
-    if (isChatSend || forged.some((h) => request.headers.has(h))) {
+    if (isChatSend || isCanvasStream || forged.some((h) => request.headers.has(h))) {
       proxied = new Request(request);
       for (const h of forged) proxied.headers.delete(h);
     }
+    // Who is looking / who is asking, for presentation-only targeting (CANVAS_VIEWER_HEADER).
+    // Stamped on exactly the two requests that need it: the stream subscribe binds an
+    // identity to a browser, and a send carries the asker's into the turn it starts. Written
+    // AFTER the strip above, so the client's own copy is always the one that loses.
+    if (isChatSend || isCanvasStream) proxied.headers.set(CANVAS_VIEWER_HEADER, user.id);
     if (isChatSend) {
       // Shared-inbox assignment: a pad send is a human act — stamp its initiator so the
       // bridge assigns the born Conversation to them (overwrites any client-sent value).
