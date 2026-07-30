@@ -1031,7 +1031,7 @@ describe('POST /api/canvas/shapes/{create,update} + /api/components/place — di
 
 // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
 // proxies here. Content only (ADR-0013): plain files under .claude/skills/<name>/,
-// path rules enforced server-side, persisted by the skills sink at flush.
+// path rules enforced server-side, persisted as Records before the files are written (#361).
 describe('PUT /api/skills/:name — workspace-skill upload (#177)', () => {
   const SKILL = `zz-test-skill-${crypto.randomUUID().slice(0, 8)}`;
   const skillsRoot = new URL('../.claude/skills/', import.meta.url).pathname;
@@ -1076,14 +1076,22 @@ describe('PUT /api/skills/:name — workspace-skill upload (#177)', () => {
 // ungated shell. Its absence must look like every other unknown path — a 404 from the route
 // table — not a 502 from a proxy to a process nobody starts.
 describe('/api/status: the turn-completion artifacts (#357)', () => {
-  // #356 also took the `sessions` sink: a Transcript is a File stored per session, so it is
-  // written by the turn that touched it rather than tarred through this sink.
-  test('reports every surviving persist sink — no custom-handler sink, no sessions sink', async () => {
+  // #366 finished the list. `sessions` went in #356 (a Transcript is a File, written per
+  // session by the turn that touched it), and the last three tar artifacts —
+  // `shared-components`, `canvas-dirs`, `skills` — went with the sinks themselves: their
+  // content is Records in D1 now, so there is nothing left to tar and no full-replace write
+  // that an empty source tree could turn into a workspace-wide delete.
+  //
+  // `chatMeta` is the ONE survivor, and deliberately: it is per-chat durable state
+  // (`chatId → {sessionId, model, effort}`), not workspace content, and it is a whole-map
+  // JSON write rather than a snapshot of a directory. The sink itself stays for it — the
+  // health it reports at /api/status is what makes a silent save failure visible.
+  test('the tar artifacts are gone; chatMeta is the only sink left', async () => {
     const res = await handleRequest(new Request('http://localhost/api/status'));
 
     expect(res.status).toBe(200);
     const { artifacts } = (await res.json()) as { artifacts: Array<{ name: string }> };
-    expect(artifacts.map((a) => a.name).sort()).toEqual(['canvas-dirs', 'chatMeta', 'shared-components', 'skills']);
+    expect(artifacts.map((a) => a.name).sort()).toEqual(['chatMeta']);
   });
 });
 
