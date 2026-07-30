@@ -435,6 +435,33 @@ never learned the document moved.
 - Dev runs both with `bun run dev` (bridge :4511, vite :4510; vite proxies
   `/api/*` → bridge).
 
+**Push plane** ([ADR-0023](../../docs/adr/0023-push-planes-split-by-volume-and-ownership.md)):
+a channel the server pushes over. There is more than one, deliberately and boundedly — **a
+new plane is justified only by a difference in message VOLUME or in who OWNS the state, never
+by a new feature.** High-volume ephemeral streams get a direct path (turn output from the
+container; canvas ops over sync); low-volume state-change notifications share one broker per
+durability tier (the per-workspace events hub, at the edge). Within a plane, multiplex by
+topic — one stream per client, not one per feature.
+
+The deciding question is **who owns the state, not what the state is about**. The Inbox looks
+like a counterexample and is the proof: it is *about* chats, but a **Conversation** is an
+edge-owned D1 row that outlives every **turn** in it, so its badge pushes from the edge, while
+an opened conversation's `<ChatView>` speaks the container's chat plane. Same screen, two
+planes, two owners. The tiebreaker: **anything that must survive the container sleeping cannot
+live on the chat plane.**
+
+Two obligations come with the hub plane. Notices are **thin** — a topic, never data; the
+subscriber re-reads D1, so there is no second copy to diverge (the contract is `.strip()`ped
+so a count cannot ride the wire). And notices must be **coalesced**: push makes cost
+proportional to write rate, which is unbounded, where polling was bounded by a fixed tick.
+_Avoid_: a per-feature `/api/*/events` endpoint, or routing turn tokens through the hub to
+reach one connection — tidier, and practically worse.
+
+> Live presence (#212) was a bespoke heartbeat with **throttled** SSE frames; #293 moved it
+> onto sync and deleted the transport — taking the throttle with it, and the hub was built
+> without one until review caught it. **Transport-specific safety machinery dies with its
+> transport.** That is why this rule lives here and not only beside a socket.
+
 ## The simplified shape model (`src/shapes.ts`)
 
 The agent and the bridge speak a **simplified** model, deliberately smaller than
