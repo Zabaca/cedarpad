@@ -1,13 +1,30 @@
 name: e2e
 
+# The push trigger on main is NOT a duplicate of the pull_request run, so do not
+# remove it. Roughly 45% of commits on main here are pushed directly and never
+# open a PR (checked against the commits/pulls API over the last 60 commits), so
+# dropping this trigger would leave nearly half of main with no e2e coverage at
+# all. Dropping it was proposed to save billed minutes; that argument no longer
+# applies now that this runs on a self-hosted runner, where the minutes are free.
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# A force-push supersedes the run it interrupts, so cancel the old one. The point is
+# freeing the single self-hosted runner, not saving money: these minutes are not billed.
+# Note this also cancels an in-flight main run when pushes land close together. That
+# costs attribution, not coverage, because a run on main tests the tip and the tip
+# already contains the commit whose run was cancelled.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ryzen]
+    timeout-minutes: 20
     env:
       CI: 'true'
     defaults:
@@ -24,8 +41,11 @@ jobs:
         run: bun install --frozen-lockfile
         working-directory: .
 
+      # No --with-deps: the system libraries are provisioned once on the runner host,
+      # not per run, and apt-get on that host is currently wedged. ~/.cache/ms-playwright
+      # persists between runs, so this is usually a no-op cache hit.
       - name: Install Playwright browser
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install chromium
 
       - name: Run e2e
         run: bun run test:e2e
