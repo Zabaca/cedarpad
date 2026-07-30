@@ -75,3 +75,38 @@ in the #365 PR; the pre-repoint bytes (6,463) are in this file's git history.
 The lengths and hashes above are **pinned** in `packages/canvas/server/record-migration.ts`
 and checked before anything is written: the migration refuses to run against bytes it was
 not shown. Editing a file here without updating that pin fails the check, by design.
+
+## `MartSessionSummary.tsx` — recovered, deliberately NOT in the migration
+
+| File | Bytes | sha256 (first 16) | Fidelity |
+| --- | --- | --- | --- |
+| `MartSessionSummary.tsx` | 2,600 | `465db953a8e699d3` | recovered from a `Read` tool result |
+
+A **sixth** casualty, found while checking the fifth. It is not in
+`MIGRATION_PLAN` and its bytes are not pinned — see
+[#381](https://github.com/Zabaca/cedarpad/issues/381).
+
+**Where it lived is unambiguous.** Transcripts name the path
+`src/canvas-cv_69599bdb-b6bc-4cee-b1d5-398e4fbe2ef7/components/MartSessionSummary.tsx`
+— the own tier of a *third* canvas, neither of the two above. That canvas's whole
+directory is gone from `canvas-components.tar`.
+
+**How it was recovered differs from the other four, and that matters.** There is no
+`write_component` call for it in any retained transcript — it was only ever `Read`,
+`place_component`ed and `read_component`ed. So the source here comes from a `Read`
+tool *result*, reconstructed by stripping `cat -n` line numbering.
+
+That is weaker provenance than a write payload, so it was checked rather than assumed:
+no truncation markers, and the file closes naturally at line 51 with a balanced
+`}`. It appears complete. But a `Read` result is a copy of the file *at read time*,
+not the last write — if the Component was edited afterwards, this is the earlier version
+and nothing retained would show it.
+
+**The tier is unsettled, which is why it is out of scope.** The R2 snapshot of
+`cv_69599bdb` holds 2 `MartSessionSummary` cards, agreeing with the file path. A live
+read during #365 instead reported the cards on `cv_4bfb07e3`. Those two disagree and the
+disagreement is **not resolved** — R2 is stale, but the file path corroborates R2. Do not
+restore this one until someone checks the live document for both canvases.
+
+It is here because `sessions.tar` is the only thing holding it, and
+[#366](https://github.com/Zabaca/cedarpad/issues/366) deletes that archive.
