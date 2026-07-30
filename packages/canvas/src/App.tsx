@@ -19,6 +19,7 @@ import { ComponentFullscreenOverlay } from './ComponentFullscreen';
 import { ComponentGallery } from './ComponentGallery';
 import { SidePanel, loadPanelOpen, savePanelOpen, type PanelSlots } from './SidePanel';
 import { createCanvasAssetStore, syncUri } from './canvas-sync';
+import { pageToSend } from './current-page';
 import { wireCanvasStream } from './canvas-stream';
 import { createCanvasTLSchema } from './tl-schema';
 import { createCanvasUserStore } from './presence';
@@ -502,6 +503,11 @@ function CanvasApp() {
           viewportCenter={() => {
             const b = editorRef.current?.getViewportPageBounds();
             return b ? { x: b.midX, y: b.midY } : { x: 500, y: 350 };
+          }}
+          currentPage={() => {
+            const editor = editorRef.current;
+            if (!editor) return undefined;
+            return pageToSend(editor.getPages().map((p) => p.id), editor.getCurrentPageId());
           }}
           onClose={() => setGalleryOpen(false)}
         />

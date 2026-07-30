@@ -45,6 +45,28 @@ describe('placeComponentOp', () => {
     expect(comp?.type === 'component' && comp.y).toBe(200);
   });
 
+  test('places onto the named page, and omits `page` when none is named', () => {
+    const store = createStore();
+    placeComponentOp(store, { module: 'KpiCard', x: 0, y: 0, rev: 1, page: 'page:two' });
+    placeComponentOp(store, { module: 'KpiCard', x: 400, y: 0, rev: 1 });
+    const shapes = store.getState().shapes;
+    const onTwo = shapes.find((s) => s.type === 'component' && s.x === 0);
+    const onFirst = shapes.find((s) => s.type === 'component' && s.x === 400);
+    expect(onTwo?.page).toBe('page:two');
+    // Absent means the canvas's first page — a single-page canvas must round-trip
+    // byte-identically to before pages existed.
+    expect(onFirst?.page).toBeUndefined();
+  });
+
+  test('re-placing by id keeps the page it is already on', () => {
+    const store = createStore();
+    placeComponentOp(store, { module: 'KpiCard', x: 0, y: 0, rev: 1, page: 'page:two' });
+    const id = store.getState().shapes[0]!.id;
+    // A placement is not a full description: naming no page must not move the card to page one.
+    placeComponentOp(store, { id, module: 'KpiCard', x: 50, y: 50, rev: 2 });
+    expect(store.getState().shapes[0]!.page).toBe('page:two');
+  });
+
   test('updates by id (retarget module + data) without adding a shape', () => {
     const store = createStore();
     placeComponentOp(store, { module: 'KpiCard', x: 0, y: 0, rev: 1 });

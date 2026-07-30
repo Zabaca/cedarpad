@@ -345,6 +345,10 @@ export interface PlaceComponentInput {
   h?: number;
   data?: Record<string, unknown>;
   rev: number;
+  /** The page to land on. Absent means the canvas's first page (src/shapes.ts) — which is
+   * what every caller meant before pages were reachable, so omitting it is unchanged
+   * behavior rather than a default being applied. */
+  page?: string;
   /** The mart this instance renders (#239 / ADR-0017: a component names a mart, never
    * a URL). Optional and passed straight through to normalizeShape — no dataSource is
    * the existing static-data behavior, unchanged. */
@@ -358,8 +362,13 @@ export function placeComponentOp(store: CanvasStore, input: PlaceComponentInput,
     // parentId, so rebuilding from input alone silently dropped frame membership (and the
     // frame-relative coords then rendered as page coords — the post-deploy scatter bug).
     const existing = input.id ? store.getState().shapes.find((s) => s.id === input.id) : undefined;
+    // A re-place that names no page keeps the one the instance is already on, for the same
+    // reason `parentId` is carried over: the input is a placement, not a full description,
+    // so rebuilding from it alone would silently move the card to page one.
+    const page = input.page ?? existing?.page;
     const shape = normalizeShape({
       ...(existing?.parentId ? { parentId: existing.parentId } : {}),
+      ...(page ? { page } : {}),
       type: 'component',
       id: input.id,
       x: input.x,

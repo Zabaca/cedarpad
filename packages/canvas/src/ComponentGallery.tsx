@@ -18,7 +18,18 @@ export function filterCards(cards: GalleryCard[], query: string): GalleryCard[] 
   return q ? cards.filter((c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)) : cards;
 }
 
-export function ComponentGallery({ viewportCenter, onClose }: { viewportCenter: () => { x: number; y: number }; onClose: () => void }) {
+export function ComponentGallery({
+  viewportCenter,
+  currentPage,
+  onClose,
+}: {
+  viewportCenter: () => { x: number; y: number };
+  /** The page to place onto — undefined on the canvas's first page, which is how the
+   *  model spells it (src/current-page.ts). The placement happens on the SERVER, so
+   *  without this the card lands on page one whatever page the human is looking at. */
+  currentPage: () => string | undefined;
+  onClose: () => void;
+}) {
   const [cards, setCards] = React.useState<GalleryCard[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState('');
@@ -45,10 +56,11 @@ export function ComponentGallery({ viewportCenter, onClose }: { viewportCenter: 
     setPlacing(name);
     setError(null);
     try {
+      const page = currentPage();
       const r = await fetch('/api/components/place', {
         method: 'POST',
         headers: withCanvasHeader({ 'content-type': 'application/json' }),
-        body: JSON.stringify({ module: name, ...placementAt(viewportCenter(), placedRef.current) }),
+        body: JSON.stringify({ module: name, ...placementAt(viewportCenter(), placedRef.current), ...(page ? { page } : {}) }),
       });
       if (!r.ok) throw new Error(`place failed (${r.status})`);
       placedRef.current += 1;
