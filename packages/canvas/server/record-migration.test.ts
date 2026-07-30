@@ -14,13 +14,12 @@ import {
   CUSTOM_ARCHIVE_KEY,
   MIGRATION_PLAN,
   MIGRATION_WORKSPACE,
+  HUDSON_STANDUP_CANVAS,
   NOT_MIGRATED,
   PERMANENTLY_LOST,
-  RESTORED_CANVAS,
   SHARED_ARCHIVE_KEY,
   SKILLS_ARCHIVE_KEY,
   SOURCE_ARCHIVES,
-  WORKFLOW_CANVAS,
   type MigrationSources,
   migrateRecords,
   prepareMigration,
@@ -58,6 +57,9 @@ const client = createClient({ url: ':memory:' });
 const db = drizzle(client, { schema });
 const SECRET = 'test-platform-rpc-secret';
 
+/** "Cedarpad" — the canvas #365 originally aimed at, which holds none of the dead cards. */
+const OTHER_CANVAS = 'cv_4bfb07e3-cd4e-4fc8-a3ed-54a4b20d483b';
+
 /** The container's own client, wired to the real handler in this process. No HTTP, same code. */
 const rpc = platformRpc({
   origin: 'http://edge.invalid',
@@ -73,8 +75,10 @@ beforeAll(async () => {
   // migration cannot mint rows for a canvas the registry does not place in the workspace.
   // Named as production names them, which is not how #365's prose names them.
   await db.insert(schema.canvases).values([
-    { id: RESTORED_CANVAS, workspaceId: MIGRATION_WORKSPACE, name: 'Cedarpad' },
-    { id: WORKFLOW_CANVAS, workspaceId: MIGRATION_WORKSPACE, name: 'Hudson Standup' },
+    { id: HUDSON_STANDUP_CANVAS, workspaceId: MIGRATION_WORKSPACE, name: 'Hudson Standup' },
+    // The canvas the plan used to be aimed at, seeded so a test could write to it — it is a
+    // real canvas in the same workspace, just not the one holding the cards.
+    { id: OTHER_CANVAS, workspaceId: MIGRATION_WORKSPACE, name: 'Cedarpad' },
   ]);
 });
 
@@ -141,11 +145,13 @@ function fakeSources(opts: { over?: Partial<Record<string, string>>; extra?: Ext
       { name: './Outliner.tsx', body: text('Outliner') },
     ],
     [CANVAS_ARCHIVE_KEY]: [
-      { name: `canvas-${RESTORED_CANVAS}/`, type: '5' },
-      { name: `canvas-${RESTORED_CANVAS}/components/`, type: '5' },
-      { name: `canvas-${WORKFLOW_CANVAS}/`, type: '5' },
-      { name: `canvas-${WORKFLOW_CANVAS}/components/`, type: '5' },
-      { name: `canvas-${WORKFLOW_CANVAS}/components/WorkflowGraph.tsx`, body: text('WorkflowGraph') },
+      // An empty components dir for the other canvas — the shape that misled #365 into
+      // aiming at it. It must stay in the fixture: the survey has to ignore it as not-content.
+      { name: `canvas-${OTHER_CANVAS}/`, type: '5' },
+      { name: `canvas-${OTHER_CANVAS}/components/`, type: '5' },
+      { name: `canvas-${HUDSON_STANDUP_CANVAS}/`, type: '5' },
+      { name: `canvas-${HUDSON_STANDUP_CANVAS}/components/`, type: '5' },
+      { name: `canvas-${HUDSON_STANDUP_CANVAS}/components/WorkflowGraph.tsx`, body: text('WorkflowGraph') },
       { name: 'canvas-default/', type: '5' },
       { name: 'canvas-default/components/', type: '5' },
       { name: 'canvas-default/components/zz_test_data_cd0fc124.json', body: '{"zz":true}\n' },
@@ -192,17 +198,28 @@ describe('the allowlist', () => {
     ]);
   });
 
-  test('Outliner is shared-tier; the recovered three and WorkflowGraph are own-tier, on two different canvases', () => {
+  test('Outliner is shared-tier; the other four are own-tier on the canvas that holds the dead cards', () => {
     expect(planned('Outliner').tier).toBe('shared');
-    for (const name of ['AudioMeeting', 'ChatRoom', 'ComponentCatalog']) {
+    for (const name of ['AudioMeeting', 'ChatRoom', 'ComponentCatalog', 'WorkflowGraph']) {
       expect(planned(name).tier).toBe('own');
-      expect(planned(name).canvasId).toBe(RESTORED_CANVAS);
+      expect(planned(name).canvasId).toBe(HUDSON_STANDUP_CANVAS);
     }
-    // The one authored after the incident lives somewhere else entirely — and a plan that
-    // assumed one own tier would have written it to the wrong canvas.
-    expect(planned('WorkflowGraph').tier).toBe('own');
-    expect(planned('WorkflowGraph').canvasId).toBe(WORKFLOW_CANVAS);
-    expect(WORKFLOW_CANVAS).not.toBe(RESTORED_CANVAS);
+  });
+
+  test('the own tier is cv_edd9bab6, NOT the canvas #365 named — the cards decide, not the title', () => {
+    // A placed card resolves against its own canvas's tier, so the shapes say where the
+    // source has to live. The live rooms hold AudioMeeting, ChatRoom, ComponentCatalog and
+    // both Henrys on cv_edd9bab6 and none of them on cv_4bfb07e3. Aimed at the latter, this
+    // migration would have written Records nobody can see and reported success.
+    expect(HUDSON_STANDUP_CANVAS).toBe('cv_edd9bab6-8bae-4a7a-a694-9abfa9965db9');
+    expect(MIGRATION_PLAN.every((p) => p.canvasId !== OTHER_CANVAS)).toBe(true);
+  });
+
+  test('every own-tier entry justifies its canvas with placement evidence', () => {
+    // A canvas id with no justification beside it is how the wrong one got written down.
+    for (const item of MIGRATION_PLAN.filter((p) => p.tier === 'own')) {
+      expect(item.why).toMatch(/placed instance/);
+    }
   });
 
   test('the verified residue is named as NOT migrated, per archive, so a sweep cannot creep back in', () => {
@@ -231,7 +248,7 @@ describe('surveying the archives', () => {
     expect(survey.unrecognised).toEqual([]);
     expect(survey.planned.map((p) => p.path).sort()).toEqual([
       'Outliner.tsx',
-      `canvas-${WORKFLOW_CANVAS}/components/WorkflowGraph.tsx`,
+      `canvas-${HUDSON_STANDUP_CANVAS}/components/WorkflowGraph.tsx`,
     ]);
     // The residue is the whole test skill (both files), the guest stub, the test data file
     // and the image's hello.ts.
@@ -392,7 +409,7 @@ describe('writing', () => {
     expect(report.outcomes.every((o) => o.rev === 1)).toBe(true);
     const shared = await rpc.componentRead({ workspaceId: MIGRATION_WORKSPACE, canvasId: 'default', tier: 'shared', name: 'Outliner' });
     expect(shared).toBe(filler('Outliner'));
-    const own = await rpc.componentRead({ workspaceId: MIGRATION_WORKSPACE, canvasId: RESTORED_CANVAS, tier: 'own', name: 'ChatRoom' });
+    const own = await rpc.componentRead({ workspaceId: MIGRATION_WORKSPACE, canvasId: HUDSON_STANDUP_CANVAS, tier: 'own', name: 'ChatRoom' });
     expect(own).toBe(filler('ChatRoom'));
   });
 
@@ -405,7 +422,7 @@ describe('writing', () => {
 
     const versions = await rpc.componentHistory({
       workspaceId: MIGRATION_WORKSPACE,
-      canvasId: RESTORED_CANVAS,
+      canvasId: HUDSON_STANDUP_CANVAS,
       tier: 'own',
       name: 'AudioMeeting',
     });
@@ -428,7 +445,7 @@ describe('idempotence', () => {
     expect(second.ok).toBe(true);
     const versions = await rpc.componentHistory({
       workspaceId: MIGRATION_WORKSPACE,
-      canvasId: RESTORED_CANVAS,
+      canvasId: HUDSON_STANDUP_CANVAS,
       tier: 'own',
       name: 'AudioMeeting',
     });
@@ -440,7 +457,7 @@ describe('idempotence', () => {
     await migrateRecords(rpc, resolved, { write: true });
     await rpc.componentWrite({
       workspaceId: MIGRATION_WORKSPACE,
-      canvasId: RESTORED_CANVAS,
+      canvasId: HUDSON_STANDUP_CANVAS,
       tier: 'own',
       userId: null,
       name: 'ChatRoom',
@@ -450,7 +467,7 @@ describe('idempotence', () => {
     const again = await migrateRecords(rpc, resolved, { write: true });
     expect(again.outcomes.find((o) => o.item.name === 'ChatRoom')?.action).toBe('differs');
     expect(again.ok).toBe(false);
-    expect(await rpc.componentRead({ workspaceId: MIGRATION_WORKSPACE, canvasId: RESTORED_CANVAS, tier: 'own', name: 'ChatRoom' })).toBe(
+    expect(await rpc.componentRead({ workspaceId: MIGRATION_WORKSPACE, canvasId: HUDSON_STANDUP_CANVAS, tier: 'own', name: 'ChatRoom' })).toBe(
       '// somebody improved this\n',
     );
   });
@@ -510,15 +527,16 @@ describe('verification', () => {
     expect(report.unexpected).toEqual([{ name: 'Tmp_GuestShared', tier: 'shared' }]);
   });
 
-  test('an unplanned Record on the SECOND own tier is reported too — one canvas is not the check', async () => {
-    // A verification scoped to one canvas silently stopped covering the other the moment the
-    // plan grew a second one. `component.list` answers for a canvas's own library and the
-    // workspace's shared one, so the other own tier is invisible from the first.
+  test('an unplanned Record on the OTHER own tier the plan touches is reported too', async () => {
+    // The plan names two canvases: Hudson Standup for the own tier, and the legacy `default`
+    // canvas as the shared write's entitlement proof. `component.list` answers for a canvas's
+    // own library plus the workspace's shared one, so `default`'s own tier is invisible from
+    // Hudson Standup — a check scoped to one canvas would not see this.
     const resolved = await resolveSources(synthetic(), fakeSources());
     await migrateRecords(rpc, resolved, { write: true });
     await rpc.componentWrite({
       workspaceId: MIGRATION_WORKSPACE,
-      canvasId: WORKFLOW_CANVAS,
+      canvasId: 'default',
       tier: 'own',
       userId: null,
       name: 'Stowaway',

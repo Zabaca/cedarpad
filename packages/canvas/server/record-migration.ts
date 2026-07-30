@@ -41,22 +41,32 @@ import { PLACEHOLDERS, tarEntries } from './persist-guards.ts';
 export const MIGRATION_WORKSPACE = 'default';
 
 /**
- * The canvas whose own-tier library the 09:39 flush emptied — the one the three recovered
- * Components go back to. Its `components/` directory is still in `canvas-components.tar`,
- * present and containing nothing; that emptiness IS the incident.
+ * The canvas every own-tier Record here belongs to — registered as **"Hudson Standup"**.
  *
- * NOTE THE NAME. #365 calls this one "Hudson Standup" throughout, but the canvas registry
- * calls it **"Cedarpad"** — and the canvas actually registered as "Hudson Standup" is
- * `WORKFLOW_CANVAS` below, a different id entirely. Whether it was renamed since the incident
- * or mislabelled in the issue is not knowable from here, so these constants are named for
- * what they hold rather than for either title, and the report prints ids.
+ * THIS ID WAS WRONG UNTIL IT WAS CHECKED AGAINST THE SHAPES. #365 and the incident notes both
+ * name `cv_4bfb07e3-cd4e-4fc8-a3ed-54a4b20d483b`, on the strength of that canvas having a
+ * present-but-empty `components/` directory in `canvas-components.tar`. That inference does
+ * not hold: an empty components directory is also what a canvas that never had components
+ * looks like, and the directories in the tar are only whichever ones existed on the container
+ * filesystem at flush time. (`cv_edd9bab6`'s directory was not in the archive at all this
+ * morning; it appeared when `WorkflowGraph` was authored.) The registry compounded it —
+ * `cv_4bfb07e3` is named "Cedarpad", and this one is the actual "Hudson Standup".
+ *
+ * The decisive evidence is PLACED INSTANCES, because a placed card resolves against its own
+ * canvas's tier: wherever the cards are is where the source has to live. Reading the LIVE room
+ * documents (`GET /api/canvas-sync/:id/snapshot`, not the stale R2 blobs — the Durable Object
+ * has been authoritative since ADR-0019) on 2026-07-29:
+ *
+ *   cv_edd9bab6 (this one)  AudioMeeting, ChatRoom, ComponentCatalog, HenryAccessExplorer,
+ *                           HenryScenarioMap, 2x Outliner — five dead cards
+ *   cv_4bfb07e3             no instance of any of them
+ *
+ * Aimed at `cv_4bfb07e3` this migration would have written four Records nobody can see and
+ * reported complete success while Hudson Standup stayed broken. Every own-tier entry below
+ * carries its own placement evidence in `why` for that reason: a canvas id with no
+ * justification beside it is exactly how the wrong one got written down.
  */
-export const RESTORED_CANVAS = 'cv_4bfb07e3-cd4e-4fc8-a3ed-54a4b20d483b';
-
-/** The canvas `WorkflowGraph.tsx` was authored on, after the incident and while this migration
- *  was being written. Registered as "Hudson Standup". Untouched by the flush — its Component
- *  is in the archive because the container is still tarring, which is the state #366 ends. */
-export const WORKFLOW_CANVAS = 'cv_edd9bab6-8bae-4a7a-a694-9abfa9965db9';
+export const HUDSON_STANDUP_CANVAS = 'cv_edd9bab6-8bae-4a7a-a694-9abfa9965db9';
 
 export const SHARED_ARCHIVE_KEY = sharedComponentsKey(MIGRATION_WORKSPACE);
 export const CANVAS_ARCHIVE_KEY = canvasDirsKey(MIGRATION_WORKSPACE);
@@ -113,9 +123,12 @@ export interface PlannedRecord {
 
 /**
  * The payload. Five files — four of which are what a whole workspace's authored content was
- * reduced to, and the fifth of which is a Component someone wrote *after* the incident, on a
- * different canvas, while this was being built. It is here because the survey found it, not
+ * reduced to, and the fifth of which is a Component someone wrote on the same canvas *after*
+ * the incident, while this was being built. It is here because the survey found it, not
  * because anyone remembered it.
+ *
+ * Each own-tier entry's `why` records **why this canvas**, in the form of the placed instances
+ * that prove it. Read them as the justification they are; the id was wrong once already.
  */
 export const MIGRATION_PLAN: readonly PlannedRecord[] = [
   {
@@ -125,56 +138,64 @@ export const MIGRATION_PLAN: readonly PlannedRecord[] = [
     bytes: 13126,
     sha256: '060a91dc1ed41f02887f0fcfe603e09f9c836b1a423a457714b5311060ccd5bb',
     origin: { kind: 'archive', key: SHARED_ARCHIVE_KEY, path: 'Outliner.tsx' },
-    why: 'the only substantial survivor in R2 — the shared library never lost its archive',
+    // SHARED because it is placed on more than one canvas: 2 instances on Hudson Standup and
+    // 1 on cv_4bfb07e3 ("Cedarpad"), live. One shared Record resolves for all three.
+    why: 'the only substantial survivor in R2 — the shared library never lost its archive; 3 placed instances across 2 canvases',
   },
   {
     name: 'AudioMeeting',
     tier: 'own',
-    canvasId: RESTORED_CANVAS,
+    canvasId: HUDSON_STANDUP_CANVAS,
     bytes: 13410,
     sha256: 'eac89ecdfd6c6d2fbc36ea529bef79707ae216c57cd9c61ee7942c2157b7cdb1',
     origin: { kind: 'recovered', file: 'AudioMeeting.tsx' },
-    why: 'recovered from a session transcript; the committed copy is the only one that exists',
+    why: 'recovered from a session transcript, the only copy that exists; 1 placed instance on this canvas, dead today',
   },
   {
     name: 'ChatRoom',
     tier: 'own',
-    canvasId: RESTORED_CANVAS,
+    canvasId: HUDSON_STANDUP_CANVAS,
     bytes: 16076,
     sha256: '96e443566b60eab1845ff599988551d851d7078eb1272cd3c0f627b8f525cd17',
     origin: { kind: 'recovered', file: 'ChatRoom.tsx' },
-    why: 'recovered from a session transcript; the committed copy is the only one that exists',
+    // Its card is NOT in the R2 snapshot of this canvas (last written 2026-07-28) and IS in
+    // the live room — placed after the snapshot. Worth stating: the stale blob is why this
+    // one nearly got recorded as having no instance at all.
+    why: 'recovered from a session transcript, the only copy that exists; 1 placed instance on this canvas in the LIVE document, dead today',
   },
   {
     name: 'ComponentCatalog',
     tier: 'own',
-    canvasId: RESTORED_CANVAS,
+    canvasId: HUDSON_STANDUP_CANVAS,
     bytes: 6947,
     sha256: 'e68a1618c4351f715349a3bb1d269180fd8ddbd70a8145b49517ab875a3c826e',
     origin: { kind: 'recovered', file: 'ComponentCatalog.tsx' },
-    why: 'recovered, then REPOINTED: as written it called /api/custom/component-catalog, a handler destroyed in the same flush and a feature removed by #357',
+    why: 'recovered then REPOINTED (it called /api/custom/component-catalog, destroyed in the same flush and removed by #357); 1 placed instance on this canvas, dead today',
   },
   {
     name: 'WorkflowGraph',
     tier: 'own',
-    canvasId: WORKFLOW_CANVAS,
+    canvasId: HUDSON_STANDUP_CANVAS,
     bytes: 25019,
     sha256: 'dbe821f0413099cb129cf123e8a8e8fd71a2b602a7ea5de961ecaf90c3fe8b0c',
-    origin: { kind: 'archive', key: CANVAS_ARCHIVE_KEY, path: `canvas-${WORKFLOW_CANVAS}/components/WorkflowGraph.tsx` },
+    origin: { kind: 'archive', key: CANVAS_ARCHIVE_KEY, path: `canvas-${HUDSON_STANDUP_CANVAS}/components/WorkflowGraph.tsx` },
     // Verified as migratable AS-IS: one import (`react`), no `fetch(`, no `/api/`, no relative
     // import — so unlike ComponentCatalog it needs no repoint. Its header comment references
     // "the skill's SCHEMA.md"; there is no `ticket-forge` skill in `skills.tar`, none in the
     // repo, and the survey finds nothing skill-shaped, so either it was never a Workspace
     // skill or it went in the same flush. Raised separately; it does not block this Component.
-    why: 'authored in production on 2026-07-29 AFTER the incident — real user work, found by the survey rather than by memory',
+    // NO placed instance, on this canvas or any other, in any live document. Migrated anyway:
+    // the archive holds the only copy of the source, and #366 deletes the archive.
+    why: 'authored in production on 2026-07-29 AFTER the incident — real user work, found by the survey rather than by memory; no placed instance yet',
   },
 ];
 
 /** The two Components destroyed in the same flush with no surviving copy anywhere — no
- *  `write_component` call for either appears in any retained transcript, and R2 has no object
- *  versioning. Named here, and named in every report, so "three of five" is stated rather
- *  than inferred from a success message. Their placed cards stay dead; they should be removed
- *  from the canvas rather than waited on. */
+ *  `write_component` call for either appears in any retained transcript (re-checked against
+ *  the 49 MB of `sessions.tar` on 2026-07-29: 4 mentions each, none of them a write), and R2
+ *  has no object versioning. Named here, and named in every report, so "three of five" is
+ *  stated rather than inferred from a success message. Both have a live placed instance on
+ *  `HUDSON_STANDUP_CANVAS`; those cards stay dead and should be removed rather than waited on. */
 export const PERMANENTLY_LOST: readonly string[] = ['HenryAccessExplorer', 'HenryScenarioMap'];
 
 /** One archive entry deliberately left where it is. Keyed by archive AND path, because the
