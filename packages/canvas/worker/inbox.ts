@@ -50,6 +50,33 @@ export const INBOX_EVENTS_KEEPALIVE_MS = 30_000;
  */
 export const INBOX_EVENTS_SAFETY_NET_MS = 300_000;
 
+/**
+ * The notice-coalescing window: after a notice is served, further notices inside this
+ * window collapse into one trailing recompute.
+ *
+ * Why a window at all: pushing the badge removed the one bound polling had for free. A 10s
+ * tick cost the same 8,640 recomputes a day per tab however busy the workspace got, while a
+ * recompute per notice makes the cost proportional to the WRITE RATE — several turns
+ * settling together, or an agent sending across chats in a loop, would multiply straight
+ * into D1 with nothing to stop it. That is a change in cost shape, not just volume.
+ *
+ * Why 500ms specifically:
+ *   - the LEADING edge is served immediately, so this delays only the settled value of a
+ *     burst, never the first visible change. Half a second on a badge nobody is staring at
+ *     is imperceptible; the latency-visible case is already paid for.
+ *   - it halves the steady-state ceiling against the 250ms alternative — 2 recomputes per
+ *     second per tab rather than 4 — for no perceptible cost, and the ceiling is the entire
+ *     point.
+ *   - it comfortably spans the realistic burst: a turn's settle / end / prOpened trio, or a
+ *     handful of concurrent turns landing together, collapse into two recomputes instead of
+ *     straddling the window and paying for several.
+ *
+ * The bound this buys, stated plainly: at most ONE recompute per window per connected tab
+ * in steady state (≈2/second/tab), against one per notice before. Measured on a burst of
+ * 20 notices in `worker/inbox-badge.test.ts`: 28 rows instead of 280.
+ */
+export const INBOX_EVENTS_NOTICE_WINDOW_MS = 500;
+
 /** The caller's view of the inbox: rows scoped to the workspace, ADR-0016 visibility
  *  applied (a private chat that isn't theirs, or any chat on someone else's private
  *  canvas — canvas dominates; derived via one registry read, never copied), ordered. */
@@ -152,6 +179,7 @@ export async function handleInboxApi(
       inboxBadgeStream(source, hub, {
         keepAliveMs: INBOX_EVENTS_KEEPALIVE_MS,
         safetyNetMs: INBOX_EVENTS_SAFETY_NET_MS,
+        noticeWindowMs: INBOX_EVENTS_NOTICE_WINDOW_MS,
       }),
       { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' } },
     );
