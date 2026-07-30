@@ -1,0 +1,1 @@
+ALTER TABLE `workspaces` ADD `canvas_order` text;

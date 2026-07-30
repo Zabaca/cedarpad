@@ -528,6 +528,16 @@ export const workspaces = sqliteTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     repo: text("repo"),
+    /**
+     * The canvas picker's hand-arranged order: a JSON array of canvas ids.
+     *
+     * One array here rather than a sort column on `canvases`, because the legacy `default`
+     * canvas has no registry row — a per-row column could never place it. Null/absent means
+     * "never reordered", which reads as `created_at` ascending, so nothing changes for a
+     * workspace that has not touched it. Consumers treat it as a HINT: it can name deleted
+     * canvases and will not know about newly created ones (shell/src/canvas-order.ts).
+     */
+    canvasOrder: text("canvas_order"),
     // Repository connection (ADR-0015): the workspace's GitHub App installation and the
     // owner-selected repos in scope for this workspace's agents. The App identity stays
     // platform env; these are workspace config. Null installation ⇒ not connected (the
