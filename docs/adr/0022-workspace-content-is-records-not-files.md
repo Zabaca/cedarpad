@@ -127,6 +127,14 @@ and permanent. That asymmetry is the entire point.
   `skills.tar` are all empty right now, so the backfill is the two surviving shared components
   plus whatever is restored from transcripts. The outage performed the "drain the old store"
   step for us.
+  _Correction (#365)_: "right now" was the load-bearing phrase, and it expired. The shared
+  archive held **one** real component, not two (the other 44 bytes are an e2e stub) — and on
+  the afternoon of 2026-07-29, while the migration was being written, a 25,019-byte
+  `WorkflowGraph.tsx` was authored in production and flushed into `canvas-components.tar`.
+  A backfill sized against a snapshot of a **live** store is a backfill that silently leaves
+  things behind, so #365's allowlist is enumerated against the archives on every run and
+  refuses to write while either holds content it was not told about. The cheapness argument
+  stands; the inventory it rests on has to be re-taken, not remembered.
 - **`write_data`'s 1 MB cap loses its stated reason** — `DATA_MAX_BYTES` is commented "the
   components sink tars the whole dir on every flush". With per-row writes that justification is
   gone; the cap should be re-derived from D1's 2 MB row limit, not inherited.

@@ -34,16 +34,19 @@ import { fsBackend, s3Backend } from '../server/blob-store.ts';
 import { requireLocalD1File } from '../server/local-d1.ts';
 import { platformRpc } from '../server/platform-rpc-client.ts';
 import {
-  HUDSON_STANDUP_CANVAS,
+  type ArchiveEntryRef,
+  type ArchiveSurvey,
   MIGRATION_PLAN,
   MIGRATION_WORKSPACE,
   type MigrationReport,
   type MigrationRpc,
   type MigrationSources,
+  HUDSON_STANDUP_CANVAS,
   NOT_MIGRATED,
+  SOURCE_ARCHIVES,
   type VerifyReport,
   migrateRecords,
-  resolveSources,
+  prepareMigration,
   verifyMigration,
 } from '../server/record-migration.ts';
 import { createDb } from '../web-poc/lib/db/client.ts';
@@ -115,8 +118,22 @@ function printPlan() {
     const where = p.origin.kind === 'archive' ? `${p.origin.key}!${p.origin.path}` : `recovered/${p.origin.file}`;
     console.log(`   ${p.name.padEnd(18)} ${p.tier.padEnd(6)} ${String(p.bytes).padStart(6)} b  ${where}`);
   }
-  console.log(`\nnot migrated — inventoried in production R2 and deliberately left there:`);
-  for (const r of NOT_MIGRATED) console.log(`   ${r.what.padEnd(28)} ${String(r.bytes).padStart(5)} b  ${r.why}`);
+  console.log(`\nnot migrated — content in the archives, deliberately left there:`);
+  for (const r of NOT_MIGRATED) console.log(`   ${r.path.padEnd(52)} ${String(r.bytes).padStart(5)} b  ${r.why}`);
+}
+
+/** What the enumeration found, before anything is read or written. The counts are the point:
+ *  "0 unrecognised" is the only line here that licenses the rest of the run. */
+function printSurvey(survey: ArchiveSurvey) {
+  console.log(`\nsurvey — every content-bearing entry in ${SOURCE_ARCHIVES.length} archives (sessions.tar is not one: Transcripts are Files)`);
+  for (const key of SOURCE_ARCHIVES) {
+    const inKey = (list: ArchiveEntryRef[]) => list.filter((e) => e.key === key).length;
+    console.log(
+      `   ${key.padEnd(46)} ${String(inKey(survey.planned)).padStart(2)} planned  ` +
+        `${String(inKey(survey.residue)).padStart(2)} left behind  ${String(inKey(survey.unrecognised)).padStart(2)} unrecognised`,
+    );
+  }
+  console.log(`   ${'TOTAL'.padEnd(46)} ${String(survey.planned.length).padStart(2)} planned  ${String(survey.residue.length).padStart(2)} left behind  ${String(survey.unrecognised.length).padStart(2)} unrecognised`);
 }
 
 function printMigration(report: MigrationReport, wrote: boolean, label: string): number {
@@ -148,8 +165,9 @@ function printLost(lost: readonly string[]) {
     `\n⚠️  ${lost.length} Component(s) are PERMANENTLY LOST and are not part of this migration:\n` +
       `   ${lost.join(', ')}\n` +
       '   Destroyed in the same 2026-07-29 flush, with no `write_component` call in any retained\n' +
-      '   transcript and no object versioning in R2. Their cards on Hudson Standup stay dead and\n' +
-      '   should be REMOVED from the canvas rather than waited on. Three of five, not five of five.',
+      `   transcript and no object versioning in R2. Their cards on ${HUDSON_STANDUP_CANVAS}\n` +
+      '   stay dead and should be REMOVED from the canvas rather than waited on.\n' +
+      '   Three of five restored, not five of five.',
   );
 }
 
@@ -186,7 +204,11 @@ const USAGE = `usage:
          reads production perfectly happily.
 
 Only Records that do not exist are written. One that exists and differs is reported and left
-alone. The R2 tarballs are never written or deleted.`;
+alone. The R2 tarballs are never written or deleted.
+
+BOTH verbs first ENUMERATE the archives and refuse to continue if they hold any content that
+is in neither the plan nor the not-migrated list. Production is in use; the allowlist is a
+claim about the world that has already gone stale once.`;
 
 if (import.meta.main) {
   const cmd = process.argv[2];
@@ -197,12 +219,24 @@ if (import.meta.main) {
 
   const write = cmd === 'migrate' && process.argv.includes('--write');
   const { rpc, label, detail } = target();
-  console.log(`workspace ${MIGRATION_WORKSPACE}, canvas ${HUDSON_STANDUP_CANVAS}`);
+  console.log(`workspace ${MIGRATION_WORKSPACE}`);
+  console.log(`canvas    ${HUDSON_STANDUP_CANVAS}  ("Hudson Standup" — where the dead cards are)`);
   console.log(`target    ${label}${write ? '   *** WRITING ***' : '   (read-only)'}`);
   if (detail) console.log(`          ${detail}`);
   if (cmd === 'migrate') printPlan();
 
-  const resolved = await resolveSources(MIGRATION_PLAN, sources());
+  // The gate. Refuses — loudly, naming paths — on an archive entry nobody has decided about,
+  // on an archive it could not read, and on a source whose bytes are not the pinned ones.
+  // Nothing below runs until it passes. Reported as a message rather than a stack trace: the
+  // operator has a decision to make, not a bug to debug.
+  const prepared = await prepareMigration(sources()).catch((err: Error) => err);
+  if (prepared instanceof Error) {
+    console.error(`\n❌ ${prepared.message}`);
+    process.exit(1);
+  }
+  const { survey, resolved } = prepared;
+  printSurvey(survey);
+
   process.exit(
     cmd === 'migrate'
       ? printMigration(await migrateRecords(rpc, resolved, { write }), write, label)
