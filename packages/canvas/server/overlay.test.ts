@@ -4,43 +4,13 @@ import { utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { extractCanvasDirs, extractOverlay, listCanvasDirs, maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
+import { listCanvasDirs, maxMtimeCanvasDirs, maxMtimeMs, tarCanvasDirs, tarSubtree } from './overlay.ts';
 
 const mk = (suffix: string) => join(tmpdir(), `Tmp_OverlayTest_${process.pid}_${suffix}`);
 const w = async (p: string, s: string) => {
   mkdirSync(join(p, '..'), { recursive: true });
   await Bun.write(p, s);
 };
-
-describe('overlay tar round-trip', () => {
-  test('replaces the subtree: additions kept, excludes dropped, deletions+node_modules honored', async () => {
-    const src = mk('src');
-    const dst = mk('dst');
-    try {
-      // Source: two real files + an excluded node_modules entry.
-      await w(join(src, 'a.txt'), 'A');
-      await w(join(src, 'sub/b.txt'), 'B');
-      await w(join(src, 'node_modules/dep.js'), 'NOPE');
-
-      const bytes = await tarSubtree(src);
-
-      // Destination pre-state: a stale file (must be wiped) and an image-resident
-      // node_modules entry (must survive the wipe).
-      await w(join(dst, 'stale.txt'), 'STALE');
-      await w(join(dst, 'node_modules/keep.js'), 'KEEP');
-
-      await extractOverlay(bytes, dst);
-
-      expect(existsSync(join(dst, 'a.txt'))).toBe(true);
-      expect(existsSync(join(dst, 'sub/b.txt'))).toBe(true);
-      expect(existsSync(join(dst, 'node_modules/dep.js'))).toBe(false); // excluded from tar
-      expect(existsSync(join(dst, 'stale.txt'))).toBe(false); // wiped (deletion honored)
-      expect(existsSync(join(dst, 'node_modules/keep.js'))).toBe(true); // image-resident, preserved
-    } finally {
-      for (const d of [src, dst]) if (existsSync(d)) rmSync(d, { recursive: true, force: true });
-    }
-  });
-});
 
 const setMtime = (p: string, ms: number) => utimes(p, ms / 1000, ms / 1000);
 
@@ -97,10 +67,10 @@ describe('maxMtimeMs (turn-completion dirty-check)', () => {
 
 // ADR-0014: the per-canvas component dirs travel as ONE tar (src-relative paths),
 // with the read-only platform base (src/canvas-components/) never captured or wiped.
-describe('canvas own dirs: tar + restore, platform base untouched', () => {
-  test('round-trips every canvas-<id> dir; base dir excluded from capture AND wipe', async () => {
+// The restore half went with the boot restore (#366) — nothing unpacks a content archive.
+describe('canvas own dirs: what the dirty-check sees', () => {
+  test('lists every canvas-<id> dir and excludes the platform base', async () => {
     const src = mk('cvsrc');
-    const dst = mk('cvdst');
     try {
       await w(join(src, 'canvas-default/components/Card.tsx'), 'CARD');
       await w(join(src, 'canvas-cv_abc/components/Board.tsx'), 'BOARD');
@@ -108,32 +78,20 @@ describe('canvas own dirs: tar + restore, platform base untouched', () => {
       await w(join(src, 'App.tsx'), 'APP'); // app code, not a canvas dir
 
       expect(await listCanvasDirs(src)).toEqual(['canvas-cv_abc', 'canvas-default']);
-      const bytes = await tarCanvasDirs(src);
-
-      await w(join(dst, 'canvas-stale/components/Old.tsx'), 'STALE'); // must be wiped
-      await w(join(dst, 'canvas-components/Seed.tsx'), 'SEED-DST'); // must survive
-      await extractCanvasDirs(bytes, dst);
-
-      expect(existsSync(join(dst, 'canvas-default/components/Card.tsx'))).toBe(true);
-      expect(existsSync(join(dst, 'canvas-cv_abc/components/Board.tsx'))).toBe(true);
-      expect(existsSync(join(dst, 'canvas-stale'))).toBe(false); // deletion honored
-      expect(await Bun.file(join(dst, 'canvas-components/Seed.tsx')).text()).toBe('SEED-DST');
+      expect((await tarCanvasDirs(src)).length).toBeGreaterThan(0);
     } finally {
-      for (const d of [src, dst]) if (existsSync(d)) rmSync(d, { recursive: true, force: true });
+      if (existsSync(src)) rmSync(src, { recursive: true, force: true });
     }
   });
 
-  test('no canvas dirs → an empty (but valid) tar; extract is a no-op wipe of nothing', async () => {
+  test('no canvas dirs → an empty (but valid) tar and a zero clock', async () => {
     const src = mk('cvempty');
-    const dst = mk('cvempty_dst');
     try {
       mkdirSync(src, { recursive: true });
-      mkdirSync(dst, { recursive: true });
-      const bytes = await tarCanvasDirs(src);
-      await extractCanvasDirs(bytes, dst); // must not throw
+      expect((await tarCanvasDirs(src)).length).toBeGreaterThan(0); // a valid empty archive
       expect(await maxMtimeCanvasDirs(src)).toBe(0);
     } finally {
-      for (const d of [src, dst]) if (existsSync(d)) rmSync(d, { recursive: true, force: true });
+      if (existsSync(src)) rmSync(src, { recursive: true, force: true });
     }
   });
 

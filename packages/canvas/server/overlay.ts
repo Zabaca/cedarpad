@@ -33,17 +33,9 @@ export async function tarSubtree(dir: string): Promise<Uint8Array> {
   return bytes;
 }
 
-/** Replace the subtree at `dir` with the tar snapshot. Wipes tracked entries
- * first (keeping image-resident node_modules/.git) so a committed file the agent
- * deleted stays deleted, then extracts the complete snapshot over the top. */
-export async function extractOverlay(bytes: Uint8Array, dir: string): Promise<void> {
-  await run([
-    'find', dir, '-mindepth', '1', '-maxdepth', '1',
-    '!', '-name', 'node_modules', '!', '-name', '.git',
-    '-exec', 'rm', '-rf', '{}', '+',
-  ]);
-  await run(['tar', '-xf', '-', '-C', dir], bytes);
-}
+// The extract half went with the boot restore (#366): nothing reads a content archive, so
+// nothing unpacks one. It was wipe-then-extract, which is why a restore that ran against a
+// stale or empty archive could clear a tree the image had populated.
 
 // ── Per-canvas component dirs (ADR-0014) ────────────────────────────────────
 // Every canvas own dir is `src/canvas-<id>/components/`; the platform base
@@ -74,15 +66,6 @@ export async function tarCanvasDirs(srcRoot: string): Promise<Uint8Array> {
   if ((await proc.exited) !== 0)
     throw new Error(`tar create failed: ${await new Response(proc.stderr).text()}`);
   return bytes;
-}
-
-/** Replace ALL canvas own dirs with the tar snapshot: wipe the existing ones (so a
- * deleted canvas dir stays deleted), keep the platform base + app code, extract. */
-export async function extractCanvasDirs(bytes: Uint8Array, srcRoot: string): Promise<void> {
-  for (const dir of await listCanvasDirs(srcRoot)) {
-    await run(['rm', '-rf', join(srcRoot, dir)]);
-  }
-  await run(['tar', '-xf', '-', '-C', srcRoot], bytes);
 }
 
 /** Newest mtime (ms) across every canvas own dir (the flushIfDirty guard for the

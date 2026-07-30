@@ -29,12 +29,16 @@ URL=${CANVAS_URL:-https://app.cedarpad.com}
 EXPECT=${1:-}
 # STALE_MS is 90s; wait past it with margin so the reaper has actually run.
 IDLE=${IDLE_SECONDS:-120}
-# A cold boot restores the workspace from R2 before serving (scripts/container-start.ts),
-# so it is slow by nature. a24676b allows 120s before killProcess; allow more than that.
+# a24676b allows 120s before killProcess; allow more than that.
 BOOT_TIMEOUT=${BOOT_TIMEOUT:-300}
-# A genuine cold boot restores the workspace from R2 first and took 8s in production. A
-# sub-2s response means the container was already warm and this check ran vacuously.
-MIN_COLD_SECONDS=${MIN_COLD_SECONDS:-2}
+# A DURATION FLOOR IS NO LONGER EVIDENCE OF COLDNESS (#366). This used to require ≥2s on the
+# grounds that "a genuine cold boot restores the workspace from R2 first and took 8s in
+# production" — but boot restores nothing now (ADR-0022 decision 5: workspace content is
+# Records, materialized on demand), so a fast cold boot is the expected outcome and the floor
+# would fail a healthy deploy. The instance-count gate below is the real proof, and it reads
+# the control plane rather than inferring from a stopwatch. Set MIN_COLD_SECONDS to re-arm the
+# floor for a one-off investigation.
+MIN_COLD_SECONDS=${MIN_COLD_SECONDS:-0}
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)              # packages/canvas/scripts (absolute)
 REPO_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
@@ -102,9 +106,8 @@ if [ "$COLD" = "?" ]; then
   exit 1
 fi
 
-if [ "$ELAPSED" -lt "$MIN_COLD_SECONDS" ]; then
-  echo "❌ NOT A COLD BOOT — responded in ${ELAPSED}s, which is implausibly fast."
-  echo "   A genuine cold boot restores the workspace from R2 and took 8s in production."
+if [ "$MIN_COLD_SECONDS" -gt 0 ] && [ "$ELAPSED" -lt "$MIN_COLD_SECONDS" ]; then
+  echo "❌ NOT A COLD BOOT — responded in ${ELAPSED}s, under the MIN_COLD_SECONDS floor you set."
   echo "   This measured a WARM hit, not a cold boot. Force a stop with:"
   echo "     curl -X POST $URL/__recycle"
   echo "   then re-run this script."
