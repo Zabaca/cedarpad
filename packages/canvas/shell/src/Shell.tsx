@@ -11,6 +11,7 @@ import { InboxStage } from './inbox/Inbox';
 import { JobsStage } from './jobs/Jobs';
 import { SettingsStage } from './settings/Settings';
 import { ComponentsStage } from './components/Components';
+import { applyCanvasOrder, moved } from './canvas-order';
 import { type Stage, stageFromUrl } from './stage';
 import { createStageMemory } from './stage-memory';
 
@@ -504,6 +505,10 @@ type Registry = {
   workspaceId: string;
   canvases: CanvasEntry[];
   setCanvases: React.Dispatch<React.SetStateAction<CanvasEntry[]>>;
+  /** The hand-arranged picker order (shell/src/canvas-order.ts). A HINT: it can name
+   *  deleted canvases and will not know about ones created since it was written. */
+  canvasOrder: string[];
+  setCanvasOrder: React.Dispatch<React.SetStateAction<string[]>>;
   reload: () => Promise<void>;
   loaded: boolean;
 };
@@ -511,21 +516,23 @@ type Registry = {
 function useCanvasRegistry(): Registry {
   const [workspaceId, setWorkspaceId] = useState('');
   const [canvases, setCanvases] = useState<CanvasEntry[]>([]);
+  const [canvasOrder, setCanvasOrder] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const reload = useCallback(async () => {
     const r = await fetch('/api/canvases', { credentials: 'same-origin' }).catch(() => null);
     if (!r?.ok) return; // edge offline — leave the list as-is
-    const d = (await r.json()) as { workspaceId: string; canvases: CanvasEntry[] };
+    const d = (await r.json()) as { workspaceId: string; canvases: CanvasEntry[]; canvasOrder?: string[] };
     setWorkspaceId(d.workspaceId);
     setCanvases(d.canvases);
+    setCanvasOrder(d.canvasOrder ?? []);
     setLoaded(true);
   }, []);
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  return { workspaceId, canvases, setCanvases, reload, loaded };
+  return { workspaceId, canvases, setCanvases, canvasOrder, setCanvasOrder, reload, loaded };
 }
 
 /** Dock memory minus one canvas's slot (undock / the docked card was deleted). */
@@ -533,7 +540,11 @@ const withoutDock = (d: DockMemory, canvasId: string): DockMemory =>
   Object.fromEntries(Object.entries(d).filter(([k]) => k !== canvasId));
 
 function CanvasStage({ registry }: { registry: Registry }) {
-  const { workspaceId: wsId, canvases, setCanvases, reload: load, loaded } = registry;
+  const { workspaceId: wsId, canvases, setCanvases, canvasOrder, setCanvasOrder, reload: load, loaded } = registry;
+  // Which row is being dragged, and which it is currently over — the only state a native
+  // HTML5 drag needs beyond the list itself.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
   // The selected canvas is a URL, so a reload/back-button lands back on the same open canvas.
   const [selected, setSelected] = useState<string | null>(() => canvasFromUrl(window.location.search));
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -606,7 +617,37 @@ function CanvasStage({ registry }: { registry: Registry }) {
   // The list always offers the legacy Default canvas (no registry row) so you can return to it.
   // Locked rows (ADR-0016 — someone else's private canvas, owner-only metadata) are never
   // pickable; they surface in Settings' manage list instead.
-  const canvasList: CanvasEntry[] = [{ id: DEFAULT_CANVAS_ID, name: 'Default' }, ...canvases.filter((c) => !c.locked)];
+  // The order is applied HERE, after Default is synthesized in — that is the whole reason
+  // it is an id array rather than a sort column: `default` has no registry row, so the
+  // server could not place it, but the client can because by this point it is just an id.
+  const canvasList: CanvasEntry[] = applyCanvasOrder(canvasOrder, [
+    { id: DEFAULT_CANVAS_ID, name: 'Default' },
+    ...canvases.filter((c) => !c.locked),
+  ]);
+
+  // Reorder by drag. The new arrangement is applied LOCALLY FIRST and then persisted: a
+  // dropped row that snaps back while a fetch is in flight reads as a failed drag, and the
+  // list is small enough that re-fetching to confirm would be the slower, worse answer.
+  // A failed write reloads, which restores the server's order rather than leaving the
+  // screen disagreeing with the database.
+  const reorder = (fromId: string, toId: string) => {
+    const ids = canvasList.map((c) => c.id);
+    const from = ids.indexOf(fromId);
+    const to = ids.indexOf(toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = moved(ids, from, to);
+    setCanvasOrder(next);
+    void fetch('/api/canvases', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ order: next }),
+    })
+      .then((r) => {
+        if (!r.ok) void load();
+      })
+      .catch(() => void load());
+  };
 
   // A URL can name a canvas that no longer exists (deleted elsewhere, stale bookmark). Only
   // clear it once the registry has actually loaded — clearing before then would drop a valid
@@ -692,8 +733,33 @@ function CanvasStage({ registry }: { registry: Registry }) {
           {canvasList.map((c) => (
             <li
               key={c.id}
-              className={`page-row${c.id === selected ? ' active' : ''}`}
+              className={`page-row${c.id === selected ? ' active' : ''}${dragId === c.id ? ' dragging' : ''}${overId === c.id && dragId !== c.id ? ' drop-target' : ''}`}
               onClick={() => setSelected(c.id)}
+              // Native HTML5 drag — the list is a dozen rows, so a drag library would be
+              // more code and more behaviour than the feature is.
+              draggable={editingId !== c.id}
+              onDragStart={(e) => {
+                setDragId(c.id);
+                e.dataTransfer.effectAllowed = 'move';
+                // Firefox starts no drag at all without data set on the transfer.
+                e.dataTransfer.setData('text/plain', c.id);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault(); // the default is "reject the drop"
+                e.dataTransfer.dropEffect = 'move';
+                setOverId(c.id);
+              }}
+              onDragLeave={() => setOverId((id) => (id === c.id ? null : id))}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragId) reorder(dragId, c.id);
+                setDragId(null);
+                setOverId(null);
+              }}
+              onDragEnd={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
             >
               {editingId === c.id ? (
                 <input

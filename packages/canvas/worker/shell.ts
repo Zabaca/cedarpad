@@ -2,7 +2,8 @@ import { z } from 'zod';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
-import { createWorkspace, getWorkspace, listWorkspaces } from '../web-poc/lib/db/queries/workspaces.ts';
+import { createWorkspace, getWorkspace, listWorkspaces, setCanvasOrder } from '../web-poc/lib/db/queries/workspaces.ts';
+import { parseCanvasOrder } from '../shell/src/canvas-order.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
@@ -55,6 +56,8 @@ export async function handleWorkspacesApi(request: Request, env: Env, user: Gate
 // owner — the manage-not-read list (name + creator, never openable). Selectors must
 // exclude locked rows.
 const CreateCanvasInput = z.object({ name: z.string().trim().min(1).max(100) });
+/** The picker order. Bounded so a bad client cannot write an unbounded blob into the row. */
+const CanvasOrderInput = z.object({ order: z.array(z.string().min(1)).max(500) });
 const PatchCanvasInput = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   visibility: z.enum(['workspace', 'private']).optional(),
@@ -144,9 +147,21 @@ export async function handleCanvasesApi(
       const canvases: CanvasView[] = rows
         .filter((c) => !canvasHiddenFrom(c, user.id) || listOwner)
         .map(view);
-      return Response.json({ workspaceId: listWorkspaceId, canvases });
+      // The hand-arranged picker order rides along with the list it orders — one round
+      // trip, and no window in which the rows have arrived but their arrangement has not.
+      return Response.json({ workspaceId: listWorkspaceId, canvases, canvasOrder: parseCanvasOrder(listWs?.canvasOrder) });
     }
     if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
+    // PUT on the COLLECTION sets that order. Deliberately not `/api/canvases/order`, which
+    // the per-canvas route below would swallow — its `([^/]+)` would read "order" as a
+    // canvas id and 404. Any member may reorder: it is shared workspace furniture, the same
+    // standing every member has to create a canvas.
+    if (request.method === 'PUT') {
+      const parsed = CanvasOrderInput.safeParse(await request.json().catch(() => null));
+      if (!parsed.success) return Response.json({ error: 'invalid order' }, { status: 400 });
+      await setCanvasOrder(database, workspaceId, parsed.data.order);
+      return Response.json({ ok: true });
+    }
     if (request.method === 'POST') {
       const parsed = CreateCanvasInput.safeParse(await request.json().catch(() => null));
       if (!parsed.success) return Response.json({ error: 'invalid name' }, { status: 400 });
