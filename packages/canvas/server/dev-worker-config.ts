@@ -61,9 +61,11 @@ export function devWorkerConfig(
   base: Config,
   packageDir: string,
   origin: string,
-  /** E2E ONLY (#276): the bridge's origin, so the edge can proxy a workspace request to it —
-   *  local dev drops `containers` below, so there is nothing else to proxy INTO. Omitted (a
-   *  plain `bun run dev`) ⇒ neither var is emitted, so `localBridgeOrigin` stays null. */
+  /** E2E ONLY (#276): what stands in for the container, so the edge can proxy a workspace
+   *  request to it — local dev drops `containers` below, so there is nothing else to proxy
+   *  INTO. That stand-in is VITE (which proxies `/api` to the bridge, exactly as the single
+   *  exposed port does inside a real container), not the bridge alone: the bridge serves the
+   *  API but not the pad HTML. Omitted (a plain `bun run dev`) ⇒ neither var is emitted. */
   localBridge?: string | null,
 ): Config {
   const { routes, triggers, containers, env, ...rest } = base;

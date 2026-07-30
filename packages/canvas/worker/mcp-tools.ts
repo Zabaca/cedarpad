@@ -62,6 +62,12 @@ export const ReadCanvasInput = z.object({
   workspace_id: z.string().min(1),
   canvas_id: z.string().min(1).optional(),
 });
+/** Reading a canvas may narrow to ONE page. Only `read_canvas` takes this — the other tools
+ *  built on `ReadCanvasInput` address a library or a set of ids, neither of which is
+ *  page-scoped. */
+export const ReadCanvasPageInput = ReadCanvasInput.extend({
+  page: z.string().min(1).optional(),
+});
 export const ListComponentsInput = ReadCanvasInput;
 export const ReadComponentInput = ReadCanvasInput.extend({ module: ComponentName });
 // canvas_id is REQUIRED here (unlike the read paths' default-canvas fallback): a write
@@ -277,10 +283,13 @@ export function buildMcpTools(deps: McpToolDeps) {
     },
 
     /** Read a canvas's full state (every shape) directly — no agent turn needed. */
-    async readCanvas(input: z.infer<typeof ReadCanvasInput>) {
+    async readCanvas(input: z.infer<typeof ReadCanvasPageInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, BRIDGE_ROUTES.canvas, { headers });
+      // The filter runs at the BRIDGE, not here: narrowing after the fact would still drag
+      // the whole canvas across this hop, and the hop is what the response limit measures.
+      const path = input.page ? `${BRIDGE_ROUTES.canvas}?page=${encodeURIComponent(input.page)}` : BRIDGE_ROUTES.canvas;
+      return bridgeJson(ws.id, path, { headers });
     },
 
     // The component library over the wire: the same list/read/write the in-canvas agent

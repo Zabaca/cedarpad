@@ -223,6 +223,23 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     await expect(tools.readCanvas({ workspace_id: WS, canvas_id: 'cv_ghost' })).rejects.toThrow(/canvas/);
   });
 
+  test('read_canvas narrows to one page at the BRIDGE, so the whole canvas never crosses this hop', async () => {
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'Paged' });
+    bridgeCalls = [];
+    bridgeResponses = { '/api/canvas?page=page%3Atwo': { version: 1, shapes: [], pages: [] } };
+
+    await tools.readCanvas({ workspace_id: WS, canvas_id: board.id, page: 'page:two' });
+    // Filtering after the response arrives would still drag every shape across this hop —
+    // and the hop is exactly what the MCP response limit measures.
+    expect(bridgeCalls[0]?.path).toBe('/api/canvas?page=page%3Atwo');
+
+    // No page named: the request is byte-identical to what it always was.
+    bridgeCalls = [];
+    bridgeResponses = { '/api/canvas': { version: 1, shapes: [] } };
+    await tools.readCanvas({ workspace_id: WS, canvas_id: board.id });
+    expect(bridgeCalls[0]?.path).toBe('/api/canvas');
+  });
+
   test('read_transcript restores the session (inbox open) then returns the full settled events — the user’s own conversations only', async () => {
     const chatId = 'mcp_full_transcript';
     const conv = await conversations.create(database, {

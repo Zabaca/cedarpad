@@ -109,6 +109,9 @@ export type CanvasMutation = z.infer<typeof CanvasMutation>;
 export const CanvasMutationResult = z.object({
   version: z.number(),
   shapes: z.array(CanvasShapeSchema),
+  /** The room's pages, first-to-last — what a caller reads to learn which ids `page`
+   *  accepts. Optional so a state built by the in-memory store still parses. */
+  pages: z.array(z.object({ id: Id, name: z.string() })).optional(),
 });
 export type CanvasMutationResult = z.infer<typeof CanvasMutationResult>;
 

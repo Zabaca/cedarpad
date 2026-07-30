@@ -10,6 +10,7 @@ import { resolve } from 'node:path';
 import type { CanvasState } from '../src/shapes.ts';
 import { bumpAllComponents, createShapesOp, nextComponentRev, placeComponentOp, updateShapesOp } from '../src/canvas-ops.ts';
 import type { OpResult } from '../src/canvas-ops.ts';
+import { shapesOnPage } from '../src/current-page.ts';
 import { canvasAssetFetcher, canvasRoomOpener } from './canvas-room.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
 import { BlobStore, selectBackend } from './blob-store.ts';
@@ -834,9 +835,17 @@ export async function handleRequest(req: Request): Promise<Response> {
       // this process's stale copy while every browser looks at a different canvas.
       try {
         const store = await openCanvasRoom(canvasIdFrom(req, url));
-        return json(store.getState() satisfies CanvasState);
+        const state = store.getState();
+        // `?page=` narrows the answer to one page. A whole canvas is more than an agent's
+        // response budget on a busy board — the failure it fixes is a read that overruns
+        // the MCP limit, whose only workaround was dumping the canvas to a file. The PAGE
+        // LIST is always returned in full: it is how the caller learns what to ask for.
+        const page = url.searchParams.get('page') ?? undefined;
+        return json({ ...state, shapes: shapesOnPage(state.shapes, state.pages ?? [], page) } satisfies CanvasState);
       } catch (e) {
-        return json({ error: (e as Error).message }, 502);
+        // An unknown page is the caller's mistake, not the room's — 400, with the list.
+        const message = (e as Error).message;
+        return json({ error: message }, message.startsWith('no page ') ? 400 : 502);
       }
     }
     // Public build stamp (#74): the SHA baked into this container image, and NOTHING

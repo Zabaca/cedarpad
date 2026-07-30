@@ -10,6 +10,7 @@ import { canvasFromUrl, urlWithCanvas } from './canvas-url';
 import { InboxStage } from './inbox/Inbox';
 import { JobsStage } from './jobs/Jobs';
 import { SettingsStage } from './settings/Settings';
+import { ComponentsStage } from './components/Components';
 import { type Stage, stageFromUrl } from './stage';
 import { createStageMemory } from './stage-memory';
 
@@ -94,6 +95,18 @@ function IconSettings() {
 }
 
 // A play-in-a-square glyph for Jobs (trigger a background-agent run).
+function IconComponents() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="7.5" height="7.5" rx="1.5" />
+      <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" />
+      <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" />
+      <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
+    </svg>
+  );
+}
+
 function IconJobs() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -242,6 +255,7 @@ function MemberShell() {
           </Suspense>
         </div>
       )}
+      {stage === 'components' && <ComponentsStage workspaceId={registry.workspaceId} />}
       {stage === 'inbox' && <InboxStage workspaceId={registry.workspaceId} />}
       {stage === 'jobs' && <JobsStage />}
       {stage === 'settings' && <SettingsStage workspaceId={registry.workspaceId} />}
@@ -353,6 +367,7 @@ function Rail({
       </button>
       {railBtn('inbox', 'Inbox', <IconInbox />, stage === 'inbox' ? 0 : inboxUnseen)}
       {railBtn('canvas', 'Canvases', <IconCanvases />)}
+      {railBtn('components', 'Components', <IconComponents />)}
       {railBtn('notebook', 'Notebook', <IconNotebook />)}
       {railBtn('jobs', 'Jobs', <IconJobs />)}
       <div className="lp-rail-bottom">

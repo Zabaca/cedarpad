@@ -6,6 +6,7 @@ import type { ArrowShape, CanvasShape } from './shapes';
 import { SHAPE_SIZE_DEFAULTS } from './shapes';
 import type { CanvasStore } from './store';
 import { normalizeShape } from './normalize';
+import { shapesOnPage } from './current-page';
 import type { DataSource } from '../shared/mart-contract';
 
 export interface OpResult {
@@ -144,10 +145,24 @@ function redactForRead(s: CanvasShape): CanvasShape | Record<string, unknown> {
   return { ...rest, src: `<image data${size}; call read_image("${s.id}") to view>` };
 }
 
-export function readOp(store: CanvasStore): OpResult {
-  const shapes = store.getState().shapes;
-  if (shapes.length === 0) return { text: 'The canvas is empty.' };
-  return { text: `${shapes.length} shape(s):\n${JSON.stringify(shapes.map(redactForRead), null, 2)}` };
+export function readOp(store: CanvasStore, page?: string): OpResult {
+  const state = store.getState();
+  const pages = state.pages ?? [];
+  let shapes: CanvasShape[];
+  try {
+    shapes = shapesOnPage(state.shapes, pages, page);
+  } catch (e) {
+    return { text: `Error: ${(e as Error).message}`, isError: true };
+  }
+  // The page preamble appears ONLY on a canvas that actually has more than one page.
+  // Everywhere else there is nothing to choose between, and a line saying so would spend
+  // tokens on every read of every single-page canvas — which is nearly all of them.
+  const header =
+    pages.length > 1
+      ? `Pages: ${pages.map((p) => `${p.id} (${p.name})`).join(', ')}${page ? ` — showing ${page} only.` : ' — showing ALL of them; pass `page` to read just one.'}\n`
+      : '';
+  if (shapes.length === 0) return { text: `${header}${page ? `Page ${page} is empty.` : 'The canvas is empty.'}` };
+  return { text: `${header}${shapes.length} shape(s):\n${JSON.stringify(shapes.map(redactForRead), null, 2)}` };
 }
 
 /** The `src` of an image shape, or null if not an image / not found / no pixels. Since
@@ -345,6 +360,10 @@ export interface PlaceComponentInput {
   h?: number;
   data?: Record<string, unknown>;
   rev: number;
+  /** The page to land on. Absent means the canvas's first page (src/shapes.ts) — which is
+   * what every caller meant before pages were reachable, so omitting it is unchanged
+   * behavior rather than a default being applied. */
+  page?: string;
   /** The mart this instance renders (#239 / ADR-0017: a component names a mart, never
    * a URL). Optional and passed straight through to normalizeShape — no dataSource is
    * the existing static-data behavior, unchanged. */
@@ -358,8 +377,13 @@ export function placeComponentOp(store: CanvasStore, input: PlaceComponentInput,
     // parentId, so rebuilding from input alone silently dropped frame membership (and the
     // frame-relative coords then rendered as page coords — the post-deploy scatter bug).
     const existing = input.id ? store.getState().shapes.find((s) => s.id === input.id) : undefined;
+    // A re-place that names no page keeps the one the instance is already on, for the same
+    // reason `parentId` is carried over: the input is a placement, not a full description,
+    // so rebuilding from it alone would silently move the card to page one.
+    const page = input.page ?? existing?.page;
     const shape = normalizeShape({
       ...(existing?.parentId ? { parentId: existing.parentId } : {}),
+      ...(page ? { page } : {}),
       type: 'component',
       id: input.id,
       x: input.x,

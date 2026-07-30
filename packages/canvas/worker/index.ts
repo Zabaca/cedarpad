@@ -11,6 +11,7 @@ import { handleConnectorSecretsApi } from './connector-secrets.ts';
 import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo, workspaceRepoSet } from './github-connection.ts';
 import { handleAdminApi } from './admin.ts';
 import { handleComponentsApi } from './components-api.ts';
+import { handleComponentInventory, INVENTORY_PATH } from './component-inventory-api.ts';
 import { handleMembersApi } from './members.ts';
 import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
@@ -912,6 +913,19 @@ export default {
         workspaceId,
         request.headers.get(CANVAS_ID_HEADER) ?? DEFAULT_CANVAS_ID,
       );
+    }
+
+    // The workspace-wide Component inventory (the Components stage). Spans canvases, which
+    // is the whole point: the palette and gallery above are scoped to the canvas you have
+    // open, so a Component generated on another canvas is invisible until you go looking.
+    if (url.pathname === INVENTORY_PATH) {
+      // `?workspace=` wins over the cookie, matching `/api/canvases`. The rail knows which
+      // workspace it is showing; the cookie is a separate piece of state that can lag it,
+      // and an inventory answered for a DIFFERENT workspace than the one on screen would
+      // put the wrong Components in front of a delete button. Access is re-checked inside
+      // either way, so naming a workspace is never a way into one.
+      const named = url.searchParams.get('workspace');
+      return handleComponentInventory(request, env, createDbForWorker(env as unknown as Bindings), user, named || workspaceId);
     }
 
     // Force the container to recycle so a freshly deployed image takes effect (CF
