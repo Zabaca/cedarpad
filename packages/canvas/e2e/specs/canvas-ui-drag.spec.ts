@@ -43,6 +43,50 @@ async function toScreenPoint(page: import('@playwright/test').Page, pagePoint: P
   return { x: box.x + screenRelative.x, y: box.y + screenRelative.y };
 }
 
+/**
+ * Where on the SCREEN this spec is allowed to press the mouse — a band clear of every fixed
+ * overlay the pad draws over the canvas: the toolbar (top-left), the properties rail (right),
+ * and the chat starter (bottom-center).
+ *
+ * These were page coordinates (600,600 → 800,750) until #388's first green run. Two things had
+ * quietly invalidated them: #347 widened the bottom-center chat control from a ~120px "＋ New
+ * chat" button into a 260px prompt, which put `button.chat-starter` directly under the draw's
+ * start point, and the end point (y=750) was below the 720px viewport entirely. The pointer
+ * pressed on a DOM button instead of the canvas, so no rectangle was ever drawn and every
+ * assertion after it failed on an empty store — a broken test that looked like broken sync.
+ *
+ * Screen-space, not page-space, because what has to be avoided is fixed to the viewport, not
+ * to the document. `bareSurface` asserts the band really is bare before each draw, so the next
+ * overlay to move fails here with "the draw would land on <element>" rather than downstream.
+ */
+const DRAW_BAND = { from: { x: 180, y: 220 }, to: { x: 330, y: 340 }, focus: { x: 180, y: 450 } };
+
+/** What the DOM says is at a viewport point — the check that keeps the band honest. */
+async function elementAt(page: import('@playwright/test').Page, p: PagePoint): Promise<string> {
+  return await page.evaluate(([x, y]) => {
+    const el = document.elementFromPoint(x as number, y as number) as HTMLElement | null;
+    return el ? `${el.tagName.toLowerCase()}.${String(el.className).slice(0, 60)}` : 'nothing (outside the viewport)';
+  }, [p.x, p.y]);
+}
+
+/**
+ * Put bare canvas under `DRAW_BAND` and prove it is bare.
+ *
+ * The pan is scene setup, not the behaviour under test: a canvas is born with a `chat` shape at
+ * page (300,130), so drawing near the origin means drawing on a card. Moving the camera far from
+ * it leaves the band showing nothing but canvas — while the drawing itself stays what this spec
+ * exists for, a real pointer on a real surface.
+ */
+async function bareSurface(page: import('@playwright/test').Page) {
+  await page.evaluate(() => {
+    (window as any).__canvasEditor.setCamera({ x: -2000, y: -2000, z: 1 });
+  });
+  await page.waitForTimeout(100);
+  for (const [name, point] of Object.entries(DRAW_BAND)) {
+    expect(await elementAt(page, point), `the ${name} point of the draw must be bare canvas`).toContain('tl-background');
+  }
+}
+
 /** The only `geo` (rectangle/ellipse/etc.) shape on the page — the one this spec drew. */
 async function readGeoShape(page: import('@playwright/test').Page): Promise<GeoShapeRecord> {
   const shapes = await page.evaluate(
@@ -56,16 +100,16 @@ async function readGeoShape(page: import('@playwright/test').Page): Promise<GeoS
   return shapes[0] as GeoShapeRecord;
 }
 
-/** Draw a rectangle by dragging the pointer from `from` to `to`, in page space. */
-async function drawRectangle(page: import('@playwright/test').Page, from: PagePoint, to: PagePoint) {
-  const start = await toScreenPoint(page, from);
-  const end = await toScreenPoint(page, to);
+/** Draw a rectangle by dragging the pointer across `DRAW_BAND`, on canvas proven to be bare. */
+async function drawRectangle(page: import('@playwright/test').Page) {
+  await bareSurface(page);
+  const { from: start, to: end, focus } = DRAW_BAND;
   // tldraw's own keyboard shortcuts only fire once the editor container has DOM focus (hence
   // its "Move focus to canvas" a11y skip-link). Focus away from the drag's own start point and
   // pause briefly after — clicking right where the drag begins risks the browser's own
   // double-click detection (time + position, blind to the keypress in between) turning the
   // drag into a click-to-place instead.
-  await page.mouse.click(start.x - 150, start.y - 150);
+  await page.mouse.click(focus.x, focus.y);
   await page.keyboard.press('r'); // the rectangle tool's own shortcut (tldraw useTools.tsx)
   await page.waitForTimeout(200);
   await page.mouse.move(start.x, start.y);
@@ -103,7 +147,7 @@ test('drawing a rectangle and dragging it updates the synced store, and the move
   await page.waitForTimeout(2000); // let the sync session connect before drawing into it
 
   // 1) Create: a real toolbar shortcut + a real pointer drag on the canvas surface.
-  await drawRectangle(page, { x: 600, y: 600 }, { x: 800, y: 750 });
+  await drawRectangle(page);
   const created1 = await readGeoShape(page);
   const initial = { x: created1.x, y: created1.y };
 
@@ -174,7 +218,7 @@ test('two browsers on one canvas: dragging a shape in A moves it live in B', asy
   await pageA.waitForTimeout(2000); // let both sync sessions connect before A draws
 
   // A draws the rectangle with a real pointer drag.
-  await drawRectangle(pageA, { x: 600, y: 600 }, { x: 800, y: 750 });
+  await drawRectangle(pageA);
   const drawnInA = await readGeoShape(pageA);
 
   // B, which never touched a tool or a mouse, converges on the same shape via the room —
