@@ -13,6 +13,7 @@ import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolver.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { notifyInboxChanged } from './workspace-events.ts';
 import {
   CANVAS_ID_HEADER,
   DEV_AGENT_GIT_TOKEN_HEADER,
@@ -136,7 +137,13 @@ export async function handleInboxBridge(
   // alive beat, or interrupt). Fire-and-forget + best-effort: a flip failure must never block
   // or break the proxied (SSE) send.
   if (isChatSend) {
-    void conversations.reply(database, convId).catch(() => {});
+    // …and ring the workspace's events hub once the flip lands (#383), so every open Shell's
+    // badge reflects a HUMAN reply as promptly as it reflects an agent's turn. Chained onto
+    // the same fire-and-forget: the doorbell must not delay a (streaming) send either.
+    void conversations
+      .reply(database, convId)
+      .then(() => notifyInboxChanged(env.WORKSPACE_EVENTS, conv.workspaceId))
+      .catch(() => {});
   }
 
   // Strip the routing prefix so only the bridge sub-path (query preserved) reaches the
@@ -183,7 +190,10 @@ export async function handleInboxBridge(
   if (isOpenConversation) {
     // Opening a thread is reading it, not activity. Fire-and-forget + best-effort, exactly as
     // the bridge did before: a failed clear must never block opening the chat.
-    void conversations.markRead(database, convId).catch(() => {});
+    void conversations
+      .markRead(database, convId)
+      .then(() => notifyInboxChanged(env.WORKSPACE_EVENTS, conv.workspaceId))
+      .catch(() => {});
     proxied.headers.set(
       INBOX_CONVERSATION_HEADER,
       encodeForwardedConversation({ id: conv.id, sessionId: conv.sessionId, ownerRef: conv.ownerRef }),
@@ -209,6 +219,10 @@ export async function handleInboxBridge(
       const status = pairing.error === 'not_found' ? 404 : pairing.error === 'already_linked' ? 409 : 400;
       return Response.json({ error: pairing.error }, { status });
     }
+    // The chat→canvas edge is what a private canvas hides a chat by (ADR-0016), so pairing
+    // can change who counts this row. Awaited, unlike the two flips above: the row work has
+    // already blocked this request anyway, and a refusal never got here.
+    await notifyInboxChanged(env.WORKSPACE_EVENTS, conv.workspaceId);
     proxied.headers.set(
       INBOX_PAIRING_HEADER,
       encodeForwardedPairing({

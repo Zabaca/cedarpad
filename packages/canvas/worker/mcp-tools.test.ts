@@ -33,9 +33,12 @@ let skillUploads: Array<{ workspaceId: string; name: string; files: number }> = 
 let bridgeCalls: Array<{ workspaceId: string; path: string; method: string; headers: Record<string, string>; body?: unknown }> = [];
 // Canned bridge responses by path — set per test; unset paths 404.
 let bridgeResponses: Record<string, unknown> = {};
+/** Which workspaces the tools rang the events hub for (#383). */
+const rung: string[] = [];
 const tools = buildMcpTools({
   db: database,
   userId: 'u_1',
+  notify: async (workspaceId) => void rung.push(workspaceId),
   proxySend: async (workspaceId, chatId, message, canvasId) => {
     sends.push({ workspaceId, chatId, message, canvasId });
     return new Response(JSON.stringify({ ok: true }), { status: 202 });
@@ -401,6 +404,21 @@ describe('assign_conversation — advisory assignment over MCP (full parity)', (
 
     const cleared = await tools.assignConversation({ chat_id: 'mcp_assign', user_id: null });
     expect(cleared.assigned_to).toBeNull();
+  });
+
+  // #383: MCP is a third writer of the conversations table, alongside the edge routes and
+  // the container's platform RPC. A claim made from an agent has to reach the badge like
+  // one made from the Inbox does.
+  test('an MCP assignment rings the conversation’s workspace events hub', async () => {
+    rung.length = 0;
+    await tools.assignConversation({ chat_id: 'mcp_assign', user_id: 'u_2' });
+    expect(rung).toEqual([WS]);
+  });
+
+  test('a REFUSED assignment rings nothing', async () => {
+    rung.length = 0;
+    await expect(tools.assignConversation({ chat_id: 'mcp_assign', user_id: 'u_ghost' })).rejects.toThrow();
+    expect(rung).toEqual([]);
   });
 
   test('a non-member target errors; a conversation outside the user’s workspaces errors', async () => {

@@ -7,7 +7,7 @@ import * as schema from '../web-poc/lib/db/schema.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { createWorkspace, setInboxReadAt } from '../web-poc/lib/db/queries/workspaces.ts';
-import { inboxBadgeSource } from './inbox-badge.ts';
+import { inboxBadgeSource, inboxBadgeStream, type HubSocket } from './inbox-badge.ts';
 
 // What the nav-badge stream COSTS per connected tab, measured rather than asserted (#383).
 // The stream used to re-read the whole inbox every 10s per tab: 187,855 read queries and
@@ -185,5 +185,152 @@ describe('inboxBadgeSource — the badge stream reads D1 only when something mov
 
     expect((await inboxBadgeSource(database, ws, USER).poll())?.count).toBe(1);
     expect((await inboxBadgeSource(database, ws, 'someone_else').poll())?.count).toBe(0);
+  });
+});
+
+// The stream around the source: what drives it, and what it writes. Real timers with tiny
+// intervals rather than a fake clock — the thing being pinned is that a NOTIFICATION beats
+// the timers, so the timers have to be able to fire and lose.
+function fakeHub() {
+  const listeners = new Map<string, ((ev: { data?: string }) => void)[]>();
+  let closed = false;
+  const socket: HubSocket = {
+    addEventListener: (type, cb) => listeners.set(type, [...(listeners.get(type) ?? []), cb as never]),
+    close: () => {
+      closed = true;
+    },
+  };
+  return {
+    socket,
+    get closed() {
+      return closed;
+    },
+    emit: (type: string, data?: string) => listeners.get(type)?.forEach((cb) => cb({ data })),
+  };
+}
+
+/** Read frames until `count` of them have arrived, or the stream ends. */
+async function readFrames(stream: ReadableStream<Uint8Array>, count: number): Promise<string[]> {
+  const reader = stream.getReader();
+  const dec = new TextDecoder();
+  const frames: string[] = [];
+  while (frames.length < count) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    frames.push(dec.decode(value));
+  }
+  void reader.cancel().catch(() => {});
+  return frames;
+}
+
+describe('inboxBadgeStream — the hub drives it, the timers only back it up', () => {
+  const slowTimers = { keepAliveMs: 60_000, safetyNetMs: 60_000 };
+
+  test('opens with the current badge, then pushes again the moment the hub says so', async () => {
+    const ws = (await createWorkspace(database, { name: 'Pushed live', ownerUserId: USER })).id;
+    const hub = fakeHub();
+    const stream = inboxBadgeStream(inboxBadgeSource(database, ws, USER), hub.socket, slowTimers);
+    const reader = stream.getReader();
+    const dec = new TextDecoder();
+
+    expect(dec.decode((await reader.read()).value)).toBe('data: {"count":0,"readAt":0}\n\n');
+
+    await conversations.create(database, { sessionId: 's_live', userId: USER, workspaceId: ws });
+    hub.emit('message', JSON.stringify({ topic: 'inbox' }));
+    // No timer has fired — with a 60s keep-alive this frame can only have come from the hub.
+    expect(dec.decode((await reader.read()).value)).toBe('data: {"count":1,"readAt":0}\n\n');
+    await reader.cancel();
+  });
+
+  test('a notice that changes nothing the badge counts writes no frame at all', async () => {
+    const ws = (await createWorkspace(database, { name: 'Quiet notice', ownerUserId: USER })).id;
+    const hub = fakeHub();
+    const stream = inboxBadgeStream(inboxBadgeSource(database, ws, USER), hub.socket, {
+      keepAliveMs: 25,
+      safetyNetMs: 60_000,
+    });
+    const [first, second] = await readFrames(stream, 2);
+    expect(first).toBe('data: {"count":0,"readAt":0}\n\n');
+    // The second frame is the keep-alive, not a repeat of the count — the notice fired but
+    // the number did not move.
+    hub.emit('message', JSON.stringify({ topic: 'inbox' }));
+    expect(second).toBe(': keep-alive\n\n');
+  });
+
+  test('an unparseable notice is ignored rather than pushed through', async () => {
+    const ws = (await createWorkspace(database, { name: 'Bad notice', ownerUserId: USER })).id;
+    const hub = fakeHub();
+    const stream = inboxBadgeStream(inboxBadgeSource(database, ws, USER), hub.socket, {
+      keepAliveMs: 25,
+      safetyNetMs: 60_000,
+    });
+    const reader = stream.getReader();
+    await reader.read(); // the opening badge
+
+    await conversations.create(database, { sessionId: 's_bad', userId: USER, workspaceId: ws });
+    hub.emit('message', 'not json');
+    hub.emit('message', JSON.stringify({ topic: 'presence' }));
+    // Whatever comes next is the keep-alive, not a badge pushed by a notice we could not read.
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe(': keep-alive\n\n');
+    await reader.cancel();
+  });
+
+  // The current 10s tick doubles as departed-client detection. An event-driven stream with
+  // no traffic would never notice a client that vanished, and those streams accumulate.
+  test('an idle stream still writes, so a departed client is still detected', async () => {
+    const ws = (await createWorkspace(database, { name: 'Idle', ownerUserId: USER })).id;
+    const stream = inboxBadgeStream(inboxBadgeSource(database, ws, USER), fakeHub().socket, {
+      keepAliveMs: 15,
+      safetyNetMs: 60_000,
+    });
+    const frames = await readFrames(stream, 3);
+    expect(frames.slice(1)).toEqual([': keep-alive\n\n', ': keep-alive\n\n']);
+  });
+
+  test('the safety net still lands a change the hub never reported', async () => {
+    const ws = (await createWorkspace(database, { name: 'Lost notice', ownerUserId: USER })).id;
+    const stream = inboxBadgeStream(inboxBadgeSource(database, ws, USER), fakeHub().socket, {
+      keepAliveMs: 60_000,
+      safetyNetMs: 15,
+    });
+    const reader = stream.getReader();
+    await reader.read(); // the opening badge
+
+    // Nobody rings the hub. The badge must still get there.
+    await conversations.create(database, { sessionId: 's_lost', userId: USER, workspaceId: ws });
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe('data: {"count":1,"readAt":0}\n\n');
+    await reader.cancel();
+  });
+
+  test('a stream with no hub at all still works — it is just as slow as it used to be', async () => {
+    const ws = (await createWorkspace(database, { name: 'Hubless', ownerUserId: USER })).id;
+    const stream = inboxBadgeStream(inboxBadgeSource(database, ws, USER), null, { keepAliveMs: 60_000, safetyNetMs: 15 });
+    const reader = stream.getReader();
+    await reader.read();
+    await conversations.create(database, { sessionId: 's_hubless', userId: USER, workspaceId: ws });
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe('data: {"count":1,"readAt":0}\n\n');
+    await reader.cancel();
+  });
+
+  test('cancelling the stream releases the hub socket — no subscriber outlives its tab', async () => {
+    const ws = (await createWorkspace(database, { name: 'Cancelled', ownerUserId: USER })).id;
+    const hub = fakeHub();
+    const stream = inboxBadgeStream(inboxBadgeSource(database, ws, USER), hub.socket, slowTimers);
+    const reader = stream.getReader();
+    await reader.read();
+    await reader.cancel();
+    expect(hub.closed).toBe(true);
+  });
+
+  // A code deploy restarts the hub and drops its sockets. Ending the stream is what makes
+  // that self-healing: EventSource reconnects, and the new stream subscribes to the new hub.
+  test('the hub going away ends the stream, so the client reconnects onto a fresh one', async () => {
+    const ws = (await createWorkspace(database, { name: 'Hub restart', ownerUserId: USER })).id;
+    const hub = fakeHub();
+    const stream = inboxBadgeStream(inboxBadgeSource(database, ws, USER), hub.socket, slowTimers);
+    const reader = stream.getReader();
+    await reader.read();
+    hub.emit('close');
+    expect((await reader.read()).done).toBe(true);
   });
 });

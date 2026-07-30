@@ -4,7 +4,8 @@ import { getWorkspace, setInboxReadAt } from '../web-poc/lib/db/queries/workspac
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
-import { inboxBadgeSource } from './inbox-badge.ts';
+import { inboxBadgeSource, inboxBadgeStream } from './inbox-badge.ts';
+import { notifyInboxChanged, subscribeToWorkspace } from './workspace-events.ts';
 import { orderInbox, viewToListOpts, type InboxItem } from './inbox-view.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
 import { resolveDevAgentRepo } from './github-connection.ts';
@@ -32,8 +33,22 @@ const AssignInput = z.object({ userId: z.string().min(1).nullable() });
 /** POST /api/inbox/:id/visibility body (ADR-0016): the chat's own flag, creator-only. */
 const VisibilityInput = z.object({ visibility: z.enum(['shared', 'private']) });
 
-/** How often /api/inbox/events re-reads the platform D1 per connected client. */
-export const INBOX_EVENTS_INTERVAL_MS = 10_000;
+/**
+ * How often an idle /api/inbox/events stream writes a comment frame. It reads NOTHING —
+ * its whole job is to notice a client that went away, which the old 10s recompute used to
+ * do as a side effect. Keep it comfortably under the ~60s idle timeout intermediaries
+ * apply to a quiet response body.
+ */
+export const INBOX_EVENTS_KEEPALIVE_MS = 30_000;
+
+/**
+ * How often a stream checks the watermark anyway, in case a notification never arrived.
+ * Ringing the hub is best-effort by construction (`notifyInboxChanged`) — the write has
+ * already committed by then — so without this a lost notice would leave a badge stale
+ * until the next change. One indexed row every five minutes is what that insurance costs:
+ * 12 rows per connected tab per hour, against the 5,760 the 10s recompute used to read.
+ */
+export const INBOX_EVENTS_SAFETY_NET_MS = 300_000;
 
 /** The caller's view of the inbox: rows scoped to the workspace, ADR-0016 visibility
  *  applied (a private chat that isn't theirs, or any chat on someone else's private
@@ -108,48 +123,38 @@ export async function handleInboxApi(
   // GET /api/inbox/events — SSE: pushes the caller's nav-badge count ({count, readAt})
   // whenever it changes, so every open Shell updates live. Per-user: visibility-filtered.
   //
-  // The edge still WATCHES the platform D1 rather than being told (writes come from both
-  // the edge and the container bridges), but the tick no longer recomputes the badge — it
-  // asks `inboxBadgeSource` for a cheap watermark first and only reads the inbox when
-  // something moved (#383). Latency is unchanged at one INBOX_EVENTS_INTERVAL_MS tick;
-  // what changes is that a quiet tick costs one indexed row instead of ~14.
+  // PUSHED, NOT POLLED (#383). The stream attaches to its workspace's events hub — one
+  // Durable Object per workspace, because Workers are stateless per isolate and a write
+  // landing on isolate B cannot otherwise reach a subscriber held on isolate A — and every
+  // conversation writer rings that hub after committing. The hub carries no count; it says
+  // "your inbox changed" and this stream re-reads. Badge latency is therefore one hub hop
+  // plus one D1 read, not the 10s tick it used to be.
+  //
+  // Two timers remain, and neither is the old recompute:
+  //   - keep-alive, which reads nothing and exists to notice a departed client;
+  //   - a five-minute watermark check, because ringing the hub is best-effort and a lost
+  //     notice must not strand the badge.
+  // Transport stays SSE: it is one-way server→client, the client already speaks it, and
+  // WebSocket would be more machinery for a number. The SSE body is held by the WORKER,
+  // not by the hub — DO hibernation is WebSocket-only, so a hub holding these streams
+  // would stay resident for as long as any tab anywhere had the app open.
   if (id === 'events' && !action) {
     if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
     const workspaceId = await activeWorkspaceId(request, database, user);
     if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
-    const enc = new TextEncoder();
     const source = inboxBadgeSource(database, workspaceId, user.id);
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const stream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        const tick = async () => {
-          try {
-            const badge = await source.poll();
-            // A tick with nothing to say still writes: the comment frame is what detects a
-            // client that went away (the enqueue below throws once nobody is reading).
-            controller.enqueue(enc.encode(badge ? `data: ${JSON.stringify(badge)}\n\n` : ': keep-alive\n\n'));
-          } catch {
-            // Client disconnected (enqueue threw) or a read failed: stop the loop.
-            if (timer) clearInterval(timer);
-            timer = null;
-            try {
-              controller.close();
-            } catch {
-              /* already closed */
-            }
-          }
-        };
-        void tick();
-        timer = setInterval(() => void tick(), INBOX_EVENTS_INTERVAL_MS);
-      },
-      cancel: () => {
-        if (timer) clearInterval(timer);
-        timer = null;
-      },
-    });
-    return new Response(stream, {
-      headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
-    });
+    // Attached before the response is returned, so no notice can slip between the first
+    // read and the subscription. Null when there is no hub (unit tests, a binding-less
+    // env): the stream then runs on its safety net alone, which is the old behaviour minus
+    // the cost, not a broken badge.
+    const hub = await subscribeToWorkspace(env.WORKSPACE_EVENTS, workspaceId);
+    return new Response(
+      inboxBadgeStream(source, hub, {
+        keepAliveMs: INBOX_EVENTS_KEEPALIVE_MS,
+        safetyNetMs: INBOX_EVENTS_SAFETY_NET_MS,
+      }),
+      { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' } },
+    );
   }
 
   // POST /api/inbox/read — stamp the shared read mark for the active workspace (any
@@ -161,6 +166,7 @@ export async function handleInboxApi(
     if (!workspaceId) return Response.json({ error: 'workspace not found' }, { status: 404 });
     const at = new Date();
     await setInboxReadAt(database, workspaceId, at);
+    await notifyInboxChanged(env.WORKSPACE_EVENTS, workspaceId);
     return Response.json({ readAt: at.getTime() });
   }
 
@@ -182,6 +188,7 @@ export async function handleInboxApi(
     const parsed = VisibilityInput.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return Response.json({ error: 'invalid visibility body' }, { status: 400 });
     const updated = await conversations.setVisibility(database, id, parsed.data.visibility);
+    await notifyInboxChanged(env.WORKSPACE_EVENTS, conv.workspaceId);
     return Response.json({ conversation: updated });
   }
 
@@ -202,6 +209,7 @@ export async function handleInboxApi(
       return Response.json({ error: 'assignee is not a workspace member' }, { status: 400 });
     }
     const updated = await conversations.assign(database, id, target);
+    await notifyInboxChanged(env.WORKSPACE_EVENTS, conv.workspaceId);
     return Response.json({ conversation: updated });
   }
 
@@ -231,6 +239,7 @@ export async function handleInboxApi(
     // failed — record it as merged rather than showing the human an error about it.
     if (!result.ok && !result.alreadyMerged) return Response.json({ error: result.reason }, { status: 409 });
     const updated = await conversations.markPrMerged(database, id);
+    await notifyInboxChanged(env.WORKSPACE_EVENTS, conv.workspaceId);
     return Response.json({ conversation: updated });
   }
 
@@ -238,6 +247,7 @@ export async function handleInboxApi(
     if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
     const updated =
       action === 'close' ? await conversations.close(database, id) : await conversations.reopen(database, id);
+    await notifyInboxChanged(env.WORKSPACE_EVENTS, conv.workspaceId);
     return Response.json({ conversation: updated });
   }
 

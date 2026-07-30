@@ -82,6 +82,11 @@ export interface McpToolDeps {
   db: Database;
   /** The OAuth access token's user — the human this connection acts as. */
   userId: string;
+  /** Ring a workspace's events hub (#383). MCP is a third writer of the conversations
+   *  table, next to the edge routes and the container's platform RPC, so a claim made from
+   *  an agent has to reach every open Shell's badge like one made from the Inbox does. A
+   *  dep rather than a binding read, matching every other outward call here. */
+  notify: (workspaceId: string) => Promise<void>;
   /** Proxy a chat send into the workspace's bridge (wakes the container). Wired to
    * serveWorkspace + coordsForWorkspace in worker/mcp-server.ts; stubbed in tests. */
   proxySend: (workspaceId: string, chatId: string, message: string, canvasId?: string) => Promise<Response>;
@@ -210,6 +215,7 @@ export function buildMcpTools(deps: McpToolDeps) {
         throw new Error(`assignee is not a workspace member: ${input.user_id}`);
       }
       const updated = await conversations.assign(deps.db, row.id, input.user_id);
+      await deps.notify(row.workspaceId);
       return conversationView(updated ?? row);
     },
 

@@ -72,6 +72,37 @@ conversation claims it for that user, deliberately. _Avoid_: scoping Inbox reads
 `user_id`, repurposing `user_id` as the assignee, or making assignment exclusive
 (assignee-only reply). _(Decided 2026-07-15.)_
 
+**Workspace events hub** _(#383, decided 2026-07-29)_: one Durable Object per workspace,
+addressed `idFromName(workspaceEventsName(workspaceId))`, whose only job is **fan-out**.
+Every writer of a Conversation — the Inbox routes, the chat proxy, inbound MCP, and the
+container's platform RPC — rings it after its write commits; every open `/api/inbox/events`
+stream is subscribed to it and re-reads D1 when it hears. It exists because Workers are
+stateless per isolate: a subscriber held on isolate A cannot be reached by a write landing
+on isolate B, so a badge could only ever be *polled*, and polling it cost 1.6M D1 rows a
+day. `CanvasSyncRoom` is the shape it copies but not a place to put it (that is keyed per
+*canvas*; an inbox spans them), and `Sandbox`/`Warehouse` are the right scope with the
+wrong lifecycle — compute containers built to sleep.
+
+**The hub is a dumb notifier, not a cache.** It says *"something in your inbox changed"*
+and holds **no count and no rows**; the subscriber re-reads. That is ADR-0022 applied to a
+notifier — a second copy of the truth diverges, needs invalidation, and goes stale
+invisibly, whereas a hub holding nothing can only be *late*. The contract
+(`shared/workspace-events.ts`) makes that structural: the wire message is a topic and
+nothing else, so a count cannot ride it. Transport to the browser stays **SSE** (one-way,
+already spoken by the client); the SSE body is held by the *Worker*, and the hub holds only
+hibernatable WebSockets from those Workers — DO hibernation is WebSocket-only, so a hub
+holding the SSE bodies itself would stay resident for as long as any tab anywhere had the
+app open. Two timers survive and neither is a recompute: a 30s keep-alive that reads
+nothing (departed-client detection, which the old tick did as a side effect) and a
+5-minute watermark re-check, because ringing the hub is best-effort by construction.
+The **watermark** (`queries/inbox-watermark.ts`) is that cheap probe: one statement,
+`max(updated_at)` over the workspace's conversations plus its shared read mark, both
+indexed point lookups — a change detector, never a stored answer. _Avoid_: giving the hub
+a count "to save a query", or wiring only `handlePlatformRpc` — that covers the container's
+writes and leaves a badge that moves for agents and not for humans, which looks fixed and
+is worse than polling. Presence, cross-chat delivery, and "a Component changed, reload it"
+are the natural next topics; none are built.
+
 **Open PR (a Conversation's PR state)** _(decided 2026-07-29)_: a dev-agent Conversation
 that has called `open_pr` **carries the PR it opened** — `pr_url` on the row, stamped by
 the container reporting the tool's result back through the platform RPC (the edge owns the

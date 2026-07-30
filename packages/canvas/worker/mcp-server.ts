@@ -13,6 +13,7 @@ import { mintDevAgentGitToken } from './github-app.ts';
 import { resolveDevAgentRepo } from './github-connection.ts';
 import { discoverJobs } from './repo-jobs.ts';
 import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { notifyInboxChanged } from './workspace-events.ts';
 import {
   AssignConversationInput,
   CreateCanvasInput,
@@ -65,6 +66,8 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
     const tools = buildMcpTools({
       db,
       userId: session.userId,
+      // #383: an MCP write reaches the badge the same way an Inbox click does.
+      notify: (workspaceId) => notifyInboxChanged(env.WORKSPACE_EVENTS, workspaceId),
       // The same proxied-send path every chat send takes: x-mcp-tokens attached (train 2),
       // the workspace's coords resolved, the container woken if asleep. Plain chat flavor —
       // no dev-agent token is ever minted here.

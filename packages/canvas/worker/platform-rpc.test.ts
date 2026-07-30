@@ -63,7 +63,12 @@ const SECRET = 'better-auth-test-secret';
 
 const rpc = async (
   body: unknown,
-  opts: { db: Awaited<ReturnType<typeof freshDb>>; token?: string | null; send?: PushSend | null },
+  opts: {
+    db: Awaited<ReturnType<typeof freshDb>>;
+    token?: string | null;
+    send?: PushSend | null;
+    notify?: (workspaceId: string) => Promise<void>;
+  },
 ): Promise<Response> =>
   handlePlatformRpc(
     new Request(`https://app.cedarpad.com${PLATFORM_RPC_PATH}`, {
@@ -72,8 +77,55 @@ const rpc = async (
       body: JSON.stringify(body),
     }),
     { BETTER_AUTH_SECRET: SECRET } as never,
-    { db: opts.db, send: opts.send ?? null, origin: 'https://app.cedarpad.com' },
+    { db: opts.db, send: opts.send ?? null, origin: 'https://app.cedarpad.com', notify: opts.notify ?? (async () => {}) },
   );
+
+// #383: the container's writes all arrive here, so this is the one handler that covers the
+// whole agent-side path. Every operation that touches a Conversation row rings the hub.
+describe('platform RPC: conversation writes ring the workspace events hub', () => {
+  const identity = { sessionId: 's-hub', userId: 'u', workspaceId: 'ws_agent', ownerRef: 'chat_hub' };
+  const ops: [string, unknown][] = [
+    ['conversation.start', { op: 'conversation.start', input: identity }],
+    ['conversation.settle', { op: 'conversation.settle', input: identity }],
+    ['conversation.prOpened', { op: 'conversation.prOpened', input: { ...identity, prUrl: 'https://github.com/o/r/pull/1' } }],
+    ['turn.end (done)', { op: 'turn.end', input: { ...identity, outcome: 'done', summary: 'finished' } }],
+    ['turn.end (needs_human)', { op: 'turn.end', input: { ...identity, outcome: 'needs_human', summary: 's', question: 'q?' } }],
+  ];
+
+  for (const [name, body] of ops) {
+    test(`${name} rings the conversation's workspace`, async () => {
+      const db = await freshDb();
+      const rung: string[] = [];
+      const res = await rpc(body, { db, notify: async (ws) => void rung.push(ws) });
+      expect(res.status).toBe(200);
+      expect(rung).toEqual(['ws_agent']);
+    });
+  }
+
+  test('an operation that touches no Conversation rings nothing', async () => {
+    const db = await freshDb();
+    const rung: string[] = [];
+    await rpc(
+      { op: 'component.read', input: { workspaceId: 'default', canvasId: 'default', tier: 'own', name: 'Thing' } },
+      { db, notify: async (ws) => void rung.push(ws) },
+    );
+    expect(rung).toEqual([]);
+  });
+
+  test('a hub that throws never fails the operation the container is waiting on', async () => {
+    const db = await freshDb();
+    const res = await rpc(
+      { op: 'turn.end', input: { ...identity, outcome: 'done', summary: 'finished' } },
+      {
+        db,
+        notify: async () => {
+          throw new Error('hub down');
+        },
+      },
+    );
+    expect(res.status).toBe(200);
+  });
+});
 
 describe('platform RPC: the edge authenticates the caller', () => {
   test('an unauthenticated request cannot invoke an operation', async () => {

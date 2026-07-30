@@ -9,6 +9,7 @@ import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import { orderInbox, transcriptObjectUrl, unseenCount, viewToListOpts } from './inbox-view.ts';
+import { workspaceEventsName } from '../shared/workspace-events.ts';
 
 // Pure decisions the edge Inbox makes: list ordering (waiting_on:human pinned) and the R2
 // object-URL derivation. Both are runtime-free so they test without the edge or a container.
@@ -406,6 +407,145 @@ describe('handleInboxApi — shared read mark + badge stream (read-for-all)', ()
     const frame = new TextDecoder().decode(value);
     expect(frame).toContain('"count":1'); // one open conversation, never read
     await reader.cancel();
+  });
+});
+
+// Every EDGE writer of the conversation and inbox-read tables rings the workspace's events
+// hub (#383). This is the half the issue warns about: the container's writes all funnel
+// through `handlePlatformRpc`, so it is easy to wire that one handler and ship a badge that
+// updates for agent activity and not for human actions — which looks fixed and is worse
+// than the polling it replaced. Each route below is a human action.
+describe('handleInboxApi — every mutation rings the workspace events hub', () => {
+  const recorder = () => {
+    const rung: string[] = [];
+    const env = {
+      WORKSPACE_EVENTS: {
+        idFromName: (name: string) => ({ name }),
+        get: ({ name }: { name: string }) => ({
+          fetch: async () => {
+            rung.push(name);
+            return new Response(null, { status: 204 });
+          },
+        }),
+      },
+    } as never;
+    return { rung, env };
+  };
+
+  const conv = async (workspaceId = 'default') =>
+    conversations.create(database, {
+      sessionId: `s_hub_${Math.random().toString(36).slice(2)}`,
+      userId: USER.id,
+      workspaceId,
+      createdBy: USER.id,
+    });
+
+  const post = (env: never, path: string, id: string | undefined, action: string | undefined, body?: unknown) =>
+    handleInboxApi(
+      new Request(`https://x${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+      env,
+      USER,
+      id,
+      action,
+    );
+
+  test('POST /api/inbox/read — the shared read mark clears every member’s badge', async () => {
+    const { rung, env } = recorder();
+    await post(env, '/api/inbox/read', 'read', undefined);
+    expect(rung).toEqual([workspaceEventsName('default')]);
+  });
+
+  test('POST /api/inbox/:id/close and /reopen — the two status transitions', async () => {
+    const row = await conv();
+    const { rung, env } = recorder();
+    await post(env, `/api/inbox/${row.id}/close`, row.id, 'close');
+    await post(env, `/api/inbox/${row.id}/reopen`, row.id, 'reopen');
+    expect(rung).toEqual([workspaceEventsName('default'), workspaceEventsName('default')]);
+  });
+
+  test('POST /api/inbox/:id/assign — a triage claim', async () => {
+    const row = await conv();
+    const { rung, env } = recorder();
+    await post(env, `/api/inbox/${row.id}/assign`, row.id, 'assign', { userId: MEMBER.id });
+    expect(rung).toEqual([workspaceEventsName('default')]);
+  });
+
+  test('POST /api/inbox/:id/visibility — the flip that changes who counts it', async () => {
+    const row = await conv();
+    const { rung, env } = recorder();
+    await post(env, `/api/inbox/${row.id}/visibility`, row.id, 'visibility', { visibility: 'private' });
+    expect(rung).toEqual([workspaceEventsName('default')]);
+  });
+
+  test('POST /api/inbox/:id/merge — landing the PR closes the run', async () => {
+    const row = await conv();
+    await conversations.recordPr(database, row.id, 'https://github.com/Zabaca/cedarpad/pull/9');
+    const { rung, env } = recorder();
+    const res = await handleInboxApi(
+      new Request(`https://x/api/inbox/${row.id}/merge`, { method: 'POST' }),
+      env,
+      USER,
+      row.id,
+      'merge',
+      {
+        resolveRepo: async () => ({ repoFullName: 'Zabaca/cedarpad', auth: { kind: 'installation', installationId: '42' } }),
+        mint: async () => 'ghs_minted',
+        merge: async () => ({ ok: true }),
+      } as never,
+    );
+    expect(res.status).toBe(200);
+    expect(rung).toEqual([workspaceEventsName('default')]);
+  });
+
+  // The hub is addressed by the CONVERSATION's workspace, not by the caller's active one.
+  // They differ whenever a member acts on a row from another workspace's inbox view, and
+  // ringing the wrong hub is a notification nobody receives.
+  test('the hub rung is the conversation’s own workspace, not the cookie’s', async () => {
+    const ws = await createWorkspace(database, { name: 'Elsewhere', ownerUserId: USER.id });
+    const row = await conv(ws.id);
+    const { rung, env } = recorder();
+    await post(env, `/api/inbox/${row.id}/close`, row.id, 'close');
+    expect(rung).toEqual([workspaceEventsName(ws.id)]);
+  });
+
+  test('a REFUSED mutation rings nothing — there was no change to announce', async () => {
+    const row = await conv();
+    const { rung, env } = recorder();
+    // Creator-only: a non-creator's visibility flip is a 403 and writes no row.
+    const res = await handleInboxApi(
+      new Request(`https://x/api/inbox/${row.id}/visibility`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ visibility: 'private' }),
+      }),
+      env,
+      MEMBER,
+      row.id,
+      'visibility',
+    );
+    expect(res.status).toBe(403);
+    expect(rung).toEqual([]);
+  });
+
+  test('a hub that is unreachable never breaks the write it was announcing', async () => {
+    const row = await conv();
+    const broken = {
+      WORKSPACE_EVENTS: {
+        idFromName: () => ({}),
+        get: () => ({
+          fetch: async () => {
+            throw new Error('hub down');
+          },
+        }),
+      },
+    } as never;
+    const res = await post(broken, `/api/inbox/${row.id}/close`, row.id, 'close');
+    expect(res.status).toBe(200);
+    expect((await conversations.get(database, row.id))?.status).toBe('closed');
   });
 });
 
