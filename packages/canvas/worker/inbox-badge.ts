@@ -78,12 +78,15 @@ export interface HubSocket {
   close(): void;
 }
 
-/** How often the stream writes with nothing to say, and how often it checks anyway. Both
- *  are the ROUTE's decision (`inbox.ts` holds the production numbers); they are parameters
- *  here so the timer behaviour is testable in milliseconds instead of minutes. */
+/** How often the stream writes with nothing to say, how often it checks anyway, and how
+ *  fast it will let notices turn into reads. All three are the ROUTE's decision (`inbox.ts`
+ *  holds the production numbers); they are parameters here so the timing behaviour is
+ *  testable in milliseconds instead of minutes. */
 export interface InboxBadgeStreamTimings {
   keepAliveMs: number;
   safetyNetMs: number;
+  /** The coalescing window. 0 disables it: every notice recomputes. */
+  noticeWindowMs: number;
 }
 
 /**
@@ -101,6 +104,22 @@ export interface InboxBadgeStreamTimings {
  *     construction (the write it announces has already committed), so a lost notice must
  *     not strand the badge until the tab is reloaded.
  *
+ * Notices are COALESCED, leading edge first. Pushing removed a bound that polling had for
+ * free: a 10s tick cost the same 8,640 recomputes a day however busy the workspace got,
+ * whereas a recompute per notice makes the cost proportional to the write rate, which
+ * nothing caps. Several turns settling together, or an agent sending across chats in a
+ * loop, would multiply straight into D1 — and the watermark cannot damp it, because the
+ * notified path skips the watermark by design (a canvas visibility flip changes the badge
+ * without moving it). So the first notice recomputes IMMEDIATELY — sub-second latency was
+ * the point of the whole design and is not traded away — and further notices inside the
+ * window collapse into ONE trailing recompute, which is what keeps the last change from
+ * being dropped. Steady-state ceiling: one recompute per window per tab.
+ *
+ * (This lesson is not new here. Live presence used to ride "the throttled `event: presence`
+ * SSE frames"; #293 moved presence onto tldraw sync, which throttles internally, and
+ * deleted the bespoke transport — taking the throttle with it. It is written down this
+ * time, and pinned by tests.)
+ *
  * `hub` may be null — no binding, or a hub that refused the upgrade. The stream then runs
  * on the safety net alone: slower than it should be, never wrong.
  */
@@ -112,6 +131,10 @@ export function inboxBadgeStream(
   const enc = new TextEncoder();
   const timers: ReturnType<typeof setInterval>[] = [];
   let done = false;
+  /** Open while notices are being suppressed; null when the next one may recompute. */
+  let window: ReturnType<typeof setTimeout> | null = null;
+  /** A notice arrived while the window was open, so a trailing recompute is owed. */
+  let owed = false;
 
   return new ReadableStream<Uint8Array>({
     start: (controller) => {
@@ -120,6 +143,8 @@ export function inboxBadgeStream(
         done = true;
         for (const t of timers) clearInterval(t);
         timers.length = 0;
+        if (window) clearTimeout(window);
+        window = null;
         // Releasing the hub socket here is what keeps subscribers from outliving their
         // tabs — the hub reaps nothing on its own.
         try {
@@ -145,13 +170,42 @@ export function inboxBadgeStream(
         }
       };
 
-      const emit = async (badge: Promise<InboxBadge | null>) => {
-        try {
-          const next = await badge;
-          if (next) write(encodeInboxBadgeFrame(next));
-        } catch {
-          teardown();
-        }
+      /**
+       * Recomputes run ONE AT A TIME, chained rather than fired in parallel. Coalescing
+       * bounds how often one starts; it does not stop two from overlapping when a read
+       * runs long, and an overlap is not merely wasteful — a slow earlier read resolving
+       * after a fast later one writes the older count last, leaving the badge wrong until
+       * something else moves. The thunk (rather than a promise) is what lets the work be
+       * deferred until its turn.
+       *
+       * Note the keep-alive deliberately does NOT go through here: it writes directly, so
+       * a read that hangs can never cost us departed-client detection.
+       */
+      let chain: Promise<void> = Promise.resolve();
+      const emit = (produce: () => Promise<InboxBadge | null>): Promise<void> => {
+        chain = chain.then(async () => {
+          if (done) return;
+          try {
+            const next = await produce();
+            if (next) write(encodeInboxBadgeFrame(next));
+          } catch {
+            teardown();
+          }
+        });
+        return chain;
+      };
+
+      /** Open the suppression window, and when it closes pay any trailing recompute owed.
+       *  The trailing one opens a window of its own, so a sustained storm settles at one
+       *  recompute per window rather than oscillating at two. */
+      const openWindow = () => {
+        window = setTimeout(() => {
+          window = null;
+          if (!owed) return;
+          owed = false;
+          void emit(() => source.push());
+          openWindow();
+        }, timings.noticeWindowMs);
       };
 
       hub?.addEventListener('message', (ev) => {
@@ -159,7 +213,12 @@ export function inboxBadgeStream(
         // rather than treated as "something changed" — a hub that starts speaking a
         // dialect we do not know must not turn into a recompute loop.
         if (!WorkspaceEvent.safeParse(safeJson(ev.data)).success) return;
-        void emit(source.push());
+        if (window) {
+          owed = true; // suppressed, never discarded
+          return;
+        }
+        void emit(() => source.push()); // leading edge: no window is added to its latency
+        if (timings.noticeWindowMs > 0) openWindow();
       });
       // A hub that goes away (a deploy restarts it) ends the stream rather than leaving it
       // silently unsubscribed: EventSource reconnects, and the new stream attaches to the
@@ -167,14 +226,16 @@ export function inboxBadgeStream(
       hub?.addEventListener('close', teardown);
       hub?.addEventListener('error', teardown);
 
-      void emit(source.poll()); // the opening badge
+      void emit(() => source.poll()); // the opening badge
       timers.push(setInterval(() => write(': keep-alive\n\n'), timings.keepAliveMs));
-      timers.push(setInterval(() => void emit(source.poll()), timings.safetyNetMs));
+      timers.push(setInterval(() => void emit(() => source.poll()), timings.safetyNetMs));
     },
     cancel: () => {
       done = true;
       for (const t of timers) clearInterval(t);
       timers.length = 0;
+      if (window) clearTimeout(window);
+      window = null;
       try {
         hub?.close();
       } catch {

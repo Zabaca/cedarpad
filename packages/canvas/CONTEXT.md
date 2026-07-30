@@ -95,6 +95,27 @@ holding the SSE bodies itself would stay resident for as long as any tab anywher
 app open. Two timers survive and neither is a recompute: a 30s keep-alive that reads
 nothing (departed-client detection, which the old tick did as a side effect) and a
 5-minute watermark re-check, because ringing the hub is best-effort by construction.
+
+**Notices are coalesced, leading edge first** _(#383 follow-up)_. Pushing removed a bound
+polling had for free: a 10s tick cost the same 8,640 recomputes a day per tab however busy
+the workspace got, whereas a recompute per notice makes cost proportional to the **write
+rate**, which nothing caps — concurrent turns settling, or an agent sending across chats in
+a loop, multiply straight into D1, and the watermark cannot damp it because the notified
+path skips the watermark by design. So the first notice recomputes *immediately* (the
+sub-second latency is the point and is not traded away) and further notices inside a 500 ms
+window collapse into **one trailing** recompute — dropping that trailing one would turn a
+cost fix into a badge that is silently wrong until the safety net, so it is pinned by its
+own test. Steady-state ceiling: one recompute per window per tab (≈2/s), measured at 28
+rows for a 20-notice burst against 280 un-coalesced. Recomputes are also chained so two
+never overlap: a slow earlier read resolving after a fast later one would write the older
+count last. The damping lives in the **Worker**, not the hub — that is where the expensive
+recompute is, it needs no protocol change, and it keeps the hub holding nothing. This is
+the *second* time this lesson has been learned here: live presence used to ride "the
+throttled `event: presence` SSE frames", and #293 moved presence onto tldraw sync (which
+throttles internally), deleting the bespoke transport and taking the throttle with it.
+_Avoid_: a trailing-only debounce (it adds the window to every badge's latency), or putting
+the damping in the DO as the primary fix. Next limit if tab counts grow: `fanOut` is
+`O(sockets)` with a `JSON.stringify` per notice.
 The **watermark** (`queries/inbox-watermark.ts`) is that cheap probe: one statement,
 `max(updated_at)` over the workspace's conversations plus its shared read mark, both
 indexed point lookups — a change detector, never a stored answer. _Avoid_: giving the hub
