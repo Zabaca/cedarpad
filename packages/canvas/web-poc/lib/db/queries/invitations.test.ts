@@ -1,7 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
+import { applyMigrations, createTestDb } from "../test-support.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import * as schema from "../schema.js";
 import {
@@ -13,26 +10,12 @@ import {
 import { createWorkspace, getWorkspace } from "./workspaces.js";
 
 /** In-memory DB built from the real migrations (mirrors the other query tests). */
-const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url));
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, "utf8")
-        .split("--> statement-breakpoint")
-        .map((s) => s.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n").trim())
-        .filter(Boolean),
-    );
-}
-
-const client = createClient({ url: ":memory:" });
-const db = drizzle(client, { schema });
+const { client, db } = createTestDb();
 
 const NOW = 1_800_000_000_000; // fixed clock — expiry is tested, never wall-time
 
 beforeAll(async () => {
-  for (const stmt of migrationStatements()) await client.execute(stmt);
+  await applyMigrations(client);
   for (const id of ["owner_1", "invitee_1", "wrong_1"]) {
     await db.insert(schema.user).values({ id, name: id, email: `${id}@example.com` });
   }

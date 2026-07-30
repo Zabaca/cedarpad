@@ -1,7 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
+import { applyMigrations, createTestDb } from "../test-support.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as schema from "../schema.js";
 import { findSimilarProblems } from "./similar.js";
@@ -15,40 +12,16 @@ import { findSimilarProblems } from "./similar.js";
  * activates a small set of dimensions, so "closeness" is easy to reason about.
  */
 
-const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url));
-
-/** Every migration's statements, in order — mirrors what the real migrator applies. */
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, "utf8")
-        .split("--> statement-breakpoint")
-        .map((s) =>
-          s
-            .split("\n")
-            .filter((line) => !line.trim().startsWith("--"))
-            .join("\n")
-            .trim(),
-        )
-        .filter(Boolean),
-    );
-}
-
 function basis(indices: number[], dims = 1536): number[] {
   const v = new Array(dims).fill(0);
   for (const i of indices) v[i] = 1;
   return v;
 }
 
-const client = createClient({ url: ":memory:" });
-const db = drizzle(client, { schema });
+const { client, db } = createTestDb();
 
 beforeAll(async () => {
-  for (const stmt of migrationStatements()) {
-    await client.execute(stmt);
-  }
+  await applyMigrations(client);
 
   await db.insert(schema.workspace).values([
     { id: "ws1", name: "WS", slug: "ws" },

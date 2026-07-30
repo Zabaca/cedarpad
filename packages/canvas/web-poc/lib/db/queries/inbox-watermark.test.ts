@@ -1,7 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
+import { applyMigrations, createTestDb } from "../test-support.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import * as schema from "../schema.js";
 import * as conversations from "./conversations.js";
@@ -9,27 +6,13 @@ import { inboxWatermark } from "./inbox-watermark.js";
 import { createWorkspace, setInboxReadAt } from "./workspaces.js";
 
 /** In-memory DB built from the real migrations (mirrors the other query tests). */
-const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url));
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, "utf8")
-        .split("--> statement-breakpoint")
-        .map((s) => s.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n").trim())
-        .filter(Boolean),
-    );
-}
-
-const client = createClient({ url: ":memory:" });
-const db = drizzle(client, { schema });
+const { client, db } = createTestDb();
 
 let wsId = "";
 let otherId = "";
 
 beforeAll(async () => {
-  for (const stmt of migrationStatements()) await client.execute(stmt);
+  await applyMigrations(client);
   await db.insert(schema.user).values({ id: "owner", name: "owner", email: "owner@example.com" });
   wsId = (await createWorkspace(db, { name: "Watermarked", ownerUserId: "owner" })).id;
   otherId = (await createWorkspace(db, { name: "Elsewhere", ownerUserId: "owner" })).id;

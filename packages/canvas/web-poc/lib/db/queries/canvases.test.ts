@@ -1,30 +1,12 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
 import { beforeAll, describe, expect, it } from "vitest";
-import * as schema from "../schema.js";
+import { applyMigrations, createTestDb } from "../test-support.js";
 import * as canvases from "./canvases.js";
 
 /** In-memory DB built from the real migrations (mirrors workspaces.test.ts). */
-const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url));
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, "utf8")
-        .split("--> statement-breakpoint")
-        .map((s) => s.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n").trim())
-        .filter(Boolean),
-    );
-}
-
-const client = createClient({ url: ":memory:" });
-const db = drizzle(client, { schema });
+const { client, db } = createTestDb();
 
 beforeAll(async () => {
-  for (const stmt of migrationStatements()) await client.execute(stmt);
+  await applyMigrations(client);
 });
 
 describe("canvas registry — create → list → get round-trip", () => {

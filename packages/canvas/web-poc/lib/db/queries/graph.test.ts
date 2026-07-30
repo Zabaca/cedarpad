@@ -1,7 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
+import { applyMigrations, createTestDb } from "../test-support.js";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import * as schema from "../schema.js";
 import {
@@ -25,36 +22,16 @@ import {
  * cross tenant boundaries; a node is excluded only when no edge reaches it.
  */
 
-const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
-
 function basis(indices: number[], dims = 1536): number[] {
   const v = new Array(dims).fill(0);
   for (const i of indices) v[i] = 1;
   return v;
 }
 
-const client = createClient({ url: ":memory:" });
-const db = drizzle(client, { schema });
+const { client, db } = createTestDb();
 
 beforeAll(async () => {
-  // Apply every migration in order so newer tables (e.g. dismissals) exist too.
-  const files = readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort();
-  for (const f of files) {
-    const sqlText = readFileSync(MIGRATIONS_DIR + f, "utf8");
-    const statements = sqlText
-      .split("--> statement-breakpoint")
-      .map((s) =>
-        s
-          .split("\n")
-          .filter((line) => !line.trim().startsWith("--"))
-          .join("\n")
-          .trim(),
-      )
-      .filter(Boolean);
-    for (const stmt of statements) await client.execute(stmt);
-  }
+  await applyMigrations(client);
 
   await db.insert(schema.workspace).values([
     { id: "ws1", name: "WS1", slug: "ws1" },

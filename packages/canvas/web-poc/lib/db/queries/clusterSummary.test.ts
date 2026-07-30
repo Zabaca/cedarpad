@@ -1,8 +1,5 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { createClient } from "@libsql/client";
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/libsql";
+import { applyMigrations, createTestDb } from "../test-support.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as schema from "../schema.js";
 import {
@@ -16,32 +13,10 @@ import {
  * Cluster-summary cache + membership. Fixture (one workspace):
  *   A —identical→ B —partial→ C   (C has an accepted solution, B a draft)
  */
-const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations", import.meta.url));
-
-/** Every migration's statements, in order — mirrors what the real migrator applies. */
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, "utf8")
-        .split("--> statement-breakpoint")
-        .map((s) =>
-          s
-            .split("\n")
-            .filter((line) => !line.trim().startsWith("--"))
-            .join("\n")
-            .trim(),
-        )
-        .filter(Boolean),
-    );
-}
-
-const client = createClient({ url: ":memory:" });
-const db = drizzle(client, { schema });
+const { client, db } = createTestDb();
 
 beforeAll(async () => {
-  for (const stmt of migrationStatements()) await client.execute(stmt);
+  await applyMigrations(client);
 
   await db.insert(schema.workspace).values([{ id: "ws1", name: "WS1", slug: "ws1" }]);
   await db.insert(schema.problems).values([
