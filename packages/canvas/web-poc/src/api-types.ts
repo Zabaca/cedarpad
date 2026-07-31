@@ -473,7 +473,38 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete a problem (its observation ties go with it; the observations stay) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Problem deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeleteResult"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         /** Edit a problem's fields (title, body, impact, priority, urgency, status, tags) */
@@ -521,6 +552,114 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/v1/problems/{id}/observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Tie an observation to this problem, recording relevance and rationale */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TieObservation"];
+                };
+            };
+            responses: {
+                /** @description The tie */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ObservationProblemEdge"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Problem or observation not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/problems/{id}/observations/{observationId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove the tie, leaving both the problem and the observation in place */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    observationId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Tie removed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeleteResult"];
+                    };
+                };
+                /** @description No such tie */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/solutions": {
@@ -1136,17 +1275,22 @@ export interface components {
             createdBy: string | null;
             createdAt: number;
         };
-        SynthesisRef: {
+        TieRef: {
             id: string;
             title: string;
             rationale: string | null;
             relevance: number | null;
+            /**
+             * @description Who drew the tie
+             * @enum {string}
+             */
+            createdBy: "human" | "agent";
         };
         ObservationDetail: {
             observation: components["schemas"]["Observation"];
             source: components["schemas"]["Source"];
             solutions: components["schemas"]["Solution"][];
-            synthesizedProblems: components["schemas"]["SynthesisRef"][];
+            problems: components["schemas"]["TieRef"][];
         };
         Error: {
             error: string;
@@ -1230,7 +1374,7 @@ export interface components {
             problem: components["schemas"]["Problem"];
             links: components["schemas"]["LinkedProblem"][];
             solutions: components["schemas"]["Solution"][];
-            sourceObservations: components["schemas"]["SynthesisRef"][];
+            observations: components["schemas"]["TieRef"][];
         };
         CreateProblem: {
             title: string;
@@ -1242,8 +1386,23 @@ export interface components {
             solutionDirection?: string;
             projectTags?: string[];
         };
+        ProblemSummary: {
+            /** @example prob_01h... */
+            id: string;
+            workspaceId: string;
+            /** @example Checkout 500s under load */
+            title: string;
+            /** @enum {string} */
+            status: "open" | "investigating" | "resolved" | "archived";
+            /** @description Relative weight against other problems (higher first) */
+            priority: number;
+            /** @enum {string} */
+            urgency: "low" | "medium" | "high" | "critical";
+            /** @description epoch ms */
+            createdAt: number;
+        };
         ProblemPage: {
-            items: components["schemas"]["Problem"][];
+            items: components["schemas"]["ProblemSummary"][];
             /** @description total problems matching the filter */
             total: number;
         };
@@ -1270,6 +1429,26 @@ export interface components {
             /** @enum {string} */
             status?: "open" | "investigating" | "resolved" | "archived";
             projectTags?: string[];
+        };
+        ObservationProblemEdge: {
+            observationId: string;
+            problemId: string;
+            /** @description How strongly this observation feeds the problem (0–1) */
+            relevance: number | null;
+            /** @description Why the tie was drawn */
+            rationale: string | null;
+            /**
+             * @description Who drew the tie
+             * @enum {string}
+             */
+            createdBy: "human" | "agent";
+            /** @description epoch ms */
+            createdAt: number;
+        };
+        TieObservation: {
+            observationId: string;
+            relevance?: number;
+            rationale?: string;
         };
         CreateSolution: {
             /** @enum {string} */

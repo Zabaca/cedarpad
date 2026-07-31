@@ -44,8 +44,9 @@ A resolution attached to an Observation or a Problem.
 
 - A **Source** has many **Observations**; an Observation has at most one Source
   (nullable — an Observation you simply think of has none)
-- Many **Observations** synthesize into a **Problem**, and an Observation can feed
-  several — many-to-many
+- Many **Observations** feed a **Problem**, and an Observation can feed several —
+  many-to-many. The tie carries a relevance, a rationale, and the **Origin** that
+  drew it; removing it leaves both ends standing
 - A **Problem** links to other **Problems**, written deliberately, never inferred
 - A **Solution** attaches to an **Observation** or a **Problem**
 

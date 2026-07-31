@@ -60,12 +60,13 @@ export async function getProblemDetail(db: Database, id: string): Promise<Proble
     .innerJoin(linked, eq(linked.id, schema.problemLinks.toProblemId))
     .where(eq(schema.problemLinks.fromProblemId, id));
 
-  const sourceRows = await db
+  const tieRows = await db
     .select({
       id: schema.observations.id,
       title: schema.observations.title,
       rationale: schema.observationProblems.rationale,
       relevance: schema.observationProblems.relevance,
+      createdBy: schema.observationProblems.createdBy,
     })
     .from(schema.observationProblems)
     .innerJoin(
@@ -81,11 +82,12 @@ export async function getProblemDetail(db: Database, id: string): Promise<Proble
       problem: serializeProblem(r.problem),
     })),
     solutions: await solutionsForTarget(db, "problem", id),
-    sourceObservations: sourceRows.map((r) => ({
+    observations: tieRows.map((r) => ({
       id: r.id,
       title: r.title,
       rationale: r.rationale ?? null,
       relevance: r.relevance ?? null,
+      createdBy: r.createdBy,
     })),
   };
 }
@@ -110,12 +112,13 @@ export async function getObservationDetail(
         .limit(1)
     : [];
 
-  const synthRows = await db
+  const tieRows = await db
     .select({
       id: schema.problems.id,
       title: schema.problems.title,
       rationale: schema.observationProblems.rationale,
       relevance: schema.observationProblems.relevance,
+      createdBy: schema.observationProblems.createdBy,
     })
     .from(schema.observationProblems)
     .innerJoin(schema.problems, eq(schema.problems.id, schema.observationProblems.problemId))
@@ -125,11 +128,12 @@ export async function getObservationDetail(
     observation: serializeObservation(observation),
     source: sourceRows[0] ? serializeSource(sourceRows[0]) : null,
     solutions: await solutionsForTarget(db, "observation", id),
-    synthesizedProblems: synthRows.map((r) => ({
+    problems: tieRows.map((r) => ({
       id: r.id,
       title: r.title,
       rationale: r.rationale ?? null,
       relevance: r.relevance ?? null,
+      createdBy: r.createdBy,
     })),
   };
 }

@@ -236,15 +236,47 @@ export const LinkedProblemSchema = z
   })
   .openapi("LinkedProblem");
 
-/** A short reference to an observation/problem on the other side of a synthesis edge. */
-export const SynthesisRefSchema = z
+/**
+ * The tie between an Observation and a Problem: many-to-many, carrying how
+ * relevant the observation is to the problem, why it was drawn, and whether a
+ * human or an agent drew it.
+ */
+export const ObservationProblemEdgeSchema = z
+  .object({
+    observationId: z.string(),
+    problemId: z.string(),
+    relevance: z
+      .number()
+      .nullable()
+      .openapi({ description: "How strongly this observation feeds the problem (0–1)" }),
+    rationale: z.string().nullable().openapi({ description: "Why the tie was drawn" }),
+    createdBy: Origin.openapi({ description: "Who drew the tie" }),
+    createdAt: z.number().openapi({ description: "epoch ms" }),
+  })
+  .openapi("ObservationProblemEdge");
+
+/** Tie an existing Observation to a Problem. */
+export const TieObservationSchema = z
+  .object({
+    observationId: z.string().min(1),
+    relevance: z.number().min(0).max(1).optional(),
+    rationale: z.string().min(1).optional(),
+  })
+  .openapi("TieObservation");
+
+/**
+ * The record on the other end of a tie, joined with the tie itself: enough to
+ * show and rank it, never its body — a Problem's body belongs to its own read.
+ */
+export const TieRefSchema = z
   .object({
     id: z.string(),
     title: z.string(),
     rationale: z.string().nullable(),
     relevance: z.number().nullable(),
+    createdBy: Origin.openapi({ description: "Who drew the tie" }),
   })
-  .openapi("SynthesisRef");
+  .openapi("TieRef");
 
 /* ------------------------------------------------------------------ *
  * Detail payloads
@@ -255,8 +287,8 @@ export const ProblemDetailSchema = z
     problem: ProblemSchema,
     links: z.array(LinkedProblemSchema),
     solutions: z.array(SolutionSchema),
-    /** Observations this problem was synthesized from. */
-    sourceObservations: z.array(SynthesisRefSchema),
+    /** The Observations that feed this problem. */
+    observations: z.array(TieRefSchema),
   })
   .openapi("ProblemDetail");
 
@@ -266,15 +298,31 @@ export const ObservationDetailSchema = z
     /** The Source it names, resolved; null when it has none. */
     source: SourceSchema.nullable(),
     solutions: z.array(SolutionSchema),
-    /** Problems this observation has been synthesized into. */
-    synthesizedProblems: z.array(SynthesisRefSchema),
+    /** The Problems this observation feeds. */
+    problems: z.array(TieRefSchema),
   })
   .openapi("ObservationDetail");
 
-/** A page of problems with the total count for pagination. */
+/**
+ * A Problem as it appears in a list: what you need to identify and rank it, and
+ * nothing more. Bodies are deliberately absent — the read that returns
+ * everything is the one that later blows an agent's context window. Fetch the
+ * problem itself for its body, impact and solution direction.
+ */
+export const ProblemSummarySchema = ProblemSchema.pick({
+  id: true,
+  workspaceId: true,
+  title: true,
+  status: true,
+  priority: true,
+  urgency: true,
+  createdAt: true,
+}).openapi("ProblemSummary");
+
+/** A page of problem summaries with the total count for pagination. */
 export const ProblemPageSchema = z
   .object({
-    items: z.array(ProblemSchema),
+    items: z.array(ProblemSummarySchema),
     total: z.number().openapi({ description: "total problems matching the filter" }),
   })
   .openapi("ProblemPage");
@@ -442,6 +490,15 @@ export const IdParam = z.object({
   id: z.string().min(1).openapi({ param: { name: "id", in: "path" }, example: "prob_01h..." }),
 });
 
+/** Both ends of an Observation↔Problem tie, addressed in the path. */
+export const EdgeParams = z.object({
+  id: z.string().min(1).openapi({ param: { name: "id", in: "path" }, example: "prob_01h..." }),
+  observationId: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: "observationId", in: "path" }, example: "obs_01h..." }),
+});
+
 export const ListProblemsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   offset: z.coerce.number().int().min(0).optional().openapi({ param: { name: "offset", in: "query" } }),
@@ -572,7 +629,10 @@ export type Solution = z.infer<typeof SolutionSchema>;
 export type CreateSolution = z.infer<typeof CreateSolutionSchema>;
 export type UpdateSolution = z.infer<typeof UpdateSolutionSchema>;
 export type ProblemLink = z.infer<typeof ProblemLinkSchema>;
+export type ObservationProblemEdge = z.infer<typeof ObservationProblemEdgeSchema>;
+export type TieObservation = z.infer<typeof TieObservationSchema>;
 export type ProblemDetail = z.infer<typeof ProblemDetailSchema>;
+export type ProblemSummary = z.infer<typeof ProblemSummarySchema>;
 export type ProblemPage = z.infer<typeof ProblemPageSchema>;
 export type Graph = z.infer<typeof GraphSchema>;
 export type ProblemContext = z.infer<typeof ProblemContextSchema>;

@@ -137,11 +137,11 @@ export function ObservationDetail({ id }: { id: string }) {
       )}
 
       {/* Synthesized problems */}
-      {data.synthesizedProblems.length > 0 && (
+      {data.problems.length > 0 && (
         <Card withBorder padding="md">
-          <Title order={5} mb="xs">Synthesized into ({data.synthesizedProblems.length})</Title>
+          <Title order={5} mb="xs">Feeds ({data.problems.length})</Title>
           <Stack gap="xs">
-            {data.synthesizedProblems.map((p) => (
+            {data.problems.map((p) => (
               <Text key={p.id} size="sm" style={{ cursor: "pointer" }}
                 onClick={() => { setView("library"); selectProblem(p.id); }}>
                 → {p.title}

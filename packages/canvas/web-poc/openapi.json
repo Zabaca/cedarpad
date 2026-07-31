@@ -189,7 +189,7 @@
           "createdAt"
         ]
       },
-      "SynthesisRef": {
+      "TieRef": {
         "type": "object",
         "properties": {
           "id": {
@@ -205,13 +205,22 @@
           "relevance": {
             "type": "number",
             "nullable": true
+          },
+          "createdBy": {
+            "type": "string",
+            "enum": [
+              "human",
+              "agent"
+            ],
+            "description": "Who drew the tie"
           }
         },
         "required": [
           "id",
           "title",
           "rationale",
-          "relevance"
+          "relevance",
+          "createdBy"
         ]
       },
       "ObservationDetail": {
@@ -229,10 +238,10 @@
               "$ref": "#/components/schemas/Solution"
             }
           },
-          "synthesizedProblems": {
+          "problems": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/SynthesisRef"
+              "$ref": "#/components/schemas/TieRef"
             }
           }
         },
@@ -240,7 +249,7 @@
           "observation",
           "source",
           "solutions",
-          "synthesizedProblems"
+          "problems"
         ]
       },
       "Error": {
@@ -559,10 +568,10 @@
               "$ref": "#/components/schemas/Solution"
             }
           },
-          "sourceObservations": {
+          "observations": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/SynthesisRef"
+              "$ref": "#/components/schemas/TieRef"
             }
           }
         },
@@ -570,7 +579,7 @@
           "problem",
           "links",
           "solutions",
-          "sourceObservations"
+          "observations"
         ]
       },
       "CreateProblem": {
@@ -615,13 +624,64 @@
           "body"
         ]
       },
+      "ProblemSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "prob_01h..."
+          },
+          "workspaceId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "example": "Checkout 500s under load"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "investigating",
+              "resolved",
+              "archived"
+            ]
+          },
+          "priority": {
+            "type": "number",
+            "description": "Relative weight against other problems (higher first)"
+          },
+          "urgency": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "epoch ms"
+          }
+        },
+        "required": [
+          "id",
+          "workspaceId",
+          "title",
+          "status",
+          "priority",
+          "urgency",
+          "createdAt"
+        ]
+      },
       "ProblemPage": {
         "type": "object",
         "properties": {
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Problem"
+              "$ref": "#/components/schemas/ProblemSummary"
             }
           },
           "total": {
@@ -745,6 +805,68 @@
             }
           }
         }
+      },
+      "ObservationProblemEdge": {
+        "type": "object",
+        "properties": {
+          "observationId": {
+            "type": "string"
+          },
+          "problemId": {
+            "type": "string"
+          },
+          "relevance": {
+            "type": "number",
+            "nullable": true,
+            "description": "How strongly this observation feeds the problem (0–1)"
+          },
+          "rationale": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why the tie was drawn"
+          },
+          "createdBy": {
+            "type": "string",
+            "enum": [
+              "human",
+              "agent"
+            ],
+            "description": "Who drew the tie"
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "epoch ms"
+          }
+        },
+        "required": [
+          "observationId",
+          "problemId",
+          "relevance",
+          "rationale",
+          "createdBy",
+          "createdAt"
+        ]
+      },
+      "TieObservation": {
+        "type": "object",
+        "properties": {
+          "observationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "relevance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "observationId"
+        ]
       },
       "CreateSolution": {
         "type": "object",
@@ -2062,6 +2184,184 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Problems"
+        ],
+        "summary": "Delete a problem (its observation ties go with it; the observations stay)",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "DevWorkspace": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "prob_01h..."
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Problem deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/problems/{id}/observations": {
+      "post": {
+        "tags": [
+          "Problems"
+        ],
+        "summary": "Tie an observation to this problem, recording relevance and rationale",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "DevWorkspace": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "prob_01h..."
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TieObservation"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The tie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservationProblemEdge"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem or observation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/problems/{id}/observations/{observationId}": {
+      "delete": {
+        "tags": [
+          "Problems"
+        ],
+        "summary": "Remove the tie, leaving both the problem and the observation in place",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "DevWorkspace": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "prob_01h..."
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "obs_01h..."
+            },
+            "required": true,
+            "name": "observationId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tie removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such tie",
             "content": {
               "application/json": {
                 "schema": {
