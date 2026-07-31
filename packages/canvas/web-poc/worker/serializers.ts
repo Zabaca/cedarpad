@@ -2,18 +2,17 @@ import type { schema } from "../lib/db/index.js";
 import type {
   ApiKeyAdmin,
   Observation,
-  ObservationLink,
   Problem,
   ProblemLink,
   Solution,
+  Source,
 } from "../lib/contract/index.js";
 
 type ObservationRow = typeof schema.observations.$inferSelect;
 type ProblemRow = typeof schema.problems.$inferSelect;
 type SolutionRow = typeof schema.solutions.$inferSelect;
 type ProblemLinkRow = typeof schema.problemLinks.$inferSelect;
-type ObservationLinkRow = typeof schema.observationLinks.$inferSelect;
-type RunRow = typeof schema.agentRuns.$inferSelect;
+type SourceRow = typeof schema.sources.$inferSelect;
 
 const ms = (d: Date | number): number => (d instanceof Date ? d.getTime() : d);
 
@@ -25,12 +24,24 @@ export function serializeObservation(o: ObservationRow): Observation {
     body: o.body,
     impact: o.impact ?? null,
     status: o.status,
-    source: o.source,
+    origin: o.origin,
+    sourceId: o.sourceId ?? null,
     projectTags: o.projectTags ?? [],
     createdBy: o.createdBy ?? null,
-    embeddingModel: o.embeddingModel ?? null,
     createdAt: ms(o.createdAt),
     updatedAt: ms(o.updatedAt),
+  };
+}
+
+export function serializeSource(s: SourceRow): Source {
+  return {
+    id: s.id,
+    workspaceId: s.workspaceId,
+    kind: s.kind,
+    identifier: s.identifier ?? null,
+    label: s.label ?? null,
+    description: s.description ?? null,
+    createdAt: ms(s.createdAt),
   };
 }
 
@@ -48,7 +59,6 @@ export function serializeProblem(p: ProblemRow): Problem {
     source: p.source,
     projectTags: p.projectTags ?? [],
     createdBy: p.createdBy ?? null,
-    embeddingModel: p.embeddingModel ?? null,
     createdAt: ms(p.createdAt),
     updatedAt: ms(p.updatedAt),
   };
@@ -120,31 +130,5 @@ export function serializeProblemLink(l: ProblemLinkRow): ProblemLink {
     similarity: l.similarity ?? null,
     rationale: l.rationale ?? null,
     createdBy: l.createdBy,
-  };
-}
-
-export function serializeObservationLink(l: ObservationLinkRow): ObservationLink {
-  return {
-    id: l.id,
-    fromObservationId: l.fromObservationId,
-    toObservationId: l.toObservationId,
-    kind: l.kind,
-    similarity: l.similarity ?? null,
-    rationale: l.rationale ?? null,
-    createdBy: l.createdBy,
-  };
-}
-
-export function serializeRun(r: RunRow) {
-  return {
-    id: r.id,
-    kind: r.kind,
-    targetKind: r.targetKind,
-    targetId: r.targetId,
-    status: r.status,
-    providerModel: r.providerModel ?? null,
-    tokensIn: r.tokensIn ?? null,
-    tokensOut: r.tokensOut ?? null,
-    createdAt: ms(r.createdAt),
   };
 }

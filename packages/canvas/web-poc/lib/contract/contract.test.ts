@@ -1,19 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { CreateProblemSchema } from "./schemas.js";
+import { CreateObservationSchema, CreateSourceSchema } from "./schemas.js";
 import { routes } from "./routes.js";
 
-describe("CreateProblemSchema", () => {
-  it("defaults runAgent to true", () => {
-    const parsed = CreateProblemSchema.parse({
-      title: "t",
-      body: "b",
-    });
-    expect(parsed.runAgent).toBe(true);
+describe("CreateObservationSchema", () => {
+  it("accepts a title and body with no source", () => {
+    const parsed = CreateObservationSchema.parse({ title: "t", body: "b" });
+    expect(parsed.source).toBeUndefined();
+    expect(parsed.sourceId).toBeUndefined();
   });
 
-  it("rejects empty title", () => {
-    const result = CreateProblemSchema.safeParse({ title: "", body: "b" });
-    expect(result.success).toBe(false);
+  it("rejects an empty title", () => {
+    expect(CreateObservationSchema.safeParse({ title: "", body: "b" }).success).toBe(false);
+  });
+});
+
+describe("CreateSourceSchema", () => {
+  it("needs an identifier or a description", () => {
+    expect(CreateSourceSchema.safeParse({ kind: "url", identifier: "https://x" }).success).toBe(true);
+    expect(CreateSourceSchema.safeParse({ kind: "person", description: "a stranger" }).success).toBe(true);
+    expect(CreateSourceSchema.safeParse({ kind: "document" }).success).toBe(false);
   });
 });
 
@@ -23,7 +28,8 @@ describe("routes", () => {
     expect(routes.createProblem.path).toBe("/v1/problems");
     expect(routes.getProblem.path).toBe("/v1/problems/{id}");
     expect(routes.createObservation.path).toBe("/v1/observations");
-    expect(routes.synthesizeProblem.path).toBe("/v1/problems/synthesize");
+    expect(routes.deleteObservation.method).toBe("delete");
+    expect(routes.listSourceObservations.path).toBe("/v1/sources/{id}/observations");
     expect(routes.getGraph.path).toBe("/v1/graph");
   });
 });

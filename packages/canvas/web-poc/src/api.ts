@@ -2,8 +2,8 @@ import {
   ApiKeyAdminSchema,
   GraphSchema,
   ItemPageSchema,
-  JobAckSchema,
   NeighborhoodSchema,
+  DeleteResultSchema,
   ObservationDetailSchema,
   ObservationPageSchema,
   ProblemContextSchema,
@@ -11,7 +11,6 @@ import {
   ProblemPageSchema,
   ProjectTagsSchema,
   SolutionSchema,
-  SolvedMatchSchema,
   WorkspaceSummarySchema,
   z,
   type CreateObservation,
@@ -19,7 +18,6 @@ import {
   type CreateSolution,
   type Graph,
   type ItemPage,
-  type JobAck,
   type Neighborhood,
   type ObservationDetail,
   type ObservationPage,
@@ -27,8 +25,6 @@ import {
   type ProblemDetail,
   type ProblemPage,
   type Solution,
-  type SolvedMatch,
-  type SynthesizeProblem,
   type UpdateObservation,
   type UpdateProblem,
   type UpdateSolution,
@@ -98,27 +94,17 @@ export const api = {
     }));
   },
 
-  async reprocessObservation(id: string): Promise<ObservationDetail> {
-    return unwrap(ObservationDetailSchema, await client.POST("/v1/observations/{id}/reprocess", {
-      params: { path: { id } },
-    }));
+  async deleteObservation(id: string): Promise<void> {
+    const res = await client.DELETE("/v1/observations/{id}", { params: { path: { id } } });
+    if (res.error) throw new Error(`Request failed: ${res.response.status}`);
+    DeleteResultSchema.parse(res.data);
   },
 
-  /** Solved problems that resemble this observation (read-time hint; excludes dismissed). */
-  async getObservationSolvedMatches(id: string): Promise<SolvedMatch[]> {
-    return unwrap(z.array(SolvedMatchSchema), await client.GET("/v1/observations/{id}/solved-matches", {
-      params: { path: { id } },
+  /** Every observation that names this source. */
+  async listSourceObservations(id: string): Promise<ObservationPage> {
+    return unwrap(ObservationPageSchema, await client.GET("/v1/sources/{id}/observations", {
+      params: { path: { id }, query: {} },
     }));
-  },
-
-  /** Flag a solved-problem match as a false positive; returns the remaining matches. */
-  async dismissObservationSolvedMatch(id: string, problemId: string): Promise<SolvedMatch[]> {
-    return unwrap(
-      z.array(SolvedMatchSchema),
-      await client.POST("/v1/observations/{id}/solved-matches/{problemId}/dismiss", {
-        params: { path: { id, problemId } },
-      }),
-    );
   },
 
   /* ---- Problems ---- */
@@ -161,17 +147,6 @@ export const api = {
       params: { path: { id } },
       body: patch,
     }));
-  },
-
-  async reprocess(id: string): Promise<ProblemDetail> {
-    return unwrap(ProblemDetailSchema, await client.POST("/v1/problems/{id}/reprocess", {
-      params: { path: { id } },
-    }));
-  },
-
-  /** Enqueue synthesis of a problem from observations; the problem arrives via realtime. */
-  async synthesizeProblem(body: SynthesizeProblem): Promise<JobAck> {
-    return unwrap(JobAckSchema, await client.POST("/v1/problems/synthesize", { body }));
   },
 
   /* ---- Solutions (polymorphic) ---- */

@@ -93,7 +93,6 @@ export function Capture({
             body,
             projectTags: tags,
             impact: impact || undefined,
-            runAgent: true,
           }),
         };
       }
@@ -107,7 +106,6 @@ export function Capture({
           urgency: urgency as "low" | "medium" | "high" | "critical",
           priority,
           solutionDirection: solutionDirection || undefined,
-          runAgent: true,
         }),
       };
     },
@@ -119,7 +117,7 @@ export function Capture({
       if (res.type === "problem") {
         notifications.show({
           title: "Problem submitted",
-          message: "The agent is processing it — links and a solution will appear shortly.",
+          message: "Recorded.",
           color: "blue",
         });
         setView("library");
@@ -127,7 +125,7 @@ export function Capture({
       } else {
         notifications.show({
           title: "Observation recorded",
-          message: "The agent is processing it — similar links will appear shortly.",
+          message: "Recorded.",
           color: "blue",
         });
         setView("library");

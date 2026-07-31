@@ -110,6 +110,21 @@ export async function observationAccessible(
   return row != null && canAccessWorkspace(scope, row.workspaceId);
 }
 
+/** Whether a source exists and is within the caller's access scope. */
+export async function sourceAccessible(
+  db: AppEnv["Variables"]["db"],
+  scope: AccessScope,
+  sourceId: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ workspaceId: schema.sources.workspaceId })
+    .from(schema.sources)
+    .where(eq(schema.sources.id, sourceId))
+    .limit(1);
+  const row = rows[0];
+  return row != null && canAccessWorkspace(scope, row.workspaceId);
+}
+
 /** Whether a problem exists and is within the caller's access scope. */
 export async function problemAccessible(
   db: AppEnv["Variables"]["db"],

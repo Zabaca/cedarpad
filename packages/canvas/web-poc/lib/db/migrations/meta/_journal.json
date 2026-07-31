@@ -225,6 +225,20 @@
       "when": 1785435929311,
       "tag": "0031_worried_exodus",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1785473692906,
+      "tag": "0032_narrow_killraven",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1785473695824,
+      "tag": "0033_motionless_anita_blake",
+      "breakpoints": true
     }
   ]
 }

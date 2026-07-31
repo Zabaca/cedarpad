@@ -8,8 +8,6 @@ import {
   text,
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
-import { EMBEDDING_DIMENSIONS } from "../config/index.js";
-import { float32Array } from "./vector.js";
 
 const timestamps = {
   createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -197,7 +195,51 @@ export const apikey = sqliteTable("apikey", {
  * LLM input.
  * ------------------------------------------------------------------ */
 
-export const sourceKind = ["human", "agent"] as const;
+/** Who produced a record. Distinct from a Source, which is where it came from. */
+export const origins = ["human", "agent"] as const;
+
+/**
+ * What a Source points at (ADR-0024). External things first, then cedarpad
+ * entities — one list, because the question ("where did this come from?") is the
+ * same either way and splitting it would mean two nullable id columns.
+ */
+export const sourceKinds = [
+  "url",
+  "call",
+  "document",
+  "person",
+  "conversation",
+  "canvas",
+  "repo",
+] as const;
+
+/**
+ * Where an Observation came from: a row, not a sentence, so "what else did that
+ * call surface?" is a join. `identifier` is the thing pointed at (a URL, a
+ * conversation id); when there is nothing to point at, `description` carries it
+ * instead — a Source with neither is refused at the contract.
+ */
+export const sources = sqliteTable(
+  "sources",
+  {
+    id: text("id").primaryKey(),
+    /** Platform workspace id (registry / `cs_workspace`). Plain text, no FK. */
+    workspaceId: text("workspace_id").notNull(),
+    kind: text("kind", { enum: sourceKinds }).notNull(),
+    identifier: text("identifier"),
+    label: text("label"),
+    description: text("description"),
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+  },
+  (t) => [index("sources_workspace_idx").on(t.workspaceId)],
+);
+
+export type Source = typeof sources.$inferSelect;
+export type NewSource = typeof sources.$inferInsert;
+
 /** Tags array, stored as JSON. Meta-only — never fed to embeddings or the LLM. */
 const projectTags = () =>
   text("project_tags", { mode: "json" }).$type<string[]>().notNull().default([]);
@@ -225,18 +267,17 @@ export const observations = sqliteTable(
      */
     impact: text("impact"),
     status: text("status", { enum: observationStatus }).notNull().default("open"),
-    source: text("source", { enum: sourceKind }).notNull().default("human"),
+    /** Who produced it. Was `source`, which collided with the Source row below. */
+    origin: text("origin", { enum: origins }).notNull().default("human"),
+    /** Where it came from. Nullable: an observation you simply think of has none. */
+    sourceId: text("source_id").references(() => sources.id, { onDelete: "set null" }),
     projectTags: projectTags(),
     createdBy: text("created_by"),
-    embedding: float32Array("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
-    embeddingModel: text("embedding_model"),
     ...timestamps,
   },
   (t) => [
     index("observations_workspace_idx").on(t.workspaceId),
-    // Similarity uses an exact `vector_distance_cos` scan (see queries/similar.ts),
-    // not an ANN index: at this corpus size brute force gives perfect recall with
-    // none of the libsql_vector_idx storage/write blow-up (~40× the row data).
+    index("observations_source_idx").on(t.sourceId),
   ],
 );
 
@@ -266,17 +307,12 @@ export const problems = sqliteTable(
     /** Guidance on how a solution should be structured. */
     solutionDirection: text("solution_direction"),
     status: text("status", { enum: problemStatus }).notNull().default("open"),
-    source: text("source", { enum: sourceKind }).notNull().default("human"),
+    source: text("source", { enum: origins }).notNull().default("human"),
     projectTags: projectTags(),
     createdBy: text("created_by"),
-    embedding: float32Array("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
-    embeddingModel: text("embedding_model"),
     ...timestamps,
   },
-  (t) => [
-    index("problems_workspace_idx").on(t.workspaceId),
-    // Exact `vector_distance_cos` scan instead of an ANN index — see observations.
-  ],
+  (t) => [index("problems_workspace_idx").on(t.workspaceId)],
 );
 
 /**
@@ -295,7 +331,7 @@ export const observationProblems = sqliteTable(
       .references(() => problems.id, { onDelete: "cascade" }),
     relevance: real("relevance"),
     rationale: text("rationale"),
-    createdBy: text("created_by", { enum: sourceKind }).notNull().default("agent"),
+    createdBy: text("created_by", { enum: origins }).notNull().default("agent"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -306,58 +342,7 @@ export const observationProblems = sqliteTable(
   ],
 );
 
-/**
- * A human's "this observation is NOT the same as that solved problem" signal.
- * Suppresses a read-time cross-kind match (see `findSolvedProblemsForObservation`)
- * so a false positive stops being surfaced. Negative feedback only — it never
- * changes the observation's status or attaches a solution.
- */
-export const observationSolvedMatchDismissals = sqliteTable(
-  "observation_solved_match_dismissals",
-  {
-    observationId: text("observation_id")
-      .notNull()
-      .references(() => observations.id, { onDelete: "cascade" }),
-    problemId: text("problem_id")
-      .notNull()
-      .references(() => problems.id, { onDelete: "cascade" }),
-    createdBy: text("created_by"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .default(sql`(unixepoch() * 1000)`),
-  },
-  (t) => [
-    primaryKey({ columns: [t.observationId, t.problemId] }),
-    index("observation_solved_match_dismissals_problem_idx").on(t.problemId),
-  ],
-);
-
 export const linkKind = ["identical", "partial", "related"] as const;
-
-/** Directed similarity edge between two observations (used for clustering). */
-export const observationLinks = sqliteTable(
-  "observation_links",
-  {
-    id: text("id").primaryKey(),
-    fromObservationId: text("from_observation_id")
-      .notNull()
-      .references(() => observations.id, { onDelete: "cascade" }),
-    toObservationId: text("to_observation_id")
-      .notNull()
-      .references(() => observations.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: linkKind }).notNull(),
-    similarity: real("similarity"),
-    rationale: text("rationale"),
-    createdBy: text("created_by", { enum: sourceKind }).notNull().default("agent"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .default(sql`(unixepoch() * 1000)`),
-  },
-  (t) => [
-    index("observation_links_from_idx").on(t.fromObservationId),
-    index("observation_links_to_idx").on(t.toObservationId),
-  ],
-);
 
 /** Directed similarity edge between two problems. */
 export const problemLinks = sqliteTable(
@@ -373,7 +358,7 @@ export const problemLinks = sqliteTable(
     kind: text("kind", { enum: linkKind }).notNull(),
     similarity: real("similarity"),
     rationale: text("rationale"),
-    createdBy: text("created_by", { enum: sourceKind }).notNull().default("agent"),
+    createdBy: text("created_by", { enum: origins }).notNull().default("agent"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .default(sql`(unixepoch() * 1000)`),
@@ -395,7 +380,6 @@ export const solutions = sqliteTable("solutions", {
   status: text("status", { enum: solutionStatus }).notNull().default("draft"),
   origin: text("origin", { enum: solutionOrigin }).notNull(),
   createdBy: text("created_by"),
-  embedding: float32Array("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
   ...timestamps,
 });
 
@@ -423,94 +407,6 @@ export const solutionLinks = sqliteTable(
     primaryKey({ columns: [t.solutionId, t.targetKind, t.targetId] }),
     index("solution_links_target_idx").on(t.targetKind, t.targetId),
   ],
-);
-
-export const agentRunStatus = ["running", "completed", "failed"] as const;
-/** What an agent pass did: embed/link an observation or problem, or synthesize a problem. */
-export const agentRunKind = ["observation_intake", "problem_intake", "synthesis"] as const;
-
-/** Audit trail of one agent pass over an observation or problem. */
-export const agentRuns = sqliteTable(
-  "agent_runs",
-  {
-    id: text("id").primaryKey(),
-    kind: text("kind", { enum: agentRunKind }).notNull(),
-    targetKind: text("target_kind", { enum: solutionTargetKind }).notNull(),
-    targetId: text("target_id").notNull(),
-    status: text("status", { enum: agentRunStatus }).notNull().default("running"),
-    steps: text("steps", { mode: "json" }).$type<unknown[]>(),
-    providerModel: text("provider_model"),
-    tokensIn: integer("tokens_in"),
-    tokensOut: integer("tokens_out"),
-    error: text("error"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .default(sql`(unixepoch() * 1000)`),
-  },
-  (t) => [index("agent_runs_target_idx").on(t.targetKind, t.targetId)],
-);
-
-export const agentJobStatus = ["queued", "running", "done", "failed"] as const;
-export const agentJobKind = ["observation_intake", "problem_intake", "synthesis"] as const;
-
-/**
- * Async work queue. Intake / reprocess / synthesis enqueue a job here and return
- * immediately; a worker (dev: a bun loop; prod: a Cron/Queue/Workflow consumer)
- * claims `queued` jobs and runs the matching pipeline. Decoupled from `agent_runs`
- * (which stays the audit log the pipeline itself writes) so intake never blocks.
- */
-export const agentJobs = sqliteTable(
-  "agent_jobs",
-  {
-    id: text("id").primaryKey(),
-    kind: text("kind", { enum: agentJobKind }).notNull(),
-    status: text("status", { enum: agentJobStatus }).notNull().default("queued"),
-    /**
-     * Kind-specific input. intake/reprocess: `{ targetId }`. synthesis:
-     * `{ workspaceId, observationIds, hint, createdBy, projectTags }`.
-     */
-    payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    /** Filled on completion (e.g. synthesis stores `{ problemId }`). */
-    result: text("result", { mode: "json" }).$type<Record<string, unknown>>(),
-    workspaceId: text("workspace_id").notNull(),
-    /**
-     * Higher drains first (then oldest-first). Seeded from the target problem's
-     * priority at enqueue time so urgent problems jump the queue; observation /
-     * synthesis jobs default to 0.
-     */
-    priority: integer("priority").notNull().default(0),
-    attempts: integer("attempts").notNull().default(0),
-    error: text("error"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .default(sql`(unixepoch() * 1000)`),
-    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
-    finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
-  },
-  (t) => [index("agent_jobs_status_idx").on(t.status, t.createdAt)],
-);
-
-/**
- * Tier 3 cached community summaries. One row per cluster root problem. The
- * `membershipHash` (hash of the cluster's sorted member ids) is the cache key:
- * a summary is reused only while membership is unchanged, otherwise recomputed.
- */
-export const clusterSummaries = sqliteTable(
-  "cluster_summaries",
-  {
-    id: text("id").primaryKey(),
-    rootProblemId: text("root_problem_id")
-      .notNull()
-      .references(() => problems.id, { onDelete: "cascade" }),
-    membershipHash: text("membership_hash").notNull(),
-    summary: text("summary").notNull(),
-    memberCount: integer("member_count").notNull().default(0),
-    model: text("model"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .default(sql`(unixepoch() * 1000)`),
-  },
-  (t) => [index("cluster_summaries_root_idx").on(t.rootProblemId)],
 );
 
 /* ------------------------------------------------------------------ *
@@ -1127,10 +1023,4 @@ export type NewProblem = typeof problems.$inferInsert;
 export type Solution = typeof solutions.$inferSelect;
 export type SolutionLink = typeof solutionLinks.$inferSelect;
 export type ObservationProblem = typeof observationProblems.$inferSelect;
-export type ObservationSolvedMatchDismissal =
-  typeof observationSolvedMatchDismissals.$inferSelect;
 export type ProblemLink = typeof problemLinks.$inferSelect;
-export type ObservationLink = typeof observationLinks.$inferSelect;
-export type AgentRun = typeof agentRuns.$inferSelect;
-export type AgentJob = typeof agentJobs.$inferSelect;
-export type ClusterSummary = typeof clusterSummaries.$inferSelect;

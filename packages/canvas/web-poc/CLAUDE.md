@@ -6,8 +6,9 @@ Rules and orientation for AI sessions working in this package. Read `CONTEXT.md`
 
 ## What this is
 
-The Cedarpad Problem/Solution app: a React SPA (`src/`) + Hono API (`worker/`),
-backed by the platform D1 (ADR-0018) with Voyage embeddings. Shared libs in `lib/`
+The Notebook: a React SPA (`src/`) + Hono API (`worker/`), backed by the platform
+D1 (ADR-0018). Since ADR-0024 it is **a store agents write and canvas reads** — the
+API is the product, the UI a read surface. Shared libs in `lib/`
 (`ai`/`config`/`contract`/`db`/`realtime`).
 
 **As of 2026-07-01 this is an in-tree module of `@cedarpad/canvas`, not a
@@ -58,19 +59,10 @@ secrets.yaml` and are pushed as Worker secrets by the zbc module — now as
   no database client at all. (There is no standalone `export default` worker /
   `run_worker_first` / Cloudflare Assets path anymore — canvas's vite serves the
   SPA and proxies.)
-- **Embeddings: Voyage `voyage-3.5-lite`, 1024 dims.** `createEmbedder`
-  (`worker/agent.ts`) uses Voyage when `VOYAGE_API_KEY` is set, else a
-  deterministic local hash (lexical, offline). Asymmetric `input_type` is
-  threaded through `Embedder.embed(text, "document"|"query")`.
-- **Embed → store → search is inline & synchronous.** Create embeds
-  (`document`) and stores on the row; search embeds (`query`) and runs an exact
-  `vector_distance_cos` scan (`lib/db/queries/similar.ts`, no ANN index — see
-  `docs/SIMILARITY_SCALING.md`). The core loop needs **no background worker**.
-- **`agent_jobs` queue is optional & inert.** It carries LLM
-  classification/linking/synthesis, enqueued behind `runAgent`, but nothing
-  drains it unless you run `bun run dev:worker`. There is no Cron/`scheduled`
-  consumer (removed). To productionize it later: Cron `scheduled` handler,
-  Cloudflare Queues, or Workflows — see `MIGRATION.md` → "Async agent jobs".
+- **No embeddings, no queue, no LLM pass (ADR-0024).** A write is one insert. The
+  `agent_jobs`/`agent_runs` tables, the similarity graph and the intake pipeline
+  were dropped by migrations 0032–0033; `createEmbedder` (`worker/agent.ts`)
+  survives for a future index. Search is not implemented — it returns on D1 FTS5.
 - **DB client**: `worker/runtime.ts`'s `createDbForWorker` builds a Drizzle db from
   the edge Worker's `PLATFORM_DB` D1 binding (ADR-0018) — the container/bridge holds
   no database client at all. In dev that binding is miniflare's local D1 (apply

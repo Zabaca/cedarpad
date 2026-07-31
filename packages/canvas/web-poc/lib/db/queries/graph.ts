@@ -1,30 +1,10 @@
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "../client.js";
-import {
-  observationSolvedMatchDismissals,
-  observations,
-  problemLinks,
-  problems,
-  solutionLinks,
-  solutions,
-} from "../schema.js";
-import { findSimilarProblems } from "./similar.js";
+import { problemLinks, problems, solutionLinks, solutions } from "../schema.js";
 
 /* ------------------------------------------------------------------ *
  * Shared shapes
  * ------------------------------------------------------------------ */
-
-export interface GraphSearchResult {
-  id: string;
-  title: string;
-  body: string;
-  similarity: number;
-  status: string;
-  /** Distinct kinds of links touching this problem (identical/partial/related). */
-  linkKinds: string[];
-  /** True when the problem has at least one accepted solution. */
-  hasAcceptedSolution: boolean;
-}
 
 export interface ContextEdge {
   id: string;
@@ -80,14 +60,6 @@ export interface SolvedNeighbor {
   solution: ContextSolution;
 }
 
-export interface SolvedMatch {
-  problemId: string;
-  title: string;
-  body: string;
-  similarity: number;
-  solution: ContextSolution;
-}
-
 /* ------------------------------------------------------------------ *
  * Helpers
  * ------------------------------------------------------------------ */
@@ -105,78 +77,6 @@ async function problemExists(db: Database, problemId: string): Promise<boolean> 
 /** All solutions attached to a set of problems (via the polymorphic join). */
 function problemSolutionJoin(ids: string[]) {
   return and(eq(solutionLinks.targetKind, "problem"), inArray(solutionLinks.targetId, ids));
-}
-
-/* ------------------------------------------------------------------ *
- * searchGraph — semantic search enriched with link/solution signals
- * ------------------------------------------------------------------ */
-
-/**
- * Top-k semantically similar problems, each annotated with the kinds of links
- * already attached and whether it has an accepted solution. Backed by the exact
- * cosine scan in {@link findSimilarProblems} + a single-hop link join.
- *
- * Pass `workspaceId` to confine results to one platform workspace (Notebook
- * search isolation, #57): workspace A's search never returns workspace B's rows.
- */
-export async function searchGraph(
-  db: Database,
-  params: {
-    queryVector: number[];
-    topK: number;
-    excludeProblemId?: string;
-    workspaceId?: string;
-  },
-): Promise<GraphSearchResult[]> {
-  const hits = await findSimilarProblems(db, params);
-  if (hits.length === 0) return [];
-
-  const ids = hits.map((h) => h.id);
-
-  const statusRows = await db
-    .select({ id: problems.id, status: problems.status })
-    .from(problems)
-    .where(inArray(problems.id, ids));
-  const statusById = new Map(statusRows.map((r) => [r.id, r.status]));
-
-  const linkRows = await db
-    .select({
-      fromProblemId: problemLinks.fromProblemId,
-      toProblemId: problemLinks.toProblemId,
-      kind: problemLinks.kind,
-    })
-    .from(problemLinks)
-    .where(
-      or(inArray(problemLinks.fromProblemId, ids), inArray(problemLinks.toProblemId, ids)),
-    );
-  const kindsById = new Map<string, Set<string>>();
-  const addKind = (id: string, kind: string) => {
-    if (!ids.includes(id)) return;
-    const set = kindsById.get(id) ?? new Set<string>();
-    set.add(kind);
-    kindsById.set(id, set);
-  };
-  for (const l of linkRows) {
-    addKind(l.fromProblemId, l.kind);
-    addKind(l.toProblemId, l.kind);
-  }
-
-  const solvedRows = await db
-    .select({ problemId: solutionLinks.targetId })
-    .from(solutionLinks)
-    .innerJoin(solutions, eq(solutions.id, solutionLinks.solutionId))
-    .where(and(problemSolutionJoin(ids), eq(solutions.status, "accepted")));
-  const solved = new Set(solvedRows.map((r) => r.problemId));
-
-  return hits.map((h) => ({
-    id: h.id,
-    title: h.title,
-    body: h.body,
-    similarity: h.similarity,
-    status: statusById.get(h.id) ?? "open",
-    linkKinds: [...(kindsById.get(h.id) ?? [])],
-    hasAcceptedSolution: solved.has(h.id),
-  }));
 }
 
 /* ------------------------------------------------------------------ *
@@ -399,103 +299,4 @@ export async function findSolvedNeighbors(
       solution: { id: r.id, body: r.body, status: r.status, origin: r.origin },
     }))
     .sort((a, b) => a.depth - b.depth);
-}
-
-/* ------------------------------------------------------------------ *
- * Cross-kind: solved problems that look like an observation
- * ------------------------------------------------------------------ */
-
-/**
- * Read-time cross-kind lookup powering the "this may already be solved" hint on
- * an observation. Uses the observation's *stored* embedding (no re-embed) to find
- * similar PROBLEMS that already carry an accepted solution, dropping any pair the
- * user has dismissed as a false positive. Cross-workspace, like every graph read.
- *
- * Returns `null` when the observation does not exist; `[]` when it has no
- * embedding yet (still queued) or nothing clears `minSimilarity`. Ordered by
- * similarity, highest first.
- */
-export async function findSolvedProblemsForObservation(
-  db: Database,
-  params: { observationId: string; topK: number; minSimilarity: number },
-): Promise<SolvedMatch[] | null> {
-  const { observationId, topK, minSimilarity } = params;
-
-  const obsRows = await db
-    .select({ embedding: observations.embedding })
-    .from(observations)
-    .where(eq(observations.id, observationId))
-    .limit(1);
-  const obs = obsRows[0];
-  if (!obs) return null;
-  const embedding = obs.embedding;
-  if (!embedding) return [];
-
-  const hits = (await findSimilarProblems(db, { queryVector: embedding, topK })).filter(
-    (h) => h.similarity >= minSimilarity,
-  );
-  if (hits.length === 0) return [];
-
-  const ids = hits.map((h) => h.id);
-
-  // One accepted solution per matched problem (first wins) — the hint only needs
-  // to assert "this is solved over there", not enumerate every solution.
-  const solRows = await db
-    .select({
-      problemId: solutionLinks.targetId,
-      id: solutions.id,
-      body: solutions.body,
-      status: solutions.status,
-      origin: solutions.origin,
-    })
-    .from(solutionLinks)
-    .innerJoin(solutions, eq(solutions.id, solutionLinks.solutionId))
-    .where(and(problemSolutionJoin(ids), eq(solutions.status, "accepted")));
-  const solByProblem = new Map<string, ContextSolution>();
-  for (const r of solRows) {
-    if (!solByProblem.has(r.problemId)) {
-      solByProblem.set(r.problemId, { id: r.id, body: r.body, status: r.status, origin: r.origin });
-    }
-  }
-
-  // Pairs the user has already rejected as false positives.
-  const dismissedRows = await db
-    .select({ problemId: observationSolvedMatchDismissals.problemId })
-    .from(observationSolvedMatchDismissals)
-    .where(eq(observationSolvedMatchDismissals.observationId, observationId));
-  const dismissed = new Set(dismissedRows.map((r) => r.problemId));
-
-  return hits
-    .filter((h) => solByProblem.has(h.id) && !dismissed.has(h.id))
-    .map((h) => ({
-      problemId: h.id,
-      title: h.title,
-      body: h.body,
-      similarity: h.similarity,
-      solution: solByProblem.get(h.id)!,
-    }));
-}
-
-/**
- * Record a false-positive dismissal so the (observation, problem) match stops
- * being surfaced. Idempotent — re-dismissing the same pair is a no-op. Returns
- * `false` (no insert) when the problem does not exist, so the caller can 404
- * instead of letting the foreign key throw.
- */
-export async function dismissSolvedMatch(
-  db: Database,
-  params: { observationId: string; problemId: string; createdBy: string | null },
-): Promise<boolean> {
-  // FK guard: a stale/invalid problemId would otherwise throw on insert.
-  if (!(await problemExists(db, params.problemId))) return false;
-
-  await db
-    .insert(observationSolvedMatchDismissals)
-    .values({
-      observationId: params.observationId,
-      problemId: params.problemId,
-      createdBy: params.createdBy,
-    })
-    .onConflictDoNothing();
-  return true;
 }
