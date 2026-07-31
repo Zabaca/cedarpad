@@ -334,9 +334,14 @@ action the agent takes mid-conversation**, not a hardcoded consequence of the re
 
 ## Data — the workspace warehouse (ADR-0017)
 
-> **Status: being designed** (grill session 2026-07-26). A workspace can own a pipeline;
-> this is a **greenfield capability**, deliberately *not* a 1:1 port of `ceo`'s 93 dbt
-> models. Decisions and the measurements behind them: ADR-0017.
+> **Status: live** — components read marts by name (`shared/mart-contract.ts`,
+> `shared/mart-scope.ts`, `src/mart-data.ts`). Designed in the 2026-07-26 grill session as a
+> **greenfield capability**, deliberately *not* a 1:1 port of `ceo`'s 93 dbt models. Decisions
+> and the measurements behind them: ADR-0017.
+>
+> The one part still unwired is **dispatch**: nothing starts the warehouse container to run a
+> Materialize Job (#240 — `deploy.sh` builds and pushes that image but never starts it). Read
+> is live; automatic rewrite is not.
 
 **Warehouse**: a workspace's analytical store — parquet files under its own R2 prefix
 (`workspaces/<ws>/warehouse/…`). It is **storage, not a server**: DuckDB is a *stateless

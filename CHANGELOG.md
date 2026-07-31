@@ -60,6 +60,12 @@ version, so this entry describes what it does today rather than the 406 commits 
   polled for. (#383) (#385)
 - **Agents reach cedarpad over MCP** — an external agent can read and write your canvases with
   the same reach the in-app agent has.
+- **Huddles** — talk over voice on a canvas. Join from the side panel, see who is in, and get
+  a live transcript as you go; guests on a share link can join too. (#222)
+- **The dev agent** — point an agent at a connected repo and it works in a branch and opens a
+  pull request. Run it from Jobs, or trigger it from an outside agent over MCP.
+- **Marts** — components read the workspace warehouse by name. A component names a mart, never
+  a URL, and a shared canvas exposes only the marts it actually uses.
 - **Shareable canvases** — invite a guest by link, see their presence, revoke it. (#320)
 - **Workspace settings** — members and invitations, private canvases, connected GitHub
   repositories, and web push notifications.

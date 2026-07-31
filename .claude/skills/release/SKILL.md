@@ -176,7 +176,14 @@ not run, say so — do not imply a green path that was not walked.
 - **Never tag before the live check** — see the top of this file.
 - **Never bump the version because a deploy failed.** The number belongs to the content, not to
   the attempt.
-- **Never edit or delete a past release entry.** Forward-fix with a new one, like migrations.
+- **Never rewrite what shipped when.** A released entry is a record of one artifact, so never
+  move an item to a different version, restate a claim the release did not make, or delete
+  history. **But an entry that misdescribes its OWN release is corrected in place** — that is
+  what serves the same purpose. On v0.0.1 three live capabilities (Huddles, the dev agent,
+  marts) were omitted because the docs read as unshipped; filing them under `0.0.2` would have
+  told readers they arrived a day later than they did. Correcting an omission is not rewriting
+  history; it is the opposite. Migrations are not the right analogy — those change state, an
+  entry only describes it.
 - **Never hand-edit a `.sql` file** under `lib/db/migrations/` or `meta/_journal.json` — drizzle
   owns those, and a release migrates D1.
 - **Never print secrets.** `deploy.sh` reads production credentials through
