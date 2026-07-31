@@ -13,8 +13,9 @@ by relative path and owns its dependencies. See "How canvas mounts it" below.
 ## Language
 
 > Agreed 2026-07-30 ([ADR-0024](../../../docs/adr/0024-the-notebook-is-an-agent-first-store.md)).
-> This is the vocabulary the redesign is being built to; the code still uses some of
-> the older words (`observations.source`, the similarity graph) until it lands.
+> The Observation side of this is built: `sources` is a table, `observations.origin`
+> replaced `observations.source`, and the similarity graph is gone. `problems.source`
+> is the one word still waiting on its own slice.
 
 **Observation**:
 A loose record of something worth noting, which may lead nowhere or pile up with
@@ -63,10 +64,10 @@ A resolution attached to an Observation or a Problem.
 
 - "source" meant both *who produced this* and *where it came from* — resolved: those
   are **Origin** and **Source**, and they are different columns.
-- Root CONTEXT.md says Notebook records are isolated per platform workspace; the graph
-  reads in `lib/db/queries/graph.ts` are not (only `searchGraph` takes a
-  `workspaceId`) — resolved: **isolation is the rule**, one shared pool *per
-  workspace*, and the unscoped reads are a defect to close.
+- Root CONTEXT.md says Notebook records are isolated per platform workspace; the
+  surviving graph reads in `lib/db/queries/graph.ts` (problem context, neighborhood,
+  solved neighbours) still are not — resolved: **isolation is the rule**, one shared
+  pool *per workspace*, and those unscoped reads are a defect to close.
 
 ## Layout
 
@@ -77,9 +78,9 @@ A resolution attached to an Observation or a Problem.
   `buildApp`, mounted at canvas's edge Worker (ADR-0018). Routes: `/api/auth/*`
   (Better Auth), `/v1/*` (the contract), `/health`, `/doc`, `/ui`.
 - `lib/` — the former workspace packages, relative-imported:
-  `ai` (AI SDK pipeline), `config` (env + tunables), `contract` (zod-openapi
-  schemas shared by SPA + worker), `db` (Drizzle, driver-agnostic over D1/libSQL,
-  vectors, `migrations/`), `realtime` (Ably channel contract).
+  `ai` (the embedder factory), `config` (env + tunables), `contract` (zod-openapi
+  schemas shared by SPA + worker), `db` (Drizzle over D1, `migrations/`),
+  `realtime` (Ably channel contract).
 - `scripts/` — `emit-openapi.ts`.
 
 ## How canvas mounts it
@@ -122,25 +123,20 @@ config in `drizzle.config.ts`). Generate with `bun run webpoc:db:generate` (from
 `packages/canvas`); never hand-edit `.sql` or `meta/_journal.json`, and never roll
 back — only forward-fix.
 
-## Embeddings & search
+## Search
 
-Embeddings use **Voyage `voyage-3.5-lite`** (1024-dim) via a REST embedder
-(`lib/ai/embedder.ts` `createVoyageEmbedder`, selected in `worker/agent.ts`
-`createEmbedder` when `VOYAGE_API_KEY` is set; deterministic local hash as the
-offline fallback). They are computed **inline**: at create
-(`createObservationRoute`/`createProblemRoute`, `input_type=document`, stored on
-the row) and at search (`searchGraphRoute`, `input_type=query`), which runs an
-exact cosine scan (`lib/db/queries/similar.ts`, no ANN index). So the core
-embed→store→search loop needs **no background worker**.
+There is none yet. Embeddings and the exact cosine scan behind them were removed
+with the intake pipeline (ADR-0024): `vector_distance_cos` and `vector32()` are
+libSQL functions, so both the read and the write path had been dead in production
+since the D1 cutover. Search returns on **D1's native FTS5**. What survives is the
+embedder factory — `lib/ai/embedder.ts`, selected in `worker/agent.ts`
+`createEmbedder` — kept for whatever indexes the corpus next.
 
-## Async jobs (optional)
+## No background work
 
-The `agent_jobs` table is still used for the **LLM** agent work (classification /
-similarity-linking / synthesis), enqueued behind `runAgent`. It is **inert** —
-nothing drains it; the standalone local consumer script was retired with the Turso
-cleanup (#268) since it can't reach D1 outside workerd. Re-introducing a production
-consumer (Cron `scheduled`, Queues, or Workflows) is documented in `MIGRATION.md` →
-"Async agent jobs".
+The `agent_jobs` queue, its `agent_runs` audit trail and the LLM intake pipeline
+are gone. A write to the Notebook is one insert; the thinking moves to cedarpad
+agents, which reach it over MCP.
 
 ## Relationships
 

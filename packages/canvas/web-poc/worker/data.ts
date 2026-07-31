@@ -5,11 +5,10 @@ import { aliasedTable, and, desc, eq, inArray } from "drizzle-orm";
 import { type AccessScope, workspaceFilter } from "./access.js";
 import {
   serializeObservation,
-  serializeObservationLink,
   serializeProblem,
   serializeProblemLink,
-  serializeRun,
   serializeSolution,
+  serializeSource,
 } from "./serializers.js";
 
 type TargetKind = "observation" | "problem";
@@ -32,17 +31,6 @@ async function solutionsForTarget(db: Database, kind: TargetKind, id: string) {
     .innerJoin(schema.solutions, eq(schema.solutions.id, schema.solutionLinks.solutionId))
     .where(and(eq(schema.solutionLinks.targetKind, kind), eq(schema.solutionLinks.targetId, id)));
   return rows.map((r) => serializeSolution(r.solution));
-}
-
-/** The latest agent run recorded against a target. */
-async function latestRunForTarget(db: Database, kind: TargetKind, id: string) {
-  const rows = await db
-    .select()
-    .from(schema.agentRuns)
-    .where(and(eq(schema.agentRuns.targetKind, kind), eq(schema.agentRuns.targetId, id)))
-    .orderBy(desc(schema.agentRuns.createdAt))
-    .limit(1);
-  return rows[0] ? serializeRun(rows[0]) : null;
 }
 
 /** Remove all solution links for a target before the target is deleted (no DB cascade). */
@@ -99,7 +87,6 @@ export async function getProblemDetail(db: Database, id: string): Promise<Proble
       rationale: r.rationale ?? null,
       relevance: r.relevance ?? null,
     })),
-    latestRun: await latestRunForTarget(db, "problem", id),
   };
 }
 
@@ -115,12 +102,13 @@ export async function getObservationDetail(
   const observation = obsRows[0];
   if (!observation) return null;
 
-  const linked = aliasedTable(schema.observations, "linked_obs");
-  const linkRows = await db
-    .select({ link: schema.observationLinks, observation: linked })
-    .from(schema.observationLinks)
-    .innerJoin(linked, eq(linked.id, schema.observationLinks.toObservationId))
-    .where(eq(schema.observationLinks.fromObservationId, id));
+  const sourceRows = observation.sourceId
+    ? await db
+        .select()
+        .from(schema.sources)
+        .where(eq(schema.sources.id, observation.sourceId))
+        .limit(1)
+    : [];
 
   const synthRows = await db
     .select({
@@ -135,10 +123,7 @@ export async function getObservationDetail(
 
   return {
     observation: serializeObservation(observation),
-    links: linkRows.map((r) => ({
-      link: serializeObservationLink(r.link),
-      observation: serializeObservation(r.observation),
-    })),
+    source: sourceRows[0] ? serializeSource(sourceRows[0]) : null,
     solutions: await solutionsForTarget(db, "observation", id),
     synthesizedProblems: synthRows.map((r) => ({
       id: r.id,
@@ -146,13 +131,12 @@ export async function getObservationDetail(
       rationale: r.rationale ?? null,
       relevance: r.relevance ?? null,
     })),
-    latestRun: await latestRunForTarget(db, "observation", id),
   };
 }
 
 /**
  * Build the knowledge graph: observation + problem + solution nodes, with
- * similarity links, `synthesizes` edges (observation → problem) and `solves`
+ * problem links, `synthesizes` edges (observation → problem) and `solves`
  * edges (solution → target). Spans every accessible workspace by default;
  * `workspaceId` narrows it to a single workspace (e.g. the UI's focused view).
  */
@@ -189,14 +173,6 @@ export async function getWorkspaceGraph(
   }
 
   if (observationIds.length > 0) {
-    const links = await db
-      .select()
-      .from(schema.observationLinks)
-      .where(inArray(schema.observationLinks.fromObservationId, observationIds));
-    for (const l of links) {
-      edges.push({ id: l.id, source: l.fromObservationId, target: l.toObservationId, kind: l.kind, weight: l.similarity ?? null });
-    }
-
     // synthesis edges: observation → problem
     const synth = await db
       .select()

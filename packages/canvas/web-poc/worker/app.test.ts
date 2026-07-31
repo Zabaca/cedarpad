@@ -39,8 +39,6 @@ beforeAll(async () => {
     { id: "ws_other", name: "Other Workspace", slug: "other-workspace" },
   ]);
 
-  // No embedding on the seed: `vector32()` is a libSQL function, so the embedding
-  // column cannot be written on D1 at all (CEDA-5U8J2H).
   const seedBody = "Database connection pool is exhausted under load causing 500s";
   await db.insert(schema.problems).values({
     id: "prob_seed",
@@ -63,21 +61,11 @@ beforeAll(async () => {
 afterAll(() => testDb.dispose());
 
 /*
- * Eight tests were NOT ported onto this seam (CEDA-5U8J2H). Each exercised the libSQL
- * vector path — `vector32()` on write, `vector_distance_cos()` on read — which D1 does
- * not have; they passed only because the seam ran on in-memory libSQL, while the
- * behaviour they asserted has been dead in production since the D1 cutover. ADR-0024
- * removes the similarity graph outright (search becomes D1 FTS5, CEDA-1XTYA5) and
- * rewrites the Observation/Problem write paths (CEDA-CUAS8S, CEDA-XQXS7V), so the
- * coverage returns with those slices, on this seam:
- *   - POST /v1/problems: links a near-duplicate to the seed and reuses its solution
- *   - observations: creates, lists and reads an observation
- *   - POST /v1/problems/synthesize: synthesizes a problem from observations
- *   - agent graph retrieval: searchGraph returns ranked hits
- *   - createGraphToolDeps: searchGraph tool dep embeds the query
- *   - problems list: paginates, searches and filters by solved
- *   - editing: edits a problem, rejects the AI solution, adds the human fix
- *   - access model: lists only the active workspace's problems
+ * Of the eight tests CEDA-5U8J2H could not port onto this seam, the observation
+ * ones return here in `worker/observations.test.ts`. The rest were the similarity
+ * graph — searchGraph, synthesis, near-duplicate linking, cluster summaries — which
+ * ADR-0024 removes outright rather than rebuilds; search returns on FTS5 with
+ * CEDA-1XTYA5, and the problem-side coverage with CEDA-XQXS7V.
  */
 
 describe("POST /v1/problems (intake + agent pipeline)", () => {
@@ -96,16 +84,6 @@ describe("POST /v1/problems (intake + agent pipeline)", () => {
 
   it("cannot read a problem from another workspace (isolation, #57)", async () => {
     const res = await req("/v1/problems/prob_seed", {}, "ws_other");
-    expect(res.status).toBe(404);
-  });
-});
-
-describe("POST /v1/problems/synthesize", () => {
-  it("404s when an observation is not in the workspace", async () => {
-    const res = await req("/v1/problems/synthesize", {
-      method: "POST",
-      body: JSON.stringify({ observationIds: ["obs_nope"] }),
-    });
     expect(res.status).toBe(404);
   });
 });
@@ -157,34 +135,6 @@ describe("editing: update problem, reject AI solution, add human solution", () =
   it("404s editing a problem or solution outside the workspace", async () => {
     expect((await req("/v1/problems/prob_nope", { method: "PATCH", body: JSON.stringify({ title: "x" }) })).status).toBe(404);
     expect((await req("/v1/solutions/sol_nope", { method: "PATCH", body: JSON.stringify({ status: "accepted" }) })).status).toBe(404);
-  });
-});
-
-describe("GET /v1/problems/:id/cluster-summary (Tier 3)", () => {
-  it("returns a deterministic templated summary with no key, then serves it from cache", async () => {
-    const first = await req(`/v1/problems/prob_seed/cluster-summary`);
-    expect(first.status).toBe(200);
-    const a = (await first.json()) as {
-      rootProblemId: string;
-      summary: string;
-      model: string | null;
-      memberCount: number;
-      cached: boolean;
-    };
-    expect(a.rootProblemId).toBe("prob_seed");
-    expect(a.model).toBe("heuristic"); // no provider key → templated, no LLM
-    expect(a.summary).toContain("Connection pool exhausted");
-    expect(a.cached).toBe(false); // freshly computed + cached
-
-    const second = await req(`/v1/problems/prob_seed/cluster-summary`);
-    const b = (await second.json()) as { summary: string; cached: boolean };
-    expect(b.cached).toBe(true); // membership unchanged → cache hit
-    expect(b.summary).toBe(a.summary);
-  });
-
-  it("404s for an unknown problem", async () => {
-    const res = await req(`/v1/problems/prob_missing/cluster-summary`);
-    expect(res.status).toBe(404);
   });
 });
 

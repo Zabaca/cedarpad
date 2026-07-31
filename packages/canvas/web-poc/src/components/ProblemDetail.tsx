@@ -56,7 +56,6 @@ export function ProblemDetail({ id }: { id: string }) {
     void qc.invalidateQueries({ queryKey: ["graph"] });
   };
 
-  const reprocess = useMutation({ mutationFn: () => api.reprocess(id), onSuccess: invalidate });
   const saveProblem = useMutation({
     mutationFn: () =>
       api.updateProblem(id, {
@@ -102,12 +101,6 @@ export function ProblemDetail({ id }: { id: string }) {
 
   return (
     <Stack>
-      {data.latestRun?.status === "running" && (
-        <Alert color="blue" variant="light" icon={<Loader size="xs" />} title="Agent is processing…">
-          Related links and a solution will appear here automatically when it finishes.
-        </Alert>
-      )}
-
       {/* Problem */}
       <Card withBorder padding="md">
         {editing ? (
@@ -136,9 +129,6 @@ export function ProblemDetail({ id }: { id: string }) {
               <Group gap="xs" wrap="nowrap">
                 <ShareLinkButton kind="problem" id={id} />
                 <Button size="xs" variant="default" onClick={startEdit}>Edit</Button>
-                <Button size="xs" variant="light" loading={reprocess.isPending} onClick={() => reprocess.mutate()}>
-                  Re-run agent
-                </Button>
               </Group>
             </Group>
             <Text mt="xs" style={preWrap}>{p.body}</Text>
@@ -152,12 +142,6 @@ export function ProblemDetail({ id }: { id: string }) {
                 ))}
               </Group>
             )}
-            {data.latestRun ? (
-              <Text size="xs" c="dimmed" mt="sm">
-                Last agent run: {data.latestRun.status}
-                {data.latestRun.providerModel ? ` · ${data.latestRun.providerModel}` : ""}
-              </Text>
-            ) : null}
           </>
         )}
       </Card>

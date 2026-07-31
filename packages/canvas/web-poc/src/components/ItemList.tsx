@@ -101,25 +101,6 @@ export function ItemList() {
     placeholderData: keepPreviousData,
   });
 
-  const synth = useMutation({
-    mutationFn: (ids: string[]) => api.synthesizeProblem({ observationIds: ids }),
-    onSuccess: () => {
-      clearSynthPicks();
-      void qc.invalidateQueries({ queryKey: ["items"] });
-      void qc.invalidateQueries({ queryKey: ["graph"] });
-      // Async: the worker drafts + creates the problem, then publishes
-      // `problem.synthesized` → realtime refreshes the list with the new problem.
-      notifications.show({
-        title: "Synthesizing…",
-        message: "The agent is drafting a problem — it'll appear shortly.",
-        color: "blue",
-      });
-      setView("library");
-    },
-    onError: (err) =>
-      notifications.show({ title: "Synthesis failed", message: String(err), color: "red" }),
-  });
-
   const items = itemsQuery.data?.items ?? [];
   const total = itemsQuery.data?.total ?? 0;
 
@@ -197,9 +178,6 @@ export function ItemList() {
             <Button size="xs" variant="default" onClick={clearSynthPicks}>
               Clear
             </Button>
-            <Button size="xs" loading={synth.isPending} onClick={() => synth.mutate(synthPicks)}>
-              Synthesize problem
-            </Button>
           </Group>
         </Group>
       )}
@@ -241,9 +219,9 @@ export function ItemList() {
                         <Badge
                           size="xs"
                           variant="outline"
-                          color={row.data.source === "agent" ? "grape" : "gray"}
+                          color={row.data.origin === "agent" ? "grape" : "gray"}
                         >
-                          {row.data.source}
+                          {row.data.origin}
                         </Badge>
                         <Badge size="xs" color={obsStatusColor[row.data.status] ?? "gray"}>
                           {row.data.status}

@@ -39,7 +39,7 @@
           "impact": {
             "type": "string",
             "nullable": true,
-            "description": "The concrete impact this observation calls out; folded into its embedding"
+            "description": "The concrete impact this observation calls out"
           },
           "status": {
             "type": "string",
@@ -49,12 +49,16 @@
               "archived"
             ]
           },
-          "source": {
+          "origin": {
             "type": "string",
             "enum": [
               "human",
               "agent"
             ]
+          },
+          "sourceId": {
+            "type": "string",
+            "nullable": true
           },
           "projectTags": {
             "type": "array",
@@ -64,10 +68,6 @@
             "description": "Human-only meta tags ('Project'); excluded from all heuristics/LLM input"
           },
           "createdBy": {
-            "type": "string",
-            "nullable": true
-          },
-          "embeddingModel": {
             "type": "string",
             "nullable": true
           },
@@ -86,73 +86,64 @@
           "body",
           "impact",
           "status",
-          "source",
+          "origin",
+          "sourceId",
           "projectTags",
           "createdBy",
-          "embeddingModel",
           "createdAt",
           "updatedAt"
         ]
       },
-      "ObservationLink": {
+      "Source": {
         "type": "object",
+        "nullable": true,
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "example": "src_01h..."
           },
-          "fromObservationId": {
-            "type": "string"
-          },
-          "toObservationId": {
+          "workspaceId": {
             "type": "string"
           },
           "kind": {
             "type": "string",
             "enum": [
-              "identical",
-              "partial",
-              "related"
+              "url",
+              "call",
+              "document",
+              "person",
+              "conversation",
+              "canvas",
+              "repo"
             ]
           },
-          "similarity": {
+          "identifier": {
+            "type": "string",
+            "nullable": true,
+            "description": "The thing pointed at — a URL, a conversation id, a file path"
+          },
+          "label": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true,
+            "description": "Carries the source when there is nothing to point at"
+          },
+          "createdAt": {
             "type": "number",
-            "nullable": true
-          },
-          "rationale": {
-            "type": "string",
-            "nullable": true
-          },
-          "createdBy": {
-            "type": "string",
-            "enum": [
-              "human",
-              "agent"
-            ]
+            "description": "epoch ms"
           }
         },
         "required": [
           "id",
-          "fromObservationId",
-          "toObservationId",
+          "workspaceId",
           "kind",
-          "similarity",
-          "rationale",
-          "createdBy"
-        ]
-      },
-      "LinkedObservation": {
-        "type": "object",
-        "properties": {
-          "link": {
-            "$ref": "#/components/schemas/ObservationLink"
-          },
-          "observation": {
-            "$ref": "#/components/schemas/Observation"
-          }
-        },
-        "required": [
-          "link",
-          "observation"
+          "identifier",
+          "label",
+          "description",
+          "createdAt"
         ]
       },
       "Solution": {
@@ -223,78 +214,14 @@
           "relevance"
         ]
       },
-      "AgentRun": {
-        "type": "object",
-        "nullable": true,
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "observation_intake",
-              "problem_intake",
-              "synthesis"
-            ]
-          },
-          "targetKind": {
-            "type": "string",
-            "enum": [
-              "observation",
-              "problem"
-            ]
-          },
-          "targetId": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "running",
-              "completed",
-              "failed"
-            ]
-          },
-          "providerModel": {
-            "type": "string",
-            "nullable": true
-          },
-          "tokensIn": {
-            "type": "number",
-            "nullable": true
-          },
-          "tokensOut": {
-            "type": "number",
-            "nullable": true
-          },
-          "createdAt": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "targetKind",
-          "targetId",
-          "status",
-          "providerModel",
-          "tokensIn",
-          "tokensOut",
-          "createdAt"
-        ]
-      },
       "ObservationDetail": {
         "type": "object",
         "properties": {
           "observation": {
             "$ref": "#/components/schemas/Observation"
           },
-          "links": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/LinkedObservation"
-            }
+          "source": {
+            "$ref": "#/components/schemas/Source"
           },
           "solutions": {
             "type": "array",
@@ -307,17 +234,13 @@
             "items": {
               "$ref": "#/components/schemas/SynthesisRef"
             }
-          },
-          "latestRun": {
-            "$ref": "#/components/schemas/AgentRun"
           }
         },
         "required": [
           "observation",
-          "links",
+          "source",
           "solutions",
-          "synthesizedProblems",
-          "latestRun"
+          "synthesizedProblems"
         ]
       },
       "Error": {
@@ -332,6 +255,38 @@
         },
         "required": [
           "error"
+        ]
+      },
+      "CreateSource": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "url",
+              "call",
+              "document",
+              "person",
+              "conversation",
+              "canvas",
+              "repo"
+            ]
+          },
+          "identifier": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "kind"
         ]
       },
       "CreateObservation": {
@@ -355,9 +310,11 @@
               "type": "string"
             }
           },
-          "runAgent": {
-            "type": "boolean",
-            "default": true
+          "source": {
+            "$ref": "#/components/schemas/CreateSource"
+          },
+          "sourceId": {
+            "type": "string"
           }
         },
         "required": [
@@ -412,68 +369,22 @@
             "items": {
               "type": "string"
             }
+          },
+          "sourceId": {
+            "type": "string",
+            "nullable": true
           }
         }
       },
-      "ContextSolution": {
+      "DeleteResult": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string"
-          },
-          "body": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "draft",
-              "accepted",
-              "rejected"
-            ]
-          },
-          "origin": {
-            "type": "string",
-            "enum": [
-              "reused",
-              "synthesized",
-              "research",
-              "human"
-            ]
+          "success": {
+            "type": "boolean"
           }
         },
         "required": [
-          "id",
-          "body",
-          "status",
-          "origin"
-        ]
-      },
-      "SolvedMatch": {
-        "type": "object",
-        "properties": {
-          "problemId": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "body": {
-            "type": "string"
-          },
-          "similarity": {
-            "type": "number"
-          },
-          "solution": {
-            "$ref": "#/components/schemas/ContextSolution"
-          }
-        },
-        "required": [
-          "problemId",
-          "title",
-          "body",
-          "similarity",
-          "solution"
+          "success"
         ]
       },
       "Problem": {
@@ -544,10 +455,6 @@
             "type": "string",
             "nullable": true
           },
-          "embeddingModel": {
-            "type": "string",
-            "nullable": true
-          },
           "createdAt": {
             "type": "number",
             "description": "epoch ms"
@@ -569,7 +476,6 @@
           "source",
           "projectTags",
           "createdBy",
-          "embeddingModel",
           "createdAt",
           "updatedAt"
         ]
@@ -658,17 +564,13 @@
             "items": {
               "$ref": "#/components/schemas/SynthesisRef"
             }
-          },
-          "latestRun": {
-            "$ref": "#/components/schemas/AgentRun"
           }
         },
         "required": [
           "problem",
           "links",
           "solutions",
-          "sourceObservations",
-          "latestRun"
+          "sourceObservations"
         ]
       },
       "CreateProblem": {
@@ -706,69 +608,11 @@
             "items": {
               "type": "string"
             }
-          },
-          "runAgent": {
-            "type": "boolean",
-            "default": true
           }
         },
         "required": [
           "title",
           "body"
-        ]
-      },
-      "JobAck": {
-        "type": "object",
-        "properties": {
-          "jobId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "jobId"
-        ]
-      },
-      "SynthesizeProblem": {
-        "type": "object",
-        "properties": {
-          "observationIds": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "minItems": 1,
-            "description": "Observations to synthesize from"
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 300
-          },
-          "body": {
-            "type": "string",
-            "minLength": 1
-          },
-          "impact": {
-            "type": "string"
-          },
-          "urgency": {
-            "type": "string",
-            "enum": [
-              "low",
-              "medium",
-              "high",
-              "critical"
-            ]
-          },
-          "projectTags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "observationIds"
         ]
       },
       "ProblemPage": {
@@ -1030,45 +874,6 @@
           "edges"
         ]
       },
-      "GraphSearchResult": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "body": {
-            "type": "string"
-          },
-          "similarity": {
-            "type": "number"
-          },
-          "status": {
-            "type": "string"
-          },
-          "linkKinds": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "distinct kinds of links touching it"
-          },
-          "hasAcceptedSolution": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "title",
-          "body",
-          "similarity",
-          "status",
-          "linkKinds",
-          "hasAcceptedSolution"
-        ]
-      },
       "ContextEdge": {
         "type": "object",
         "properties": {
@@ -1114,6 +919,40 @@
           "kind",
           "similarity",
           "rationale"
+        ]
+      },
+      "ContextSolution": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "accepted",
+              "rejected"
+            ]
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "reused",
+              "synthesized",
+              "research",
+              "human"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "status",
+          "origin"
         ]
       },
       "ProblemContext": {
@@ -1281,41 +1120,6 @@
           "solution"
         ]
       },
-      "ClusterSummary": {
-        "type": "object",
-        "properties": {
-          "rootProblemId": {
-            "type": "string"
-          },
-          "summary": {
-            "type": "string"
-          },
-          "memberCount": {
-            "type": "number",
-            "description": "problems folded into the summary"
-          },
-          "model": {
-            "type": "string",
-            "nullable": true,
-            "description": "'heuristic' when generated without an LLM"
-          },
-          "createdAt": {
-            "type": "number"
-          },
-          "cached": {
-            "type": "boolean",
-            "description": "true when served from cache (membership unchanged)"
-          }
-        },
-        "required": [
-          "rootProblemId",
-          "summary",
-          "memberCount",
-          "model",
-          "createdAt",
-          "cached"
-        ]
-      },
       "ProjectTags": {
         "type": "object",
         "properties": {
@@ -1428,17 +1232,6 @@
           "allowedWorkspaces",
           "owner"
         ]
-      },
-      "DeleteResult": {
-        "type": "object",
-        "properties": {
-          "success": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success"
-        ]
       }
     },
     "parameters": {}
@@ -1449,7 +1242,7 @@
         "tags": [
           "Observations"
         ],
-        "summary": "Record an observation (optionally embeds + links similar observations)",
+        "summary": "Record an observation, naming where it came from in the same call",
         "security": [
           {
             "ApiKeyAuth": []
@@ -1470,7 +1263,7 @@
         },
         "responses": {
           "201": {
-            "description": "Observation created; includes any similar observations",
+            "description": "Observation created, with its resolved Source",
             "content": {
               "application/json": {
                 "schema": {
@@ -1491,6 +1284,16 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The named source does not exist",
             "content": {
               "application/json": {
                 "schema": {
@@ -1613,7 +1416,7 @@
         "tags": [
           "Observations"
         ],
-        "summary": "Get an observation with its links, solutions and synthesized problems",
+        "summary": "Get an observation with its source, solutions and synthesized problems",
         "security": [
           {
             "ApiKeyAuth": []
@@ -1724,14 +1527,12 @@
             }
           }
         }
-      }
-    },
-    "/v1/observations/{id}/reprocess": {
-      "post": {
+      },
+      "delete": {
         "tags": [
           "Observations"
         ],
-        "summary": "Re-embed an observation and refresh its similarity links",
+        "summary": "Delete an observation",
         "security": [
           {
             "ApiKeyAuth": []
@@ -1754,11 +1555,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Reprocessed observation detail",
+            "description": "Observation deleted",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ObservationDetail"
+                  "$ref": "#/components/schemas/DeleteResult"
                 }
               }
             }
@@ -1776,12 +1577,12 @@
         }
       }
     },
-    "/v1/observations/{id}/solved-matches": {
+    "/v1/sources/{id}/observations": {
       "get": {
         "tags": [
-          "Observations"
+          "Sources"
         ],
-        "summary": "Solved problems that resemble this observation (read-time hint; excludes dismissed)",
+        "summary": "List the observations that name this source",
         "security": [
           {
             "ApiKeyAuth": []
@@ -1800,81 +1601,83 @@
             "required": true,
             "name": "id",
             "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Matching solved problems, most similar first",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SolvedMatch"
-                  }
-                }
-              }
-            }
           },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/observations/{id}/solved-matches/{problemId}/dismiss": {
-      "post": {
-        "tags": [
-          "Observations"
-        ],
-        "summary": "Mark a solved-problem match as a false positive; returns the remaining matches",
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "DevWorkspace": []
-          }
-        ],
-        "parameters": [
           {
             "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "obs_01h..."
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
             },
-            "required": true,
-            "name": "id",
-            "in": "path"
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "nullable": true,
+              "minimum": 0
+            },
+            "required": false,
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "q",
+            "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "minLength": 1,
-              "example": "prob_01h..."
+              "description": "filter by a project meta tag"
             },
-            "required": true,
-            "name": "problemId",
-            "in": "path"
+            "required": false,
+            "name": "tag",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "synthesized",
+                "archived"
+              ]
+            },
+            "required": false,
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "boolean",
+              "nullable": true
+            },
+            "required": false,
+            "name": "solved",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "narrow the all-workspaces list to a single workspace"
+            },
+            "required": false,
+            "name": "workspaceId",
+            "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Remaining matches after the dismissal",
+            "description": "A page of the source's observations",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SolvedMatch"
-                  }
+                  "$ref": "#/components/schemas/ObservationPage"
                 }
               }
             }
@@ -1897,7 +1700,7 @@
         "tags": [
           "Problems"
         ],
-        "summary": "Intake a problem (optionally runs the AI agent pipeline)",
+        "summary": "Record a problem",
         "security": [
           {
             "ApiKeyAuth": []
@@ -1918,7 +1721,7 @@
         },
         "responses": {
           "201": {
-            "description": "Problem created; includes agent-found links + solutions",
+            "description": "Problem created",
             "content": {
               "application/json": {
                 "schema": {
@@ -2032,64 +1835,6 @@
           },
           "401": {
             "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/problems/synthesize": {
-      "post": {
-        "tags": [
-          "Problems"
-        ],
-        "summary": "Synthesize a problem from observations (async; agent drafts in a worker)",
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "DevWorkspace": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SynthesizeProblem"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Synthesis enqueued; the problem is published when ready",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobAck"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "An observation was not found in the workspace",
             "content": {
               "application/json": {
                 "schema": {
@@ -2215,7 +1960,7 @@
         "tags": [
           "Problems"
         ],
-        "summary": "Get a problem with its links, solutions, source observations and latest run",
+        "summary": "Get a problem with its links, solutions and source observations",
         "security": [
           {
             "ApiKeyAuth": []
@@ -2311,56 +2056,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/problems/{id}/reprocess": {
-      "post": {
-        "tags": [
-          "Problems"
-        ],
-        "summary": "Re-run the AI agent pipeline for a problem",
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "DevWorkspace": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "prob_01h..."
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Reprocessed problem detail",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
                 }
               }
             }
@@ -2606,68 +2301,6 @@
         }
       }
     },
-    "/v1/graph/search": {
-      "get": {
-        "tags": [
-          "Graph"
-        ],
-        "summary": "Semantic search over problems, annotated with link/solution signals",
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "DevWorkspace": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "required": true,
-            "name": "q",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 50
-            },
-            "required": false,
-            "name": "k",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Ranked problems with graph annotations",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/GraphSearchResult"
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/problems/{id}/context": {
       "get": {
         "tags": [
@@ -2840,74 +2473,6 @@
                   "items": {
                     "$ref": "#/components/schemas/SolvedNeighbor"
                   }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/problems/{id}/cluster-summary": {
-      "get": {
-        "tags": [
-          "Graph"
-        ],
-        "summary": "Cached natural-language summary of a problem's cluster (Tier 3)",
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "DevWorkspace": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "prob_01h..."
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "required": false,
-            "name": "hops",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "required": false,
-            "name": "maxNodes",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Cluster summary (cached or freshly computed)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ClusterSummary"
                 }
               }
             }

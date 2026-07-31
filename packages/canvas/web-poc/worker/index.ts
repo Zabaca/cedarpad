@@ -1,13 +1,9 @@
 import { configuration } from "../lib/config/index.js";
 import {
-  dismissSolvedMatch,
-  enqueueAgentJob,
   findSolvedNeighbors,
-  findSolvedProblemsForObservation,
   getProblemContext,
   neighborhood,
   schema,
-  searchGraph,
   type Database,
 } from "../lib/db/index.js";
 import * as contract from "../lib/contract/index.js";
@@ -17,12 +13,11 @@ import { createMiddleware } from "hono/factory";
 import { and, count, desc, eq, exists, inArray, like, or, type SQL, sql } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { type AccessScope, accessWhere, canAccessWorkspace, workspaceFilter } from "./access.js";
-import { createEmbedder, providerModelLabel } from "./agent.js";
-import { embedText } from "../lib/ai/index.js";
-import { getClusterSummary } from "./cluster.js";
+import { providerModelLabel } from "./agent.js";
 import { createAuth } from "./auth.js";
 import type { AppEnv } from "./context.js";
 import {
+  deleteSolutionLinksForTarget,
   getObservationDetail,
   getProblemDetail,
   getWorkspaceGraph,
@@ -32,6 +27,7 @@ import {
   dbMiddleware,
   observationAccessible,
   problemAccessible,
+  sourceAccessible,
 } from "./middleware.js";
 import { publish, workspaceChannel } from "./realtime.js";
 import {
@@ -108,20 +104,25 @@ export function buildApp(opts: BuildAppOptions = {}) {
       const input = c.req.valid("json");
       const workspaceId = c.get("workspaceId");
       const id = newId("obs");
-      // Embed inline (Voyage) so the observation is searchable immediately — no
-      // background worker needed. Best-effort: on failure the record is still
-      // created (embedding stays NULL) and can be re-embedded later.
-      const embedder = createEmbedder(c.env);
-      let embedding: number[] | undefined;
-      let embeddingModel: string | undefined;
-      try {
-        embedding = await embedder.embed(
-          embedText({ title: input.title, body: input.body, impact: input.impact ?? null }),
-          "document",
-        );
-        embeddingModel = embedder.model;
-      } catch (err) {
-        console.error("inline embed failed (observation)", err);
+      // The Source is named in the same call: created inline, or pointed at by
+      // id (which must already be in the caller's workspace), or absent.
+      let sourceId: string | null = null;
+      if (input.source) {
+        sourceId = newId("src");
+        await db.insert(schema.sources).values({
+          id: sourceId,
+          workspaceId,
+          kind: input.source.kind,
+          identifier: input.source.identifier ?? null,
+          label: input.source.label ?? null,
+          description: input.source.description ?? null,
+          createdBy: c.get("userId"),
+        });
+      } else if (input.sourceId) {
+        if (!(await sourceAccessible(db, c.get("accessScope"), input.sourceId))) {
+          return c.json({ error: "not_found", message: "Source not accessible" }, 404);
+        }
+        sourceId = input.sourceId;
       }
       await db.insert(schema.observations).values({
         id,
@@ -129,24 +130,15 @@ export function buildApp(opts: BuildAppOptions = {}) {
         title: input.title,
         body: input.body,
         impact: input.impact ?? null,
-        source: c.get("isAgent") ? "agent" : "human",
+        origin: c.get("isAgent") ? "agent" : "human",
+        sourceId,
         createdBy: c.get("userId"),
         projectTags: input.projectTags ?? [],
-        ...(embedding ? { embedding, embeddingModel } : {}),
       });
       await publish(c.env, workspaceChannel(workspaceId), {
         type: "observation.created",
         payload: { id },
       });
-      if (input.runAgent) {
-        // Non-blocking: enqueue intake; a worker drains it at its own pace and
-        // publishes `observation.processed` when done (realtime updates the UI).
-        await enqueueAgentJob(db, {
-          kind: "observation_intake",
-          payload: { targetId: id },
-          workspaceId,
-        });
-      }
       const detail = await getObservationDetail(db, id);
       return c.json(detail!, 201);
     })
@@ -216,52 +208,40 @@ export function buildApp(opts: BuildAppOptions = {}) {
       if (input.impact !== undefined) patch.impact = input.impact;
       if (input.status !== undefined) patch.status = input.status;
       if (input.projectTags !== undefined) patch.projectTags = input.projectTags;
+      if (input.sourceId !== undefined) patch.sourceId = input.sourceId;
       await db.update(schema.observations).set(patch).where(eq(schema.observations.id, id));
       const detail = await getObservationDetail(db, id);
       return c.json(detail!, 200);
     })
-    .openapi(contract.reprocessObservationRoute, async (c) => {
+    .openapi(contract.deleteObservationRoute, async (c) => {
       const db = c.get("db");
       const { id } = c.req.valid("param");
       if (!(await observationAccessible(db, c.get("accessScope"), id))) {
         return c.json({ error: "not_found" }, 404);
       }
-      await enqueueAgentJob(db, {
-        kind: "observation_intake",
-        payload: { targetId: id },
-        workspaceId: c.get("workspaceId"),
-      });
-      const detail = await getObservationDetail(db, id);
-      return c.json(detail!, 200);
+      // Solutions attach polymorphically, so there is no DB cascade for them.
+      await deleteSolutionLinksForTarget(db, "observation", id);
+      await db.delete(schema.observations).where(eq(schema.observations.id, id));
+      return c.json({ success: true }, 200);
     })
-    .openapi(contract.getObservationSolvedMatchesRoute, async (c) => {
+    /* ---- Sources ---- */
+    .openapi(contract.listSourceObservationsRoute, async (c) => {
       const db = c.get("db");
       const { id } = c.req.valid("param");
-      if (!(await observationAccessible(db, c.get("accessScope"), id))) {
+      const { limit, offset } = c.req.valid("query");
+      if (!(await sourceAccessible(db, c.get("accessScope"), id))) {
         return c.json({ error: "not_found" }, 404);
       }
-      const matches = await findSolvedProblemsForObservation(db, {
-        observationId: id,
-        topK: configuration.similarity.topK,
-        minSimilarity: configuration.similarity.partialThreshold,
-      });
-      return c.json((matches ?? []) as contract.SolvedMatch[], 200);
-    })
-    .openapi(contract.dismissObservationSolvedMatchRoute, async (c) => {
-      const db = c.get("db");
-      const { id, problemId } = c.req.valid("param");
-      if (!(await observationAccessible(db, c.get("accessScope"), id))) {
-        return c.json({ error: "not_found" }, 404);
-      }
-      // Negative signal only — record the false positive, then return what's left.
-      const ok = await dismissSolvedMatch(db, { observationId: id, problemId, createdBy: c.get("userId") });
-      if (!ok) return c.json({ error: "not_found" }, 404);
-      const matches = await findSolvedProblemsForObservation(db, {
-        observationId: id,
-        topK: configuration.similarity.topK,
-        minSimilarity: configuration.similarity.partialThreshold,
-      });
-      return c.json((matches ?? []) as contract.SolvedMatch[], 200);
+      const where = eq(schema.observations.sourceId, id);
+      const items = await db
+        .select()
+        .from(schema.observations)
+        .where(where)
+        .orderBy(desc(schema.observations.createdAt))
+        .limit(limit ?? configuration.defaultPageSize)
+        .offset(offset ?? 0);
+      const totalRow = await db.select({ total: count() }).from(schema.observations).where(where);
+      return c.json({ items: items.map(serializeObservation), total: totalRow[0]?.total ?? 0 }, 200);
     })
     /* ---- Problems ---- */
     .openapi(contract.createProblemRoute, async (c) => {
@@ -271,20 +251,6 @@ export function buildApp(opts: BuildAppOptions = {}) {
       const id = newId("prob");
       // Urgency implies a default sort weight; an explicit priority still wins.
       const priority = input.priority ?? contract.urgencyToPriority(input.urgency ?? "medium");
-      // Embed inline (Voyage) so the problem is searchable immediately — see the
-      // observation handler. Best-effort: NULL embedding on failure.
-      const embedder = createEmbedder(c.env);
-      let embedding: number[] | undefined;
-      let embeddingModel: string | undefined;
-      try {
-        embedding = await embedder.embed(
-          embedText({ title: input.title, body: input.body, impact: input.impact ?? null }),
-          "document",
-        );
-        embeddingModel = embedder.model;
-      } catch (err) {
-        console.error("inline embed failed (problem)", err);
-      }
       await db.insert(schema.problems).values({
         id,
         workspaceId,
@@ -297,64 +263,13 @@ export function buildApp(opts: BuildAppOptions = {}) {
         source: c.get("isAgent") ? "agent" : "human",
         createdBy: c.get("userId"),
         projectTags: input.projectTags ?? [],
-        ...(embedding ? { embedding, embeddingModel } : {}),
       });
       await publish(c.env, workspaceChannel(workspaceId), {
         type: "problem.created",
         payload: { id },
       });
-      if (input.runAgent) {
-        // Non-blocking: enqueue intake; a worker drains it and publishes
-        // `problem.processed` when done (realtime updates the UI). The job
-        // inherits the problem's priority so urgent problems drain first.
-        await enqueueAgentJob(db, {
-          kind: "problem_intake",
-          payload: { targetId: id },
-          workspaceId,
-          priority,
-        });
-      }
       const detail = await getProblemDetail(db, id);
       return c.json(detail!, 201);
-    })
-    .openapi(contract.synthesizeProblemRoute, async (c) => {
-      const db = c.get("db");
-      const input = c.req.valid("json");
-      const workspaceId = c.get("workspaceId");
-      // Source observations may come from any accessible workspace; the new
-      // problem lands in the caller's create target (`workspaceId`).
-      const accessibleObs = await db
-        .select({ id: schema.observations.id })
-        .from(schema.observations)
-        .where(
-          and(
-            inArray(schema.observations.id, input.observationIds),
-            accessWhere(c.get("accessScope"), schema.observations.workspaceId),
-          ),
-        );
-      if (accessibleObs.length !== new Set(input.observationIds).size) {
-        return c.json({ error: "not_found", message: "Observation not accessible" }, 404);
-      }
-      // Non-blocking: enqueue synthesis. The worker drafts + creates the problem,
-      // then publishes `problem.synthesized` so the UI surfaces it (the problem
-      // doesn't exist yet, so we return a job ack instead of the problem).
-      const jobId = await enqueueAgentJob(db, {
-        kind: "synthesis",
-        payload: {
-          workspaceId,
-          observationIds: input.observationIds,
-          createdBy: c.get("userId"),
-          hint: {
-            title: input.title,
-            body: input.body,
-            impact: input.impact,
-            urgency: input.urgency,
-          },
-          projectTags: input.projectTags,
-        },
-        workspaceId,
-      });
-      return c.json({ jobId }, 202);
     })
     .openapi(contract.listProblemsRoute, async (c) => {
       const db = c.get("db");
@@ -505,27 +420,6 @@ export function buildApp(opts: BuildAppOptions = {}) {
       }
       return c.json(detail, 200);
     })
-    .openapi(contract.reprocessProblemRoute, async (c) => {
-      const db = c.get("db");
-      const { id } = c.req.valid("param");
-      if (!(await problemAccessible(db, c.get("accessScope"), id))) {
-        return c.json({ error: "not_found" }, 404);
-      }
-      // Re-run at the problem's current priority so urgent problems drain first.
-      const [{ priority } = { priority: 0 }] = await db
-        .select({ priority: schema.problems.priority })
-        .from(schema.problems)
-        .where(eq(schema.problems.id, id))
-        .limit(1);
-      await enqueueAgentJob(db, {
-        kind: "problem_intake",
-        payload: { targetId: id },
-        workspaceId: c.get("workspaceId"),
-        priority,
-      });
-      const detail = await getProblemDetail(db, id);
-      return c.json(detail!, 200);
-    })
     .openapi(contract.updateProblemRoute, async (c) => {
       const db = c.get("db");
       const { id } = c.req.valid("param");
@@ -641,18 +535,6 @@ export function buildApp(opts: BuildAppOptions = {}) {
         200,
       );
     })
-    .openapi(contract.searchGraphRoute, async (c) => {
-      const db = c.get("db");
-      const { q, k } = c.req.valid("query");
-      const queryVector = await createEmbedder(c.env).embed(q, "query");
-      const results = await searchGraph(db, {
-        queryVector,
-        topK: k ?? configuration.graph.defaultK,
-        // Isolation (#57): confine search to the caller's active platform workspace.
-        workspaceId: c.get("workspaceId"),
-      });
-      return c.json(results, 200);
-    })
     .openapi(contract.getProblemContextRoute, async (c) => {
       const db = c.get("db");
       const { id } = c.req.valid("param");
@@ -690,14 +572,6 @@ export function buildApp(opts: BuildAppOptions = {}) {
       });
       if (result === null) return c.json({ error: "not_found" }, 404);
       return c.json(result as contract.SolvedNeighbor[], 200);
-    })
-    .openapi(contract.getClusterSummaryRoute, async (c) => {
-      const db = c.get("db");
-      const { id } = c.req.valid("param");
-      // Cross-workspace graph: summarise the cluster around any existing problem.
-      const summary = await getClusterSummary(db, c.env, id);
-      if (!summary) return c.json({ error: "not_found" }, 404);
-      return c.json(summary, 200);
     })
     /* ---- Meta ---- */
     .openapi(contract.listProjectTagsRoute, async (c) => {
@@ -821,10 +695,7 @@ export function buildApp(opts: BuildAppOptions = {}) {
 
 const app = buildApp();
 
-// Plain Hono app. Embeddings are computed inline at create/search time, so no
-// background consumer (Cron/scheduled) is required for the core embed→store→
-// search loop. The `agent_jobs` queue (LLM classification/linking/synthesis) is
-// still enqueued behind `runAgent` but is inert unless a consumer is run
-// (`bun run dev:worker`). See MIGRATION.md "Async agent jobs".
+// Plain Hono app. The Notebook is a store agents write and canvas reads
+// (ADR-0024): a write is one insert, with no queue, no consumer and no LLM pass.
 export default app;
 export type AppType = ReturnType<typeof buildApp>;

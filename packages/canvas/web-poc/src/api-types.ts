@@ -50,7 +50,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Record an observation (optionally embeds + links similar observations) */
+        /** Record an observation, naming where it came from in the same call */
         post: {
             parameters: {
                 query?: never;
@@ -64,7 +64,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Observation created; includes any similar observations */
+                /** @description Observation created, with its resolved Source */
                 201: {
                     headers: {
                         [name: string]: unknown;
@@ -91,6 +91,15 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
+                /** @description The named source does not exist */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -106,7 +115,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get an observation with its links, solutions and synthesized problems */
+        /** Get an observation with its source, solutions and synthesized problems */
         get: {
             parameters: {
                 query?: never;
@@ -140,7 +149,38 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete an observation */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Observation deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeleteResult"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         /** Edit an observation's title, body, status or tags */
@@ -190,64 +230,25 @@ export interface paths {
         };
         trace?: never;
     };
-    "/v1/observations/{id}/reprocess": {
+    "/v1/sources/{id}/observations": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        /** Re-embed an observation and refresh its similarity links */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Reprocessed observation detail */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ObservationDetail"];
-                    };
-                };
-                /** @description Not found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/observations/{id}/solved-matches": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Solved problems that resemble this observation (read-time hint; excludes dismissed) */
+        /** List the observations that name this source */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    limit?: number;
+                    offset?: number | null;
+                    q?: string;
+                    tag?: string;
+                    status?: "open" | "synthesized" | "archived";
+                    solved?: boolean | null;
+                    workspaceId?: string;
+                };
                 header?: never;
                 path: {
                     id: string;
@@ -256,13 +257,13 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Matching solved problems, most similar first */
+                /** @description A page of the source's observations */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["SolvedMatch"][];
+                        "application/json": components["schemas"]["ObservationPage"];
                     };
                 };
                 /** @description Not found */
@@ -278,54 +279,6 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/observations/{id}/solved-matches/{problemId}/dismiss": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Mark a solved-problem match as a false positive; returns the remaining matches */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                    problemId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Remaining matches after the dismissal */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SolvedMatch"][];
-                    };
-                };
-                /** @description Not found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
         delete?: never;
         options?: never;
         head?: never;
@@ -377,7 +330,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Intake a problem (optionally runs the AI agent pipeline) */
+        /** Record a problem */
         post: {
             parameters: {
                 query?: never;
@@ -391,7 +344,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Problem created; includes agent-found links + solutions */
+                /** @description Problem created */
                 201: {
                     headers: {
                         [name: string]: unknown;
@@ -411,64 +364,6 @@ export interface paths {
                 };
                 /** @description Unauthorized */
                 401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/problems/synthesize": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Synthesize a problem from observations (async; agent drafts in a worker) */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["SynthesizeProblem"];
-                };
-            };
-            responses: {
-                /** @description Synthesis enqueued; the problem is published when ready */
-                202: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["JobAck"];
-                    };
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description An observation was not found in the workspace */
-                404: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -544,7 +439,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a problem with its links, solutions, source observations and latest run */
+        /** Get a problem with its links, solutions and source observations */
         get: {
             parameters: {
                 query?: never;
@@ -626,53 +521,6 @@ export interface paths {
                 };
             };
         };
-        trace?: never;
-    };
-    "/v1/problems/{id}/reprocess": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Re-run the AI agent pipeline for a problem */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Reprocessed problem detail */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ProblemDetail"];
-                    };
-                };
-                /** @description Not found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/v1/solutions": {
@@ -863,54 +711,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/graph/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Semantic search over problems, annotated with link/solution signals */
-        get: {
-            parameters: {
-                query: {
-                    q: string;
-                    k?: number;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Ranked problems with graph annotations */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["GraphSearchResult"][];
-                    };
-                };
-                /** @description Unauthorized */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/problems/{id}/context": {
         parameters: {
             query?: never;
@@ -1037,56 +837,6 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["SolvedNeighbor"][];
-                    };
-                };
-                /** @description Not found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/problems/{id}/cluster-summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cached natural-language summary of a problem's cluster (Tier 3) */
-        get: {
-            parameters: {
-                query?: {
-                    hops?: number;
-                    maxNodes?: number;
-                };
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Cluster summary (cached or freshly computed) */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ClusterSummary"];
                     };
                 };
                 /** @description Not found */
@@ -1348,35 +1098,34 @@ export interface components {
             /** @example Checkout felt sluggish this morning */
             title: string;
             body: string;
-            /** @description The concrete impact this observation calls out; folded into its embedding */
+            /** @description The concrete impact this observation calls out */
             impact: string | null;
             /** @enum {string} */
             status: "open" | "synthesized" | "archived";
             /** @enum {string} */
-            source: "human" | "agent";
+            origin: "human" | "agent";
+            sourceId: string | null;
             /** @description Human-only meta tags ('Project'); excluded from all heuristics/LLM input */
             projectTags: string[];
             createdBy: string | null;
-            embeddingModel: string | null;
             /** @description epoch ms */
             createdAt: number;
             updatedAt: number;
         };
-        ObservationLink: {
+        Source: {
+            /** @example src_01h... */
             id: string;
-            fromObservationId: string;
-            toObservationId: string;
+            workspaceId: string;
             /** @enum {string} */
-            kind: "identical" | "partial" | "related";
-            similarity: number | null;
-            rationale: string | null;
-            /** @enum {string} */
-            createdBy: "human" | "agent";
-        };
-        LinkedObservation: {
-            link: components["schemas"]["ObservationLink"];
-            observation: components["schemas"]["Observation"];
-        };
+            kind: "url" | "call" | "document" | "person" | "conversation" | "canvas" | "repo";
+            /** @description The thing pointed at — a URL, a conversation id, a file path */
+            identifier: string | null;
+            label: string | null;
+            /** @description Carries the source when there is nothing to point at */
+            description: string | null;
+            /** @description epoch ms */
+            createdAt: number;
+        } | null;
         Solution: {
             id: string;
             body: string;
@@ -1393,38 +1142,30 @@ export interface components {
             rationale: string | null;
             relevance: number | null;
         };
-        AgentRun: {
-            id: string;
-            /** @enum {string} */
-            kind: "observation_intake" | "problem_intake" | "synthesis";
-            /** @enum {string} */
-            targetKind: "observation" | "problem";
-            targetId: string;
-            /** @enum {string} */
-            status: "running" | "completed" | "failed";
-            providerModel: string | null;
-            tokensIn: number | null;
-            tokensOut: number | null;
-            createdAt: number;
-        } | null;
         ObservationDetail: {
             observation: components["schemas"]["Observation"];
-            links: components["schemas"]["LinkedObservation"][];
+            source: components["schemas"]["Source"];
             solutions: components["schemas"]["Solution"][];
             synthesizedProblems: components["schemas"]["SynthesisRef"][];
-            latestRun: components["schemas"]["AgentRun"];
         };
         Error: {
             error: string;
             message?: string;
+        };
+        CreateSource: {
+            /** @enum {string} */
+            kind: "url" | "call" | "document" | "person" | "conversation" | "canvas" | "repo";
+            identifier?: string;
+            label?: string;
+            description?: string;
         };
         CreateObservation: {
             title: string;
             body: string;
             impact?: string;
             projectTags?: string[];
-            /** @default true */
-            runAgent: boolean;
+            source?: components["schemas"]["CreateSource"];
+            sourceId?: string;
         };
         ObservationPage: {
             items: components["schemas"]["Observation"][];
@@ -1438,21 +1179,10 @@ export interface components {
             /** @enum {string} */
             status?: "open" | "synthesized" | "archived";
             projectTags?: string[];
+            sourceId?: string | null;
         };
-        ContextSolution: {
-            id: string;
-            body: string;
-            /** @enum {string} */
-            status: "draft" | "accepted" | "rejected";
-            /** @enum {string} */
-            origin: "reused" | "synthesized" | "research" | "human";
-        };
-        SolvedMatch: {
-            problemId: string;
-            title: string;
-            body: string;
-            similarity: number;
-            solution: components["schemas"]["ContextSolution"];
+        DeleteResult: {
+            success: boolean;
         };
         Problem: {
             /** @example prob_01h... */
@@ -1477,7 +1207,6 @@ export interface components {
             /** @description Human-only meta tags ('Project'); excluded from all heuristics/LLM input */
             projectTags: string[];
             createdBy: string | null;
-            embeddingModel: string | null;
             /** @description epoch ms */
             createdAt: number;
             updatedAt: number;
@@ -1502,7 +1231,6 @@ export interface components {
             links: components["schemas"]["LinkedProblem"][];
             solutions: components["schemas"]["Solution"][];
             sourceObservations: components["schemas"]["SynthesisRef"][];
-            latestRun: components["schemas"]["AgentRun"];
         };
         CreateProblem: {
             title: string;
@@ -1512,21 +1240,6 @@ export interface components {
             /** @enum {string} */
             urgency?: "low" | "medium" | "high" | "critical";
             solutionDirection?: string;
-            projectTags?: string[];
-            /** @default true */
-            runAgent: boolean;
-        };
-        JobAck: {
-            jobId: string;
-        };
-        SynthesizeProblem: {
-            /** @description Observations to synthesize from */
-            observationIds: string[];
-            title?: string;
-            body?: string;
-            impact?: string;
-            /** @enum {string} */
-            urgency?: "low" | "medium" | "high" | "critical";
             projectTags?: string[];
         };
         ProblemPage: {
@@ -1593,16 +1306,6 @@ export interface components {
             nodes: components["schemas"]["GraphNode"][];
             edges: components["schemas"]["GraphEdge"][];
         };
-        GraphSearchResult: {
-            id: string;
-            title: string;
-            body: string;
-            similarity: number;
-            status: string;
-            /** @description distinct kinds of links touching it */
-            linkKinds: string[];
-            hasAcceptedSolution: boolean;
-        };
         ContextEdge: {
             id: string;
             /** @enum {string} */
@@ -1614,6 +1317,14 @@ export interface components {
             kind: "identical" | "partial" | "related";
             similarity: number | null;
             rationale: string | null;
+        };
+        ContextSolution: {
+            id: string;
+            body: string;
+            /** @enum {string} */
+            status: "draft" | "accepted" | "rejected";
+            /** @enum {string} */
+            origin: "reused" | "synthesized" | "research" | "human";
         };
         ProblemContext: {
             problem: {
@@ -1654,17 +1365,6 @@ export interface components {
             depth: number;
             solution: components["schemas"]["ContextSolution"];
         };
-        ClusterSummary: {
-            rootProblemId: string;
-            summary: string;
-            /** @description problems folded into the summary */
-            memberCount: number;
-            /** @description 'heuristic' when generated without an LLM */
-            model: string | null;
-            createdAt: number;
-            /** @description true when served from cache (membership unchanged) */
-            cached: boolean;
-        };
         ProjectTags: {
             tags: string[];
         };
@@ -1695,9 +1395,6 @@ export interface components {
                 name: string;
                 email: string;
             } | null;
-        };
-        DeleteResult: {
-            success: boolean;
         };
     };
     responses: never;

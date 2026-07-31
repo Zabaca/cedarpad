@@ -28,4 +28,30 @@ describe("the test database is a real D1", () => {
       .all();
     expect(results).toHaveLength(1);
   });
+
+  /*
+   * Foreign-key *actions* are the one kind of schema drift drizzle-kit cannot see:
+   * it diffs schema.ts against the snapshot, never against a database. `ALTER TABLE
+   * ADD COLUMN` drops the `ON DELETE` clause, so `source_id` arrived as NO ACTION
+   * while schema.ts and the snapshot both said `set null` — agreeing with each other
+   * and with nothing else. Assert the behaviour the schema promises, against the
+   * migrated engine, or the next one goes unnoticed too.
+   */
+  it("nulls an Observation's Source pointer when the Source is deleted", async () => {
+    await d1.d1
+      .prepare("INSERT INTO sources (id, workspace_id, kind) VALUES ('src_fk', 'ws_fk', 'url')")
+      .run();
+    await d1.d1
+      .prepare(
+        "INSERT INTO observations (id, workspace_id, title, body, source_id) VALUES ('obs_fk', 'ws_fk', 't', 'b', 'src_fk')",
+      )
+      .run();
+
+    await d1.d1.prepare("DELETE FROM sources WHERE id = 'src_fk'").run();
+
+    const { results } = await d1.d1
+      .prepare("SELECT source_id FROM observations WHERE id = 'obs_fk'")
+      .all();
+    expect(results).toEqual([{ source_id: null }]);
+  });
 });

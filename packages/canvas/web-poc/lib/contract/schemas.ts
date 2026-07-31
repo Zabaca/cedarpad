@@ -21,12 +21,22 @@ export const URGENCY_PRIORITY: Record<z.infer<typeof Urgency>, number> = {
 export function urgencyToPriority(urgency: z.infer<typeof Urgency>): number {
   return URGENCY_PRIORITY[urgency];
 }
-export const SourceKind = z.enum(["human", "agent"]);
+/** Who produced a record. Distinct from a Source, which is where it came from. */
+export const Origin = z.enum(["human", "agent"]);
+/** What a Source points at: external things and cedarpad entities in one list. */
+export const SourceKind = z.enum([
+  "url",
+  "call",
+  "document",
+  "person",
+  "conversation",
+  "canvas",
+  "repo",
+]);
 export const LinkKind = z.enum(["identical", "partial", "related"]);
 export const SolutionOrigin = z.enum(["reused", "synthesized", "research", "human"]);
 export const SolutionStatus = z.enum(["draft", "accepted", "rejected"]);
 export const SolutionTargetKind = z.enum(["observation", "problem"]);
-export const AgentRunKind = z.enum(["observation_intake", "problem_intake", "synthesis"]);
 
 /** Weightless human meta tags. Never fed to embeddings or the LLM. */
 const ProjectTags = z
@@ -37,6 +47,41 @@ const ProjectTags = z
  * Observation — a loose record of something worth noting
  * ------------------------------------------------------------------ */
 
+export const SourceSchema = z
+  .object({
+    id: z.string().openapi({ example: "src_01h..." }),
+    workspaceId: z.string(),
+    kind: SourceKind,
+    identifier: z
+      .string()
+      .nullable()
+      .openapi({ description: "The thing pointed at — a URL, a conversation id, a file path" }),
+    label: z.string().nullable(),
+    description: z
+      .string()
+      .nullable()
+      .openapi({ description: "Carries the source when there is nothing to point at" }),
+    createdAt: z.number().openapi({ description: "epoch ms" }),
+  })
+  .openapi("Source");
+
+/**
+ * A Source created inline with the observation that names it. Either an
+ * `identifier` or a `description` must be present: a Source that says neither
+ * what it points at nor what it was records nothing.
+ */
+export const CreateSourceSchema = z
+  .object({
+    kind: SourceKind,
+    identifier: z.string().min(1).optional(),
+    label: z.string().min(1).optional(),
+    description: z.string().min(1).optional(),
+  })
+  .refine((v) => v.identifier != null || v.description != null, {
+    message: "a Source needs an identifier or a description",
+  })
+  .openapi("CreateSource");
+
 export const ObservationSchema = z
   .object({
     id: z.string().openapi({ example: "obs_01h..." }),
@@ -46,25 +91,31 @@ export const ObservationSchema = z
     impact: z
       .string()
       .nullable()
-      .openapi({ description: "The concrete impact this observation calls out; folded into its embedding" }),
+      .openapi({ description: "The concrete impact this observation calls out" }),
     status: ObservationStatus,
-    source: SourceKind,
+    /** Who produced it. */
+    origin: Origin,
+    /** Where it came from; null when there was nothing to point at. */
+    sourceId: z.string().nullable(),
     projectTags: ProjectTags,
     createdBy: z.string().nullable(),
-    embeddingModel: z.string().nullable(),
     createdAt: z.number().openapi({ description: "epoch ms" }),
     updatedAt: z.number(),
   })
   .openapi("Observation");
 
+/**
+ * Record an observation. Its Source is named in the SAME call — either created
+ * inline (`source`) or pointed at by id (`sourceId`), and both may be omitted.
+ */
 export const CreateObservationSchema = z
   .object({
     title: z.string().min(1).max(300),
     body: z.string().min(1),
     impact: z.string().optional(),
     projectTags: z.array(z.string()).optional(),
-    /** When false, persist only — skip embedding + similarity linking. Defaults true. */
-    runAgent: z.boolean().optional().default(true),
+    source: CreateSourceSchema.optional(),
+    sourceId: z.string().optional(),
   })
   .openapi("CreateObservation");
 
@@ -75,6 +126,7 @@ export const UpdateObservationSchema = z
     impact: z.string().optional(),
     status: ObservationStatus.optional(),
     projectTags: z.array(z.string()).optional(),
+    sourceId: z.string().nullable().optional(),
   })
   .openapi("UpdateObservation");
 
@@ -93,10 +145,9 @@ export const ProblemSchema = z
     urgency: Urgency,
     solutionDirection: z.string().nullable().openapi({ description: "Guidance on how a solution should be structured" }),
     status: ProblemStatus,
-    source: SourceKind,
+    source: Origin,
     projectTags: ProjectTags,
     createdBy: z.string().nullable(),
-    embeddingModel: z.string().nullable(),
     createdAt: z.number().openapi({ description: "epoch ms" }),
     updatedAt: z.number(),
   })
@@ -111,8 +162,6 @@ export const CreateProblemSchema = z
     urgency: Urgency.optional(),
     solutionDirection: z.string().optional(),
     projectTags: z.array(z.string()).optional(),
-    /** When false, persist only — skip the agent pipeline. Defaults true. */
-    runAgent: z.boolean().optional().default(true),
   })
   .openapi("CreateProblem");
 
@@ -129,22 +178,6 @@ export const UpdateProblemSchema = z
     projectTags: z.array(z.string()).optional(),
   })
   .openapi("UpdateProblem");
-
-/**
- * Synthesize a problem from one or more observations (assistive): the agent
- * drafts the problem from the observations, the human can override any field.
- */
-export const SynthesizeProblemSchema = z
-  .object({
-    observationIds: z.array(z.string()).min(1).openapi({ description: "Observations to synthesize from" }),
-    /** Optional human-provided overrides for the drafted problem. */
-    title: z.string().min(1).max(300).optional(),
-    body: z.string().min(1).optional(),
-    impact: z.string().optional(),
-    urgency: Urgency.optional(),
-    projectTags: z.array(z.string()).optional(),
-  })
-  .openapi("SynthesizeProblem");
 
 /* ------------------------------------------------------------------ *
  * Solution — solves an observation or a problem (polymorphic target)
@@ -191,35 +224,9 @@ export const ProblemLinkSchema = z
     kind: LinkKind,
     similarity: z.number().nullable(),
     rationale: z.string().nullable(),
-    createdBy: SourceKind,
+    createdBy: Origin,
   })
   .openapi("ProblemLink");
-
-export const ObservationLinkSchema = z
-  .object({
-    id: z.string(),
-    fromObservationId: z.string(),
-    toObservationId: z.string(),
-    kind: LinkKind,
-    similarity: z.number().nullable(),
-    rationale: z.string().nullable(),
-    createdBy: SourceKind,
-  })
-  .openapi("ObservationLink");
-
-export const AgentRunSchema = z
-  .object({
-    id: z.string(),
-    kind: AgentRunKind,
-    targetKind: SolutionTargetKind,
-    targetId: z.string(),
-    status: z.enum(["running", "completed", "failed"]),
-    providerModel: z.string().nullable(),
-    tokensIn: z.number().nullable(),
-    tokensOut: z.number().nullable(),
-    createdAt: z.number(),
-  })
-  .openapi("AgentRun");
 
 /** A linked problem joined with the edge that connects it (for detail view). */
 export const LinkedProblemSchema = z
@@ -228,14 +235,6 @@ export const LinkedProblemSchema = z
     problem: ProblemSchema,
   })
   .openapi("LinkedProblem");
-
-/** A linked observation joined with the edge that connects it. */
-export const LinkedObservationSchema = z
-  .object({
-    link: ObservationLinkSchema,
-    observation: ObservationSchema,
-  })
-  .openapi("LinkedObservation");
 
 /** A short reference to an observation/problem on the other side of a synthesis edge. */
 export const SynthesisRefSchema = z
@@ -258,18 +257,17 @@ export const ProblemDetailSchema = z
     solutions: z.array(SolutionSchema),
     /** Observations this problem was synthesized from. */
     sourceObservations: z.array(SynthesisRefSchema),
-    latestRun: AgentRunSchema.nullable(),
   })
   .openapi("ProblemDetail");
 
 export const ObservationDetailSchema = z
   .object({
     observation: ObservationSchema,
-    links: z.array(LinkedObservationSchema),
+    /** The Source it names, resolved; null when it has none. */
+    source: SourceSchema.nullable(),
     solutions: z.array(SolutionSchema),
     /** Problems this observation has been synthesized into. */
     synthesizedProblems: z.array(SynthesisRefSchema),
-    latestRun: AgentRunSchema.nullable(),
   })
   .openapi("ObservationDetail");
 
@@ -350,19 +348,6 @@ export const GraphSchema = z
  * The graph spans every workspace, so these views are cross-tenant.
  * ------------------------------------------------------------------ */
 
-/** A semantic-search hit annotated with the link/solution signals it carries. */
-export const GraphSearchResultSchema = z
-  .object({
-    id: z.string(),
-    title: z.string(),
-    body: z.string(),
-    similarity: z.number(),
-    status: z.string(),
-    linkKinds: z.array(z.string()).openapi({ description: "distinct kinds of links touching it" }),
-    hasAcceptedSolution: z.boolean(),
-  })
-  .openapi("GraphSearchResult");
-
 /** One edge in a problem's context view, with the stored rationale. */
 export const ContextEdgeSchema = z
   .object({
@@ -436,37 +421,9 @@ export const SolvedNeighborSchema = z
   })
   .openapi("SolvedNeighbor");
 
-/** A solved problem that resembles an observation (read-time cross-kind hint). */
-export const SolvedMatchSchema = z
-  .object({
-    problemId: z.string(),
-    title: z.string(),
-    body: z.string(),
-    similarity: z.number(),
-    solution: ContextSolutionSchema,
-  })
-  .openapi("SolvedMatch");
-
-/** Tier 3: a cached natural-language summary of a problem's cluster. */
-export const ClusterSummarySchema = z
-  .object({
-    rootProblemId: z.string(),
-    summary: z.string(),
-    memberCount: z.number().openapi({ description: "problems folded into the summary" }),
-    model: z.string().nullable().openapi({ description: "'heuristic' when generated without an LLM" }),
-    createdAt: z.number(),
-    cached: z.boolean().openapi({ description: "true when served from cache (membership unchanged)" }),
-  })
-  .openapi("ClusterSummary");
-
 /* ------------------------------------------------------------------ *
  * Query params
  * ------------------------------------------------------------------ */
-
-export const GraphSearchQuery = z.object({
-  q: z.string().min(1).openapi({ param: { name: "q", in: "query" } }),
-  k: z.coerce.number().int().min(1).max(50).optional(),
-});
 
 /** Shared params for the bounded traversal endpoints. */
 export const NeighborhoodQuery = z.object({
@@ -481,24 +438,8 @@ export const ErrorSchema = z
   })
   .openapi("Error");
 
-/** Acknowledgement for async work: the enqueued job's id. */
-export const JobAckSchema = z
-  .object({
-    jobId: z.string(),
-  })
-  .openapi("JobAck");
-
 export const IdParam = z.object({
   id: z.string().min(1).openapi({ param: { name: "id", in: "path" }, example: "prob_01h..." }),
-});
-
-/** Path params for a (observation, problem) pair — the solved-match dismiss route. */
-export const ObservationProblemParam = z.object({
-  id: z.string().min(1).openapi({ param: { name: "id", in: "path" }, example: "obs_01h..." }),
-  problemId: z
-    .string()
-    .min(1)
-    .openapi({ param: { name: "problemId", in: "path" }, example: "prob_01h..." }),
 });
 
 export const ListProblemsQuery = z.object({
@@ -615,6 +556,8 @@ export const ApiKeyAdminSchema = z
 /** Acknowledgement for a successful revoke. */
 export const DeleteResultSchema = z.object({ success: z.boolean() }).openapi("DeleteResult");
 
+export type Source = z.infer<typeof SourceSchema>;
+export type CreateSource = z.infer<typeof CreateSourceSchema>;
 export type Observation = z.infer<typeof ObservationSchema>;
 export type CreateObservation = z.infer<typeof CreateObservationSchema>;
 export type UpdateObservation = z.infer<typeof UpdateObservationSchema>;
@@ -625,22 +568,16 @@ export type ItemPage = z.infer<typeof ItemPageSchema>;
 export type Problem = z.infer<typeof ProblemSchema>;
 export type CreateProblem = z.infer<typeof CreateProblemSchema>;
 export type UpdateProblem = z.infer<typeof UpdateProblemSchema>;
-export type SynthesizeProblem = z.infer<typeof SynthesizeProblemSchema>;
 export type Solution = z.infer<typeof SolutionSchema>;
 export type CreateSolution = z.infer<typeof CreateSolutionSchema>;
 export type UpdateSolution = z.infer<typeof UpdateSolutionSchema>;
 export type ProblemLink = z.infer<typeof ProblemLinkSchema>;
-export type ObservationLink = z.infer<typeof ObservationLinkSchema>;
 export type ProblemDetail = z.infer<typeof ProblemDetailSchema>;
 export type ProblemPage = z.infer<typeof ProblemPageSchema>;
-export type JobAck = z.infer<typeof JobAckSchema>;
 export type Graph = z.infer<typeof GraphSchema>;
-export type GraphSearchResult = z.infer<typeof GraphSearchResultSchema>;
 export type ProblemContext = z.infer<typeof ProblemContextSchema>;
 export type Neighborhood = z.infer<typeof NeighborhoodSchema>;
 export type SolvedNeighbor = z.infer<typeof SolvedNeighborSchema>;
-export type SolvedMatch = z.infer<typeof SolvedMatchSchema>;
-export type ClusterSummary = z.infer<typeof ClusterSummarySchema>;
 export type ProjectTags = z.infer<typeof ProjectTagsSchema>;
 export type WorkspaceSummary = z.infer<typeof WorkspaceSummarySchema>;
 export type ApiKeyAdmin = z.infer<typeof ApiKeyAdminSchema>;

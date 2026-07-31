@@ -1,19 +1,15 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   ApiKeyAdminSchema,
-  ClusterSummarySchema,
   CreateObservationSchema,
   CreateProblemSchema,
   CreateSolutionSchema,
   ErrorSchema,
   GraphQuery,
   GraphSchema,
-  GraphSearchQuery,
   DeleteResultSchema,
-  GraphSearchResultSchema,
   IdParam,
   ItemPageSchema,
-  JobAckSchema,
   ListItemsQuery,
   ListObservationsQuery,
   ListProblemsQuery,
@@ -22,15 +18,12 @@ import {
   NeighborhoodSchema,
   ObservationDetailSchema,
   ObservationPageSchema,
-  ObservationProblemParam,
   ProblemContextSchema,
   ProblemDetailSchema,
   ProblemPageSchema,
   ProjectTagsSchema,
   SolutionSchema,
-  SolvedMatchSchema,
   SolvedNeighborSchema,
-  SynthesizeProblemSchema,
   UpdateObservationSchema,
   UpdateProblemSchema,
   UpdateSolutionSchema,
@@ -43,6 +36,7 @@ const json = <T extends z.ZodTypeAny>(schema: T, description: string) => ({
 });
 
 const ObservationsTag = ["Observations"];
+const SourcesTag = ["Sources"];
 const ProblemsTag = ["Problems"];
 const SolutionsTag = ["Solutions"];
 const GraphTag = ["Graph"];
@@ -66,13 +60,14 @@ export const createObservationRoute = createRoute({
   method: "post",
   path: "/v1/observations",
   tags: ObservationsTag,
-  summary: "Record an observation (optionally embeds + links similar observations)",
+  summary: "Record an observation, naming where it came from in the same call",
   security: SECURITY,
   request: {
     body: { content: { "application/json": { schema: CreateObservationSchema } }, required: true },
   },
   responses: {
-    201: json(ObservationDetailSchema, "Observation created; includes any similar observations"),
+    201: json(ObservationDetailSchema, "Observation created, with its resolved Source"),
+    404: json(ErrorSchema, "The named source does not exist"),
     400: json(ErrorSchema, "Invalid request"),
     401: json(ErrorSchema, "Unauthorized"),
   },
@@ -95,7 +90,7 @@ export const getObservationRoute = createRoute({
   method: "get",
   path: "/v1/observations/{id}",
   tags: ObservationsTag,
-  summary: "Get an observation with its links, solutions and synthesized problems",
+  summary: "Get an observation with its source, solutions and synthesized problems",
   security: SECURITY,
   request: { params: IdParam },
   responses: {
@@ -121,41 +116,32 @@ export const updateObservationRoute = createRoute({
   },
 });
 
-export const reprocessObservationRoute = createRoute({
-  method: "post",
-  path: "/v1/observations/{id}/reprocess",
+export const deleteObservationRoute = createRoute({
+  method: "delete",
+  path: "/v1/observations/{id}",
   tags: ObservationsTag,
-  summary: "Re-embed an observation and refresh its similarity links",
+  summary: "Delete an observation",
   security: SECURITY,
   request: { params: IdParam },
   responses: {
-    200: json(ObservationDetailSchema, "Reprocessed observation detail"),
+    200: json(DeleteResultSchema, "Observation deleted"),
     404: json(ErrorSchema, "Not found"),
   },
 });
 
-export const getObservationSolvedMatchesRoute = createRoute({
+/* ------------------------------------------------------------------ *
+ * Sources — where observations came from
+ * ------------------------------------------------------------------ */
+
+export const listSourceObservationsRoute = createRoute({
   method: "get",
-  path: "/v1/observations/{id}/solved-matches",
-  tags: ObservationsTag,
-  summary: "Solved problems that resemble this observation (read-time hint; excludes dismissed)",
+  path: "/v1/sources/{id}/observations",
+  tags: SourcesTag,
+  summary: "List the observations that name this source",
   security: SECURITY,
-  request: { params: IdParam },
+  request: { params: IdParam, query: ListObservationsQuery },
   responses: {
-    200: json(z.array(SolvedMatchSchema), "Matching solved problems, most similar first"),
-    404: json(ErrorSchema, "Not found"),
-  },
-});
-
-export const dismissObservationSolvedMatchRoute = createRoute({
-  method: "post",
-  path: "/v1/observations/{id}/solved-matches/{problemId}/dismiss",
-  tags: ObservationsTag,
-  summary: "Mark a solved-problem match as a false positive; returns the remaining matches",
-  security: SECURITY,
-  request: { params: ObservationProblemParam },
-  responses: {
-    200: json(z.array(SolvedMatchSchema), "Remaining matches after the dismissal"),
+    200: json(ObservationPageSchema, "A page of the source's observations"),
     404: json(ErrorSchema, "Not found"),
   },
 });
@@ -168,31 +154,15 @@ export const createProblemRoute = createRoute({
   method: "post",
   path: "/v1/problems",
   tags: ProblemsTag,
-  summary: "Intake a problem (optionally runs the AI agent pipeline)",
+  summary: "Record a problem",
   security: SECURITY,
   request: {
     body: { content: { "application/json": { schema: CreateProblemSchema } }, required: true },
   },
   responses: {
-    201: json(ProblemDetailSchema, "Problem created; includes agent-found links + solutions"),
+    201: json(ProblemDetailSchema, "Problem created"),
     400: json(ErrorSchema, "Invalid request"),
     401: json(ErrorSchema, "Unauthorized"),
-  },
-});
-
-export const synthesizeProblemRoute = createRoute({
-  method: "post",
-  path: "/v1/problems/synthesize",
-  tags: ProblemsTag,
-  summary: "Synthesize a problem from observations (async; agent drafts in a worker)",
-  security: SECURITY,
-  request: {
-    body: { content: { "application/json": { schema: SynthesizeProblemSchema } }, required: true },
-  },
-  responses: {
-    202: json(JobAckSchema, "Synthesis enqueued; the problem is published when ready"),
-    400: json(ErrorSchema, "Invalid request"),
-    404: json(ErrorSchema, "An observation was not found in the workspace"),
   },
 });
 
@@ -226,24 +196,11 @@ export const getProblemRoute = createRoute({
   method: "get",
   path: "/v1/problems/{id}",
   tags: ProblemsTag,
-  summary: "Get a problem with its links, solutions, source observations and latest run",
+  summary: "Get a problem with its links, solutions and source observations",
   security: SECURITY,
   request: { params: IdParam },
   responses: {
     200: json(ProblemDetailSchema, "Problem detail"),
-    404: json(ErrorSchema, "Not found"),
-  },
-});
-
-export const reprocessProblemRoute = createRoute({
-  method: "post",
-  path: "/v1/problems/{id}/reprocess",
-  tags: ProblemsTag,
-  summary: "Re-run the AI agent pipeline for a problem",
-  security: SECURITY,
-  request: { params: IdParam },
-  responses: {
-    200: json(ProblemDetailSchema, "Reprocessed problem detail"),
     404: json(ErrorSchema, "Not found"),
   },
 });
@@ -331,19 +288,6 @@ export const getGraphRoute = createRoute({
   },
 });
 
-export const searchGraphRoute = createRoute({
-  method: "get",
-  path: "/v1/graph/search",
-  tags: GraphTag,
-  summary: "Semantic search over problems, annotated with link/solution signals",
-  security: SECURITY,
-  request: { query: GraphSearchQuery },
-  responses: {
-    200: json(z.array(GraphSearchResultSchema), "Ranked problems with graph annotations"),
-    401: json(ErrorSchema, "Unauthorized"),
-  },
-});
-
 export const getProblemContextRoute = createRoute({
   method: "get",
   path: "/v1/problems/{id}/context",
@@ -379,19 +323,6 @@ export const getSolvedNeighborsRoute = createRoute({
   request: { params: IdParam, query: NeighborhoodQuery },
   responses: {
     200: json(z.array(SolvedNeighborSchema), "Solved neighbours, nearest first"),
-    404: json(ErrorSchema, "Not found"),
-  },
-});
-
-export const getClusterSummaryRoute = createRoute({
-  method: "get",
-  path: "/v1/problems/{id}/cluster-summary",
-  tags: GraphTag,
-  summary: "Cached natural-language summary of a problem's cluster (Tier 3)",
-  security: SECURITY,
-  request: { params: IdParam, query: NeighborhoodQuery },
-  responses: {
-    200: json(ClusterSummarySchema, "Cluster summary (cached or freshly computed)"),
     404: json(ErrorSchema, "Not found"),
   },
 });
@@ -478,25 +409,20 @@ export const routes = {
   listObservations: listObservationsRoute,
   getObservation: getObservationRoute,
   updateObservation: updateObservationRoute,
-  reprocessObservation: reprocessObservationRoute,
-  getObservationSolvedMatches: getObservationSolvedMatchesRoute,
-  dismissObservationSolvedMatch: dismissObservationSolvedMatchRoute,
+  deleteObservation: deleteObservationRoute,
+  listSourceObservations: listSourceObservationsRoute,
   createProblem: createProblemRoute,
-  synthesizeProblem: synthesizeProblemRoute,
   listProblems: listProblemsRoute,
   listItems: listItemsRoute,
   getProblem: getProblemRoute,
   updateProblem: updateProblemRoute,
-  reprocessProblem: reprocessProblemRoute,
   listSolutions: listSolutionsRoute,
   createSolution: createSolutionRoute,
   updateSolution: updateSolutionRoute,
   getGraph: getGraphRoute,
-  searchGraph: searchGraphRoute,
   getProblemContext: getProblemContextRoute,
   getNeighborhood: getNeighborhoodRoute,
   getSolvedNeighbors: getSolvedNeighborsRoute,
-  getClusterSummary: getClusterSummaryRoute,
   listProjectTags: listProjectTagsRoute,
   listWorkspaces: listWorkspacesRoute,
   activateWorkspace: activateWorkspaceRoute,
