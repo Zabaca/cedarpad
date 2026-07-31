@@ -87,7 +87,7 @@ import Layout from '../layouts/Layout.astro'
 
     <footer>
       <div>cedarpad — the pad where teams get aligned.</div>
-      <div>© 2026 Zabaca</div>
+      <div><a href="/changelog">Changelog</a> · © 2026 Zabaca</div>
     </footer>
   </div>
 </Layout>
@@ -144,5 +144,11 @@ import Layout from '../layouts/Layout.astro'
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 14px;
+  }
+  footer a {
+    color: var(--muted);
+  }
+  footer a:hover {
+    color: var(--text);
   }
 </style>

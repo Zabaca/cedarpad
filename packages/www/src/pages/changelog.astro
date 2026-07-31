@@ -1,0 +1,141 @@
+---
+import Layout from '../layouts/Layout.astro'
+import { publicReleases, renderItem } from '../lib/changelog'
+// ADR-0025: CHANGELOG.md at the repo root is the source of truth. `?raw` inlines it at VITE
+// build time, so the parse happens on the build machine and only finished HTML ships — the
+// file never reaches the Worker. (Reading it with node:fs in this frontmatter instead fails:
+// the Cloudflare prerenderer runs the page in a workerd-shaped context where import.meta.url
+// is not a file URL.) A malformed entry throws here and fails the build — deliberately, since
+// the alternative is content quietly missing from a public page.
+import changelogSource from '../../../../CHANGELOG.md?raw'
+
+const releases = publicReleases(changelogSource)
+
+const monthDay = (iso: string) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' })
+---
+
+<Layout
+  title="Changelog — cedarpad"
+  description="What shipped in cedarpad, release by release."
+>
+  <div class="wrap">
+    <header>
+      <a class="back" href="/">← cedarpad</a>
+      <h1>Changelog</h1>
+      <p class="lede">What shipped, release by release. Newest first.</p>
+    </header>
+
+    <main id="main">
+      {
+        releases.length === 0 ? (
+          <p class="empty">No releases yet.</p>
+        ) : (
+          releases.map((release) => (
+            <article class="release">
+              <div class="release-head">
+                <h2>v{release.version}</h2>
+                <time datetime={release.date}>{monthDay(release.date)}</time>
+              </div>
+              {release.sections.map((section) => (
+                <section>
+                  <h3 class="label">{section.heading}</h3>
+                  <ul>
+                    {section.items.map((item) => (
+                      <li set:html={renderItem(item)} />
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </article>
+          ))
+        )
+      }
+    </main>
+
+    <footer>
+      <div>cedarpad — the pad where teams get aligned.</div>
+      <div>© 2026 Zabaca</div>
+    </footer>
+  </div>
+</Layout>
+
+<style>
+  .wrap {
+    max-width: 720px;
+  }
+  header {
+    padding: 64px 0 40px;
+  }
+  .back {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.8125rem;
+  }
+  .back:hover {
+    color: var(--text);
+  }
+  h1 {
+    font-size: 2rem;
+    margin: 20px 0 8px;
+    letter-spacing: -0.02em;
+  }
+  .lede {
+    color: var(--muted);
+    margin: 0;
+  }
+  .empty {
+    color: var(--faint);
+    padding: 40px 0 80px;
+  }
+  .release {
+    padding: 32px 0;
+    border-top: 1px solid var(--line);
+  }
+  .release-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .release-head h2 {
+    font-family: var(--mono);
+    font-size: 1.125rem;
+    margin: 0;
+  }
+  .release-head time {
+    color: var(--faint);
+    font-size: 0.8125rem;
+  }
+  .release section + section {
+    margin-top: 20px;
+  }
+  .release h3 {
+    margin: 0 0 8px;
+  }
+  .release ul {
+    margin: 0;
+    padding-left: 20px;
+  }
+  .release li {
+    margin: 6px 0;
+    color: var(--muted);
+  }
+  .release li :global(strong) {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .release li :global(a) {
+    color: var(--accent-hi);
+  }
+  footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 40px 0;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-size: 0.8125rem;
+  }
+</style>
