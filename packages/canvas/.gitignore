@@ -7,9 +7,11 @@
 /playwright-report/
 /playwright/.cache/
 
-# build stamp written by scripts/deploy.sh right before the image build (the git
-# SHA the bridge reports at /api/status). Regenerated per deploy, never committed.
+# build stamps written by scripts/deploy.sh right before the image build: the git SHA and
+# the released version the bridge reports at /api/buildrev (ADR-0025). Regenerated per
+# deploy, never committed — the committed record of a version is the git tag.
 server/build-rev.txt
+server/version.txt
 
 # per-canvas component dirs are workspace content (persisted to R2, ADR-0014) —
 # only the platform base library is committed

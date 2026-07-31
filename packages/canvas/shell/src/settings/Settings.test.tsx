@@ -38,6 +38,7 @@ let calls: string[] = [];
 let ownerView = true;
 let githubStatus: unknown = GITHUB_CONNECTED;
 let adminWaitlist: Array<{ email: string; createdAt: string }> | null = null; // null = not admin (403)
+let buildStamps: unknown = { buildRev: 'a8e62db', version: '0.2.0' };
 
 function stubEdge() {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -75,6 +76,9 @@ function stubEdge() {
       const b = JSON.parse((init?.body as string) ?? '{}') as { fullName?: string };
       return Response.json({ fullName: b.fullName, defaultBranch: 'main', protected: false, canPush: true });
     }
+    if (url === '/api/buildrev' && method === 'GET') {
+      return buildStamps ? Response.json(buildStamps) : new Response('unavailable', { status: 503 });
+    }
     return new Response('not found', { status: 404 });
   }) as typeof fetch;
 }
@@ -87,6 +91,7 @@ beforeEach(() => {
   ownerView = true;
   githubStatus = GITHUB_CONNECTED;
   adminWaitlist = null;
+  buildStamps = { buildRev: 'a8e62db', version: '0.2.0' };
   stubEdge();
   host = document.createElement('div');
   document.body.appendChild(host);
@@ -308,5 +313,29 @@ describe('SettingsStage — members (#192)', () => {
     expect(calls).toContain('PATCH /api/workspaces/ws_abc/members/u_khoa');
     expect(host.querySelectorAll('.settings-role-owner').length).toBe(1);
     expect(host.textContent).toContain('Khoa');
+  });
+});
+
+// ADR-0025: the version is the release's public claim, so the app has to be able to state
+// which one it is running. It reads /api/buildrev — the stamps baked into the SERVING
+// container — rather than anything bundled, so it reports what is actually live.
+describe('SettingsStage — the running version (ADR-0025)', () => {
+  test('shows the released version, with the build SHA alongside it', async () => {
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+
+    expect(calls).toContain('GET /api/buildrev');
+    const about = host.querySelector('.settings-version') as HTMLElement;
+    expect(about?.textContent).toContain('0.2.0');
+    expect(about?.textContent).toContain('a8e62db');
+  });
+
+  test('an unreachable build stamp renders nothing rather than a blank or wrong version', async () => {
+    buildStamps = null; // → 503 from the stub
+
+    await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
+    await flush();
+
+    expect(host.querySelector('.settings-version')).toBeNull();
   });
 });

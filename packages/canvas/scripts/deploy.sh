@@ -102,8 +102,17 @@ fi
 CANVAS_DIR="$BUILD_ROOT/$CANVAS_REL"
 cd "$CANVAS_DIR"
 
-echo "→ stamping build-rev $SHA"
+# Two stamps, two questions (ADR-0025). The SHA is the operational truth — precise to the
+# commit, and what identifies a build when someone reports a bug. The version is the
+# communication truth: what a tag claims went live, and what the app and the changelog say.
+# The version is read from the ROOT package.json, not packages/canvas's: a release ships one
+# Cloudflare instance, so it carries one product version, and the per-package 0.0.1s stay
+# private and unbumped.
+VERSION=$(python3 -c "import json; print(json.load(open('$BUILD_ROOT/package.json'))['version'])" 2>/dev/null) || {
+  echo "❌ could not read version from $BUILD_ROOT/package.json"; exit 1; }
+echo "→ stamping build-rev $SHA, version $VERSION"
 printf '%s' "$SHA" > server/build-rev.txt
+printf '%s' "$VERSION" > server/version.txt
 
 # Headless Docker config (keychain/buildx workaround — see memory cf-container-deploy-headless).
 python3 -c "import json; c=json.load(open('$HOME/.docker/config.json')); c.pop('credsStore',None); c.pop('credStore',None); json.dump(c,open('$DC/config.json','w'))"
@@ -249,14 +258,18 @@ esac
 # reaches the container ahead of the gate, so the verify loop needs no session/secret. The
 # explicit /__recycle kick is gone: `zbc apply` above rolls the container onto the new
 # image immediately, so polling the served SHA alone confirms the rollout.
-echo "→ verifying served buildRev == $SHA (cold boot + rollout settle; up to $((TRIES*5))s)"
-cur="?"
+# BOTH stamps must match (ADR-0025). Checking only the SHA would let a release ship with a
+# stale or missing version.txt and still report success — and the tag written after this
+# check is a claim about the VERSION, so the version is exactly what has to be proven.
+WANT="$SHA $VERSION"
+echo "→ verifying served buildRev+version == $WANT (cold boot + rollout settle; up to $((TRIES*5))s)"
+cur="? ?"
 for i in $(seq 1 "$TRIES"); do
   cur=$(curl -s --max-time 20 "$URL/api/buildrev" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin).get('buildRev','?'))" 2>/dev/null || echo "?")
-  if [ "$cur" = "$SHA" ]; then echo "✅ LIVE: $SHA is serving at $URL"; exit 0; fi
-  printf '   [%02d/%s] served=%s expected=%s\n' "$i" "$TRIES" "$cur" "$SHA"
+        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('buildRev','?'), d.get('version','?'))" 2>/dev/null || echo "? ?")
+  if [ "$cur" = "$WANT" ]; then echo "✅ LIVE: v$VERSION ($SHA) is serving at $URL"; exit 0; fi
+  printf '   [%02d/%s] served=%s expected=%s\n' "$i" "$TRIES" "$cur" "$WANT"
   sleep 5
 done
-echo "❌ TIMEOUT: served=$cur expected=$SHA — the new code is NOT confirmed live"
+echo "❌ TIMEOUT: served=$cur expected=$WANT — the new code is NOT confirmed live"
 exit 1

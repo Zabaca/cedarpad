@@ -1078,6 +1078,11 @@ body,
   white-space: normal;
   overflow: visible;
 }
+/* The running release (ADR-0025). The SHA rides along in mono because it is the thing you
+   paste into a bug report; the version is the thing you say out loud. */
+.settings-buildrev {
+  font-family: var(--mono);
+}
 .settings-role {
   flex: none;
   font-size: 11.5px;

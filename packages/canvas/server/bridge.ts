@@ -68,14 +68,20 @@ import { materializeSkills, writeSkill } from './skills.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
 import { createHuddleSupervisor } from './huddle-supervisor.ts';
 
-// Build stamp: scripts/deploy.sh writes the git SHA to build-rev.txt right before
-// the image build, so /api/status reports exactly which commit is serving. The
-// deploy then polls until that matches — turning "is the new code live?" from a
-// guess into a deterministic check. "dev" locally (file absent).
-const BUILD_REV =
-  (await Bun.file(fileURLToPath(new URL('./build-rev.txt', import.meta.url)))
+// Build stamps: scripts/deploy.sh writes both files right before the image build, so the
+// running container reports exactly what it is. The deploy then polls until they match —
+// turning "is the new code live?" from a guess into a deterministic check. Both are "dev"
+// locally (files absent, and both are gitignored).
+//
+// Two stamps, two questions (ADR-0025). BUILD_REV is the git SHA — the operational truth,
+// precise to the commit. VERSION is the released semver — the communication truth, and what
+// a tag claims went live. A release makes them 1:1; between releases only BUILD_REV moves.
+const stamp = async (file: string) =>
+  (await Bun.file(fileURLToPath(new URL(file, import.meta.url)))
     .text()
     .catch(() => '')).trim() || 'dev';
+const BUILD_REV = await stamp('./build-rev.txt');
+const VERSION = await stamp('./version.txt');
 
 const PORT = Number(process.env.CANVAS_BRIDGE_PORT ?? 4511);
 
@@ -854,13 +860,19 @@ export async function handleRequest(req: Request): Promise<Response> {
         return json({ error: message }, message.startsWith('no page ') ? 400 : 502);
       }
     }
-    // Public build stamp (#74): the SHA baked into this container image, and NOTHING
-    // else. deploy.sh polls this at the edge WITHOUT a session to confirm a rollout is
-    // live. Kept separate from /api/status (which exposes the turn-artifact health + client
-    // counts and stays edge-gated) so the public surface is exactly one non-sensitive
-    // field — the "minor info disclosure" rated acceptable in SECURITY-cs_gate.
+    // Public build stamps (#74, ADR-0025): the SHA and the released version baked into this
+    // container image, and NOTHING else. deploy.sh polls this at the edge WITHOUT a session
+    // to confirm a rollout is live, and a release asserts BOTH — the version is what the tag
+    // claims went live, so it has to be checkable from outside. Kept separate from
+    // /api/status (which exposes the turn-artifact health + client counts and stays
+    // edge-gated).
+    //
+    // SECURITY-cs_gate sized this surface at exactly one non-sensitive field and rated it a
+    // "minor info disclosure". It is now two, deliberately: a semver reveals strictly less
+    // than the git SHA already served here, so the rating is unchanged. Anything beyond
+    // these two belongs on the gated /api/status.
     if (path === '/api/buildrev' && req.method === 'GET') {
-      return json({ buildRev: BUILD_REV });
+      return json({ buildRev: BUILD_REV, version: VERSION });
     }
     // Container health in one read. The canvas-persistence half of this (degraded, live
     // version/shape counts, save-health, unsavedVersions) went with the sync plane in #297:

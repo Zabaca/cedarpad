@@ -27,6 +27,9 @@ type GithubStatus = {
   canConnect?: boolean;
 };
 type WaitlistEntry = { email: string; createdAt: string };
+// ADR-0025: the two stamps baked into the serving container image — the released semver and
+// the git SHA it was cut from. Both public, both from /api/buildrev.
+type BuildStamps = { buildRev: string; version: string };
 // ADR-0016 manage-not-read: `locked` rows (other members' private canvases) reach the
 // workspace owner as name + creator only; the owner may force-publish or delete, never open.
 type CanvasRowView = {
@@ -47,6 +50,7 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
   // Web push (#87) — PER DEVICE, so this is deliberately not part of `reload()`'s
   // workspace payload: it describes the browser you're sitting at, not the workspace.
   const [push, setPush] = useState<PushState | null>(null);
+  const [build, setBuild] = useState<BuildStamps | null>(null);
   const base = `/api/workspaces/${encodeURIComponent(workspaceId)}`;
 
   const reload = useCallback(async () => {
@@ -72,6 +76,18 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     void pushState().then(setPush);
+  }, []);
+
+  // The running release (ADR-0025). Deliberately NOT part of `reload()`'s workspace payload
+  // and deliberately fetched rather than bundled: /api/buildrev reports the stamps baked into
+  // the container that is SERVING, so this states what is actually live rather than what this
+  // JS bundle was built from. Unreachable → stays null → the section does not render, which
+  // is the honest answer to "which version am I on?".
+  useEffect(() => {
+    void fetch('/api/buildrev', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? (r.json() as Promise<BuildStamps>) : null))
+      .then((d) => setBuild(d?.version && d?.buildRev ? d : null))
+      .catch(() => setBuild(null));
   }, []);
 
   const togglePush = async () => {
@@ -657,6 +673,20 @@ export function SettingsStage({ workspaceId }: { workspaceId: string }) {
             <p className="settings-row-sub">
               Signups from cedarpad.com. Invites are manual: create the user with the generated temporary password and
               send it over your own channel.
+            </p>
+          </section>
+        )}
+
+        {build && (
+          <section className="settings-section settings-version">
+            <div className="settings-section-head">
+              <h3>Version</h3>
+            </div>
+            <p className="settings-row-sub">
+              Running <strong>v{build.version}</strong> <span className="settings-buildrev">({build.buildRev})</span> —{' '}
+              <a href="https://cedarpad.com/changelog" target="_blank" rel="noreferrer">
+                what&rsquo;s new
+              </a>
             </p>
           </section>
         )}

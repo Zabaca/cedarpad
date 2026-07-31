@@ -756,14 +756,31 @@ describe('GET /api/inbox/:id/chat: served from the forwarded Conversation, no ro
 });
 
 describe('/api/buildrev: public build stamp (#74)', () => {
-  test('returns ONLY buildRev — none of /api/status persistence/client fields', async () => {
+  test('returns ONLY the two build stamps — none of /api/status persistence/client fields', async () => {
     const res = await handleRequest(new Request('http://localhost/api/buildrev'));
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    // Exactly one field: the SHA stamp. No backend/degraded/save/clients/etc.
-    expect(Object.keys(body)).toEqual(['buildRev']);
+    // Exactly two fields: the SHA stamp and the release version (ADR-0025). No
+    // backend/degraded/save/clients/etc. The second field is a deliberate amendment to the
+    // "exactly one non-sensitive field" sizing — a version reveals strictly less than the
+    // SHA already here — so it is asserted, not merely allowed.
+    expect(Object.keys(body)).toEqual(['buildRev', 'version']);
     expect(typeof body.buildRev).toBe('string');
+    expect(typeof body.version).toBe('string');
+  });
+
+  // ADR-0025: deploy.sh polls this to prove a release is live by string-comparing both
+  // fields, so an unstamped image must say "dev" rather than serve an empty string — ''
+  // would compare equal to an unset expectation and turn a failed stamp into a green
+  // deploy. (Asserted as non-empty, not as literally 'dev': build-rev.txt is gitignored, so
+  // whether a stamp file exists is a property of the checkout, not of this behavior.)
+  test('neither stamp is ever an empty string', async () => {
+    const res = await handleRequest(new Request('http://localhost/api/buildrev'));
+
+    const body = (await res.json()) as { buildRev: string; version: string };
+    expect(body.buildRev).not.toBe('');
+    expect(body.version).not.toBe('');
   });
 });
 
