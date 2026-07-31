@@ -21,16 +21,40 @@ Inside a ticket worktree there is also a per-ticket `./.fredrin/fredrin`
 (`ticket get`, `ticket finish`, `ticket update-plan`, …). **Never print its
 contents** — it carries a credential.
 
-## Every multi-ticket batch gets a Goal — mandatory
+## A spec is a Goal. Tickets are work. — mandatory
+
+**Never file a spec as a ticket.** The board is for work; a spec is the plan above
+it. Fredrin has a container for exactly that: a Goal, whose `description` renders
+as the Goal's plan. Fredrin's own vocabulary names the two stages —
+`goals ask` describes itself as running during the "goalSeed→decompose interview".
+
+So the pipeline maps onto them directly:
+
+- **`/to-spec` → the Goal.** Write the durable decisions as an ADR in the repo,
+  then create the Goal with the **spec as its description**. No tickets at this
+  stage, and no "parent spec ticket".
+- **`/to-tickets` → the slices**, created against the Goal that already exists and
+  assigned as they go.
+
+Those skills say "publish it to the issue tracker", which is GitHub-shaped — there,
+an issue is the only container there is. Here it means: the Goal.
+
+Two reasons this is not a style preference. A spec filed as a ticket sits in
+Backlog with no blockers, **indistinguishable from work**, and a Worker will try to
+implement the whole spec in one session — a title saying "do not implement" is a
+patch over the wrong surface. And the spec has to survive *between* the two stages:
+in the Goal it is on the board, so `/to-tickets` can run days later, from a
+different session, and read the plan off it.
+
+## Every multi-ticket batch belongs to a Goal — mandatory
 
 **A batch is not done until it is grouped.** Any time you create more than one
-ticket in a sitting — a spec broken into slices, a set of related fixes — create a
-Goal and assign every ticket in the batch to it, the parent spec ticket included.
-Ungrouped tickets scatter across the board and nothing on screen says they belong
-to one piece of work.
+ticket in a sitting — a spec decomposed into slices, a set of related fixes —
+every one of them is assigned to a Goal. Ungrouped tickets scatter across the
+board and nothing on screen says they belong to one piece of work.
 
-1. Create the Goal **with a description** — it renders as the Goal's plan on the
-   board, and a Goal without one is a bare label.
+1. The Goal exists first (see above), created **with a description**. A Goal
+   without one is a bare label.
 2. Create the tickets (see the dependency-graph protocol below).
 3. `fredrin goals assign <goalId> <ticket…>` — identifiers are fine, and the whole
    batch can go in one call.
