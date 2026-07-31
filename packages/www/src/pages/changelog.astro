@@ -1,4 +1,5 @@
 ---
+import Logo from '../components/Logo.astro'
 import Layout from '../layouts/Layout.astro'
 import { publicReleases, renderItem } from '../lib/changelog'
 // ADR-0025: CHANGELOG.md at the repo root is the source of truth. `?raw` inlines it at VITE
@@ -20,8 +21,16 @@ const monthDay = (iso: string) =>
   description="What shipped in cedarpad, release by release."
 >
   <div class="wrap">
+    <nav aria-label="Main">
+      <Logo />
+      <div class="navlinks">
+        <a href="/">Home</a>
+        <a href="/why">Why</a>
+        <a href="/#access">Access</a>
+      </div>
+    </nav>
+
     <header>
-      <a class="back" href="/">← cedarpad</a>
       <h1>Changelog</h1>
       <p class="lede">What shipped, release by release. Newest first.</p>
     </header>
@@ -64,16 +73,27 @@ const monthDay = (iso: string) =>
   .wrap {
     max-width: 720px;
   }
-  header {
-    padding: 64px 0 40px;
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--line);
   }
-  .back {
-    color: var(--muted);
-    text-decoration: none;
+  .navlinks {
+    display: flex;
+    gap: 22px;
     font-size: 0.8125rem;
   }
-  .back:hover {
+  .navlinks a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .navlinks a:hover {
     color: var(--text);
+  }
+  header {
+    padding: 56px 0 40px;
   }
   h1 {
     font-size: 2rem;
