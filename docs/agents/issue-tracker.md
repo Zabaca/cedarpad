@@ -21,6 +21,25 @@ Inside a ticket worktree there is also a per-ticket `./.fredrin/fredrin`
 (`ticket get`, `ticket finish`, `ticket update-plan`, …). **Never print its
 contents** — it carries a credential.
 
+## Every multi-ticket batch gets a Goal — mandatory
+
+**A batch is not done until it is grouped.** Any time you create more than one
+ticket in a sitting — a spec broken into slices, a set of related fixes — create a
+Goal and assign every ticket in the batch to it, the parent spec ticket included.
+Ungrouped tickets scatter across the board and nothing on screen says they belong
+to one piece of work.
+
+1. Create the Goal **with a description** — it renders as the Goal's plan on the
+   board, and a Goal without one is a bare label.
+2. Create the tickets (see the dependency-graph protocol below).
+3. `fredrin goals assign <goalId> <ticket…>` — identifiers are fine, and the whole
+   batch can go in one call.
+4. Re-read one ticket and confirm membership before reporting done.
+
+Membership lives in the ticket's **`goals`** field, which is an **array** —
+there is no `goal` field. Reading `.goal` returns null for a ticket that is
+correctly assigned, which looks exactly like a failed assign.
+
 ## Workflow
 
 - Tickets move Backlog → Running → Review → Completed via deterministic signals.
@@ -73,8 +92,11 @@ A batch is not done until every edge is set **and verified**.
    it.
 3. **Pass `"dependsOn":[…]` on the dependent's own create call.** Never create
    now intending to wire edges later — later is where edges get lost.
-4. **Check `dependsOnResults` on every create response.** Each ref returns
-   `{"ok":true}` or an error. Repair a failure immediately with
+4. **Do not trust `dependsOnResults` — it is `null` on this API version.** It is
+   documented as returning `{"ok":true}` per ref, and does not, so a create whose
+   edges all landed and a create whose edges were all dropped look identical.
+   Verify with the re-read in step 5 instead; that is what actually proves an edge.
+   Repair a missing one with
    `raw POST "tickets/<full-id>/dependencies" '{"blockingTicketId":"<full-id>"}'`.
 5. **Re-read the whole graph before reporting done** —
    `raw GET "tickets/<full-id>/dependencies"` per dependent — and confirm
