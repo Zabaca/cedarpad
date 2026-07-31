@@ -83,6 +83,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "drizzle-kit": "^0.30.1",
     "jsdom": "^29.1.0",
+    "miniflare": "^4.20260708.1",
     "msw": "^2.15.0",
     "openapi-typescript": "^7.13.0",
     "typescript": "^5.7.0",

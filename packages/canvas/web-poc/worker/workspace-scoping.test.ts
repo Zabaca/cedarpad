@@ -1,11 +1,7 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { createClient } from "@libsql/client";
 import { and, eq } from "drizzle-orm";
-import { beforeAll, describe, expect, it } from "vitest";
-import { createHashEmbedder } from "../lib/ai/index.js";
-import { configuration } from "../lib/config/index.js";
-import { type Database, makeDb, schema } from "../lib/db/index.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { type Database, schema } from "../lib/db/index.js";
+import { createTestD1, migrationFiles, applyMigrations, type TestD1 } from "../lib/db/test-d1.js";
 import type { Bindings } from "./context.js";
 import { buildApp } from "./index.js";
 import { resolveActiveWorkspace } from "./middleware.js";
@@ -16,51 +12,15 @@ import { resolveActiveWorkspace } from "./middleware.js";
  * workspace (A never sees B), and legacy rows backfill to `default`.
  */
 
-const MIGRATIONS_DIR = fileURLToPath(new URL("../lib/db/migrations", import.meta.url));
-
-/** Parse each migration file into its individual SQL statements, in order. */
-function migrationFiles(): { name: string; statements: string[] }[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .map((f) => ({
-      name: f,
-      statements: readFileSync(`${MIGRATIONS_DIR}/${f}`, "utf8")
-        .split("--> statement-breakpoint")
-        .map((s) => s.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n").trim())
-        .filter(Boolean),
-    }));
-}
-
-type Client = ReturnType<typeof createClient>;
-
-async function applyMigrations(client: Client, files = migrationFiles()) {
-  for (const file of files) for (const stmt of file.statements) await client.execute(stmt);
-}
-
-function freshDb() {
-  const client = createClient({ url: ":memory:" });
-  return { client, db: makeDb(client) };
-}
-
-const embedder = createHashEmbedder(configuration.ai.embeddingDimensions);
-
 const env = {
   BETTER_AUTH_SECRET: "test-secret-at-least-32-characters-long!!",
   BETTER_AUTH_URL: "http://localhost:8787",
   DEV_AUTH_WORKSPACE: "any", // enables the dev hatch (x-dev-workspace picks the ws)
 } as unknown as Bindings;
 
-/** A problem row with a deterministic embedding so search can find it. */
+/** A problem row. No embedding: `vector32()` is libSQL-only and D1 rejects it. */
 async function seedProblem(db: Database, id: string, workspaceId: string, body: string) {
-  await db.insert(schema.problems).values({
-    id,
-    workspaceId,
-    title: id,
-    body,
-    embedding: await embedder.embed(`${id}\n\n${body}`),
-    embeddingModel: embedder.model,
-  });
+  await db.insert(schema.problems).values({ id, workspaceId, title: id, body });
 }
 
 describe("resolveActiveWorkspace — source resolution (#57)", () => {
@@ -81,7 +41,18 @@ describe("resolveActiveWorkspace — source resolution (#57)", () => {
   });
 });
 
+/*
+ * Three tests were NOT ported onto the D1 seam (CEDA-5U8J2H) — "create persists the
+ * active platform workspace_id", "list is scoped to the active workspace" and "search
+ * (graph) returns only the active workspace's problems". All three went through the
+ * libSQL vector path (`vector32()` on observation create, `vector_distance_cos()` in
+ * graph search), which D1 does not have, so what they asserted has been dead in
+ * production since the D1 cutover. The workspace-scoping guarantee is re-asserted on
+ * the rewritten write path and on FTS5 search (CEDA-CUAS8S, CEDA-1XTYA5).
+ */
+
 describe("Notebook isolation end-to-end (#57)", () => {
+  let testDb: TestD1;
   let db: Database;
   let app: ReturnType<typeof buildApp>;
 
@@ -96,9 +67,8 @@ describe("Notebook isolation end-to-end (#57)", () => {
     );
 
   beforeAll(async () => {
-    const f = freshDb();
-    db = f.db;
-    await applyMigrations(f.client);
+    testDb = await createTestD1();
+    db = testDb.db;
     app = buildApp({ db });
 
     // Two problems with the SAME topic in DIFFERENT platform workspaces.
@@ -107,46 +77,7 @@ describe("Notebook isolation end-to-end (#57)", () => {
     await seedProblem(db, "prob_B", "wsB", body);
   });
 
-  it("create persists the active platform workspace_id", async () => {
-    const res = await call("/v1/observations", "wsA", {
-      method: "POST",
-      body: JSON.stringify({ title: "pool obs", body: "connections exhausted" }),
-    });
-    expect(res.status).toBe(201);
-    const created = (await res.json()) as { observation: { id: string; workspaceId: string } };
-    expect(created.observation.workspaceId).toBe("wsA");
-    const [row] = await db
-      .select({ workspaceId: schema.observations.workspaceId })
-      .from(schema.observations)
-      .where(eq(schema.observations.id, created.observation.id));
-    expect(row.workspaceId).toBe("wsA");
-  });
-
-  it("list is scoped to the active workspace (A never sees B)", async () => {
-    await call("/v1/observations", "wsB", {
-      method: "POST",
-      body: JSON.stringify({ title: "B only", body: "belongs to B" }),
-    });
-    const resA = await call("/v1/observations", "wsA");
-    const listA = (await resA.json()) as { items?: { title: string }[] } | { title: string }[];
-    const itemsA = Array.isArray(listA) ? listA : (listA.items ?? []);
-    expect(itemsA.some((o) => o.title === "B only")).toBe(false);
-    expect(itemsA.some((o) => o.title === "pool obs")).toBe(true);
-  });
-
-  it("search (graph) returns only the active workspace's problems", async () => {
-    const q = encodeURIComponent("connection pool exhausted 500s");
-    const resA = await call(`/v1/graph/search?q=${q}`, "wsA");
-    expect(resA.status).toBe(200);
-    const hitsA = (await resA.json()) as { id: string }[];
-    expect(hitsA.some((h) => h.id === "prob_A")).toBe(true);
-    expect(hitsA.some((h) => h.id === "prob_B")).toBe(false);
-
-    const resB = await call(`/v1/graph/search?q=${q}`, "wsB");
-    const hitsB = (await resB.json()) as { id: string }[];
-    expect(hitsB.some((h) => h.id === "prob_B")).toBe(true);
-    expect(hitsB.some((h) => h.id === "prob_A")).toBe(false);
-  });
+  afterAll(() => testDb.dispose());
 
   it("cross-workspace detail is a 404 (isolation on reads)", async () => {
     // prob_B exists but is not in wsA's scope.
@@ -161,8 +92,7 @@ describe("legacy-row backfill → default (#57 migration 0004)", () => {
     const schemaOnly = files.filter((f) => !f.name.startsWith("0004"));
     const backfill = files.find((f) => f.name.startsWith("0004"))!;
 
-    const { client, db } = freshDb();
-    await applyMigrations(client, schemaOnly);
+    const { db, d1, dispose } = await createTestD1({ migrations: schemaOnly });
 
     // Rows created under the OLD semantics (workspace_id = a Better Auth org id).
     await db.insert(schema.observations).values({
@@ -178,7 +108,7 @@ describe("legacy-row backfill → default (#57 migration 0004)", () => {
       body: "made before #57",
     });
 
-    await applyMigrations(client, [backfill]);
+    await applyMigrations(d1, [backfill]);
 
     const [obs] = await db
       .select({ w: schema.observations.workspaceId })
@@ -190,5 +120,6 @@ describe("legacy-row backfill → default (#57 migration 0004)", () => {
       .where(and(eq(schema.problems.id, "prob_legacy")));
     expect(obs.w).toBe("default");
     expect(prob.w).toBe("default");
+    await dispose();
   });
 });

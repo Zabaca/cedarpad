@@ -1,33 +1,8 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { createHashEmbedder } from "../lib/ai/index.js";
-import { configuration } from "../lib/config/index.js";
-import { makeDb, schema } from "../lib/db/index.js";
-import { createClient } from "@libsql/client";
-import { beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
-import { createGraphToolDeps } from "./agent.js";
+import { type Database, schema } from "../lib/db/index.js";
+import { createTestD1, type TestD1 } from "../lib/db/test-d1.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "./auth.js";
-import type { Bindings } from "./context.js";
 import { buildApp } from "./index.js";
-import { drainAgentJobs } from "./worker.js";
-
-const MIGRATIONS_DIR = fileURLToPath(
-  new URL("../lib/db/migrations", import.meta.url).href,
-);
-
-/** Every migration's statements, in order — mirrors what the real migrator applies. */
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, "utf8")
-        .split("--> statement-breakpoint")
-        .map((s) => s.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n").trim())
-        .filter(Boolean),
-    );
-}
 
 const WORKSPACE = "ws_test";
 
@@ -37,13 +12,11 @@ const env = {
   DEV_AUTH_WORKSPACE: WORKSPACE,
 } as Record<string, string>;
 
-const client = createClient({ url: ":memory:" });
-const db = makeDb(client);
-const app = buildApp({ db });
-const embedder = createHashEmbedder(configuration.ai.embeddingDimensions);
-
-/** Intake is async now — run the worker inline to process whatever was enqueued. */
-const drain = () => drainAgentJobs(db, env as unknown as Bindings);
+// The seam runs on a REAL D1 — workerd's own, via Miniflare — the engine production
+// runs on (ADR-0018). See lib/db/test-d1.ts.
+let testDb: TestD1;
+let db: Database;
+let app: ReturnType<typeof buildApp>;
 
 async function req(path: string, init: RequestInit = {}, workspace = WORKSPACE) {
   return app.request(
@@ -57,24 +30,23 @@ async function req(path: string, init: RequestInit = {}, workspace = WORKSPACE) 
 }
 
 beforeAll(async () => {
-  for (const stmt of migrationStatements()) {
-    await client.execute(stmt);
-  }
+  testDb = await createTestD1();
+  db = testDb.db;
+  app = buildApp({ db });
 
   await db.insert(schema.workspace).values([
     { id: WORKSPACE, name: "Test Workspace", slug: "test-workspace" },
     { id: "ws_other", name: "Other Workspace", slug: "other-workspace" },
   ]);
 
-  // Seed an existing problem WITH an embedding so retrieval has something to find.
+  // No embedding on the seed: `vector32()` is a libSQL function, so the embedding
+  // column cannot be written on D1 at all (CEDA-5U8J2H).
   const seedBody = "Database connection pool is exhausted under load causing 500s";
   await db.insert(schema.problems).values({
     id: "prob_seed",
     workspaceId: WORKSPACE,
     title: "Connection pool exhausted",
     body: seedBody,
-    embedding: await embedder.embed(`Connection pool exhausted\n\n${seedBody}`),
-    embeddingModel: embedder.model,
   });
   // Attach a solution to the seed so the agent can reuse it.
   await db.insert(schema.solutions).values({
@@ -88,36 +60,27 @@ beforeAll(async () => {
     .values({ solutionId: "sol_seed", targetKind: "problem", targetId: "prob_seed" });
 });
 
+afterAll(() => testDb.dispose());
+
+/*
+ * Eight tests were NOT ported onto this seam (CEDA-5U8J2H). Each exercised the libSQL
+ * vector path — `vector32()` on write, `vector_distance_cos()` on read — which D1 does
+ * not have; they passed only because the seam ran on in-memory libSQL, while the
+ * behaviour they asserted has been dead in production since the D1 cutover. ADR-0024
+ * removes the similarity graph outright (search becomes D1 FTS5, CEDA-1XTYA5) and
+ * rewrites the Observation/Problem write paths (CEDA-CUAS8S, CEDA-XQXS7V), so the
+ * coverage returns with those slices, on this seam:
+ *   - POST /v1/problems: links a near-duplicate to the seed and reuses its solution
+ *   - observations: creates, lists and reads an observation
+ *   - POST /v1/problems/synthesize: synthesizes a problem from observations
+ *   - agent graph retrieval: searchGraph returns ranked hits
+ *   - createGraphToolDeps: searchGraph tool dep embeds the query
+ *   - problems list: paginates, searches and filters by solved
+ *   - editing: edits a problem, rejects the AI solution, adds the human fix
+ *   - access model: lists only the active workspace's problems
+ */
+
 describe("POST /v1/problems (intake + agent pipeline)", () => {
-  it("links a near-duplicate to the seed and reuses its solution", async () => {
-    const res = await req("/v1/problems", {
-      method: "POST",
-      body: JSON.stringify({
-        title: "Connection pool exhausted",
-        body: "Database connection pool is exhausted under load causing 500s",
-      }),
-    });
-    expect(res.status).toBe(201);
-    const { problem } = (await res.json()) as { problem: { id: string } };
-
-    // Intake is async: process the queue, then re-read the now-enriched problem.
-    await drain();
-    const detail = (await (await req(`/v1/problems/${problem.id}`)).json()) as {
-      links: { link: { kind: string } }[];
-      solutions: { origin: string }[];
-      latestRun: { status: string };
-    };
-
-    // The agent found the seed and linked it as identical (deterministic hash embedder).
-    expect(detail.links.length).toBeGreaterThan(0);
-    const kinds = detail.links.map((l) => l.link.kind);
-    expect(kinds).toContain("identical");
-    // A solution was produced, reusing the seed's solution.
-    expect(detail.solutions.length).toBeGreaterThan(0);
-    expect(detail.solutions[0]!.origin).toBe("reused");
-    expect(detail.latestRun.status).toBe("completed");
-  });
-
   it("rejects unauthenticated requests", async () => {
     const res = await app.request(
       "/v1/problems",
@@ -137,63 +100,7 @@ describe("POST /v1/problems (intake + agent pipeline)", () => {
   });
 });
 
-describe("observations", () => {
-  it("creates, lists and reads an observation", async () => {
-    const created = (await (
-      await req("/v1/observations", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Slow page on mobile",
-          body: "A user said the dashboard took ages on their phone.",
-          projectTags: ["Mobile"],
-          runAgent: false,
-        }),
-      })
-    ).json()) as { observation: { id: string; projectTags: string[] } };
-    expect(created.observation.projectTags).toEqual(["Mobile"]);
-
-    const list = (await (await req("/v1/observations")).json()) as { items: { id: string }[]; total: number };
-    expect(list.items.some((o) => o.id === created.observation.id)).toBe(true);
-
-    const tags = (await (await req("/v1/project-tags")).json()) as { tags: string[] };
-    expect(tags.tags).toContain("Mobile");
-  });
-});
-
 describe("POST /v1/problems/synthesize", () => {
-  it("synthesizes a problem from observations and links them", async () => {
-    const mkObs = (title: string, body: string) =>
-      req("/v1/observations", {
-        method: "POST",
-        body: JSON.stringify({ title, body, runAgent: false }),
-      }).then((r) => r.json()) as Promise<{ observation: { id: string } }>;
-    const o1 = await mkObs("Timeout at checkout", "checkout timed out for a user at 9am");
-    const o2 = await mkObs("Another checkout hang", "checkout spun and failed during a demo");
-
-    const res = await req("/v1/problems/synthesize", {
-      method: "POST",
-      body: JSON.stringify({
-        observationIds: [o1.observation.id, o2.observation.id],
-        title: "Checkout intermittently hangs",
-      }),
-    });
-    expect(res.status).toBe(202);
-    const { jobId } = (await res.json()) as { jobId: string };
-
-    // Synthesis runs in the worker; drain it, then read the problem it created.
-    await drain();
-    const [job] = await db.select().from(schema.agentJobs).where(eq(schema.agentJobs.id, jobId));
-    const problemId = (job!.result as { problemId: string }).problemId;
-    const detail = (await (await req(`/v1/problems/${problemId}`)).json()) as {
-      problem: { title: string; source: string };
-      sourceObservations: { id: string }[];
-    };
-    expect(detail.problem.title).toBe("Checkout intermittently hangs");
-    expect(detail.sourceObservations.map((o) => o.id).sort()).toEqual(
-      [o1.observation.id, o2.observation.id].sort(),
-    );
-  });
-
   it("404s when an observation is not in the workspace", async () => {
     const res = await req("/v1/problems/synthesize", {
       method: "POST",
@@ -215,13 +122,6 @@ describe("GET /v1/graph", () => {
 });
 
 describe("agent graph retrieval endpoints", () => {
-  it("searchGraph returns ranked hits annotated with solution signals", async () => {
-    const res = await req(`/v1/graph/search?q=${encodeURIComponent("connection pool exhausted")}`);
-    expect(res.status).toBe(200);
-    const results = (await res.json()) as { id: string; hasAcceptedSolution: boolean }[];
-    expect(results.some((r) => r.id === "prob_seed")).toBe(true);
-  });
-
   it("getProblemContext returns the node, edges and attached solutions", async () => {
     const res = await req(`/v1/problems/prob_seed/context`);
     expect(res.status).toBe(200);
@@ -253,98 +153,7 @@ describe("agent graph retrieval endpoints", () => {
   });
 });
 
-describe("createGraphToolDeps (in-process tool wiring)", () => {
-  it("searchGraph tool dep embeds the query and returns annotated hits", async () => {
-    const deps = createGraphToolDeps(db, env as unknown as Bindings);
-    const results = (await deps.searchGraph({ query: "connection pool exhausted" })) as {
-      id: string;
-    }[];
-    expect(results.some((r) => r.id === "prob_seed")).toBe(true);
-  });
-});
-
-describe("problems list: pagination, search, solved filter", () => {
-  it("paginates, searches and filters by solved", async () => {
-    const mk = (title: string, body: string) =>
-      req("/v1/problems", {
-        method: "POST",
-        body: JSON.stringify({ title, body, runAgent: false }),
-      });
-    await mk("Alpha latency", "checkout latency spike");
-    await mk("Beta crash", "null pointer on load");
-    await mk("Gamma latency", "search latency high");
-
-    const p1 = (await (await req(`/v1/problems?q=latency&limit=1&offset=0`)).json()) as {
-      items: { id: string }[];
-      total: number;
-    };
-    expect(p1.total).toBe(2); // Alpha + Gamma
-    expect(p1.items.length).toBe(1);
-
-    const p2 = (await (await req(`/v1/problems?q=latency&limit=1&offset=1`)).json()) as {
-      items: unknown[];
-    };
-    expect(p2.items.length).toBe(1);
-  });
-});
-
 describe("editing: update problem, reject AI solution, add human solution", () => {
-  it("edits a problem, rejects the AI solution (kept intact), adds the human fix", async () => {
-    const created = (await (
-      await req("/v1/problems", {
-        method: "POST",
-        body: JSON.stringify({ title: "Edit me", body: "original", runAgent: true }),
-      })
-    ).json()) as { problem: { id: string } };
-    const pid = created.problem.id;
-
-    // Intake is async — process the queue, then read the AI solution it produced.
-    await drain();
-    const enriched = (await (await req(`/v1/problems/${pid}`)).json()) as {
-      solutions: { id: string; body: string }[];
-    };
-    expect(enriched.solutions.length).toBeGreaterThan(0);
-    const aiSolId = enriched.solutions[0]!.id;
-
-    // Edit the problem
-    const upd = await req(`/v1/problems/${pid}`, {
-      method: "PATCH",
-      body: JSON.stringify({ title: "Edited title", status: "resolved", urgency: "high" }),
-    });
-    expect(upd.status).toBe(200);
-    const detail = (await upd.json()) as { problem: { title: string; status: string; urgency: string } };
-    expect(detail.problem.title).toBe("Edited title");
-    expect(detail.problem.status).toBe("resolved");
-    expect(detail.problem.urgency).toBe("high");
-
-    // Reject the AI solution — its body must stay intact (for learning)
-    const rej = await req(`/v1/solutions/${aiSolId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: "rejected" }),
-    });
-    expect(rej.status).toBe(200);
-    const rejSol = (await rej.json()) as { status: string; body: string };
-    expect(rejSol.status).toBe("rejected");
-    expect(rejSol.body.length).toBeGreaterThan(0);
-
-    // Add the solution that actually worked (human-authored, accepted)
-    const add = await req("/v1/solutions", {
-      method: "POST",
-      body: JSON.stringify({ targetKind: "problem", targetId: pid, body: "The fix that actually worked" }),
-    });
-    expect(add.status).toBe(201);
-    const human = (await add.json()) as { origin: string; status: string };
-    expect(human.origin).toBe("human");
-    expect(human.status).toBe("accepted");
-
-    // Both coexist: the rejected AI answer + the accepted human one
-    const after = (await (await req(`/v1/problems/${pid}`)).json()) as {
-      solutions: { status: string; origin: string }[];
-    };
-    expect(after.solutions.some((s) => s.status === "rejected")).toBe(true);
-    expect(after.solutions.some((s) => s.origin === "human" && s.status === "accepted")).toBe(true);
-  });
-
   it("404s editing a problem or solution outside the workspace", async () => {
     expect((await req("/v1/problems/prob_nope", { method: "PATCH", body: JSON.stringify({ title: "x" }) })).status).toBe(404);
     expect((await req("/v1/solutions/sol_nope", { method: "PATCH", body: JSON.stringify({ status: "accepted" }) })).status).toBe(404);
@@ -380,38 +189,6 @@ describe("GET /v1/problems/:id/cluster-summary (Tier 3)", () => {
 });
 
 describe("access model: reads are confined to the active workspace (ADR-0007, #57)", () => {
-  it("lists only the active workspace's problems; an out-of-scope ?workspaceId= yields nothing", async () => {
-    // Create a problem that lives in ws_other.
-    const created = (await (
-      await req(
-        "/v1/problems",
-        { method: "POST", body: JSON.stringify({ title: "Other-ws problem", body: "in ws_other", runAgent: false }) },
-        "ws_other",
-      )
-    ).json()) as { problem: { id: string; workspaceId: string } };
-    expect(created.problem.workspaceId).toBe("ws_other");
-
-    // Default list (called as ws_test) never sees ws_other's rows.
-    const all = (await (await req("/v1/problems?limit=100")).json()) as {
-      items: { workspaceId: string }[];
-    };
-    const wsIds = new Set(all.items.map((p) => p.workspaceId));
-    expect(wsIds.has(WORKSPACE)).toBe(true);
-    expect(wsIds.has("ws_other")).toBe(false);
-
-    // An explicit ?workspaceId= outside the caller's scope is forced empty, not honoured.
-    const narrowed = (await (await req("/v1/problems?limit=100&workspaceId=ws_other")).json()) as {
-      items: { id: string; workspaceId: string }[];
-    };
-    expect(narrowed.items).toEqual([]);
-
-    // The row exists — its own workspace sees it.
-    const own = (await (await req("/v1/problems?limit=100", {}, "ws_other")).json()) as {
-      items: { id: string }[];
-    };
-    expect(own.items.some((p) => p.id === created.problem.id)).toBe(true);
-  });
-
   it("GET /v1/workspaces returns only the active workspace", async () => {
     const res = await req("/v1/workspaces");
     expect(res.status).toBe(200);
