@@ -23,6 +23,8 @@ export type Release = { version: string; date: string; sections: ChangelogSectio
 const RELEASE_RE = /^##\s+\[(\d+\.\d+\.\d+)\]\s+[—-]\s+(\d{4}-\d{2}-\d{2})\s*$/
 const SECTION_RE = /^###\s+(.+?)\s*$/
 const ITEM_RE = /^-\s+(.*\S)\s*$/
+/** A wrapped item's continuation: indented, non-empty, and not the start of a new item. */
+const CONTINUATION_RE = /^\s+(\S.*?)\s*$/
 
 /**
  * Every release in the file, in file order, including internal-only ones.
@@ -80,11 +82,22 @@ export function parseChangelog(markdown: string): Release[] {
     }
 
     const item = ITEM_RE.exec(line)?.[1]
-    if (item === undefined) continue // prose, blank lines, and the preamble before release one
-    // An item under a release but under no section would silently never render.
-    if (release && !section)
-      throw new Error(`${where}: item ${JSON.stringify(item)} sits outside any section`)
-    section?.items.push(item)
+    if (item !== undefined) {
+      // An item under a release but under no section would silently never render.
+      if (release && !section)
+        throw new Error(`${where}: item ${JSON.stringify(item)} sits outside any section`)
+      section?.items.push(item)
+      continue
+    }
+
+    // Entries wrap. An indented line straight after an item is that item's continuation, and
+    // joining it back is not cosmetic: dropping it truncates a sentence mid-clause on the
+    // public page — silently, which is the one failure mode this parser exists to prevent.
+    const cont = section?.items.length ? CONTINUATION_RE.exec(line)?.[1] : undefined
+    if (cont !== undefined && section) {
+      section.items[section.items.length - 1] += ` ${cont}`
+    }
+    // Everything else — prose, blank lines, the preamble before release one.
   }
   if (release) finish(release, 'CHANGELOG.md')
 

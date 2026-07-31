@@ -152,3 +152,23 @@ test('the committed CHANGELOG.md parses', () => {
       expect(() => renderItem(item)).not.toThrow()
   }
 })
+
+// Entries wrap — every markdown formatter in the world does it, and CHANGELOG.md is
+// hand-edited at the release gate. Dropping the continuation silently truncates a sentence
+// mid-clause on the public page, which is worse than failing loudly.
+test('an item wrapped across lines is one item', () => {
+  const md = [
+    '## [0.1.0] — 2026-07-31',
+    '',
+    '### Added',
+    '- **The shared canvas** — a multiplayer surface where you and AI agents work on the',
+    '  same artifacts. Multi-page, and a reload returns you to the page you left. (#344)',
+    '- A second, unwrapped item.',
+  ].join('\n')
+
+  const [items] = parseChangelog(md).map((r) => r.sections[0]?.items)
+  expect(items).toEqual([
+    '**The shared canvas** — a multiplayer surface where you and AI agents work on the same artifacts. Multi-page, and a reload returns you to the page you left. (#344)',
+    'A second, unwrapped item.',
+  ])
+})
