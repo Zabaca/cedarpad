@@ -39,3 +39,38 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.0.1] — 2026-07-31
+
+The first release. Cedarpad has been live for months; this is the point it starts carrying a
+version, so this entry describes what it does today rather than the 406 commits it took.
+
+### Added
+- **The shared canvas** — a multiplayer surface where you and AI agents work on the same
+  artifacts. Multi-page, with the picker reorderable by drag; a reload returns you to the page
+  and camera you left. (#344) (#384)
+- **Live components** — agents write real React components onto the canvas instead of
+  describing them. Each canvas has its own; promote one and every canvas sees it. A gallery to
+  place them, a Components stage for the workspace-wide inventory, and preview on demand.
+- **The Notebook** — record an Observation and where it came from, and synthesize Observations
+  into a Problem. API-first, so agents can write to it while working with you. (#392) (#394)
+- **Ilograph diagrams** — architecture views with perspectives, drill-down, and a sequence
+  walkthrough. (#393)
+- **Passwordless sign-in** — a magic link by email; no password to set or forget. (#346)
+- **The Inbox** — conversations with agents, with an unread badge pushed to you rather than
+  polled for. (#383) (#385)
+- **Agents reach cedarpad over MCP** — an external agent can read and write your canvases with
+  the same reach the in-app agent has.
+- **Shareable canvases** — invite a guest by link, see their presence, revoke it. (#320)
+- **Workspace settings** — members and invitations, private canvases, connected GitHub
+  repositories, and web push notifications.
+- **This changelog**, and the running version in Settings.
+
+### Fixed
+- Components no longer fail to render after the container restarts — one that imports another
+  now materializes together with it.
+
+### Internal
+- Everything shipped before this release. Structurally: workspace content became records in D1
+  (ADR-0022), the platform data layer moved from Turso to D1 (ADR-0018), canvas sync moved onto
+  tldraw sync (ADR-0019), and e2e moved to a self-hosted runner. (#388)
+
