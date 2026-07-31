@@ -1347,7 +1347,7 @@ export interface components {
             /** @enum {string} */
             status: "open" | "investigating" | "resolved" | "archived";
             /** @enum {string} */
-            source: "human" | "agent";
+            origin: "human" | "agent";
             /** @description Human-only meta tags ('Project'); excluded from all heuristics/LLM input */
             projectTags: string[];
             createdBy: string | null;

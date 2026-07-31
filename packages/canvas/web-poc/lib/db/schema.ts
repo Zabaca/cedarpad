@@ -307,7 +307,8 @@ export const problems = sqliteTable(
     /** Guidance on how a solution should be structured. */
     solutionDirection: text("solution_direction"),
     status: text("status", { enum: problemStatus }).notNull().default("open"),
-    source: text("source", { enum: origins }).notNull().default("human"),
+    /** Who produced it. Was `source`, which collided with the Source row. */
+    origin: text("origin", { enum: origins }).notNull().default("human"),
     projectTags: projectTags(),
     createdBy: text("created_by"),
     ...timestamps,

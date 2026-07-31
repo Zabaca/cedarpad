@@ -145,7 +145,7 @@ export const ProblemSchema = z
     urgency: Urgency,
     solutionDirection: z.string().nullable().openapi({ description: "Guidance on how a solution should be structured" }),
     status: ProblemStatus,
-    source: Origin,
+    origin: Origin,
     projectTags: ProjectTags,
     createdBy: z.string().nullable(),
     createdAt: z.number().openapi({ description: "epoch ms" }),

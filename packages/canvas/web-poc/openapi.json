@@ -446,7 +446,7 @@
               "archived"
             ]
           },
-          "source": {
+          "origin": {
             "type": "string",
             "enum": [
               "human",
@@ -482,7 +482,7 @@
           "urgency",
           "solutionDirection",
           "status",
-          "source",
+          "origin",
           "projectTags",
           "createdBy",
           "createdAt",

@@ -261,7 +261,7 @@ export function buildApp(opts: BuildAppOptions = {}) {
         priority,
         urgency: input.urgency ?? "medium",
         solutionDirection: input.solutionDirection ?? null,
-        source: c.get("isAgent") ? "agent" : "human",
+        origin: c.get("isAgent") ? "agent" : "human",
         createdBy: c.get("userId"),
         projectTags: input.projectTags ?? [],
       });

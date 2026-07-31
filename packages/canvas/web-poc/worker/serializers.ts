@@ -57,7 +57,7 @@ export function serializeProblem(p: ProblemRow): Problem {
     urgency: p.urgency,
     solutionDirection: p.solutionDirection ?? null,
     status: p.status,
-    source: p.source,
+    origin: p.origin,
     projectTags: p.projectTags ?? [],
     createdBy: p.createdBy ?? null,
     createdAt: ms(p.createdAt),

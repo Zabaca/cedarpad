@@ -63,6 +63,7 @@ interface ProblemDetailBody {
     urgency: "low" | "medium" | "high" | "critical";
     solutionDirection: string | null;
     status: "open" | "investigating" | "resolved" | "archived";
+    origin: "human" | "agent";
   };
   observations: { id: string; title: string; relevance: number | null; rationale: string | null }[];
 }
@@ -109,6 +110,15 @@ describe("a Problem's life cycle", () => {
       "Intermittent 500s during checkout above roughly 200 concurrent carts.",
     );
     expect(fetched.problem.solutionDirection).toBe(created.problem.solutionDirection);
+  });
+
+  it("records who produced it as `origin`, the same word an Observation uses", async () => {
+    // The dev-workspace header authenticates an agent (worker/middleware.ts).
+    const created = await newProblem({ title: "Drawn by an agent", body: "During a run." });
+    expect(created.problem.origin).toBe("agent");
+    // `source` was the old name for this, and now means a Source row — a Problem
+    // must not answer to it, or the collision ADR-0024 removed is back.
+    expect(created.problem).not.toHaveProperty("source");
   });
 
   it("edits a Problem's fields and then deletes it", async () => {

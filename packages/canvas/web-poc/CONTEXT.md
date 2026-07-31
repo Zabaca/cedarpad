@@ -13,9 +13,8 @@ by relative path and owns its dependencies. See "How canvas mounts it" below.
 ## Language
 
 > Agreed 2026-07-30 ([ADR-0024](../../../docs/adr/0024-the-notebook-is-an-agent-first-store.md)).
-> The Observation side of this is built: `sources` is a table, `observations.origin`
-> replaced `observations.source`, and the similarity graph is gone. `problems.source`
-> is the one word still waiting on its own slice.
+> The vocabulary below is the code's: `sources` is a table, both `observations`
+> and `problems` carry `origin`, and the similarity graph is gone.
 
 **Observation**:
 A loose record of something worth noting, which may lead nowhere or pile up with
