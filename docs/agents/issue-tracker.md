@@ -101,9 +101,11 @@ position, not `createdAt` — a ticket created days earlier can appear above a
 newer one. Never infer recency from list order; read `createdAt`. The listing is
 also paginated (`nextCursor`), so a filtered scan can silently miss tickets.
 
-**A parent spec ticket looks grabbable.** A spec filed as a ticket sits in
-Backlog with no blockers, indistinguishable from work. Say so in its title or
-first line, or a Worker will try to implement an entire spec in one session.
+**A parent spec ticket looks grabbable.** This is why a spec belongs in a Goal
+(above) and not on the board: filed as a ticket it sits in Backlog with no
+blockers, indistinguishable from work, and a Worker will try to implement the
+whole spec in one session. If you inherit one that already exists, say so in its
+title or first line — but do not create new ones.
 
 ## The dependency-graph protocol — mandatory for any multi-ticket batch
 
