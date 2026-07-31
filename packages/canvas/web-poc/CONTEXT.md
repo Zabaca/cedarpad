@@ -10,6 +10,64 @@ its Hono app directly (ADR-0018), canvas's Vite serves the SPA, and prod ships a
 one Cloudflare instance. There is no `package.json`/`exports` — canvas imports it
 by relative path and owns its dependencies. See "How canvas mounts it" below.
 
+## Language
+
+> Agreed 2026-07-30 ([ADR-0024](../../../docs/adr/0024-the-notebook-is-an-agent-first-store.md)).
+> This is the vocabulary the redesign is being built to; the code still uses some of
+> the older words (`observations.source`, the similarity graph) until it lands.
+
+**Observation**:
+A loose record of something worth noting, which may lead nowhere or pile up with
+others until a Problem emerges.
+_Avoid_: note, entry, item.
+
+**Problem**:
+A specific, weighted, urgent thing that a pile of Observations points at, and that
+is expected to be resolved.
+_Avoid_: issue, ticket — those are GitHub things (ADR-0015).
+
+**Source**:
+Where an Observation came from — a URL, a call, a document, or a cedarpad entity (a
+Conversation, a canvas, a repo). A row, not a sentence; when there is nothing to
+point at, it carries a description instead.
+_Avoid_: using "source" for who produced a record — that is **Origin**.
+
+**Origin**:
+Who produced a record: `human` or `agent`. Distinct from **Source**, which is where
+it came from.
+
+**Solution**:
+A resolution attached to an Observation or a Problem.
+
+## Relationships
+
+- A **Source** has many **Observations**; an Observation has at most one Source
+  (nullable — an Observation you simply think of has none)
+- Many **Observations** synthesize into a **Problem**, and an Observation can feed
+  several — many-to-many
+- A **Problem** links to other **Problems**, written deliberately, never inferred
+- A **Solution** attaches to an **Observation** or a **Problem**
+
+## Example dialogue
+
+> **Dev:** "An agent notices something during a dev-agent run and records it. What's
+> the **Source**?"
+> **James:** "The Conversation — a real id, not a sentence describing it. And the
+> **Origin** is `agent`, because the agent typed it. Two different questions."
+> **Dev:** "The same complaint arrives on a call and in a ticket — one **Observation**
+> with two **Sources**?"
+> **James:** "Two Observations. That they're the same thing is what synthesizing them
+> into one **Problem** says."
+
+## Flagged ambiguities
+
+- "source" meant both *who produced this* and *where it came from* — resolved: those
+  are **Origin** and **Source**, and they are different columns.
+- Root CONTEXT.md says Notebook records are isolated per platform workspace; the graph
+  reads in `lib/db/queries/graph.ts` are not (only `searchGraph` takes a
+  `workspaceId`) — resolved: **isolation is the rule**, one shared pool *per
+  workspace*, and the unscoped reads are a defect to close.
+
 ## Layout
 
 - `src/` — the React 19 SPA (Mantine, React Query, zustand, Better Auth client,
