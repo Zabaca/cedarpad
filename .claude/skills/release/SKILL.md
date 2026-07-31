@@ -153,8 +153,12 @@ git tag v0.2.0 && git push origin v0.2.0
 
 ```bash
 bunx @zabaca/zbc apply production www          # from the REPO ROOT, as deploy.sh runs it
-curl -s https://cedarpad.com/changelog | grep -o 'v0\.2\.0'
+curl -sL https://cedarpad.com/changelog | grep -o 'v0\.2\.0'
 ```
+
+**`-L` is not optional.** Astro emits `changelog/index.html`, so `/changelog` answers **307 →
+`/changelog/`**. Without it curl reports a 404 body on a page that is live and correct — which
+is exactly what happened on the v0.0.1 release, and briefly looked like a failed deploy.
 
 www is a **separate** deploy and can fail independently. It runs last so the public page can
 never advertise a version that is not serving. A www failure leaves a live, tagged release with a
