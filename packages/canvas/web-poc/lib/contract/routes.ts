@@ -8,6 +8,7 @@ import {
   GraphQuery,
   GraphSchema,
   DeleteResultSchema,
+  EdgeParams,
   IdParam,
   ItemPageSchema,
   ListItemsQuery,
@@ -18,12 +19,14 @@ import {
   NeighborhoodSchema,
   ObservationDetailSchema,
   ObservationPageSchema,
+  ObservationProblemEdgeSchema,
   ProblemContextSchema,
   ProblemDetailSchema,
   ProblemPageSchema,
   ProjectTagsSchema,
   SolutionSchema,
   SolvedNeighborSchema,
+  TieObservationSchema,
   UpdateObservationSchema,
   UpdateProblemSchema,
   UpdateSolutionSchema,
@@ -222,6 +225,53 @@ export const updateProblemRoute = createRoute({
   },
 });
 
+export const deleteProblemRoute = createRoute({
+  method: "delete",
+  path: "/v1/problems/{id}",
+  tags: ProblemsTag,
+  summary: "Delete a problem (its observation ties go with it; the observations stay)",
+  security: SECURITY,
+  request: { params: IdParam },
+  responses: {
+    200: json(DeleteResultSchema, "Problem deleted"),
+    404: json(ErrorSchema, "Not found"),
+  },
+});
+
+/* ------------------------------------------------------------------ *
+ * The Observation → Problem tie (many-to-many)
+ * ------------------------------------------------------------------ */
+
+export const tieObservationRoute = createRoute({
+  method: "post",
+  path: "/v1/problems/{id}/observations",
+  tags: ProblemsTag,
+  summary: "Tie an observation to this problem, recording relevance and rationale",
+  security: SECURITY,
+  request: {
+    params: IdParam,
+    body: { content: { "application/json": { schema: TieObservationSchema } }, required: true },
+  },
+  responses: {
+    201: json(ObservationProblemEdgeSchema, "The tie"),
+    400: json(ErrorSchema, "Invalid request"),
+    404: json(ErrorSchema, "Problem or observation not found"),
+  },
+});
+
+export const untieObservationRoute = createRoute({
+  method: "delete",
+  path: "/v1/problems/{id}/observations/{observationId}",
+  tags: ProblemsTag,
+  summary: "Remove the tie, leaving both the problem and the observation in place",
+  security: SECURITY,
+  request: { params: EdgeParams },
+  responses: {
+    200: json(DeleteResultSchema, "Tie removed"),
+    404: json(ErrorSchema, "No such tie"),
+  },
+});
+
 /* ------------------------------------------------------------------ *
  * Solutions (polymorphic: attach to an observation or a problem)
  * ------------------------------------------------------------------ */
@@ -416,6 +466,9 @@ export const routes = {
   listItems: listItemsRoute,
   getProblem: getProblemRoute,
   updateProblem: updateProblemRoute,
+  deleteProblem: deleteProblemRoute,
+  tieObservation: tieObservationRoute,
+  untieObservation: untieObservationRoute,
   listSolutions: listSolutionsRoute,
   createSolution: createSolutionRoute,
   updateSolution: updateSolutionRoute,

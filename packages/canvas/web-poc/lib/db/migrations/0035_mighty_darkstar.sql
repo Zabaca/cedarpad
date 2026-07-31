@@ -1,0 +1,1 @@
+ALTER TABLE `problems` RENAME COLUMN "source" TO "origin";

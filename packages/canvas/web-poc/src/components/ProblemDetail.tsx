@@ -146,12 +146,12 @@ export function ProblemDetail({ id }: { id: string }) {
         )}
       </Card>
 
-      {/* Source observations */}
-      {data.sourceObservations.length > 0 && (
+      {/* The observations that feed this problem */}
+      {data.observations.length > 0 && (
         <Card withBorder padding="md">
-          <Title order={5} mb="xs">Synthesized from ({data.sourceObservations.length})</Title>
+          <Title order={5} mb="xs">Fed by ({data.observations.length})</Title>
           <Stack gap="xs">
-            {data.sourceObservations.map((o) => (
+            {data.observations.map((o) => (
               <Text key={o.id} size="sm" style={{ cursor: "pointer" }}
                 onClick={() => { setView("library"); selectObservation(o.id); }}>
                 ← {o.title}

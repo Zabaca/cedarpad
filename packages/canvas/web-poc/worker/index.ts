@@ -33,6 +33,7 @@ import { publish, workspaceChannel } from "./realtime.js";
 import {
   serializeApiKey,
   serializeObservation,
+  serializeObservationProblemEdge,
   serializeProblem,
   serializeSolution,
 } from "./serializers.js";
@@ -260,7 +261,7 @@ export function buildApp(opts: BuildAppOptions = {}) {
         priority,
         urgency: input.urgency ?? "medium",
         solutionDirection: input.solutionDirection ?? null,
-        source: c.get("isAgent") ? "agent" : "human",
+        origin: c.get("isAgent") ? "agent" : "human",
         createdBy: c.get("userId"),
         projectTags: input.projectTags ?? [],
       });
@@ -304,15 +305,32 @@ export function buildApp(opts: BuildAppOptions = {}) {
         );
       }
       const where = and(...conds);
+      // Summaries only: the columns needed to identify and rank a problem. A
+      // list that carried bodies is the read that blows an agent's context
+      // window, so the body is reachable only through the problem's own read.
       const items = await db
-        .select()
+        .select({
+          id: schema.problems.id,
+          workspaceId: schema.problems.workspaceId,
+          title: schema.problems.title,
+          status: schema.problems.status,
+          priority: schema.problems.priority,
+          urgency: schema.problems.urgency,
+          createdAt: schema.problems.createdAt,
+        })
         .from(schema.problems)
         .where(where)
         .orderBy(desc(schema.problems.priority), desc(schema.problems.createdAt))
         .limit(limit ?? configuration.defaultPageSize)
         .offset(offset ?? 0);
       const totalRow = await db.select({ total: count() }).from(schema.problems).where(where);
-      return c.json({ items: items.map(serializeProblem), total: totalRow[0]?.total ?? 0 }, 200);
+      return c.json(
+        {
+          items: items.map((p) => ({ ...p, createdAt: p.createdAt.getTime() })),
+          total: totalRow[0]?.total ?? 0,
+        },
+        200,
+      );
     })
     .openapi(contract.listItemsRoute, async (c) => {
       // Unified feed: observations and problems interleaved under ONE offset, in
@@ -439,6 +457,82 @@ export function buildApp(opts: BuildAppOptions = {}) {
       await db.update(schema.problems).set(patch).where(eq(schema.problems.id, id));
       const detail = await getProblemDetail(db, id);
       return c.json(detail!, 200);
+    })
+    .openapi(contract.deleteProblemRoute, async (c) => {
+      const db = c.get("db");
+      const { id } = c.req.valid("param");
+      if (!(await problemAccessible(db, c.get("accessScope"), id))) {
+        return c.json({ error: "not_found" }, 404);
+      }
+      // Solutions attach polymorphically, so there is no DB cascade for them.
+      // The observation ties and problem links DO cascade — the observations
+      // themselves are untouched.
+      await deleteSolutionLinksForTarget(db, "problem", id);
+      await db.delete(schema.problems).where(eq(schema.problems.id, id));
+      return c.json({ success: true }, 200);
+    })
+    /* ---- The Observation → Problem tie ---- */
+    .openapi(contract.tieObservationRoute, async (c) => {
+      const db = c.get("db");
+      const { id } = c.req.valid("param");
+      const input = c.req.valid("json");
+      const scope = c.get("accessScope");
+      if (
+        !(await problemAccessible(db, scope, id)) ||
+        !(await observationAccessible(db, scope, input.observationId))
+      ) {
+        return c.json({ error: "not_found", message: "Problem or observation not accessible" }, 404);
+      }
+      const values = {
+        observationId: input.observationId,
+        problemId: id,
+        relevance: input.relevance ?? null,
+        rationale: input.rationale ?? null,
+        createdBy: (c.get("isAgent") ? "agent" : "human") as "agent" | "human",
+      };
+      // Tying the same pair twice restates the tie rather than failing.
+      await db
+        .insert(schema.observationProblems)
+        .values(values)
+        .onConflictDoUpdate({
+          target: [
+            schema.observationProblems.observationId,
+            schema.observationProblems.problemId,
+          ],
+          set: {
+            relevance: values.relevance,
+            rationale: values.rationale,
+            createdBy: values.createdBy,
+          },
+        });
+      const edge = (
+        await db
+          .select()
+          .from(schema.observationProblems)
+          .where(
+            and(
+              eq(schema.observationProblems.problemId, id),
+              eq(schema.observationProblems.observationId, input.observationId),
+            ),
+          )
+          .limit(1)
+      )[0]!;
+      return c.json(serializeObservationProblemEdge(edge), 201);
+    })
+    .openapi(contract.untieObservationRoute, async (c) => {
+      const db = c.get("db");
+      const { id, observationId } = c.req.valid("param");
+      if (!(await problemAccessible(db, c.get("accessScope"), id))) {
+        return c.json({ error: "not_found" }, 404);
+      }
+      const where = and(
+        eq(schema.observationProblems.problemId, id),
+        eq(schema.observationProblems.observationId, observationId),
+      );
+      const existing = await db.select().from(schema.observationProblems).where(where).limit(1);
+      if (existing.length === 0) return c.json({ error: "not_found" }, 404);
+      await db.delete(schema.observationProblems).where(where);
+      return c.json({ success: true }, 200);
     })
     /* ---- Solutions (polymorphic) ---- */
     .openapi(contract.listSolutionsRoute, async (c) => {

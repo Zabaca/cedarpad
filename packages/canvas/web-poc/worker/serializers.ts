@@ -2,6 +2,7 @@ import type { schema } from "../lib/db/index.js";
 import type {
   ApiKeyAdmin,
   Observation,
+  ObservationProblemEdge,
   Problem,
   ProblemLink,
   Solution,
@@ -56,11 +57,24 @@ export function serializeProblem(p: ProblemRow): Problem {
     urgency: p.urgency,
     solutionDirection: p.solutionDirection ?? null,
     status: p.status,
-    source: p.source,
+    origin: p.origin,
     projectTags: p.projectTags ?? [],
     createdBy: p.createdBy ?? null,
     createdAt: ms(p.createdAt),
     updatedAt: ms(p.updatedAt),
+  };
+}
+
+export function serializeObservationProblemEdge(
+  e: typeof schema.observationProblems.$inferSelect,
+): ObservationProblemEdge {
+  return {
+    observationId: e.observationId,
+    problemId: e.problemId,
+    relevance: e.relevance ?? null,
+    rationale: e.rationale ?? null,
+    createdBy: e.createdBy,
+    createdAt: ms(e.createdAt),
   };
 }
 
