@@ -29,6 +29,7 @@ import {
   sourceAccessible,
 } from "./middleware.js";
 import { publish, workspaceChannel } from "./realtime.js";
+import { matchExpression } from "./search-query.js";
 import {
   serializeApiKey,
   serializeObservation,
@@ -43,24 +44,6 @@ const newId = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
 /** Match a single tag inside the JSON-encoded `project_tags` array. */
 const tagFilter = (column: unknown, tag: string) =>
   sql`${column} LIKE ${`%"${tag}"%`}`;
-
-/**
- * A user's words turned into an FTS5 MATCH expression, as TEXT. Every token is
- * wrapped in double quotes (with embedded quotes doubled), so `AND`, `*`, `:`,
- * `NEAR(` and friends are searched for rather than executed — a query is never
- * an injection into the match grammar. Returns `null` when nothing is left to
- * search for.
- */
-function matchExpression(q: string): string | null {
-  const tokens = q
-    .split(/\s+/)
-    .map((t) => t.replace(/["]/g, ""))
-    // Strip anything that isn't a word character; a token of pure punctuation
-    // ("*", "-") has nothing to match and would only quote to an empty string.
-    .filter((t) => /[\p{L}\p{N}]/u.test(t));
-  if (tokens.length === 0) return null;
-  return tokens.map((t) => `"${t}"`).join(" ");
-}
 
 /**
  * Workspace `WHERE` conditions for a list query. By default a list spans every

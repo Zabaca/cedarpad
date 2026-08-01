@@ -38,6 +38,7 @@ function recordingRpc(overrides: Partial<PlatformRpc> = {}) {
     skillList: async () => [],
     dataWrite: async () => ({ rev: 1 }),
     dataRead: async () => null,
+    notebook: async () => ({}),
     ...overrides,
   };
   return { rpc, turnEnds };

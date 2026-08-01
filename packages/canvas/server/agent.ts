@@ -37,6 +37,7 @@ import { reposPromptAppend } from './repo-checkout.ts';
 import type { TurnCanvasStore } from './turn-canvas-store.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 import type { ComponentVersion } from '../shared/platform-rpc.ts';
+import { createNotebookMcpServer } from './notebook-agent-tools.ts';
 
 const MODEL = process.env.CANVAS_MODEL ?? 'sonnet';
 
@@ -781,6 +782,10 @@ export async function* runChat(
       }
     : undefined;
   const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr, sendToChat, listMarts, fetchAsset, selectPage);
+  // The Notebook (ADR-0024): the store agents write and canvas reads. Null when this process
+  // has no edge in front of it (local dev without the Worker, the unit suite) — the turn then
+  // simply has no notebook tools, rather than tools that quietly write nowhere.
+  const notebook = createNotebookMcpServer();
   const stopGate = endTurnSeam
     ? makeStopGate(
         () => turnEnded,
@@ -822,7 +827,7 @@ export async function* runChat(
       options: {
         model: resolveModelForSdk(model ?? MODEL),
         ...(effort ? { effort: effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}), // guide thinking depth; omitted = adaptive default
-        mcpServers: { canvas, ...buildExternalMcpServers(mcpTokens) },
+        mcpServers: { canvas, ...(notebook ? { notebook } : {}), ...buildExternalMcpServers(mcpTokens) },
         permissionMode: 'bypassPermissions',
         includePartialMessages: true, // stream text deltas + tool starts for live feedback
         forwardSubagentText: true, // stream Task-subagent text/thinking inline (parent_tool_use_id-tagged) so the UI can nest it

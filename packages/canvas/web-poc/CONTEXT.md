@@ -138,6 +138,32 @@ The `agent_jobs` queue, its `agent_runs` audit trail and the LLM intake pipeline
 are gone. A write to the Notebook is one insert; the thinking moves to cedarpad
 agents, which reach it over MCP.
 
+## MCP surface
+
+The way records actually get in (ADR-0024). Ten tools — `notebook_record_observation`,
+`notebook_update_observation`, `notebook_create_problem`, `notebook_tie_observation`,
+`notebook_link_problems`, `notebook_record_solution`, `notebook_search`,
+`notebook_read_observation`, `notebook_read_problem`, `notebook_list_problems`.
+
+One seam holds the logic: **`buildNotebookTools`** (`worker/notebook-tools.ts`), pure and
+dependency-injected, with its inputs and advertised descriptions in
+`lib/contract/notebook-tools.ts`. Three surfaces wrap it, and none of them adds behaviour:
+
+- **Remote MCP** — `packages/canvas/worker/mcp-server.ts`, bound to the token user's *home*
+  workspace (their oldest owned-or-member workspace; an OAuth token names a person, not a
+  workspace).
+- **The in-canvas agent and the dev-agent** — the container's `notebook` SDK MCP server
+  (`packages/canvas/server/notebook-agent-tools.ts`), which reaches the edge through the
+  platform RPC's `notebook.call` verb, bound to the container's own workspace.
+
+Two properties are contract, not style. **No tool takes a workspace** — every surface binds
+it from what proved the caller's identity, so isolation is a property of the surface rather
+than of each tool remembering to filter. **A list carries identifiers and one line, never
+bodies** — search returns ranked pointers with a bounded snippet, `notebook_list_problems`
+returns id/title/status/priority/urgency; full records are fetched one at a time by id. A
+tool asked for a record that is not there (or is another workspace's) throws, and every
+surface turns that into a tool error the agent reads.
+
 ## Relationships
 
 - **web-poc → Canvas**: it *is* part of canvas — mounted at the edge and shipped
