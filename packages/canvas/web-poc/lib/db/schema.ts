@@ -187,9 +187,9 @@ export const apikey = sqliteTable("apikey", {
  * or a problem can each carry one. `workspace_id` is the PLATFORM workspace
  * (the `workspaces` registry / `cs_workspace`, ADR-0007), NOT the Better Auth
  * organization — a plain text column with no FK (the legacy `default` workspace
- * has no registry row). Records are isolated per workspace: a workspace's search
- * (#57) never returns another's. (The graph's original cross-workspace
- * solution-reuse was intentionally dropped; a future opt-in may reintroduce it.)
+ * has no registry row). Records are isolated per workspace: every read — search,
+ * traversal and problem context alike — is confined to the caller's workspace,
+ * and a problem link cannot be drawn out of it (ADR-0024).
  * "Project" is a weightless human meta tag stored inline on
  * observations/problems and is deliberately excluded from every embedding and
  * LLM input.
@@ -345,7 +345,11 @@ export const observationProblems = sqliteTable(
 
 export const linkKind = ["identical", "partial", "related"] as const;
 
-/** Directed similarity edge between two problems. */
+/**
+ * Directed link between two problems, drawn deliberately by a human or an agent
+ * rather than inferred (ADR-0024). Both ends are always in the same workspace.
+ * `similarity` is a leftover of the removed similarity pass — nothing writes it.
+ */
 export const problemLinks = sqliteTable(
   "problem_links",
   {
