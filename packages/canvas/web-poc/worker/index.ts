@@ -45,6 +45,24 @@ const tagFilter = (column: unknown, tag: string) =>
   sql`${column} LIKE ${`%"${tag}"%`}`;
 
 /**
+ * A user's words turned into an FTS5 MATCH expression, as TEXT. Every token is
+ * wrapped in double quotes (with embedded quotes doubled), so `AND`, `*`, `:`,
+ * `NEAR(` and friends are searched for rather than executed — a query is never
+ * an injection into the match grammar. Returns `null` when nothing is left to
+ * search for.
+ */
+function matchExpression(q: string): string | null {
+  const tokens = q
+    .split(/\s+/)
+    .map((t) => t.replace(/["]/g, ""))
+    // Strip anything that isn't a word character; a token of pure punctuation
+    // ("*", "-") has nothing to match and would only quote to an empty string.
+    .filter((t) => /[\p{L}\p{N}]/u.test(t));
+  if (tokens.length === 0) return null;
+  return tokens.map((t) => `"${t}"`).join(" ");
+}
+
+/**
  * Workspace `WHERE` conditions for a list query. By default a list spans every
  * accessible workspace (`accessWhere` is a no-op when scope is `all`); an
  * explicit `workspaceId` narrows to that one — honoured only when it's in scope,
@@ -619,6 +637,51 @@ export function buildApp(opts: BuildAppOptions = {}) {
         await db.select().from(schema.solutions).where(eq(schema.solutions.id, id)).limit(1)
       )[0]!;
       return c.json(serializeSolution(updated), 200);
+    })
+    /* ---- Search ---- */
+    .openapi(contract.searchRoute, async (c) => {
+      const db = c.get("db");
+      const { q, limit, offset } = c.req.valid("query");
+      const match = matchExpression(q);
+      const empty = { items: [] as never[], total: 0 };
+      if (!match) return c.json(empty, 200);
+
+      const scope = c.get("accessScope");
+      const conds = [sql`notebook_fts MATCH ${match}`];
+      if (scope.kind === "list") {
+        if (scope.workspaceIds.length === 0) return c.json(empty, 200);
+        conds.push(
+          sql`workspace_id IN (${sql.join(
+            scope.workspaceIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})`,
+        );
+      }
+      const where = sql.join(conds, sql` AND `);
+
+      // `-1` lets FTS5 pick the column that matched best; the excerpt is bounded
+      // at 20 tokens, so a result is a pointer and never a full body.
+      const rows = await db.all<{ id: string; kind: string; title: string; snippet: string }>(
+        sql`SELECT record_id AS id, kind, title, snippet(notebook_fts, -1, '[', ']', '…', 20) AS snippet
+            FROM notebook_fts WHERE ${where}
+            ORDER BY rank
+            LIMIT ${limit ?? configuration.defaultPageSize} OFFSET ${offset ?? 0}`,
+      );
+      const totals = await db.all<{ total: number }>(
+        sql`SELECT count(*) AS total FROM notebook_fts WHERE ${where}`,
+      );
+      return c.json(
+        {
+          items: rows.map((r) => ({
+            id: r.id,
+            kind: r.kind as "observation" | "problem",
+            title: r.title,
+            snippet: r.snippet,
+          })),
+          total: totals[0]?.total ?? 0,
+        },
+        200,
+      );
     })
     /* ---- Knowledge graph + agent retrieval ---- */
     .openapi(contract.getGraphRoute, async (c) => {

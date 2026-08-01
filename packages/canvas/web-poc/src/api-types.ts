@@ -803,6 +803,64 @@ export interface paths {
         };
         trace?: never;
     };
+    "/v1/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search Observations and Problems (FTS5), ranked, with snippets */
+        get: {
+            parameters: {
+                query: {
+                    q: string;
+                    limit?: number;
+                    offset?: number | null;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of ranked hits with the total count */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SearchPage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/graph": {
         parameters: {
             query?: never;
@@ -1465,6 +1523,19 @@ export interface components {
             body?: string;
             /** @enum {string} */
             status?: "draft" | "accepted" | "rejected";
+        };
+        SearchResult: {
+            id: string;
+            /** @enum {string} */
+            kind: "observation" | "problem";
+            title: string;
+            /** @description matching excerpt, with the matched terms marked by [ ] */
+            snippet: string;
+        };
+        SearchPage: {
+            items: components["schemas"]["SearchResult"][];
+            /** @description total records matching the query */
+            total: number;
         };
         GraphNode: {
             id: string;
