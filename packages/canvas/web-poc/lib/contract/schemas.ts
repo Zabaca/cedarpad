@@ -516,6 +516,39 @@ export const ListProblemsQuery = z.object({
   }),
 });
 
+/* ------------------------------------------------------------------ *
+ * Search — FTS5 over Observations and Problems (ADR-0024)
+ * ------------------------------------------------------------------ */
+
+/** Query for the FTS5 search across both searchable kinds. */
+export const SearchQuery = z.object({
+  q: z.string().openapi({ param: { name: "q", in: "query" }, description: "free text; FTS5 syntax characters are treated as text" }),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).optional().openapi({ param: { name: "offset", in: "query" } }),
+});
+
+/**
+ * One hit: enough to identify the record and show why it matched. Deliberately
+ * never the full body — a search result is a pointer, and the detail route is
+ * how a caller reads the record.
+ */
+export const SearchResultSchema = z
+  .object({
+    id: z.string(),
+    kind: z.enum(["observation", "problem"]),
+    title: z.string(),
+    snippet: z.string().openapi({ description: "matching excerpt, with the matched terms marked by [ ]" }),
+  })
+  .openapi("SearchResult");
+
+/** A page of search hits, ranked most relevant first. */
+export const SearchPageSchema = z
+  .object({
+    items: z.array(SearchResultSchema),
+    total: z.number().openapi({ description: "total records matching the query" }),
+  })
+  .openapi("SearchPage");
+
 export const ListObservationsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   offset: z.coerce.number().int().min(0).optional().openapi({ param: { name: "offset", in: "query" } }),

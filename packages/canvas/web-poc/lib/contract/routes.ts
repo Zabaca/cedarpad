@@ -24,6 +24,8 @@ import {
   ProblemDetailSchema,
   ProblemPageSchema,
   ProjectTagsSchema,
+  SearchPageSchema,
+  SearchQuery,
   SolutionSchema,
   SolvedNeighborSchema,
   TieObservationSchema,
@@ -42,6 +44,7 @@ const ObservationsTag = ["Observations"];
 const SourcesTag = ["Sources"];
 const ProblemsTag = ["Problems"];
 const SolutionsTag = ["Solutions"];
+const SearchTag = ["Search"];
 const GraphTag = ["Graph"];
 const MetaTag = ["Meta"];
 const WorkspacesTag = ["Workspaces"];
@@ -322,6 +325,24 @@ export const updateSolutionRoute = createRoute({
 });
 
 /* ------------------------------------------------------------------ *
+ * Search
+ * ------------------------------------------------------------------ */
+
+export const searchRoute = createRoute({
+  method: "get",
+  path: "/v1/search",
+  tags: SearchTag,
+  summary: "Search Observations and Problems (FTS5), ranked, with snippets",
+  security: SECURITY,
+  request: { query: SearchQuery },
+  responses: {
+    200: json(SearchPageSchema, "A page of ranked hits with the total count"),
+    400: json(ErrorSchema, "Invalid request"),
+    401: json(ErrorSchema, "Unauthorized"),
+  },
+});
+
+/* ------------------------------------------------------------------ *
  * Knowledge graph + agent retrieval
  * ------------------------------------------------------------------ */
 
@@ -472,6 +493,7 @@ export const routes = {
   listSolutions: listSolutionsRoute,
   createSolution: createSolutionRoute,
   updateSolution: updateSolutionRoute,
+  search: searchRoute,
   getGraph: getGraphRoute,
   getProblemContext: getProblemContextRoute,
   getNeighborhood: getNeighborhoodRoute,
