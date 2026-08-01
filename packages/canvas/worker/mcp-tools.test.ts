@@ -8,6 +8,7 @@ import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { addWorkspaceMember, createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { buildMcpTools, RunDevAgentInput, WriteComponentInput } from './mcp-tools.ts';
+import { NOTEBOOK_TOOL_SPECS } from '../web-poc/lib/contract/notebook-tools.ts';
 import { d1RecordStore } from './record-store.ts';
 
 // In-memory DB built from the real migrations (mirrors shell.test.ts).
@@ -527,5 +528,38 @@ describe('run_dev_agent — proxies the manual trigger; the bridge’s join answ
     expect(RunDevAgentInput.safeParse({}).success).toBe(false);
     expect(RunDevAgentInput.safeParse({ repo: 'Zabaca/cedarpad' }).success).toBe(false);
     expect(RunDevAgentInput.safeParse({ job: 'deps-audit' }).success).toBe(true);
+  });
+});
+
+// The Notebook over remote MCP (ADR-0024 / CEDA-X6OIAO). The tool BEHAVIOUR is covered at
+// its own seam (`web-poc/worker/notebook-tools.test.ts`, on real D1); what matters here is
+// the binding this surface supplies — a workspace the caller never names.
+describe('notebook tools bind the token user’s workspace, never an argument', () => {
+  test('records into the token user’s home workspace, and another user cannot read it', async () => {
+    const mine = await tools.notebook();
+    const { id } = await mine.recordObservation({ title: 'From MCP', body: 'recorded over the wire' });
+    // u_1's oldest workspace is WS — the home workspace rule, not a parameter.
+    expect((await mine.readObservation({ id })).observation.workspaceId).toBe(WS);
+
+    // A stranger: their own user, their own workspace, no membership of WS.
+    await db.insert(schema.user).values({ id: 'u_3', name: 'u_3', email: 'u_3@example.com' });
+    await createWorkspace(database, { name: 'stranger', ownerUserId: 'u_3' });
+    const theirs = await buildMcpTools({
+      db: database,
+      userId: 'u_3',
+      notify: async () => {},
+      proxySend: async () => new Response(null, { status: 202 }),
+      proxySkill: async () => new Response(null, { status: 200 }),
+      proxyBridge: async () => new Response(null, { status: 404 }),
+      kickDevAgent: async () => new Response(null, { status: 202 }),
+    }).notebook();
+    await expect(theirs.readObservation({ id })).rejects.toThrow(/not found/);
+  });
+
+  test('no notebook tool advertises a workspace input', () => {
+    for (const spec of NOTEBOOK_TOOL_SPECS) {
+      expect(Object.keys(spec.schema.shape)).not.toContain('workspace_id');
+      expect(Object.keys(spec.schema.shape)).not.toContain('workspaceId');
+    }
   });
 });
