@@ -39,6 +39,7 @@ import { handleCanvasSnapshot, parseCanvasSnapshotPath } from './canvas-snapshot
 import { evictGuestSockets, handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
 import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
 import { handleMartApi, martsForGuestCanvas, MART_ROUTE } from './mart-api.ts';
+import { handleNotebookApi, NOTEBOOK_ROUTE } from './notebook-data-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
 import { IS_CHAT_SEND, effectiveMcpTokens, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
@@ -445,6 +446,11 @@ export default {
         // :ws segment is ignored for guests; only the LINK's workspace is ever read, so a
         // guest can't slide a foreign workspace id into the path.
         const guestMartMatch = MART_ROUTE.exec(url.pathname);
+        // The Notebook is NOT guest-readable (ADR-0024, `NotebookRequester`): a mart is a
+        // published artifact a shared canvas may confine, the Notebook is the workspace's
+        // raw Observations and Problems. Matched here only so the refusal is a deliberate
+        // 404 from the same handler a member hits, never an accident of the gate's allowlist.
+        const guestNotebookMatch = NOTEBOOK_ROUTE.exec(url.pathname);
         // #320: the LIVE row is read BEFORE the gate decides, because it is the source of
         // the capabilities as well as of liveness. The cookie carries a snapshot of the
         // grants at mint time; a link that has since been downgraded must not keep what it
@@ -454,7 +460,16 @@ export default {
         if (live && live.canvasId === guest.canvasId) {
           const caps = guestCapabilities({ ...live, shapeId: live.shapeId ?? guest.shapeId });
           const guestGate = decideGuestGate({ pathname: url.pathname, method: request.method, canvas }, guest, caps);
-          if (isGuestProbe || guestHuddleMatch || guestMartMatch || guestGate.decision === 'allow') {
+          if (isGuestProbe || guestHuddleMatch || guestMartMatch || guestNotebookMatch || guestGate.decision === 'allow') {
+            if (guestNotebookMatch) {
+              return handleNotebookApi(
+                createDbForWorker(env as unknown as Bindings),
+                guest.workspaceId,
+                guestNotebookMatch[2] as string,
+                Object.fromEntries(url.searchParams),
+                { kind: 'guest' },
+              );
+            }
             if (isGuestProbe) {
               return Response.json({
                 canvasId: guest.canvasId,
@@ -626,6 +641,20 @@ export default {
         return Response.json({ error: 'not found' }, { status: 404 });
       }
       return handleMartApi(env.MART_BUCKET, wsId, name, { kind: 'member' });
+    }
+
+    // The Notebook as a data source (ADR-0024): a component names a QUERY, and it resolves
+    // HERE against the platform D1 — live rows, no materialize step, no container wake.
+    // Same membership check as marts; the registry (notebook-data-api.ts) is the boundary,
+    // so nothing the caller writes reaches a statement.
+    const notebookMatch = NOTEBOOK_ROUTE.exec(url.pathname);
+    if (notebookMatch) {
+      const wsId = notebookMatch[1] as string;
+      const db = createDbForWorker(env as unknown as Bindings);
+      if (!(await getWorkspace(db, wsId, user.id))) {
+        return Response.json({ error: 'not found' }, { status: 404 });
+      }
+      return handleNotebookApi(db, wsId, notebookMatch[2] as string, Object.fromEntries(url.searchParams), { kind: 'member' });
     }
 
     // Admin surface (ADR-0014): waitlist view, role=admin only. Edge-served.

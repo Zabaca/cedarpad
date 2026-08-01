@@ -503,7 +503,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
           h: z.number().optional().describe('Box height. Default 260.'),
           data: z.record(z.unknown()).optional().describe('Static props object passed to the component (the data channel). Omit when using data_source.'),
           data_source: DataSourceSchema.optional().describe(
-            'Names a workspace mart this component should render LIVE, names a mart from `list_marts` — never a URL, and never a guess (an unknown mart renders EMPTY). The mart\'s rows + freshness are resolved at render time in the browser, so the canvas stays current without you re-calling this tool.',
+            'Names the data this component should render LIVE — never a URL, never SQL. Either `{kind:"mart", name}` (a mart from `list_marts`; never a guess — an unknown mart renders EMPTY) or `{kind:"notebook", query, params}`, where query is one of open_problems / problem_observations (params.problemId) / recent_observations (params.sourceId optional), reading the workspace Notebook as of right now. Rows are resolved at render time in the browser (a mart also shows its "as of"), so the canvas stays current without you re-calling this tool.',
           ),
         },
         async ({ id, module, x, y, w, h, data, data_source }) =>

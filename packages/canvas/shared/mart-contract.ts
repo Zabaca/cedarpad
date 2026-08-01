@@ -5,6 +5,8 @@
 
 import { z } from 'zod';
 
+import { NotebookSourceSchema } from './notebook-source.ts';
+
 /** A mart's name, as it appears in a storage key (`martKey`/`martSidecarKey`, both
  * `workspaces/<ws>/warehouse/<name>.*`) and in the edge route (#238). Mirrors
  * `COMPONENT_NAME_RE`'s style (`shared/bridge-wire.ts`, #234) — reject at the boundary,
@@ -43,10 +45,15 @@ export type MartSidecar = z.infer<typeof MartSidecarSchema>;
  * the boundary). Minimal on purpose: THIS slice (#238) only declares the field + shape so
  * the guest-scoping resolver (`martsInRoomSnapshot`) has something to read; placement and
  * rendering are #239's job, not this one's. */
-export const DataSourceSchema = z.object({
+export const MartSourceSchema = z.object({
   kind: z.literal('mart'),
   name: MartName,
 });
+
+/** What a component instance may read. Two members: a mart (parquet in R2, as of its last
+ * materialize run) and the Notebook (rows in D1, live). Both name a thing in a namespace
+ * we own, never a URL and never a statement — that is the invariant the union preserves. */
+export const DataSourceSchema = z.discriminatedUnion('kind', [MartSourceSchema, NotebookSourceSchema]);
 export type DataSource = z.infer<typeof DataSourceSchema>;
 
 /** A mart row as it crosses the boundary out of DuckDB. Values are the JS shapes a component
