@@ -14,6 +14,7 @@ import {
   ListItemsQuery,
   ListObservationsQuery,
   ListProblemsQuery,
+  LinkProblemSchema,
   ListSolutionsQuery,
   NeighborhoodQuery,
   NeighborhoodSchema,
@@ -22,12 +23,13 @@ import {
   ObservationProblemEdgeSchema,
   ProblemContextSchema,
   ProblemDetailSchema,
+  ProblemLinkParams,
+  ProblemLinkSchema,
   ProblemPageSchema,
   ProjectTagsSchema,
   SearchPageSchema,
   SearchQuery,
   SolutionSchema,
-  SolvedNeighborSchema,
   TieObservationSchema,
   UpdateObservationSchema,
   UpdateProblemSchema,
@@ -242,6 +244,40 @@ export const deleteProblemRoute = createRoute({
 });
 
 /* ------------------------------------------------------------------ *
+ * The Problem ↔ Problem link (deliberate, never inferred)
+ * ------------------------------------------------------------------ */
+
+export const linkProblemRoute = createRoute({
+  method: "post",
+  path: "/v1/problems/{id}/links",
+  tags: ProblemsTag,
+  summary: "Link this problem to another one, recording the kind of relation and why",
+  security: SECURITY,
+  request: {
+    params: IdParam,
+    body: { content: { "application/json": { schema: LinkProblemSchema } }, required: true },
+  },
+  responses: {
+    201: json(ProblemLinkSchema, "The link"),
+    400: json(ErrorSchema, "Invalid request"),
+    404: json(ErrorSchema, "Either problem is not in the caller's workspace"),
+  },
+});
+
+export const unlinkProblemRoute = createRoute({
+  method: "delete",
+  path: "/v1/problems/{id}/links/{toProblemId}",
+  tags: ProblemsTag,
+  summary: "Remove the link, leaving both problems in place",
+  security: SECURITY,
+  request: { params: ProblemLinkParams },
+  responses: {
+    200: json(DeleteResultSchema, "Link removed"),
+    404: json(ErrorSchema, "No such link"),
+  },
+});
+
+/* ------------------------------------------------------------------ *
  * The Observation → Problem tie (many-to-many)
  * ------------------------------------------------------------------ */
 
@@ -385,18 +421,6 @@ export const getNeighborhoodRoute = createRoute({
   },
 });
 
-export const getSolvedNeighborsRoute = createRoute({
-  method: "get",
-  path: "/v1/problems/{id}/solved-neighbors",
-  tags: GraphTag,
-  summary: "Nearest neighbours that already have an accepted solution",
-  security: SECURITY,
-  request: { params: IdParam, query: NeighborhoodQuery },
-  responses: {
-    200: json(z.array(SolvedNeighborSchema), "Solved neighbours, nearest first"),
-    404: json(ErrorSchema, "Not found"),
-  },
-});
 
 /* ------------------------------------------------------------------ *
  * Meta
@@ -490,6 +514,8 @@ export const routes = {
   deleteProblem: deleteProblemRoute,
   tieObservation: tieObservationRoute,
   untieObservation: untieObservationRoute,
+  linkProblem: linkProblemRoute,
+  unlinkProblem: unlinkProblemRoute,
   listSolutions: listSolutionsRoute,
   createSolution: createSolutionRoute,
   updateSolution: updateSolutionRoute,
@@ -497,7 +523,6 @@ export const routes = {
   getGraph: getGraphRoute,
   getProblemContext: getProblemContextRoute,
   getNeighborhood: getNeighborhoodRoute,
-  getSolvedNeighbors: getSolvedNeighborsRoute,
   listProjectTags: listProjectTagsRoute,
   listWorkspaces: listWorkspacesRoute,
   activateWorkspace: activateWorkspaceRoute,

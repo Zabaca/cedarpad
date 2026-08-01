@@ -123,12 +123,6 @@ describe("agent graph retrieval endpoints", () => {
     expect(nb.rootId).toBe("prob_seed");
     expect(nb.nodes.find((n) => n.id === "prob_seed")?.depth).toBe(0);
   });
-
-  it("solved-neighbors returns an array", async () => {
-    const res = await req(`/v1/problems/prob_seed/solved-neighbors`);
-    expect(res.status).toBe(200);
-    expect(Array.isArray(await res.json())).toBe(true);
-  });
 });
 
 describe("editing: update problem, reject AI solution, add human solution", () => {

@@ -806,6 +806,31 @@
           }
         }
       },
+      "LinkProblem": {
+        "type": "object",
+        "properties": {
+          "toProblemId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "identical",
+              "partial",
+              "related"
+            ]
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "toProblemId",
+          "kind"
+        ]
+      },
       "ObservationProblemEdge": {
         "type": "object",
         "properties": {
@@ -1264,29 +1289,6 @@
           "rootId",
           "nodes",
           "edges"
-        ]
-      },
-      "SolvedNeighbor": {
-        "type": "object",
-        "properties": {
-          "problemId": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "depth": {
-            "type": "number"
-          },
-          "solution": {
-            "$ref": "#/components/schemas/ContextSolution"
-          }
-        },
-        "required": [
-          "problemId",
-          "title",
-          "depth",
-          "solution"
         ]
       },
       "ProjectTags": {
@@ -2290,6 +2292,136 @@
         }
       }
     },
+    "/v1/problems/{id}/links": {
+      "post": {
+        "tags": [
+          "Problems"
+        ],
+        "summary": "Link this problem to another one, recording the kind of relation and why",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "DevWorkspace": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "prob_01h..."
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkProblem"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Either problem is not in the caller's workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/problems/{id}/links/{toProblemId}": {
+      "delete": {
+        "tags": [
+          "Problems"
+        ],
+        "summary": "Remove the link, leaving both problems in place",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          },
+          {
+            "DevWorkspace": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "prob_01h..."
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "prob_02h..."
+            },
+            "required": true,
+            "name": "toProblemId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Link removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/problems/{id}/observations": {
       "post": {
         "tags": [
@@ -2828,77 +2960,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Neighborhood"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/problems/{id}/solved-neighbors": {
-      "get": {
-        "tags": [
-          "Graph"
-        ],
-        "summary": "Nearest neighbours that already have an accepted solution",
-        "security": [
-          {
-            "ApiKeyAuth": []
-          },
-          {
-            "DevWorkspace": []
-          }
-        ],
-        "parameters": [
-          {
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "example": "prob_01h..."
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "required": false,
-            "name": "hops",
-            "in": "query"
-          },
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "required": false,
-            "name": "maxNodes",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Solved neighbours, nearest first",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SolvedNeighbor"
-                  }
                 }
               }
             }

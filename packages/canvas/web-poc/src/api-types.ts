@@ -554,6 +554,114 @@ export interface paths {
         };
         trace?: never;
     };
+    "/v1/problems/{id}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Link this problem to another one, recording the kind of relation and why */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LinkProblem"];
+                };
+            };
+            responses: {
+                /** @description The link */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProblemLink"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Either problem is not in the caller's workspace */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/problems/{id}/links/{toProblemId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove the link, leaving both problems in place */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    toProblemId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Link removed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DeleteResult"];
+                    };
+                };
+                /** @description No such link */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/problems/{id}/observations": {
         parameters: {
             query?: never;
@@ -984,56 +1092,6 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Neighborhood"];
-                    };
-                };
-                /** @description Not found */
-                404: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/problems/{id}/solved-neighbors": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Nearest neighbours that already have an accepted solution */
-        get: {
-            parameters: {
-                query?: {
-                    hops?: number;
-                    maxNodes?: number;
-                };
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Solved neighbours, nearest first */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SolvedNeighbor"][];
                     };
                 };
                 /** @description Not found */
@@ -1488,6 +1546,12 @@ export interface components {
             status?: "open" | "investigating" | "resolved" | "archived";
             projectTags?: string[];
         };
+        LinkProblem: {
+            toProblemId: string;
+            /** @enum {string} */
+            kind: "identical" | "partial" | "related";
+            rationale?: string;
+        };
         ObservationProblemEdge: {
             observationId: string;
             problemId: string;
@@ -1608,12 +1672,6 @@ export interface components {
             rootId: string;
             nodes: components["schemas"]["NeighborhoodNode"][];
             edges: components["schemas"]["NeighborhoodEdge"][];
-        };
-        SolvedNeighbor: {
-            problemId: string;
-            title: string;
-            depth: number;
-            solution: components["schemas"]["ContextSolution"];
         };
         ProjectTags: {
             tags: string[];

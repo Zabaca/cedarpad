@@ -53,23 +53,24 @@ export interface Neighborhood {
   edges: NeighborhoodEdge[];
 }
 
-export interface SolvedNeighbor {
-  problemId: string;
-  title: string;
-  depth: number;
-  solution: ContextSolution;
-}
-
 /* ------------------------------------------------------------------ *
  * Helpers
  * ------------------------------------------------------------------ */
 
-/** True when a problem with this id exists — the root guard for traversals. */
-async function problemExists(db: Database, problemId: string): Promise<boolean> {
+/**
+ * True when a problem with this id exists IN this workspace — the root guard for
+ * traversals. A root outside the caller's workspace is indistinguishable from
+ * one that does not exist.
+ */
+async function problemInWorkspace(
+  db: Database,
+  problemId: string,
+  workspaceId: string,
+): Promise<boolean> {
   const rows = await db
     .select({ id: problems.id })
     .from(problems)
-    .where(eq(problems.id, problemId))
+    .where(and(eq(problems.id, problemId), eq(problems.workspaceId, workspaceId)))
     .limit(1);
   return rows.length > 0;
 }
@@ -84,15 +85,19 @@ function problemSolutionJoin(ids: string[]) {
  * ------------------------------------------------------------------ */
 
 /**
- * One problem with its links (both directions, carrying the stored
- * kind/similarity/rationale) and attached solutions. The rationale is returned
- * verbatim so the agent reads *why* two problems relate instead of re-inferring.
- * Returns `null` when the problem does not exist.
+ * One problem with its links (both directions, carrying the stored kind and
+ * rationale) and attached solutions. The rationale is returned verbatim so the
+ * agent reads *why* two problems relate instead of re-inferring it.
+ *
+ * Confined to `workspaceId`: the problem itself, and the problem at the far end
+ * of every edge, must be in it. Returns `null` when the problem does not exist
+ * there — a problem in another workspace is indistinguishable from a missing one.
  */
 export async function getProblemContext(
   db: Database,
-  problemId: string,
+  params: { problemId: string; workspaceId: string },
 ): Promise<ProblemContext | null> {
+  const { problemId, workspaceId } = params;
   const rows = await db
     .select({
       id: problems.id,
@@ -102,7 +107,7 @@ export async function getProblemContext(
       status: problems.status,
     })
     .from(problems)
-    .where(eq(problems.id, problemId))
+    .where(and(eq(problems.id, problemId), eq(problems.workspaceId, workspaceId)))
     .limit(1);
   const problem = rows[0];
   if (!problem) return null;
@@ -118,7 +123,7 @@ export async function getProblemContext(
     })
     .from(problemLinks)
     .innerJoin(problems, eq(problems.id, problemLinks.toProblemId))
-    .where(eq(problemLinks.fromProblemId, problemId));
+    .where(and(eq(problemLinks.fromProblemId, problemId), eq(problems.workspaceId, workspaceId)));
 
   const inRows = await db
     .select({
@@ -131,7 +136,7 @@ export async function getProblemContext(
     })
     .from(problemLinks)
     .innerJoin(problems, eq(problems.id, problemLinks.fromProblemId))
-    .where(eq(problemLinks.toProblemId, problemId));
+    .where(and(eq(problemLinks.toProblemId, problemId), eq(problems.workspaceId, workspaceId)));
 
   const edges: ContextEdge[] = [
     ...outRows.map((r) => ({ ...r, direction: "out" as const })),
@@ -162,32 +167,39 @@ export async function getProblemContext(
  * the in-scope nodes (with shortest depth) and every edge between them.
  *
  * Both `hops` and `maxNodes` are hard ceilings so latency/context stay bounded.
- * Returns `null` when the root problem does not exist.
+ * The whole walk is confined to `workspaceId` — it never steps through a link
+ * leaving it, so it can neither surface another workspace's problem nor route
+ * through one. Returns `null` when the root problem is not in that workspace.
  */
 export async function neighborhood(
   db: Database,
   params: {
     rootId: string;
+    workspaceId: string;
     hops: number;
     maxNodes: number;
   },
 ): Promise<Neighborhood | null> {
-  const { rootId, hops, maxNodes } = params;
+  const { rootId, workspaceId, hops, maxNodes } = params;
 
-  if (!(await problemExists(db, rootId))) return null;
+  if (!(await problemInWorkspace(db, rootId, workspaceId))) return null;
 
   // Walk links in both directions up to `hops`; UNION dedupes (id, depth) rows
   // so the recursion terminates. GROUP BY id keeps the shortest depth per node.
+  // The join onto `problems` is what confines the walk to one workspace: a link
+  // pointing out of it is never stepped through, so the traversal cannot leak
+  // another tenant's problem in — nor route around one to reach a third.
   const reached = await db.all<{ id: string; depth: number }>(sql`
     WITH RECURSIVE nbh(id, depth) AS (
       SELECT ${rootId}, 0
       UNION
-      SELECT
-        CASE WHEN pl.from_problem_id = nbh.id THEN pl.to_problem_id ELSE pl.from_problem_id END,
-        nbh.depth + 1
+      SELECT next.id, nbh.depth + 1
       FROM nbh
       JOIN problem_links pl
         ON pl.from_problem_id = nbh.id OR pl.to_problem_id = nbh.id
+      JOIN problems next
+        ON next.id = CASE WHEN pl.from_problem_id = nbh.id THEN pl.to_problem_id ELSE pl.from_problem_id END
+       AND next.workspace_id = ${workspaceId}
       WHERE nbh.depth < ${hops}
     )
     SELECT id, MIN(depth) AS depth FROM nbh GROUP BY id LIMIT ${maxNodes}
@@ -196,11 +208,10 @@ export async function neighborhood(
   const depthById = new Map(reached.map((r) => [r.id, Number(r.depth)]));
   const reachedIds = [...depthById.keys()];
 
-  // The graph spans every workspace, so materialisation is unfiltered by tenant.
   const nodeRows = await db
     .select({ id: problems.id, title: problems.title, status: problems.status })
     .from(problems)
-    .where(inArray(problems.id, reachedIds));
+    .where(and(inArray(problems.id, reachedIds), eq(problems.workspaceId, workspaceId)));
 
   const nodes: NeighborhoodNode[] = nodeRows.map((n) => ({
     id: n.id,
@@ -231,72 +242,4 @@ export async function neighborhood(
       : [];
 
   return { rootId, nodes, edges: edgeRows };
-}
-
-/* ------------------------------------------------------------------ *
- * findSolvedNeighbors — nearest neighbours that already have solutions
- * ------------------------------------------------------------------ */
-
-/**
- * Problems within `hops` of `rootId` that already carry an accepted solution,
- * nearest first. Lets the agent jump straight to reusable prior work. Returns
- * `null` when the root problem does not exist.
- */
-export async function findSolvedNeighbors(
-  db: Database,
-  params: {
-    rootId: string;
-    hops: number;
-    maxNodes: number;
-  },
-): Promise<SolvedNeighbor[] | null> {
-  const { rootId, hops, maxNodes } = params;
-
-  if (!(await problemExists(db, rootId))) return null;
-
-  const reached = await db.all<{ id: string; depth: number }>(sql`
-    WITH RECURSIVE nbh(id, depth) AS (
-      SELECT ${rootId}, 0
-      UNION
-      SELECT
-        CASE WHEN pl.from_problem_id = nbh.id THEN pl.to_problem_id ELSE pl.from_problem_id END,
-        nbh.depth + 1
-      FROM nbh
-      JOIN problem_links pl
-        ON pl.from_problem_id = nbh.id OR pl.to_problem_id = nbh.id
-      WHERE nbh.depth < ${hops}
-    )
-    SELECT id, MIN(depth) AS depth FROM nbh GROUP BY id LIMIT ${maxNodes}
-  `);
-
-  const depthById = new Map(reached.map((r) => [r.id, Number(r.depth)]));
-  // Exclude the root itself — we want *other* problems with solutions.
-  const ids = [...depthById.keys()].filter((id) => id !== rootId);
-  if (ids.length === 0) return [];
-
-  const rows = await db
-    .select({
-      problemId: problems.id,
-      title: problems.title,
-      id: solutions.id,
-      body: solutions.body,
-      status: solutions.status,
-      origin: solutions.origin,
-    })
-    .from(problems)
-    .innerJoin(
-      solutionLinks,
-      and(eq(solutionLinks.targetKind, "problem"), eq(solutionLinks.targetId, problems.id)),
-    )
-    .innerJoin(solutions, eq(solutions.id, solutionLinks.solutionId))
-    .where(and(inArray(problems.id, ids), eq(solutions.status, "accepted")));
-
-  return rows
-    .map((r) => ({
-      problemId: r.problemId,
-      title: r.title,
-      depth: depthById.get(r.problemId) ?? 1,
-      solution: { id: r.id, body: r.body, status: r.status, origin: r.origin },
-    }))
-    .sort((a, b) => a.depth - b.depth);
 }

@@ -228,6 +228,19 @@ export const ProblemLinkSchema = z
   })
   .openapi("ProblemLink");
 
+/**
+ * Drawing a link between two problems. Deliberate, never inferred (ADR-0024):
+ * the caller says which kind of relation it is and why, and there is no
+ * similarity score to carry.
+ */
+export const LinkProblemSchema = z
+  .object({
+    toProblemId: z.string().min(1),
+    kind: LinkKind,
+    rationale: z.string().min(1).optional(),
+  })
+  .openapi("LinkProblem");
+
 /** A linked problem joined with the edge that connects it (for detail view). */
 export const LinkedProblemSchema = z
   .object({
@@ -393,7 +406,7 @@ export const GraphSchema = z
 
 /* ------------------------------------------------------------------ *
  * Agent graph retrieval — bounded, read-only views over the stored graph.
- * The graph spans every workspace, so these views are cross-tenant.
+ * Every one of them is confined to the caller's workspace (ADR-0024).
  * ------------------------------------------------------------------ */
 
 /** One edge in a problem's context view, with the stored rationale. */
@@ -460,14 +473,6 @@ export const NeighborhoodSchema = z
   })
   .openapi("Neighborhood");
 
-export const SolvedNeighborSchema = z
-  .object({
-    problemId: z.string(),
-    title: z.string(),
-    depth: z.number(),
-    solution: ContextSolutionSchema,
-  })
-  .openapi("SolvedNeighbor");
 
 /* ------------------------------------------------------------------ *
  * Query params
@@ -488,6 +493,15 @@ export const ErrorSchema = z
 
 export const IdParam = z.object({
   id: z.string().min(1).openapi({ param: { name: "id", in: "path" }, example: "prob_01h..." }),
+});
+
+/** Both ends of a Problem↔Problem link, addressed in the path. */
+export const ProblemLinkParams = z.object({
+  id: z.string().min(1).openapi({ param: { name: "id", in: "path" }, example: "prob_01h..." }),
+  toProblemId: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: "toProblemId", in: "path" }, example: "prob_02h..." }),
 });
 
 /** Both ends of an Observation↔Problem tie, addressed in the path. */
@@ -662,6 +676,7 @@ export type Solution = z.infer<typeof SolutionSchema>;
 export type CreateSolution = z.infer<typeof CreateSolutionSchema>;
 export type UpdateSolution = z.infer<typeof UpdateSolutionSchema>;
 export type ProblemLink = z.infer<typeof ProblemLinkSchema>;
+export type LinkProblem = z.infer<typeof LinkProblemSchema>;
 export type ObservationProblemEdge = z.infer<typeof ObservationProblemEdgeSchema>;
 export type TieObservation = z.infer<typeof TieObservationSchema>;
 export type ProblemDetail = z.infer<typeof ProblemDetailSchema>;
@@ -670,7 +685,6 @@ export type ProblemPage = z.infer<typeof ProblemPageSchema>;
 export type Graph = z.infer<typeof GraphSchema>;
 export type ProblemContext = z.infer<typeof ProblemContextSchema>;
 export type Neighborhood = z.infer<typeof NeighborhoodSchema>;
-export type SolvedNeighbor = z.infer<typeof SolvedNeighborSchema>;
 export type ProjectTags = z.infer<typeof ProjectTagsSchema>;
 export type WorkspaceSummary = z.infer<typeof WorkspaceSummarySchema>;
 export type ApiKeyAdmin = z.infer<typeof ApiKeyAdminSchema>;
