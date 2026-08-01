@@ -9,12 +9,10 @@ import {
   ProblemContextSchema,
   ProblemDetailSchema,
   ProblemPageSchema,
-  ProjectTagsSchema,
+  SearchPageSchema,
   SolutionSchema,
   WorkspaceSummarySchema,
   z,
-  type CreateObservation,
-  type CreateProblem,
   type CreateSolution,
   type Graph,
   type ItemPage,
@@ -24,6 +22,7 @@ import {
   type ProblemContext,
   type ProblemDetail,
   type ProblemPage,
+  type SearchPage,
   type Solution,
   type UpdateObservation,
   type UpdateProblem,
@@ -83,10 +82,6 @@ export const api = {
     }));
   },
 
-  async createObservation(body: CreateObservation): Promise<ObservationDetail> {
-    return unwrap(ObservationDetailSchema, await client.POST("/v1/observations", { body }));
-  },
-
   async updateObservation(id: string, patch: UpdateObservation): Promise<ObservationDetail> {
     return unwrap(ObservationDetailSchema, await client.PATCH("/v1/observations/{id}", {
       params: { path: { id } },
@@ -138,15 +133,23 @@ export const api = {
     }));
   },
 
-  async createProblem(body: CreateProblem): Promise<ProblemDetail> {
-    return unwrap(ProblemDetailSchema, await client.POST("/v1/problems", { body }));
-  },
-
   async updateProblem(id: string, patch: UpdateProblem): Promise<ProblemDetail> {
     return unwrap(ProblemDetailSchema, await client.PATCH("/v1/problems/{id}", {
       params: { path: { id } },
       body: patch,
     }));
+  },
+
+  async deleteProblem(id: string): Promise<void> {
+    const res = await client.DELETE("/v1/problems/{id}", { params: { path: { id } } });
+    if (res.error) throw new Error(`Request failed: ${res.response.status}`);
+    DeleteResultSchema.parse(res.data);
+  },
+
+  /* ---- Search (D1 FTS5, ranked, snippets) ---- */
+  /** Ranked hits across observations and problems. The one text search there is. */
+  async search(params: { q: string; limit?: number; offset?: number }): Promise<SearchPage> {
+    return unwrap(SearchPageSchema, await client.GET("/v1/search", { params: { query: params } }));
   },
 
   /* ---- Solutions (polymorphic) ---- */
@@ -185,11 +188,6 @@ export const api = {
     return unwrap(ProblemContextSchema, await client.GET("/v1/problems/{id}/context", {
       params: { path: { id } },
     }));
-  },
-
-  /** Distinct project meta tags across accessible workspaces (for autocomplete). */
-  async listProjectTags(): Promise<string[]> {
-    return unwrap(ProjectTagsSchema, await client.GET("/v1/project-tags")).tags;
   },
 
   /* ---- Workspaces ---- */

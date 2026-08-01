@@ -12,18 +12,10 @@ interface AppState {
   /** View scope: which workspace the lists/graph show. `null` = all workspaces. */
   scopeWorkspaceId: string | null;
   /**
-   * Observation ids picked for "Synthesize problem", in selection order. Held in
-   * the store (not the list component) so the selection survives pagination,
-   * search, workspace-scope changes, and switching between Library/Graph views —
-   * synthesize can gather observations chosen across all of them. Synthesis is
-   * cross-workspace, so picks from different workspaces are intentionally kept.
-   */
-  synthPicks: string[];
-  /**
    * Which page of the Library list is showing. Held in the store — not the list
    * component — so the page survives the list unmounting (switching to Graph or
-   * Settings and back, synthesize returning to the library). Component state
-   * silently sent the user back to page 1 every time.
+   * Settings and back). Component state silently sent the user back to page 1
+   * every time.
    */
   listPage: number;
   /** How many rows per page the Library list shows; stored for the same reason. */
@@ -34,8 +26,6 @@ interface AppState {
   selectProblem: (id: string | null) => void;
   selectObservation: (id: string | null) => void;
   setScopeWorkspace: (id: string | null) => void;
-  toggleSynthPick: (id: string) => void;
-  clearSynthPicks: () => void;
   setListPage: (page: number) => void;
   setListPageSize: (size: number) => void;
   /**
@@ -52,7 +42,6 @@ export const useAppStore = create<AppState>((set) => ({
   selectedObservationId: null,
   selectedKind: null,
   scopeWorkspaceId: null,
-  synthPicks: [],
   listPage: 1,
   listPageSize: 10,
   listFilterKey: null,
@@ -72,13 +61,6 @@ export const useAppStore = create<AppState>((set) => ({
       selectedKind: selectedObservationId ? "observation" : null,
     }),
   setScopeWorkspace: (scopeWorkspaceId) => set({ scopeWorkspaceId }),
-  toggleSynthPick: (id) =>
-    set((s) => ({
-      synthPicks: s.synthPicks.includes(id)
-        ? s.synthPicks.filter((x) => x !== id)
-        : [...s.synthPicks, id],
-    })),
-  clearSynthPicks: () => set({ synthPicks: [] }),
   setListPage: (listPage) => set({ listPage }),
   setListPageSize: (listPageSize) => set({ listPageSize }),
   syncListFilters: (key) =>
