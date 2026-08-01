@@ -1,7 +1,6 @@
-import { Box, Group, Stack } from "@mantine/core";
+import { Box, Stack } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
 import { useAppStore } from "../store.js";
-import { CaptureModal } from "./CaptureModal.js";
 import { ItemList } from "./ItemList.js";
 import { ObservationDetail } from "./ObservationDetail.js";
 import { ProblemDetail } from "./ProblemDetail.js";
@@ -24,10 +23,6 @@ export function LibraryView() {
 
   const listContent = (
     <Stack gap="sm" {...paneScroll}>
-      <Group gap="xs">
-        <CaptureModal defaultKind="observation" />
-        <CaptureModal defaultKind="problem" />
-      </Group>
       <ItemList />
     </Stack>
   );

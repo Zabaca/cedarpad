@@ -1,11 +1,11 @@
 import {
-  Alert,
   Badge,
   Button,
   Card,
   Divider,
   Group,
   Loader,
+  Modal,
   Select,
   Stack,
   Text,
@@ -13,6 +13,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api.js";
@@ -32,6 +33,7 @@ export function ProblemDetail({ id }: { id: string }) {
   const qc = useQueryClient();
   const setView = useAppStore((s) => s.setView);
   const selectObservation = useAppStore((s) => s.selectObservation);
+  const selectProblem = useAppStore((s) => s.selectProblem);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["problem", id],
@@ -48,6 +50,7 @@ export function ProblemDetail({ id }: { id: string }) {
   const [solBody, setSolBody] = useState("");
   const [adding, setAdding] = useState(false);
   const [newSol, setNewSol] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["problem", id] });
@@ -68,6 +71,19 @@ export function ProblemDetail({ id }: { id: string }) {
       setEditing(false);
       invalidate();
     },
+  });
+  // Deleting is a correction, not a workflow — it clears the selection so the
+  // detail pane doesn't sit on a record that is gone.
+  const deleteProblem = useMutation({
+    mutationFn: () => api.deleteProblem(id),
+    onSuccess: () => {
+      setConfirmDelete(false);
+      selectProblem(null);
+      invalidate();
+      notifications.show({ title: "Problem deleted", message: "Removed.", color: "gray" });
+    },
+    onError: (err) =>
+      notifications.show({ title: "Delete failed", message: String(err), color: "red" }),
   });
   const saveSolution = useMutation({
     mutationFn: (vars: { sid: string; patch: Parameters<typeof api.updateSolution>[1] }) =>
@@ -101,6 +117,32 @@ export function ProblemDetail({ id }: { id: string }) {
 
   return (
     <Stack>
+      <Modal
+        opened={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="Delete problem"
+        centered
+      >
+        <Stack gap="sm">
+          <Text size="sm">
+            Delete <b>{p.title}</b>? This removes the problem, its links and its ties to
+            observations. The observations themselves stay.
+          </Text>
+          <Group justify="flex-end">
+            <Button size="xs" variant="default" onClick={() => setConfirmDelete(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="xs"
+              color="red"
+              loading={deleteProblem.isPending}
+              onClick={() => deleteProblem.mutate()}
+            >
+              Delete
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
       {/* Problem */}
       <Card withBorder padding="md">
         {editing ? (
@@ -129,6 +171,9 @@ export function ProblemDetail({ id }: { id: string }) {
               <Group gap="xs" wrap="nowrap">
                 <ShareLinkButton kind="problem" id={id} />
                 <Button size="xs" variant="default" onClick={startEdit}>Edit</Button>
+                <Button size="xs" variant="subtle" color="red" onClick={() => setConfirmDelete(true)}>
+                  Delete
+                </Button>
               </Group>
             </Group>
             <Text mt="xs" style={preWrap}>{p.body}</Text>
