@@ -14,7 +14,9 @@ import { type EventGuards, InteractiveBoxShapeUtil } from './InteractiveBoxShape
 import { isInteractiveControl } from './predicates';
 import { componentShapeProps } from './shape-props';
 import { fetchMart, type MartData } from './mart-data';
+import { fetchNotebook } from './notebook-data';
 import type { DataSource } from '../shared/mart-contract';
+import type { NotebookParams, NotebookRow } from '../shared/notebook-source';
 import { readPage } from './tldraw-bridge';
 import { resolveReplyTarget } from './reply-target';
 import { getActiveChat, postMessageToChat } from './agent-link';
@@ -152,6 +154,10 @@ class ComponentErrorBoundary extends React.Component<
  * this at all — the idle/no-op path IS the backward-compat guarantee. */
 type MartState = { phase: 'idle' } | { phase: 'loading' } | { phase: 'ready'; mart: MartData } | { phase: 'error'; message: string };
 
+/** The Notebook's equivalent (ADR-0024). No sidecar: a notebook read is live, so there is
+ * no "as of" to carry — the freshness question a mart has simply does not arise. */
+type NotebookState = { phase: 'idle' } | { phase: 'loading' } | { phase: 'ready'; rows: NotebookRow[] } | { phase: 'error'; message: string };
+
 /** The freshness badge (#239 requirement 4): a mart is a snapshot as of its last
  * materialize run, and a number with no "as of" is how someone makes a decision on stale
  * data — so this renders unconditionally whenever a component names a mart, independent
@@ -194,6 +200,7 @@ export function ComponentHost({
   dataSource,
   load = (module, rev) => loadComponent(module, rev, activeCanvasId()),
   loadMart = fetchMart,
+  loadNotebook = fetchNotebook,
   readShapes = () => readPage(editor),
   post = postMessageToChat,
 }: {
@@ -209,6 +216,8 @@ export function ComponentHost({
   load?: (module: string, rev: number) => Promise<AgentComponent>;
   /** The mart reader. Defaults to the real edge-route fetch; injected in tests. */
   loadMart?: (name: string) => Promise<MartData>;
+  /** The Notebook reader (ADR-0024). Defaults to the real edge-route fetch; injected in tests. */
+  loadNotebook?: (query: string, params?: NotebookParams) => Promise<NotebookRow[]>;
   /** Reads all page shapes to resolve this component's reply target; injected in tests. */
   readShapes?: () => CanvasShape[];
   /** Posts a component's reply into a chat session; injected in tests. */
@@ -217,6 +226,7 @@ export function ComponentHost({
   const [Comp, setComp] = React.useState<AgentComponent | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [martState, setMartState] = React.useState<MartState>({ phase: 'idle' });
+  const [notebookState, setNotebookState] = React.useState<NotebookState>({ phase: 'idle' });
   const currentUser = useCurrentUser();
   // Attempts at loading THIS module@rev. Reset to the first attempt on every fresh
   // load below; retries (a later slice) bump it so a `loading` status carries which try.
@@ -308,16 +318,43 @@ export function ComponentHost({
     };
   }, [martName]);
 
+  // The Notebook's live read (ADR-0024), resolved the same way one member over: a named
+  // query + its params, never a statement. Keyed on the SERIALIZED source so an
+  // equal-by-value dataSource (params included) doesn't re-fetch on every render.
+  const notebookKey = dataSource?.kind === 'notebook' ? JSON.stringify(dataSource) : undefined;
+  React.useEffect(() => {
+    if (!notebookKey) {
+      setNotebookState({ phase: 'idle' });
+      return;
+    }
+    const source = JSON.parse(notebookKey) as { query: string; params?: NotebookParams };
+    let alive = true;
+    setNotebookState({ phase: 'loading' });
+    loadNotebook(source.query, source.params)
+      .then((rows) => {
+        if (alive) setNotebookState({ phase: 'ready', rows });
+      })
+      .catch((e: Error) => {
+        if (alive) setNotebookState({ phase: 'error', message: e.message });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [notebookKey]);
+
   if (error) return <ErrorCard module={module} message={error} where="" />;
   if (!Comp) return <div style={{ padding: 12, color: 'var(--muted)', font: '12px ui-sans-serif' }}>loading {module}…</div>;
   // Mart rows resolve into the component's props (#239) ONLY when dataSource is set —
   // no dataSource means `data` reaches Comp byte-for-byte as before (backward compat).
-  const resolvedData =
-    martName && martState.phase === 'ready'
+  // A notebook source resolves into the SAME `rows` prop (ADR-0024), with `mart: null` —
+  // a component renders rows without caring which namespace they came from.
+  const resolvedData = martName
+    ? martState.phase === 'ready'
       ? { ...data, rows: martState.mart.rows, mart: martState.mart.sidecar }
-      : martName
-        ? { ...data, rows: [], mart: null }
-        : data;
+      : { ...data, rows: [], mart: null }
+    : notebookKey
+      ? { ...data, rows: notebookState.phase === 'ready' ? notebookState.rows : [], mart: null }
+      : data;
   return (
     <>
       <ComponentErrorBoundary
