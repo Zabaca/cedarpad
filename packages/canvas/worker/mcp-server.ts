@@ -253,7 +253,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'write_component',
       {
         description:
-          'Create or overwrite a reusable React component module in a workspace canvas library. Rules: `export default` a React component; it receives the placement `data` as props; imports of react, other components, and "mermaid" are allowed; inline styles + SVG. Placed instances hot-reload; use place_component to render a new instance on a canvas.',
+          'Create or overwrite a reusable React component module in a workspace canvas library. Rules: `export default` a React component; it receives the placement `data` as props; imports of react, other components, "mermaid", and "flint-chart/vegalite" + "vega"/"vega-lite" are allowed; inline styles + SVG. For a chart, place the platform `ChartCard` (it takes a Flint spec) rather than drawing one. Placed instances hot-reload; use place_component to render a new instance on a canvas.',
         inputSchema: WriteComponentInput.shape,
       },
       async (input) => text(await tools.writeComponent(input)),
