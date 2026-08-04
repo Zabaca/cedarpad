@@ -33,6 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ONE runner + `cancel-in-progress` + no reaper = a cancelled run poisons the next one.
+      # Playwright's webServer children (bridge, vite, `wrangler dev`) are orphaned when the
+      # job is killed mid-step and keep their ports; the next run's wrangler then cannot bind,
+      # nothing listens on the edge port, and every test fails at auth setup with
+      # ECONNREFUSED. Re-running does not clear it. See scripts/ci-reap.sh for the incident.
+      - name: Reap orphans from a cancelled run
+        run: bash scripts/ci-reap.sh
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.4
@@ -57,3 +65,11 @@ jobs:
           name: playwright-report
           path: packages/canvas/playwright-report/
           retention-days: 7
+
+      # `always()` covers CANCELLATION, which is the case that matters: leaving the box clean
+      # for the next run is the whole point, and the run most likely to strand processes is
+      # the one that gets superseded. The step above is the safety net for when even this
+      # does not get to run.
+      - name: Leave the runner clean
+        if: always()
+        run: bash scripts/ci-reap.sh
