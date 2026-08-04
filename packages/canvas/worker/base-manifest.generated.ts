@@ -4,6 +4,7 @@
 // it off a filesystem. This is what the edge knows the base tier by, bundled with the
 // worker; `worker/base-manifest.test.ts` fails if it drifts from `src/canvas-components/`.
 export const BASE_COMPONENTS: ReadonlyArray<{ name: string; description: string }> = [
+  { name: "AgentChat", description: "Agent-terminal chat. Renders a coding-agent transcript in the visual grammar of Claude Code, Codex CLI, or Grok CLI — header, turns, working line, tool calls, diffs, todos, events, thoughts, writes, permission prompts — with a working compo" },
   { name: "BarChart", description: "Simple horizontal-axis bar chart, no deps. Props: { bars: [{ label, value, color? }], height?, maxValue? }. Text colors come from the cedar tokens (src/styles.css, DESIGN.md): this component draws on the pad's own surface rather than painti" },
   { name: "CanvasArch", description: "How cedarpad is put together, as of ADR-0023. The previous version of this card predated the edge Worker: it drew three tiers (browser / bridge / agent) and showed canvas writes landing in the bridge's memory. Four ADRs have moved since. Wh" },
   { name: "CedarPalette", description: "cedarpad design-system preview. Renders the warm-graphite neutral system plus a pluggable accent so we can compare accent directions (wood ember vs foliage green) on identical neutrals. Self-contained; accent defaults to cedar-ember." },
@@ -16,6 +17,7 @@ export const BASE_COMPONENTS: ReadonlyArray<{ name: string; description: string 
   { name: "Dashboard", description: "Composition example: Dashboard imports and lays out KpiCard. Props: { title, kpis: [{ label, value, delta? }] }." },
   { name: "DataTable", description: "Fast data-table card: renders tabular data (pasted spreadsheets, CSV/TSV, query results) with windowed rows, so tens of thousands of rows stay smooth. Props: { title?, columns: string[], rows: string[][], totalRows? (set when truncated) }." },
   { name: "DiscussionThread", description: "" },
+  { name: "FlintGallery", description: "Flint chart gallery. Every chart type `flint-chart` ships, live-rendered off demo data, with the exact `place_component(module=\"ChartCard\", …)` spec that produced it. It renders through ChartCard rather than calling Flint directly — the poi" },
   { name: "GithubRepoCard", description: "GitHub Repo reference card (ADR-0016 addendum): pasting a GitHub URL onto the canvas places one of these. It is a VIEW of the workspace's Repo asset, never the owner of it — cloned-ness is looked up live from the workspace repo set (the edg" },
   { name: "HtmlCard", description: "Live HTML preview: renders pasted HTML source (a full document or a fragment) in a sandboxed iframe. Props: { html: string }. Scripts run isolated from the app origin (sandbox=\"allow-scripts\", no allow-same-origin) — the page can be fully i" },
   { name: "IlographDiagram", description: "An Ilograph-style architecture diagram: one declarative model, many perspectives. Ilograph's idea is that a system has no single correct diagram. You describe the resources once — nested, like the system actually is — and then describe seve" },
