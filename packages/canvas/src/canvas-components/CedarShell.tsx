@@ -14,12 +14,12 @@ import { type ReactNode } from 'react';
 interface Props { accent?: string; label?: string; view?: 'workspace' | 'canvases' | 'pages' }
 
 const C = {
-  void: 'oklch(0.16 0.010 60)',
-  surface: 'oklch(0.21 0.012 60)',
-  raised: 'oklch(0.25 0.013 60)',
-  overlay: 'oklch(0.29 0.014 60)',
-  line: 'oklch(0.32 0.016 60)',
-  lineStrong: 'oklch(0.41 0.018 60)',
+  void: 'oklch(0.16 0 0)',
+  surface: 'oklch(0.21 0 0)',
+  raised: 'oklch(0.25 0 0)',
+  overlay: 'oklch(0.29 0 0)',
+  line: 'oklch(0.32 0 0)',
+  lineStrong: 'oklch(0.41 0 0)',
   text: 'oklch(0.93 0.008 75)',
   muted: 'oklch(0.69 0.014 65)',
   faint: 'oklch(0.60 0.014 60)',
@@ -142,7 +142,7 @@ function WorkspacePopover({ accent }: { accent: string }) {
 function Canvas({ accent }: { accent: string }) {
   return (
     <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: C.void,
-      backgroundImage: 'radial-gradient(oklch(0.30 0.016 60) 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
+      backgroundImage: 'radial-gradient(oklch(0.30 0 0) 1px, transparent 1px)', backgroundSize: '20px 20px' }}>
       <div style={{ position: 'absolute', top: 30, left: 34, width: 138, borderRadius: RAD.lg, overflow: 'hidden',
         background: C.surface, boxShadow: `${SHADOW_FLOAT}, 0 0 0 1px ${C.line}` }}>
         <div style={{ background: C.raised, color: C.text, font: `600 12px ${SANS}`, padding: '7px 10px' }}>Chat 1</div>

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { type ChatEvent, isChatFrame } from '../shared/chat-wire.ts';
 import type { ChatSnapshot } from '../shared/chat-store';
-import { armFirstPrompt, beatTargets, connectionTarget, ensureSession, forkSession, getSnapshot, interrupt, isSubscribed, openStream, routeChatFrame, send, setCanvasOverride, setConnectionTarget, subscribe, takeFirstPrompt } from '../shared/chat-store';
+import { armFirstPrompt, beatTargets, connectionTarget, ensureSession, forkSession, getSnapshot, interrupt, isSubscribed, openStream, routeChatFrame, send, setCanvasOverride, setConnectionTarget, subscribe, takeFirstPrompt, toolDetail, toolNameOf, toolParts } from '../shared/chat-store';
 import { aliveUrl } from './idle.ts';
 
 /** Serialize a wire frame the way the bridge does: a ChatEvent tagged with its chatId. */
@@ -33,6 +33,83 @@ describe('init frame (a turn started, possibly not by this tab)', () => {
     routeChatFrame(frame('chat_foreign_run2', { kind: 'done', sessionId: 'sess_run_2', costUsd: 0 }));
 
     expect(getSnapshot('chat_foreign_run2').busy).toBe(false);
+  });
+});
+
+// `toolLabel` gets one line, so it truncates (Bash at 44 chars, paths to their basename).
+// That used to be the ONLY record of a call — a long curl read as `curl -s "https://query1…`
+// and you could not tell what ran. `toolDetail` keeps the untruncated text for the
+// disclosure under the label.
+describe('toolDetail: the full text behind a truncated tool label', () => {
+  const long = 'curl -s "https://query1.finance.yahoo.com/v8/finance/chart/VT?range=max&interval=1mo"';
+
+  test('a truncated Bash command is recoverable in full', () => {
+    const detail = toolDetail({ kind: 'tool', name: 'Bash', input: { command: long } });
+    expect(detail).toBe(long);
+    expect(detail).not.toContain('…');
+  });
+
+  test('a non-Bash input is shown as its parameter bag', () => {
+    const detail = toolDetail({ kind: 'tool', name: 'Read', input: { file_path: '/repo/app/settings/page.tsx' } });
+    expect(detail).toContain('"file_path"');
+    expect(detail).toContain('/repo/app/settings/page.tsx'); // the label only kept `page.tsx`
+  });
+
+  test('nothing to add ⇒ no disclosure', () => {
+    expect(toolDetail({ kind: 'tool', name: 'end_turn', input: null })).toBeUndefined();
+    // `Bash · ls` already shows the whole command; an expander revealing the same string is
+    // worse than none, so a short command gets no chevron.
+    expect(toolDetail({ kind: 'tool', name: 'Bash', input: { command: 'ls' } })).toBeUndefined();
+  });
+
+  test('a huge input is capped, and says so rather than silently ending', () => {
+    const detail = toolDetail({ kind: 'tool', name: 'Write', input: { content: 'x'.repeat(20_000) } });
+    expect(detail?.length).toBeLessThan(4_200);
+    expect(detail).toContain('truncated');
+  });
+
+  test('a cyclic input does not throw a render away', () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(toolDetail({ kind: 'tool', name: 'Weird', input: cyclic })).toBeUndefined();
+  });
+
+  test('a tool frame carries the detail onto its transcript item', () => {
+    const chatId = 'shape:detail1';
+    ensureSession(chatId);
+    routeChatFrame(frame(chatId, { kind: 'tool', name: 'Bash', input: { command: long } }));
+    const item = getSnapshot(chatId).items.at(-1);
+    expect(item).toMatchObject({ kind: 'tool', detail: long });
+  });
+});
+
+// A tool line says two things — WHICH tool, and WHAT it acted on — and they carry different
+// weight. Flattened into one string they render at one emphasis, so `combined.json` is as
+// quiet as the `Read` in front of it. The view renders the halves separately; these pin the
+// split so it cannot drift from the flat label the store also keeps.
+describe('toolParts / toolNameOf: the two halves of a tool line', () => {
+  test('a file tool splits into its name and the file it touched', () => {
+    expect(toolParts({ kind: 'tool', name: 'Read', input: { file_path: '/repo/data/combined.json' } })).toEqual({
+      name: 'Read',
+      arg: 'combined.json',
+    });
+    expect(toolNameOf('Read · combined.json', 'combined.json')).toBe('Read');
+  });
+
+  test('a count hangs off the name without the separator, and still splits cleanly', () => {
+    expect(toolNameOf('create_shapes ×3', '×3')).toBe('create_shapes');
+  });
+
+  test('no arg — or a label that is not name+arg, like a subagent chip — stays whole', () => {
+    expect(toolNameOf('end_turn', undefined)).toBe('end_turn');
+    expect(toolNameOf('⤷ code-reviewer · completed', 'nope')).toBe('⤷ code-reviewer · completed');
+  });
+
+  test('a tool frame carries the arg onto its item, so the view can emphasise it', () => {
+    const chatId = 'shape:arg1';
+    ensureSession(chatId);
+    routeChatFrame(frame(chatId, { kind: 'tool', name: 'Read', input: { file_path: '/repo/data/combined.json' } }));
+    expect(getSnapshot(chatId).items.at(-1)).toMatchObject({ label: 'Read · combined.json', arg: 'combined.json' });
   });
 });
 

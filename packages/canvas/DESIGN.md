@@ -1,13 +1,13 @@
 ---
 name: cedarpad
-description: A warm spatial instrument where one operator and an agent share the same pad.
+description: A spatial instrument where one operator and an agent share the same pad — true-neutral chrome, one cedar-ember signal.
 colors:
-  canvas-void: "oklch(0.16 0.010 60)"
-  surface: "oklch(0.21 0.012 60)"
-  surface-raised: "oklch(0.25 0.013 60)"
-  surface-overlay: "oklch(0.29 0.014 60)"
-  line: "oklch(0.32 0.016 60)"
-  line-strong: "oklch(0.41 0.018 60)"
+  canvas-void: "oklch(0.16 0 0)"
+  surface: "oklch(0.21 0 0)"
+  surface-raised: "oklch(0.25 0 0)"
+  surface-overlay: "oklch(0.29 0 0)"
+  line: "oklch(0.32 0 0)"
+  line-strong: "oklch(0.41 0 0)"
   text: "oklch(0.93 0.008 75)"
   text-muted: "oklch(0.69 0.014 65)"
   text-faint: "oklch(0.60 0.014 60)"
@@ -120,25 +120,32 @@ components:
 
 **Creative North Star: "The Lit Drafting Table"**
 
-cedarpad is a cedar drafting table under one warm work-light. The surface is a warm
-graphite that recedes like wood in shadow; the only thing that catches the light is
-what is live. Color belongs to the work on the pad (the shapes you draw, the
-components the agent builds), never to the frame around it. The chrome is a precise
-instrument: flat, quiet, tightly spaced, built from a single warm-neutral material
-so the pad's real color reads true against it. The name is the palette: cedar is
-warm, natural, and crafted, and the one accent is a cedar ember. Personality lives
-in restraint and in how fast the surface answers you, not in decoration.
+cedarpad is a cedar drafting table under one warm work-light. The surface is a true
+graphite that recedes into shadow; the only thing that catches the light is what is
+live. Color belongs to the work on the pad (the shapes you draw, the components the
+agent builds), never to the frame around it. The chrome is a precise instrument:
+flat, quiet, tightly spaced, built from a single achromatic material so the pad's
+real color reads true against it. The name is the palette: the one accent is a cedar
+ember, and the text it lights is a warm off-white. Personality lives in restraint
+and in how fast the surface answers you, not in decoration.
 
-This system explicitly rejects the generic dark-tool reflex, which is always cool:
-no cold steel-blue chrome, no neon-on-black, no glassmorphism, no glowing gradient
-accents, no soft pastel cards. Going warm is the point: a cedar-toned canvas tool is
-the deliberate opposite of the Linear/Figma cool-blue convention. It also rejects
-the consumer-rounded, SaaS-cheerful register: this is an instrument, not a friendly
-app. The rushed current `styles.css` is not a reference; this spec is the source of
-truth and code conforms to it.
+**The neutrals carried hue-60 tint at chroma 0.010–0.018 until 2026-08-03.** They are
+now chroma 0, at the same lightnesses. The tint was doing the opposite of its job:
+`--surface` rendered `#1d1713`, a brown-grey that read as *faded* rather than as wood
+in shadow, and it muddied every color placed on it. Removing chroma moved `--surface`
+to `#181818` and changed no lightness, so every contrast ratio in this document still
+holds. Warmth is now carried where it is legible — the ember accent and the off-white
+text ramp — instead of being smeared thinly across every surface.
+
+This system still rejects the generic dark-tool reflex: no cold steel-blue chrome, no
+neon-on-black, no glassmorphism, no glowing gradient accents, no soft pastel cards.
+Neutral is not cool — the neutrals are achromatic, and the chromatic voice in the
+chrome is a cedar ember, which is what keeps this off the Linear/Figma cool-blue
+convention. It also rejects the consumer-rounded, SaaS-cheerful register: this is an
+instrument, not a friendly app.
 
 **Key Characteristics:**
-- Warm-graphite tinted-dark surfaces (hue 60, very low chroma), never `#000`.
+- True-neutral dark surfaces (chroma 0), never `#000`.
 - A single cedar-ember accent that means one thing: *live / active*.
 - Tonal depth, not shadow depth. Lighter surface = closer to you.
 - Mono for labels and machine output; sans for human content.
@@ -146,9 +153,19 @@ truth and code conforms to it.
 
 ## 2. Colors
 
-A near-achromatic warm-graphite stack carrying a single cedar signal. The neutrals
-are tinted toward hue 60 at chroma 0.010-0.018 so the frame feels like one warm
-material (wood in shadow) rather than flat grey or cold steel.
+An achromatic graphite stack carrying a single cedar signal. The neutrals are chroma
+0 — one material, no hue — so nothing in the frame competes with the pad, and a color
+placed on a surface reads as itself rather than through a tint.
+
+**The one sanctioned exception: the chat card.** A transcript is machine output rendered
+as a terminal — `⏺ ⎿ ❯` over a fixed-pitch column — and a terminal carries its own theme
+the way a code block carries its own syntax colours. `.chat-card` therefore redeclares the
+token names locally (`shared/chat.css`): Tokyo-Night text `#c0caf5` over `#181818`, paths
+and commands in `#7dcfff`, a white user row on `#3a3a3a`. Cedar terracotta stays the
+*live* accent, so the card still reads as ours. Because the override is on the token names
+themselves, every rule inside re-themes without knowing about it and **nothing leaks past
+`.chat-card`**. Do not copy this trick anywhere else: it is justified by the surface being
+a terminal emulation, not by a preference for those colours.
 
 ### Primary
 - **Cedar Ember** (`oklch(0.68 0.145 45)`): the only chromatic voice in the chrome.
@@ -158,16 +175,16 @@ material (wood in shadow) rather than flat grey or cold steel.
   (`oklch(0.45 0.08 45)`) is for dim accent lines and inactive-but-accented borders.
 
 ### Neutral
-- **Canvas Void** (`oklch(0.16 0.010 60)`): the deepest layer, behind everything;
+- **Canvas Void** (`oklch(0.16 0 0)`): the deepest layer, behind everything;
   also the inset field background (composer, inputs).
-- **Surface** (`oklch(0.21 0.012 60)`): panels and the rail. The default chrome
+- **Surface** (`oklch(0.21 0 0)`): panels and the rail. The default chrome
   plane.
-- **Surface Raised** (`oklch(0.25 0.013 60)`): chat cards, popovers, chips, ghost
+- **Surface Raised** (`oklch(0.25 0 0)`): chat cards, popovers, chips, ghost
   buttons. One step toward the viewer.
-- **Surface Overlay** (`oklch(0.29 0.014 60)`): the highest resting plane, active
+- **Surface Overlay** (`oklch(0.29 0 0)`): the highest resting plane, active
   nav row, hovered menu items, the floating composer toolbar.
-- **Line** (`oklch(0.32 0.016 60)`): default 1px borders and dividers.
-- **Line Strong** (`oklch(0.41 0.018 60)`): emphasized separators, card outlines
+- **Line** (`oklch(0.32 0 0)`): default 1px borders and dividers.
+- **Line Strong** (`oklch(0.41 0 0)`): emphasized separators, card outlines
   that need to read against a busy board.
 - **Text** (`oklch(0.93 0.008 75)`): primary text, warm off-white, never `#fff`.
 - **Text Muted** (`oklch(0.69 0.014 65)`): secondary text, labels, inactive nav.
@@ -311,7 +328,7 @@ instrument's heartbeat made visible; keep it small and quiet.
 ## 6. Do's and Don'ts
 
 ### Do:
-- **Do** build the chrome from the warm-graphite neutral ramp (hue 60) and treat
+- **Do** build the chrome from the achromatic neutral ramp (chroma 0) and treat
   Cedar Ember as a ≤10% signal that means *live*.
 - **Do** convey depth by stepping the surface one tone lighter (Void → Surface →
   Raised → Overlay), and reserve shadows for things floating above the pad.
@@ -323,7 +340,9 @@ instrument's heartbeat made visible; keep it small and quiet.
   loudest thing on screen.
 
 ### Don't:
-- **Don't** use `#000` or `#fff`; every neutral is tinted toward hue 60 (warm).
+- **Don't** use `#000` or `#fff`; the surface ramp bottoms out at `oklch(0.16 0 0)`
+  and the text ramp tops out at a warm off-white. Don't re-tint the surface ramp
+  either — chroma 0 is the point (see the 2026-08-03 note above).
 - **Don't** fall back to the cool dark-tool cliché (steel-blue chrome, cyan accent,
   neon-on-black, glassmorphism, glowing or gradient accents). Cedar Ember never
   glows.

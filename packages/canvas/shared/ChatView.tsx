@@ -7,7 +7,7 @@
 import * as React from 'react';
 
 import { requestFork, setActiveChat } from '../src/agent-link';
-import { EFFORTS, ensureSession, getSnapshot, interrupt, type McpSelection, MODELS, openStream, type PendingImage, send, setEffort, setMcpSelection, setModel, subscribe, takeFirstPrompt } from './chat-store';
+import { EFFORTS, ensureSession, getSnapshot, interrupt, type McpSelection, MODELS, openStream, type PendingImage, send, setEffort, setMcpSelection, setModel, subscribe, takeFirstPrompt, toolNameOf } from './chat-store';
 import { useGuestScope } from './guest-scope';
 import { MarkdownMessage } from './MarkdownMessage';
 
@@ -239,7 +239,9 @@ export function ChatView({ chatId, title, onDock, onFocus }: { chatId: string; t
   return (
     <div className="chat-card" onPointerDownCapture={() => setActiveChat(chatId)}>
       <div className="chat-card-head">
-        <span className={snap.busy ? 'tab-dot' : 'dot'} />
+        <span aria-hidden className={`t-dot${snap.busy ? ' busy' : ''}`}>
+          ⏺
+        </span>
         <span className="chat-card-title">{title}</span>
         {snap.busy && <span className="chat-card-status">{snap.subscribed ? snap.status || 'working' : 'reconnecting…'}</span>}
         {snap.busy && (
@@ -320,23 +322,37 @@ export function ChatView({ chatId, title, onDock, onFocus }: { chatId: string; t
           <div className="job-tray" title="Background jobs running in this chat">
             {Object.values(snap.tasks).map((t) => (
               <div key={t.id} className={`job-row ${t.status}`}>
-                <span className="job-dot" />
+                <span aria-hidden className="job-dot">
+                  ◆
+                </span>
                 <span className="job-type">{t.taskType ?? 'job'}</span>
                 <span className="job-title">{t.title || t.detail || t.id}</span>
                 {t.summary && <span className="job-summary">{t.summary}</span>}
+                <span className="sr-only"> ({t.status})</span>
               </div>
             ))}
           </div>
         )}
         {Object.keys(snap.todos).length > 0 && (
-          <div className="todo-tray" title="The agent's plan (TaskCreate / TaskUpdate)">
-            {Object.values(snap.todos).map((t) => (
-              <div key={t.id} className={`todo-row ${t.status}`}>
-                <span className="todo-box">{t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '◐' : '○'}</span>
+          <ol className="todo-tray" title="The agent's plan (TaskCreate / TaskUpdate)">
+            {Object.values(snap.todos).map((t, i) => (
+              <li key={t.id} className={`todo-row ${t.status}`}>
+                {/* `⎿ ` on the first row only, then aligned padding — Claude Code's list
+                    grammar, where the elbow introduces the block rather than each item. */}
+                <span aria-hidden className="todo-elbow">
+                  {i === 0 ? '⎿ ' : '  '}
+                </span>
+                <span aria-hidden className="todo-box">
+                  {t.status === 'completed' ? '✔' : t.status === 'in_progress' ? '◼' : '◻'}
+                </span>
                 <span className="todo-subject">{t.subject || t.id}</span>
-              </div>
+                <span className="sr-only">
+                  {' '}
+                  ({t.status === 'completed' ? 'completed' : t.status === 'in_progress' ? 'in progress' : 'pending'})
+                </span>
+              </li>
             ))}
-          </div>
+          </ol>
         )}
         <div className="chat-log" ref={scroller}>
           {snap.items.length === 0 && (
@@ -355,13 +371,70 @@ export function ChatView({ chatId, title, onDock, onFocus }: { chatId: string; t
               const isSub = !!it.subagentType;
               const label = isSub ? `⤷ ${it.subagentType}${it.status && it.status !== 'running' ? ` · ${it.status}` : ''}` : it.label;
               const running = it.status === 'running';
+              // Claude Code's ⏺ / ⎿ pair: the call on one line, its result indented under
+              // it. The glyph carries state (running amber, done green) and is aria-hidden
+              // — the status rides the label text, never colour alone.
+              const result = it.summary && (
+                <div className="tool-result">
+                  <span aria-hidden className="tool-glyph spacer">
+                    ⏺
+                  </span>
+                  <span aria-hidden className="tool-elbow">
+                    ⎿
+                  </span>
+                  <span className="tool-summary">{it.summary}</span>
+                </div>
+              );
+              // Two emphases, not one: the tool name recedes, the thing it acted on carries
+              // the line. A subagent chip has no argument — its label IS the subagent.
+              const head = (
+                <>
+                  <span aria-hidden className="tool-glyph">
+                    ⏺
+                  </span>
+                  {!isSub && it.arg ? (
+                    // `Read(app/settings/page.tsx)` — Claude Code's call form. The parens are
+                    // the separator, so the argument reads as what the tool was applied TO
+                    // rather than as a second, equal noun.
+                    <span className="tool-label">
+                      <span className="tool-name">{toolNameOf(it.label, it.arg)}</span>
+                      <span aria-hidden className="tool-paren">
+                        (
+                      </span>
+                      <span className="tool-arg">{it.arg}</span>
+                      <span aria-hidden className="tool-paren">
+                        )
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="tool-label">{label}</span>
+                  )}
+                </>
+              );
+              // The full call text rides a real <details>, so it is keyboard-operable and
+              // announced. The card's pointer guard admits it already (`inChatBody`), which
+              // is why no role="button" is needed here — unlike a component-shape card.
               return (
                 <div key={it.id} className={`tool-chip${nested}${isSub ? ' subagent' : ''}${running ? ' running' : ''}`}>
-                  {label}
-                  {it.summary && <span className="tool-summary"> · {it.summary}</span>}
+                  {it.detail ? (
+                    <details className="tool-detail">
+                      <summary className="tool-call">
+                        {head}
+                        <span aria-hidden className="tool-more">
+                          ▸
+                        </span>
+                      </summary>
+                      <pre className="tool-detail-body">{it.detail}</pre>
+                    </details>
+                  ) : (
+                    <div className="tool-call">{head}</div>
+                  )}
+                  {result}
                 </div>
               );
             }
+            // The user turn is Claude Code's full-width ❯ row; the agent's is plain text,
+            // still through MarkdownMessage so tables/code/links keep rendering.
             return (
               <div key={it.id} className={`bubble ${it.role}${nested}`}>
                 {it.images && it.images.length > 0 && (
@@ -371,16 +444,16 @@ export function ChatView({ chatId, title, onDock, onFocus }: { chatId: string; t
                     ))}
                   </div>
                 )}
-                {it.role === 'agent' ? <MarkdownMessage text={it.text} /> : it.text}
+                {it.role === 'user' && (
+                  <span aria-hidden className="bubble-marker">
+                    ❯
+                  </span>
+                )}
+                {it.role === 'agent' ? <MarkdownMessage text={it.text} /> : <span className="bubble-text">{it.text}</span>}
               </div>
             );
           })}
-          {snap.busy && (
-            <div className="activity">
-              {snap.subscribed ? snap.status || 'working' : 'reconnecting…'}
-              <span className="ell" />
-            </div>
-          )}
+          {snap.busy && <WorkingLine label={snap.subscribed ? snap.status || 'working' : 'reconnecting…'} />}
         </div>
         {pending.length > 0 && (
           <div className="chat-attachments">
@@ -396,6 +469,9 @@ export function ChatView({ chatId, title, onDock, onFocus }: { chatId: string; t
         )}
         {readOnly ? null : (
         <form className="chat-input" onSubmit={submit}>
+          <span aria-hidden className="chat-input-marker">
+            ❯
+          </span>
           <textarea
             ref={textareaRef}
             value={input}
@@ -417,7 +493,48 @@ export function ChatView({ chatId, title, onDock, onFocus }: { chatId: string; t
           </button>
         </form>
         )}
+        {readOnly ? null : (
+          <div className="chat-mode">
+            <span className="chat-mode-model">
+              <span aria-hidden>⏵⏵ </span>
+              {snap.model} · {snap.effort}
+            </span>
+            <span className="chat-mode-hint">
+              {snap.busy ? 'esc to interrupt' : 'enter to send · shift+enter for a newline'}
+            </span>
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+// Claude Code's working line: a pulsing sparkle, the server's own status verb, and the
+// elapsed hint. The verb comes from `snap.status` — this invents nothing, it only animates
+// the glyph and counts seconds. A polite live region, so a screen reader hears the turn
+// start without the glyph churn.
+const WORKING_GLYPHS = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
+
+function WorkingLine({ label }: { label: string }) {
+  const [glyph, setGlyph] = React.useState(0);
+  const [secs, setSecs] = React.useState(0);
+
+  React.useEffect(() => {
+    const g = setInterval(() => setGlyph((n) => (n + 1) % WORKING_GLYPHS.length), 110);
+    const s = setInterval(() => setSecs((n) => n + 1), 1000);
+    return () => {
+      clearInterval(g);
+      clearInterval(s);
+    };
+  }, []);
+
+  return (
+    <div className="activity" role="status" aria-live="polite">
+      <span aria-hidden className="activity-glyph">
+        {WORKING_GLYPHS[glyph]}
+      </span>
+      <span className="activity-verb">{label}…</span>
+      <span className="activity-hint">({secs}s · esc to interrupt)</span>
     </div>
   );
 }

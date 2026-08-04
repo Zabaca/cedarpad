@@ -4,12 +4,12 @@
 import * as React from 'react';
 
 const C = {
-  void: 'oklch(0.16 0.010 60)',
-  surface: 'oklch(0.21 0.012 60)',
-  raised: 'oklch(0.25 0.013 60)',
-  overlay: 'oklch(0.29 0.014 60)',
-  line: 'oklch(0.32 0.016 60)',
-  lineStrong: 'oklch(0.41 0.018 60)',
+  void: 'oklch(0.16 0 0)',
+  surface: 'oklch(0.21 0 0)',
+  raised: 'oklch(0.25 0 0)',
+  overlay: 'oklch(0.29 0 0)',
+  line: 'oklch(0.32 0 0)',
+  lineStrong: 'oklch(0.41 0 0)',
   text: 'oklch(0.93 0.008 75)',
   muted: 'oklch(0.69 0.014 65)',
   faint: 'oklch(0.60 0.014 60)',

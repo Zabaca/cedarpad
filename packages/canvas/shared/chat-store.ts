@@ -18,7 +18,7 @@ import { CANVAS_ID_HEADER, CHAT_KIND_HEADER } from './bridge-wire.ts';
 // event can find and decorate the Task chip with its subagent type + live status.
 export type ChatItem =
   | { id: string; kind: 'msg'; role: 'user' | 'agent'; text: string; images?: string[]; parentId?: string }
-  | { id: string; kind: 'tool'; label: string; parentId?: string; toolUseId?: string; subagentType?: string; status?: TaskStatus; summary?: string };
+  | { id: string; kind: 'tool'; label: string; arg?: string; detail?: string; parentId?: string; toolUseId?: string; subagentType?: string; status?: TaskStatus; summary?: string };
 
 export interface ChatSnapshot {
   items: ChatItem[];
@@ -186,15 +186,77 @@ const nextItemId = () => `i${(idSeq += 1)}`;
 const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const basename = (p: string) => p.split('/').filter(Boolean).pop() ?? p;
 
-// A short, legible label for a completed tool call.
-function toolLabel(e: Extract<ChatEvent, { kind: 'tool' }>): string {
+/**
+ * A completed tool call split into the two things it says: WHICH tool, and WHAT it acted on.
+ *
+ * Kept apart because they carry different weight. The tool name is a category you scan past
+ * — a transcript is mostly `Read`, `Bash`, `Edit` — while the argument is the specific thing
+ * you are actually looking for. Flattened into one string they render at one emphasis and
+ * `combined.json` is as quiet as the `Read` in front of it.
+ */
+export function toolParts(e: Extract<ChatEvent, { kind: 'tool' }>): { name: string; arg?: string } {
   const i = (e.input ?? {}) as Record<string, unknown>;
   const name = e.name;
-  if (name === 'Bash' && typeof i.command === 'string') return `Bash · ${truncate(i.command, 44)}`;
-  if (['Read', 'Write', 'Edit', 'MultiEdit'].includes(name) && typeof i.file_path === 'string') return `${name} · ${basename(i.file_path)}`;
-  if (typeof i.module === 'string') return `${name} · ${i.module}`;
+  if (name === 'Bash' && typeof i.command === 'string') return { name, arg: truncate(i.command, 44) };
+  if (['Read', 'Write', 'Edit', 'MultiEdit'].includes(name) && typeof i.file_path === 'string')
+    return { name, arg: basename(i.file_path) };
+  if (typeof i.module === 'string') return { name, arg: i.module };
   const n = Array.isArray(i.shapes) ? i.shapes.length : Array.isArray(i.ids) ? i.ids.length : undefined;
-  return n ? `${name} ×${n}` : name;
+  return n ? { name, arg: `×${n}` } : { name };
+}
+
+// A short, legible label for a completed tool call — the flat form, for anywhere that has
+// only one string to work with. Derived from `toolParts` so the two can never disagree.
+function toolLabel(e: Extract<ChatEvent, { kind: 'tool' }>): string {
+  const { name, arg } = toolParts(e);
+  if (!arg) return name;
+  // `×3` is a count, not a subject: it hangs off the name instead of taking the separator.
+  return arg.startsWith('×') ? `${name} ${arg}` : `${name} · ${arg}`;
+}
+
+/** The tool-name half of a stored label, for rendering the two halves at different weights.
+ *  `label` is built as name + separator + arg, so the arg is always its suffix; anything
+ *  else (a subagent chip, an argument-less tool) falls through as the whole label. */
+export function toolNameOf(label: string, arg?: string): string {
+  return arg && label.endsWith(arg) ? label.slice(0, -arg.length).replace(/[\s·]+$/u, '') : label;
+}
+
+/** Longest tool input kept for the expandable body. A Write's `content` or a create_shapes
+ *  batch can be tens of KB, and the transcript holds every call for the session — the label
+ *  is what you scan, this is what you open, and neither needs the whole payload. */
+const DETAIL_MAX = 4000;
+
+/**
+ * The full text of a tool call, for the disclosure under its label. Returns undefined when
+ * it would only repeat the label — an expander that reveals nothing is worse than none.
+ *
+ * `toolLabel` is deliberately lossy (Bash truncated at 44 chars, paths reduced to their
+ * basename) because it has one line to stay scannable in. That threw the actual command
+ * away, so a long `curl` read as `curl -s "https://query1.finance.yahoo…` and you could not
+ * tell what ran. This keeps it.
+ */
+export function toolDetail(e: Extract<ChatEvent, { kind: 'tool' }>): string | undefined {
+  const i = e.input;
+  if (i === null || i === undefined) return undefined;
+  // Bash reads as the shell line it is; anything else is a parameter bag, so show its shape.
+  const raw =
+    e.name === 'Bash' && typeof (i as Record<string, unknown>).command === 'string'
+      ? String((i as Record<string, unknown>).command)
+      : typeof i === 'string'
+        ? i
+        : safeJson(i);
+  if (!raw) return undefined;
+  const text = raw.length > DETAIL_MAX ? `${raw.slice(0, DETAIL_MAX)}\n… truncated (${raw.length} chars)` : raw;
+  // Single-line inputs the label already shows in full carry nothing new.
+  return text === toolLabel(e) || `${e.name} · ${text}` === toolLabel(e) ? undefined : text;
+}
+
+function safeJson(v: unknown): string {
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return ''; // a cyclic or non-serialisable input is not worth failing a render over
+  }
 }
 
 function notify(chatId: string) {
@@ -471,7 +533,9 @@ function applyEvent(chatId: string, ev: ChatEvent) {
   } else if (ev.kind === 'tool') {
     openBubble.set(bubbleKey(chatId, ev.parentId), null); // next text starts a fresh bubble after the chip
     const id = nextItemId();
-    update(chatId, (s) => ({ ...s, status: 'working', items: [...s.items, { id, kind: 'tool', label: toolLabel(ev), ...(ev.parentId ? { parentId: ev.parentId } : {}), ...(ev.id ? { toolUseId: ev.id } : {}) }] }));
+    const detail = toolDetail(ev);
+    const { arg } = toolParts(ev);
+    update(chatId, (s) => ({ ...s, status: 'working', items: [...s.items, { id, kind: 'tool', label: toolLabel(ev), ...(arg ? { arg } : {}), ...(detail ? { detail } : {}), ...(ev.parentId ? { parentId: ev.parentId } : {}), ...(ev.id ? { toolUseId: ev.id } : {}) }] }));
     // end_turn (and its ask_human predecessor in old transcripts) is the one tool whose INPUT
     // is human-facing — the question/summary it posts to the Inbox. Render it as a readable
     // agent bubble after the chip (live AND replay emit the same tool event): a question the
