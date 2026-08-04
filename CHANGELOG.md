@@ -39,6 +39,47 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.1.0] — 2026-08-04
+
+### Added
+- **Notebook search** — type in the Notebook and get ranked results with highlighted
+  excerpts instead of a filter over what is already on screen. (#396)
+- **Agents write the Notebook** — an agent can record an Observation and where it came
+  from, create a Problem, tie Observations to it, link Problems, and record a Solution.
+  Works from the in-canvas agent and from an outside agent over MCP. (#399)
+- **A canvas reads the Notebook live** — place a component against a Notebook query (open
+  problems, a problem's observations, recent observations) and it shows what is there now,
+  not a nightly snapshot. Members only. (#397)
+- **Solutions and Problem links** — record how a Problem was solved, and link one Problem
+  to another. (#395)
+- **The chart gallery** — browse every chart type on the pad with live data and the spec
+  that produced it, so you can see what an agent can build. (#393)
+- **An agent-terminal chat card** — a chat rendered in the grammar of Claude Code, Codex or
+  Grok, with three skins.
+
+### Changed
+- **The Notebook is a reading surface.** The capture box and modal are gone — agents write
+  it, you read it. (#398)
+- **Chat reads as a terminal.** Turns, tool calls, plans and approvals share one column, and
+  a tool call opens to show the full command it ran.
+- **The interface is a true neutral.** Surfaces lost their warm tint; the cedar ember is now
+  the only colour in the chrome.
+
+### Fixed
+- Charts fill the card they are placed in, at any zoom. Before, one drew at a fixed size and
+  left the rest of the card empty.
+
+### Security
+- Notebook graph reads are confined to your workspace. A problem-context or neighbourhood
+  read could previously return a record from another workspace, and a traversal could route
+  through one. (#395)
+
+### Internal
+- The local container stand-in was split off `E2E_MODE`, which had been forcing a choice
+  between a dead canvas stage and a stubbed agent in local dev. Chart sizing moved out of the
+  component module to stop breaking Fast Refresh. Release tooling: the publish check follows
+  its redirect; /changelog carries the site nav.
+
 ## [0.0.1] — 2026-07-31
 
 The first release. Cedarpad has been live for months; this is the point it starts carrying a
