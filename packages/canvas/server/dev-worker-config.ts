@@ -86,7 +86,10 @@ export function devWorkerConfig(
       // `web-poc/.dev.vars` overrides this — wrangler gives `.dev.vars` precedence over
       // `vars` — so a configured worktree keeps its own secret and both ends still agree.
       BETTER_AUTH_SECRET: LOCAL_DEV_PLATFORM_SECRET,
-      ...(localBridge ? { E2E_MODE: '1', LOCAL_BRIDGE_ORIGIN: localBridge } : {}),
+      // Local dev runs no container, so tell the edge where the dev stack is instead
+      // (#276, `localBridgeOrigin`). NOT `E2E_MODE`: that flag also stubs the bridge's
+      // Claude SDK turn, and the canvas stage working locally must not cost a fake agent.
+      ...(localBridge ? { LOCAL_CONTAINER_SHIM: '1', LOCAL_BRIDGE_ORIGIN: localBridge } : {}),
     },
     main: join(packageDir, String(base.main)),
     ...(assets ? { assets: { ...assets, directory: join(packageDir, assets.directory) } } : {}),

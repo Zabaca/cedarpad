@@ -141,10 +141,11 @@ export interface Env {
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
   WEB_ORIGIN?: string;
-  // E2E ONLY (#276), emitted only into the GENERATED local dev config (never wrangler.jsonc):
-  // local dev runs no container, so `serveWorkspace` proxies to the bridge process instead.
-  // See `localBridgeOrigin` in sandbox-resolver.ts for the two belts guarding it.
-  E2E_MODE?: string;
+  // LOCAL DEV ONLY (#276), emitted only into the GENERATED local dev config (never
+  // wrangler.jsonc): local dev runs no container, so `serveWorkspace` proxies to the dev
+  // stack instead. See `localBridgeOrigin` in sandbox-resolver.ts for the two belts guarding
+  // it, and for why this is NOT `E2E_MODE` (that one also stubs the agent).
+  LOCAL_CONTAINER_SHIM?: string;
   LOCAL_BRIDGE_ORIGIN?: string;
   // Kill-switch for the scheduled dev-agent run (#63/#66). Default off ("false"); the cron
   // fires but no-ops until repo-connection (#96) lands. Flip to "true" to enable.

@@ -61,14 +61,23 @@ describe('devWorkerConfig: the edge Worker as local dev runs it', () => {
     });
   });
 
-  test('no bridge origin ⇒ no e2e container stand-in in the config at all', () => {
-    expect(dev.vars).not.toHaveProperty('E2E_MODE');
+  test('no bridge origin ⇒ no container stand-in in the config at all', () => {
+    expect(dev.vars).not.toHaveProperty('LOCAL_CONTAINER_SHIM');
     expect(dev.vars).not.toHaveProperty('LOCAL_BRIDGE_ORIGIN');
   });
 
-  test('under e2e the edge is told where the bridge is, since local dev has no container (#276)', () => {
-    const e2e = devWorkerConfig(base, '/wt/packages/canvas', 'http://localhost:4520', 'http://localhost:4521');
-    expect(e2e.vars).toMatchObject({ E2E_MODE: '1', LOCAL_BRIDGE_ORIGIN: 'http://localhost:4521' });
+  test('given a bridge origin the edge is told where it is, since local dev has no container (#276)', () => {
+    const local = devWorkerConfig(base, '/wt/packages/canvas', 'http://localhost:4520', 'http://localhost:4521');
+    expect(local.vars).toMatchObject({ LOCAL_CONTAINER_SHIM: '1', LOCAL_BRIDGE_ORIGIN: 'http://localhost:4521' });
+  });
+
+  // The stand-in is a LOCAL DEV fact, not an e2e one. It used to ride on `E2E_MODE`, which
+  // also swaps the bridge's Claude SDK turn for a stub (server/bridge.ts) — so the only way
+  // to make the Shell's canvas stage work locally was to silently fake the agent, and a plain
+  // `bun run dev` instead died on "Containers have not been enabled". Separate flags.
+  test('the container stand-in never implies the e2e agent stub', () => {
+    const local = devWorkerConfig(base, '/wt/packages/canvas', 'http://localhost:4520', 'http://localhost:4521');
+    expect(local.vars).not.toHaveProperty('E2E_MODE');
   });
 
   // Since #265 wrangler.jsonc declares a PRODUCTION PLATFORM_DB. Local dev must replace it,

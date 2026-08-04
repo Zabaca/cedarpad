@@ -183,20 +183,49 @@ if (process.env.NODE_ENV !== 'production' && process.env.E2E_MODE === '1') {
 | Shim | Where | Why |
 | --- | --- | --- |
 | Stubbed Claude SDK turn | `server/bridge.ts` (`E2E_MODE`) | a real turn needs an OAuth token + a model round-trip |
-| Container stand-in | `worker/sandbox-resolver.ts` (`localBridgeOrigin`) → `worker/sandbox-runtime.ts` | **local dev runs no container at all** |
 
-The container stand-in (#276) is the one to understand before writing an authenticated
-spec. `server/dev-worker-config.ts` drops `containers` from the generated local config,
-so proxying into the Sandbox DO throws *"Containers have not been enabled"* — yet the
-bridge is right there as a plain process on `CANVAS_BRIDGE_PORT`. So under e2e the
-generated config carries `E2E_MODE=1` + `LOCAL_BRIDGE_ORIGIN`, and `serveWorkspace`
-proxies to that origin instead of the container. Two belts guard it: the flag, and a
-loopback-only origin check — and **neither var exists in `wrangler.jsonc`**, so nothing
-deployed can reach it. It sits at the START of `serveWorkspace`, which is downstream of
-the session gate, the ownership check, and the header stamping — so it replaces the
-transport into the container and papers over no check.
+`E2E_MODE` gates that one shim and **nothing else**. In particular it does *not* gate the
+container stand-in below — see the warning there before you reach for it.
 
-Without it, every edge-gated path stops at a 500 and only the *deny* half of an
+---
+
+## The container stand-in is LOCAL DEV, not e2e
+
+**This is not a shim and is not e2e-gated.** Local dev runs no container at all, so it is
+on for every local run — `bun run dev` included.
+
+`server/dev-worker-config.ts` drops `containers` from the generated local config, so
+proxying into the Sandbox DO throws:
+
+> Error: Containers have not been enabled for this Durable Object class.
+
+The dev stack is right there as plain processes on ports, so the generated config carries
+`LOCAL_CONTAINER_SHIM=1` + `LOCAL_BRIDGE_ORIGIN`, and `serveWorkspace` proxies to that
+origin instead of the container (`localBridgeOrigin` in `worker/sandbox-resolver.ts`, #276).
+Two belts guard it: the flag, and a loopback-only origin check — and **neither var exists in
+`wrangler.jsonc`**, so nothing deployed can reach it. It sits at the START of
+`serveWorkspace`, downstream of the session gate, the ownership check and the header
+stamping, so it replaces the transport into the container and papers over no check.
+
+The origin is **vite**, not the bridge: the container exposes ONE port and vite is what
+listens on it, proxying `/api` to the bridge beside it. Point it at the bridge and every API
+call works while the Shell's canvas stage 404s on `/w/:ws/canvas/:id/pad`.
+
+### Why it has its own flag
+
+It used to ride on `E2E_MODE`, and that cost us the same hour twice. Two symptoms, one
+cause:
+
+- a plain `bun run dev` → open the Shell at `:4513` → the canvas stage dies with
+  *"Containers have not been enabled"*, because no stand-in was emitted;
+- `E2E_MODE=1 bun run dev` "fixes" it — and **silently replaces the agent with the e2e
+  stub**, because the same flag swaps `runChat` for `e2eRunChat` in `server/bridge.ts`.
+
+So the only working local Shell was one with a fake agent. The flags are now separate:
+`LOCAL_CONTAINER_SHIM` is a fact about local dev, `E2E_MODE` is a fact about e2e. If you
+ever find yourself setting `E2E_MODE=1` to make the UI work, that is the bug, not the fix.
+
+Without the stand-in, every edge-gated path stops at a 500 and only the *deny* half of an
 authorization test is observable.
 
 ---

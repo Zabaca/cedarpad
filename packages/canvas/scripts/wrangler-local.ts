@@ -18,8 +18,15 @@ const WRANGLER = fileURLToPath(new URL('../node_modules/.bin/wrangler', import.m
 export const webOrigin = () => `http://localhost:${process.env.PORT ?? 4510}`;
 
 /**
- * E2E ONLY (#276): where the edge should proxy a workspace request, since local dev runs no
- * container. Null outside e2e, so a plain `bun run dev` emits no stand-in at all.
+ * Where the edge should proxy a workspace request, since local dev runs no container (#276).
+ *
+ * Unconditional, and that is the fix for a bug that bit twice: this generator only ever
+ * writes the LOCAL config, so the stand-in is right for every local run, not just e2e. It
+ * used to be gated on `E2E_MODE` — which ALSO stubs the bridge's Claude SDK turn
+ * (`server/bridge.ts`). So a plain `bun run dev` left the Shell's canvas stage dead with
+ * *"Containers have not been enabled for this Durable Object class"*, and the only way to
+ * revive it was a mode that silently replaced the agent with a stub. The two flags are now
+ * separate: this emits `LOCAL_CONTAINER_SHIM`, and `E2E_MODE` stays e2e's alone.
  *
  * VITE, not the bridge — the container exposes ONE port and vite is what listens on it,
  * proxying `/api` to the bridge beside it (vite.config.ts). Pointing this at the bridge
@@ -31,7 +38,7 @@ export const webOrigin = () => `http://localhost:${process.env.PORT ?? 4510}`;
  * itself, well before anything reaches the workspace proxy — so the routes vite would send
  * BACK to the edge never travel this way.
  */
-export const localContainerOrigin = () => (process.env.E2E_MODE === '1' ? webOrigin() : null);
+export const localContainerOrigin = () => webOrigin();
 
 /** Spawn wrangler with this worktree's dev config and state dir bolted on.
  *
