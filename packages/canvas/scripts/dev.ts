@@ -51,6 +51,21 @@ const web = Bun.spawn(['bun', 'run', 'dev:web'], {
   env: { ...process.env, CANVAS_BRIDGE: BRIDGE, CANVAS_EDGE: EDGE, ...(edge ? { PLATFORM_RPC_ORIGIN: EDGE } : {}) },
 });
 
+// The Shell (rail, canvas picker, Inbox) has NO dev server: the edge Worker serves it from
+// `shell/dist` through its ASSETS binding, exactly as production does. So without this the
+// Shell at :4513 silently serves whatever was last built — which has twice looked like "my
+// change didn't apply" when the truth was a five-day-old bundle. `vite build --watch` keeps
+// `shell/dist` tracking `shell/src` + `shared/`.
+//
+// Only LOCAL dev: in the container (IS_SANDBOX) the Shell is served by the deployed Worker
+// and nothing here should be writing to dist.
+const shellBuild = process.env.IS_SANDBOX
+  ? null
+  : Bun.spawn(['bun', 'x', 'vite', 'build', '--watch', '--logLevel', 'warn', '--config', 'shell/vite.config.ts'], {
+      stdio: ['inherit', 'inherit', 'inherit'],
+      env: process.env,
+    });
+
 let shuttingDown = false;
 
 // Console PTY server (ADR-0021). SUPERVISED, not part of the critical pair — node-pty is
@@ -91,6 +106,7 @@ const killAll = () => {
   web.kill();
   ptyServer?.kill();
   edge?.kill();
+  shellBuild?.kill();
 };
 process.on('SIGINT', () => {
   killAll();

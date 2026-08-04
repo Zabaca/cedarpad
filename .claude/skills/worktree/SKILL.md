@@ -211,6 +211,25 @@ The origin is **vite**, not the bridge: the container exposes ONE port and vite 
 listens on it, proxying `/api` to the bridge beside it. Point it at the bridge and every API
 call works while the Shell's canvas stage 404s on `/w/:ws/canvas/:id/pad`.
 
+### The Shell has no dev server — `dev.ts` rebuilds it instead
+
+Same root cause, second symptom. The Shell (rail, canvas picker, **Inbox**) is served by the
+edge Worker from `shell/dist` through its ASSETS binding, exactly as production does — there
+is no vite dev server for it and `bun run dev:web` is the *pad*, not the Shell. So an edit to
+`shell/src/` or to anything shared with it (`shared/ChatView.tsx`, `shared/chat.css`) does
+**not** appear at `:4513` until the bundle is rebuilt.
+
+This reads as "my change didn't apply", or worse as "the Inbox must use a different
+component" — it does not; it renders the same `<ChatView>`. `scripts/dev.ts` now runs
+`vite build --watch --config shell/vite.config.ts` alongside the stack so `shell/dist`
+tracks the source. If you ever bypass `dev.ts`, rebuild by hand:
+
+```bash
+bunx vite build --config shell/vite.config.ts   # from packages/canvas
+```
+
+Check `ls -la shell/dist/index.html` before believing a Shell change is broken.
+
 ### Why it has its own flag
 
 It used to ride on `E2E_MODE`, and that cost us the same hour twice. Two symptoms, one
