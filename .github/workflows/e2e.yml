@@ -41,6 +41,17 @@ jobs:
       - name: Reap orphans from a cancelled run
         run: bash scripts/ci-reap.sh
 
+      # wrangler REQUIRES node and refuses to run under bun. `scripts/wrangler-local.ts`
+      # spawns `node_modules/.bin/wrangler`, whose shebang resolves `node` off PATH — so when
+      # node vanished from this runner host (2026-08-04) the shim fell through to bun,
+      # wrangler's inspector WebSocket died with "Unexpected server response: 101", the edge
+      # Worker never bound its port, and every spec failed at auth setup with ECONNREFUSED
+      # (1 failed, 22 never ran). The workflow pinned bun but only ASSUMED node; pinning it
+      # makes the runtime wrangler needs a property of the workflow, not of the box.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.4
