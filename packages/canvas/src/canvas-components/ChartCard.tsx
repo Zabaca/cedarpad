@@ -16,6 +16,7 @@
 // Colors: chrome follows the cedar tokens (src/styles.css, DESIGN.md) — NEVER hardcoded
 // hex, the KpiCard rule. Series colors stay Flint's: they're data, not chrome.
 import { assembleVegaLite, vlGetTemplateChannels } from 'flint-chart/vegalite';
+import { applyFit } from '../chart-fit';
 import { useEffect, useRef, useState } from 'react';
 import { View, parse } from 'vega';
 import { compile } from 'vega-lite';
@@ -61,10 +62,29 @@ export default function ChartCard({
     let view: View | null = null;
     let raf = 0;
     let alive = true;
+    // The size we last drew at. Since #-fit the chart is sized FROM the host, and drawing
+    // into the host can change the host — a chart one pixel too tall brings up a scrollbar,
+    // which narrows `clientWidth`, which redraws narrower, which drops the scrollbar, which
+    // widens it again: an endless redraw loop that reads as the card flickering forever.
+    // Redrawing only on a real size change breaks it, whatever the cause of the nudge.
+    let lastW = 0;
+    let lastH = 0;
 
     const draw = () => {
-      const { width, height } = host.getBoundingClientRect();
+      // `clientWidth/Height`, NOT `getBoundingClientRect()`: the card renders inside tldraw's
+      // CSS-scaled container, so the bounding rect is POST-transform. At zoom 0.6 it reported
+      // 60% of the layout box, Flint laid out a chart that small, and the transform then
+      // scaled it back up — so the chart under-filled the card at any zoom below 1 (and
+      // overflowed above it). `clientWidth` is pure layout, unaffected by transforms; it is
+      // the same reason `scrollToHeading` uses `offsetTop` (cedarpad-component skill).
+      const width = host.clientWidth;
+      const height = host.clientHeight;
       if (!alive || width < 1 || height < 1) return;
+      // A sub-pixel settle is not a resize. 2px of slack also absorbs the rounding between
+      // the layout box and the SVG vega emits, which is what oscillated.
+      if (Math.abs(width - lastW) < 2 && Math.abs(height - lastH) < 2) return;
+      lastW = width;
+      lastH = height;
       try {
         // Re-assemble (not just resize) on every size change: Flint's auto-layout re-derives
         // label density, rotation and legend placement from the size it is given.
@@ -79,6 +99,7 @@ export default function ChartCard({
           chart_spec: { chartType, encodings, baseSize: { width, height }, canvasSize: { width, height } },
         }) as Record<string, unknown>;
         applyCedarTheme(spec, host);
+        applyFit(spec, width, height);
 
         view?.finalize();
         view = new View(parse(compile(spec as never).spec), { renderer: 'svg', container: host, hover: true });
@@ -119,7 +140,11 @@ export default function ChartCard({
       {message ? (
         <div style={{ color: 'var(--danger)', fontSize: 12, lineHeight: 1.5 }}>{message}</div>
       ) : (
-        <div ref={hostRef} style={{ flex: 1, minHeight: 0, overflow: 'auto' }} />
+        // `overflow: hidden`, not `auto`: with autosize:fit the chart is drawn to this box,
+        // so a scrollbar can only ever be the rounding artefact that used to drive the
+        // resize loop — and a scrollbar that appears and disappears on its own is worse
+        // than a hairline of a chart clipped.
+        <div ref={hostRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden' }} />
       )}
     </div>
   );

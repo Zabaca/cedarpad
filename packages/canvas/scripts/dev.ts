@@ -52,19 +52,17 @@ const web = Bun.spawn(['bun', 'run', 'dev:web'], {
 });
 
 // The Shell (rail, canvas picker, Inbox) has NO dev server: the edge Worker serves it from
-// `shell/dist` through its ASSETS binding, exactly as production does. So without this the
-// Shell at :4513 silently serves whatever was last built — which has twice looked like "my
-// change didn't apply" when the truth was a five-day-old bundle. `vite build --watch` keeps
-// `shell/dist` tracking `shell/src` + `shared/`.
+// `shell/dist` through its ASSETS binding, exactly as production does. So the Shell at :4513
+// serves whatever was last BUILT — an edit to `shell/src/` or to anything shared with it
+// (`shared/ChatView.tsx`, `shared/chat.css`) needs a rebuild to show up:
 //
-// Only LOCAL dev: in the container (IS_SANDBOX) the Shell is served by the deployed Worker
-// and nothing here should be writing to dist.
-const shellBuild = process.env.IS_SANDBOX
-  ? null
-  : Bun.spawn(['bun', 'x', 'vite', 'build', '--watch', '--logLevel', 'warn', '--config', 'shell/vite.config.ts'], {
-      stdio: ['inherit', 'inherit', 'inherit'],
-      env: process.env,
-    });
+//   bunx vite build --config shell/vite.config.ts
+//
+// This deliberately does NOT run that on a `--watch`. It was tried on 2026-08-04 and is a
+// trap: `shell/vite.config.ts` has its outDir INSIDE its own root, so the watcher rebuilds
+// its own output forever — and the pad's dev server, whose root is the whole package, full-
+// page-reloads the browser on every write. An infinite refresh loop, not a stale bundle.
+// Fixing it properly means excluding `shell/dist` from both watchers first.
 
 let shuttingDown = false;
 
@@ -106,7 +104,6 @@ const killAll = () => {
   web.kill();
   ptyServer?.kill();
   edge?.kill();
-  shellBuild?.kill();
 };
 process.on('SIGINT', () => {
   killAll();

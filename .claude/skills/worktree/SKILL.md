@@ -220,15 +220,29 @@ is no vite dev server for it and `bun run dev:web` is the *pad*, not the Shell. 
 **not** appear at `:4513` until the bundle is rebuilt.
 
 This reads as "my change didn't apply", or worse as "the Inbox must use a different
-component" — it does not; it renders the same `<ChatView>`. `scripts/dev.ts` now runs
-`vite build --watch --config shell/vite.config.ts` alongside the stack so `shell/dist`
-tracks the source. If you ever bypass `dev.ts`, rebuild by hand:
+component" — it does not; it renders the same `<ChatView>`. **Rebuild by hand:**
 
 ```bash
 bunx vite build --config shell/vite.config.ts   # from packages/canvas
 ```
 
 Check `ls -la shell/dist/index.html` before believing a Shell change is broken.
+
+**Do not put that build on a `--watch` inside `dev.ts`.** Tried 2026-08-04, reverted the
+same hour: `shell/vite.config.ts` has its `outDir` INSIDE its own `root`, so the watcher
+rebuilds its own output forever — and the pad's dev server, whose root is the whole package,
+full-page-reloads the browser on every write. The operator gets an infinite refresh loop,
+which is strictly worse than a stale bundle. Excluding `shell/dist` from both watchers is
+the prerequisite, not an afterthought.
+
+### While you are at it: don't add scratch files under `packages/canvas/src/`
+
+A temporary harness there is inside vite's root, so creating or touching it **full-page-
+reloads whatever the operator has open**. Repeated over a work session that reads as the app
+being broken, and it can drop an in-flight chat turn's SSE stream (see the recovery gap
+below). Same trap, smaller blast radius: a non-component export from a `.tsx` (a helper, a
+constant) breaks React Fast Refresh for that module, so every later edit to it is a full
+reload rather than a patch — keep helpers in a sibling `.ts`.
 
 ### Why it has its own flag
 
