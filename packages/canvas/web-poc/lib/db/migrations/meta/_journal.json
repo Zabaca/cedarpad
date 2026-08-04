@@ -253,6 +253,13 @@
       "when": 1785510490186,
       "tag": "0035_mighty_darkstar",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1785556905924,
+      "tag": "0036_notebook_fts",
+      "breakpoints": true
     }
   ]
 }

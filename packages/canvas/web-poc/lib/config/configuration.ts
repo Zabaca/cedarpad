@@ -62,13 +62,12 @@ export interface SimilarityConfig {
 }
 
 /**
- * The graph knowledge layer is cross-workspace by design. The hierarchy is
+ * The graph knowledge layer is confined to one workspace. The hierarchy is
  * `workspace → observations → problems → solutions`: observations are loose,
  * workspace-local captures; many observations synthesize into a problem, and a
- * problem (or an observation) carries solutions. Similarity, traversal,
- * solved-neighbour and cluster-summary reads all span every tenant so solutions
- * are reused across workspaces — there is no caller-selectable scope. Only plain
- * listing of a tenant's own observations/problems stays workspace-scoped.
+ * problem (or an observation) carries solutions. Every read — listing, traversal
+ * and problem context alike — filters by the caller's active workspace, which is
+ * resolved from their token and never a request parameter (ADR-0024).
  */
 
 /**

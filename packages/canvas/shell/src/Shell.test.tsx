@@ -134,7 +134,6 @@ afterEach(async () => {
     selectedObservationId: null,
     selectedKind: null,
     scopeWorkspaceId: null,
-    synthPicks: [],
   });
 });
 

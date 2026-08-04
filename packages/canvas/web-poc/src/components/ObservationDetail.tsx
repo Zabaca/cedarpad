@@ -1,11 +1,11 @@
 import {
-  Alert,
   Badge,
   Button,
   Card,
   Divider,
   Group,
   Loader,
+  Modal,
   Select,
   Stack,
   Text,
@@ -20,7 +20,6 @@ import { api } from "../api.js";
 import { useAppStore } from "../store.js";
 import { ShareLinkButton } from "./ShareLinkButton.js";
 
-const linkColor: Record<string, string> = { identical: "red", partial: "orange", related: "blue" };
 const OBS_STATUS = ["open", "synthesized", "archived"];
 // Preserve newlines/paragraphs in free-form text (body, solutions).
 const preWrap = { whiteSpace: "pre-wrap" } as const;
@@ -29,6 +28,7 @@ export function ObservationDetail({ id }: { id: string }) {
   const qc = useQueryClient();
   const setView = useAppStore((s) => s.setView);
   const selectProblem = useAppStore((s) => s.selectProblem);
+  const selectObservation = useAppStore((s) => s.selectObservation);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["observation", id],
@@ -41,6 +41,7 @@ export function ObservationDetail({ id }: { id: string }) {
   const [status, setStatus] = useState("open");
   const [adding, setAdding] = useState(false);
   const [newSol, setNewSol] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["observation", id] });
@@ -60,6 +61,19 @@ export function ObservationDetail({ id }: { id: string }) {
       setEditing(false);
       invalidate();
     },
+  });
+  // Deleting is a correction, not a workflow — it clears the selection so the
+  // detail pane doesn't sit on a record that is gone.
+  const deleteObs = useMutation({
+    mutationFn: () => api.deleteObservation(id),
+    onSuccess: () => {
+      setConfirmDelete(false);
+      selectObservation(null);
+      invalidate();
+      notifications.show({ title: "Observation deleted", message: "Removed.", color: "gray" });
+    },
+    onError: (err) =>
+      notifications.show({ title: "Delete failed", message: String(err), color: "red" }),
   });
   const addSolution = useMutation({
     mutationFn: () => api.createSolution({ targetKind: "observation", targetId: id, body: newSol }),
@@ -82,6 +96,26 @@ export function ObservationDetail({ id }: { id: string }) {
 
   return (
     <Stack>
+      <Modal
+        opened={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        title="Delete observation"
+        centered
+      >
+        <Stack gap="sm">
+          <Text size="sm">
+            Delete <b>{data.observation.title}</b>? This removes the record and its ties.
+          </Text>
+          <Group justify="flex-end">
+            <Button size="xs" variant="default" onClick={() => setConfirmDelete(false)}>
+              Cancel
+            </Button>
+            <Button size="xs" color="red" loading={deleteObs.isPending} onClick={() => deleteObs.mutate()}>
+              Delete
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
       <Card withBorder padding="md">
         {editing ? (
           <Stack gap="xs">
@@ -101,11 +135,23 @@ export function ObservationDetail({ id }: { id: string }) {
               <Group gap="xs">
                 <Title order={4}>{data.observation.title}</Title>
                 <Badge size="sm" color="grape" variant="light">observation</Badge>
+                {/* Who produced it — distinct from the Source below, which is
+                    where it came from. */}
+                <Badge
+                  size="sm"
+                  variant="outline"
+                  color={data.observation.origin === "agent" ? "grape" : "gray"}
+                >
+                  {data.observation.origin}
+                </Badge>
                 <Badge size="sm" variant="outline">{data.observation.status}</Badge>
               </Group>
               <Group gap="xs" wrap="nowrap">
                 <ShareLinkButton kind="observation" id={id} />
                 <Button size="xs" variant="default" onClick={startEdit}>Edit</Button>
+                <Button size="xs" variant="subtle" color="red" onClick={() => setConfirmDelete(true)}>
+                  Delete
+                </Button>
               </Group>
             </Group>
             <Text mt="xs" style={preWrap}>{data.observation.body}</Text>

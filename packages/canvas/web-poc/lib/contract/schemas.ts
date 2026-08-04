@@ -228,6 +228,19 @@ export const ProblemLinkSchema = z
   })
   .openapi("ProblemLink");
 
+/**
+ * Drawing a link between two problems. Deliberate, never inferred (ADR-0024):
+ * the caller says which kind of relation it is and why, and there is no
+ * similarity score to carry.
+ */
+export const LinkProblemSchema = z
+  .object({
+    toProblemId: z.string().min(1),
+    kind: LinkKind,
+    rationale: z.string().min(1).optional(),
+  })
+  .openapi("LinkProblem");
+
 /** A linked problem joined with the edge that connects it (for detail view). */
 export const LinkedProblemSchema = z
   .object({
@@ -393,7 +406,7 @@ export const GraphSchema = z
 
 /* ------------------------------------------------------------------ *
  * Agent graph retrieval — bounded, read-only views over the stored graph.
- * The graph spans every workspace, so these views are cross-tenant.
+ * Every one of them is confined to the caller's workspace (ADR-0024).
  * ------------------------------------------------------------------ */
 
 /** One edge in a problem's context view, with the stored rationale. */
@@ -460,14 +473,6 @@ export const NeighborhoodSchema = z
   })
   .openapi("Neighborhood");
 
-export const SolvedNeighborSchema = z
-  .object({
-    problemId: z.string(),
-    title: z.string(),
-    depth: z.number(),
-    solution: ContextSolutionSchema,
-  })
-  .openapi("SolvedNeighbor");
 
 /* ------------------------------------------------------------------ *
  * Query params
@@ -488,6 +493,15 @@ export const ErrorSchema = z
 
 export const IdParam = z.object({
   id: z.string().min(1).openapi({ param: { name: "id", in: "path" }, example: "prob_01h..." }),
+});
+
+/** Both ends of a Problem↔Problem link, addressed in the path. */
+export const ProblemLinkParams = z.object({
+  id: z.string().min(1).openapi({ param: { name: "id", in: "path" }, example: "prob_01h..." }),
+  toProblemId: z
+    .string()
+    .min(1)
+    .openapi({ param: { name: "toProblemId", in: "path" }, example: "prob_02h..." }),
 });
 
 /** Both ends of an Observation↔Problem tie, addressed in the path. */
@@ -515,6 +529,39 @@ export const ListProblemsQuery = z.object({
     description: "narrow the all-workspaces list to a single workspace",
   }),
 });
+
+/* ------------------------------------------------------------------ *
+ * Search — FTS5 over Observations and Problems (ADR-0024)
+ * ------------------------------------------------------------------ */
+
+/** Query for the FTS5 search across both searchable kinds. */
+export const SearchQuery = z.object({
+  q: z.string().openapi({ param: { name: "q", in: "query" }, description: "free text; FTS5 syntax characters are treated as text" }),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).optional().openapi({ param: { name: "offset", in: "query" } }),
+});
+
+/**
+ * One hit: enough to identify the record and show why it matched. Deliberately
+ * never the full body — a search result is a pointer, and the detail route is
+ * how a caller reads the record.
+ */
+export const SearchResultSchema = z
+  .object({
+    id: z.string(),
+    kind: z.enum(["observation", "problem"]),
+    title: z.string(),
+    snippet: z.string().openapi({ description: "matching excerpt, with the matched terms marked by [ ]" }),
+  })
+  .openapi("SearchResult");
+
+/** A page of search hits, ranked most relevant first. */
+export const SearchPageSchema = z
+  .object({
+    items: z.array(SearchResultSchema),
+    total: z.number().openapi({ description: "total records matching the query" }),
+  })
+  .openapi("SearchPage");
 
 export const ListObservationsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -629,15 +676,17 @@ export type Solution = z.infer<typeof SolutionSchema>;
 export type CreateSolution = z.infer<typeof CreateSolutionSchema>;
 export type UpdateSolution = z.infer<typeof UpdateSolutionSchema>;
 export type ProblemLink = z.infer<typeof ProblemLinkSchema>;
+export type LinkProblem = z.infer<typeof LinkProblemSchema>;
 export type ObservationProblemEdge = z.infer<typeof ObservationProblemEdgeSchema>;
 export type TieObservation = z.infer<typeof TieObservationSchema>;
 export type ProblemDetail = z.infer<typeof ProblemDetailSchema>;
 export type ProblemSummary = z.infer<typeof ProblemSummarySchema>;
 export type ProblemPage = z.infer<typeof ProblemPageSchema>;
+export type SearchResult = z.infer<typeof SearchResultSchema>;
+export type SearchPage = z.infer<typeof SearchPageSchema>;
 export type Graph = z.infer<typeof GraphSchema>;
 export type ProblemContext = z.infer<typeof ProblemContextSchema>;
 export type Neighborhood = z.infer<typeof NeighborhoodSchema>;
-export type SolvedNeighbor = z.infer<typeof SolvedNeighborSchema>;
 export type ProjectTags = z.infer<typeof ProjectTagsSchema>;
 export type WorkspaceSummary = z.infer<typeof WorkspaceSummarySchema>;
 export type ApiKeyAdmin = z.infer<typeof ApiKeyAdminSchema>;

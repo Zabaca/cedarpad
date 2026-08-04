@@ -1,6 +1,5 @@
 import { configuration } from "../lib/config/index.js";
 import {
-  findSolvedNeighbors,
   getProblemContext,
   neighborhood,
   schema,
@@ -30,11 +29,13 @@ import {
   sourceAccessible,
 } from "./middleware.js";
 import { publish, workspaceChannel } from "./realtime.js";
+import { matchExpression } from "./search-query.js";
 import {
   serializeApiKey,
   serializeObservation,
   serializeObservationProblemEdge,
   serializeProblem,
+  serializeProblemLink,
   serializeSolution,
 } from "./serializers.js";
 
@@ -471,6 +472,58 @@ export function buildApp(opts: BuildAppOptions = {}) {
       await db.delete(schema.problems).where(eq(schema.problems.id, id));
       return c.json({ success: true }, 200);
     })
+    /* ---- The Problem ↔ Problem link ---- */
+    .openapi(contract.linkProblemRoute, async (c) => {
+      const db = c.get("db");
+      const { id } = c.req.valid("param");
+      const input = c.req.valid("json");
+      const scope = c.get("accessScope");
+      // Both ends must be in the caller's workspace — a link never crosses one.
+      if (
+        !(await problemAccessible(db, scope, id)) ||
+        !(await problemAccessible(db, scope, input.toProblemId))
+      ) {
+        return c.json({ error: "not_found", message: "Problem not accessible" }, 404);
+      }
+      const where = and(
+        eq(schema.problemLinks.fromProblemId, id),
+        eq(schema.problemLinks.toProblemId, input.toProblemId),
+      );
+      const values = {
+        kind: input.kind,
+        rationale: input.rationale ?? null,
+        createdBy: (c.get("isAgent") ? "agent" : "human") as "agent" | "human",
+      };
+      // Linking the same pair twice restates the link rather than duplicating it.
+      const existing = await db.select().from(schema.problemLinks).where(where).limit(1);
+      if (existing[0]) {
+        await db.update(schema.problemLinks).set(values).where(where);
+      } else {
+        await db.insert(schema.problemLinks).values({
+          id: newId("plink"),
+          fromProblemId: id,
+          toProblemId: input.toProblemId,
+          ...values,
+        });
+      }
+      const link = (await db.select().from(schema.problemLinks).where(where).limit(1))[0]!;
+      return c.json(serializeProblemLink(link), 201);
+    })
+    .openapi(contract.unlinkProblemRoute, async (c) => {
+      const db = c.get("db");
+      const { id, toProblemId } = c.req.valid("param");
+      if (!(await problemAccessible(db, c.get("accessScope"), id))) {
+        return c.json({ error: "not_found" }, 404);
+      }
+      const where = and(
+        eq(schema.problemLinks.fromProblemId, id),
+        eq(schema.problemLinks.toProblemId, toProblemId),
+      );
+      const existing = await db.select().from(schema.problemLinks).where(where).limit(1);
+      if (existing.length === 0) return c.json({ error: "not_found" }, 404);
+      await db.delete(schema.problemLinks).where(where);
+      return c.json({ success: true }, 200);
+    })
     /* ---- The Observation → Problem tie ---- */
     .openapi(contract.tieObservationRoute, async (c) => {
       const db = c.get("db");
@@ -620,6 +673,51 @@ export function buildApp(opts: BuildAppOptions = {}) {
       )[0]!;
       return c.json(serializeSolution(updated), 200);
     })
+    /* ---- Search ---- */
+    .openapi(contract.searchRoute, async (c) => {
+      const db = c.get("db");
+      const { q, limit, offset } = c.req.valid("query");
+      const match = matchExpression(q);
+      const empty = { items: [] as never[], total: 0 };
+      if (!match) return c.json(empty, 200);
+
+      const scope = c.get("accessScope");
+      const conds = [sql`notebook_fts MATCH ${match}`];
+      if (scope.kind === "list") {
+        if (scope.workspaceIds.length === 0) return c.json(empty, 200);
+        conds.push(
+          sql`workspace_id IN (${sql.join(
+            scope.workspaceIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})`,
+        );
+      }
+      const where = sql.join(conds, sql` AND `);
+
+      // `-1` lets FTS5 pick the column that matched best; the excerpt is bounded
+      // at 20 tokens, so a result is a pointer and never a full body.
+      const rows = await db.all<{ id: string; kind: string; title: string; snippet: string }>(
+        sql`SELECT record_id AS id, kind, title, snippet(notebook_fts, -1, '[', ']', '…', 20) AS snippet
+            FROM notebook_fts WHERE ${where}
+            ORDER BY rank
+            LIMIT ${limit ?? configuration.defaultPageSize} OFFSET ${offset ?? 0}`,
+      );
+      const totals = await db.all<{ total: number }>(
+        sql`SELECT count(*) AS total FROM notebook_fts WHERE ${where}`,
+      );
+      return c.json(
+        {
+          items: rows.map((r) => ({
+            id: r.id,
+            kind: r.kind as "observation" | "problem",
+            title: r.title,
+            snippet: r.snippet,
+          })),
+          total: totals[0]?.total ?? 0,
+        },
+        200,
+      );
+    })
     /* ---- Knowledge graph + agent retrieval ---- */
     .openapi(contract.getGraphRoute, async (c) => {
       const db = c.get("db");
@@ -632,8 +730,7 @@ export function buildApp(opts: BuildAppOptions = {}) {
     .openapi(contract.getProblemContextRoute, async (c) => {
       const db = c.get("db");
       const { id } = c.req.valid("param");
-      // The graph is cross-workspace: a problem from any tenant is readable.
-      const ctx = await getProblemContext(db, id);
+      const ctx = await getProblemContext(db, { problemId: id, workspaceId: c.get("workspaceId") });
       if (!ctx) {
         return c.json({ error: "not_found" }, 404);
       }
@@ -644,28 +741,15 @@ export function buildApp(opts: BuildAppOptions = {}) {
       const { id } = c.req.valid("param");
       const query = c.req.valid("query");
       const g = configuration.graph;
-      // Cross-workspace graph: root at any existing problem; null ⇒ not found.
+      // The root must be a problem in the caller's workspace; null ⇒ not found.
       const result = await neighborhood(db, {
         rootId: id,
+        workspaceId: c.get("workspaceId"),
         hops: Math.min(query.hops ?? g.defaultHops, g.maxHops),
         maxNodes: Math.min(query.maxNodes ?? g.maxNodes, g.maxNodes),
       });
       if (!result) return c.json({ error: "not_found" }, 404);
       return c.json(result as contract.Neighborhood, 200);
-    })
-    .openapi(contract.getSolvedNeighborsRoute, async (c) => {
-      const db = c.get("db");
-      const { id } = c.req.valid("param");
-      const query = c.req.valid("query");
-      const g = configuration.graph;
-      // Cross-workspace graph: root at any existing problem; null ⇒ not found.
-      const result = await findSolvedNeighbors(db, {
-        rootId: id,
-        hops: Math.min(query.hops ?? g.defaultHops, g.maxHops),
-        maxNodes: Math.min(query.maxNodes ?? g.maxNodes, g.maxNodes),
-      });
-      if (result === null) return c.json({ error: "not_found" }, 404);
-      return c.json(result as contract.SolvedNeighbor[], 200);
     })
     /* ---- Meta ---- */
     .openapi(contract.listProjectTagsRoute, async (c) => {

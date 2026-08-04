@@ -62,7 +62,9 @@ secrets.yaml` and are pushed as Worker secrets by the zbc module — now as
 - **No embeddings, no queue, no LLM pass (ADR-0024).** A write is one insert. The
   `agent_jobs`/`agent_runs` tables, the similarity graph and the intake pipeline
   were dropped by migrations 0032–0033; `createEmbedder` (`worker/agent.ts`)
-  survives for a future index. Search is not implemented — it returns on D1 FTS5.
+  survives for a future index. Search is D1's native FTS5: a `notebook_fts` virtual
+  table over Observations and Problems, kept in sync by triggers (migration 0036),
+  served by `GET /v1/search`.
 - **DB client**: `worker/runtime.ts`'s `createDbForWorker` builds a Drizzle db from
   the edge Worker's `PLATFORM_DB` D1 binding (ADR-0018) — the container/bridge holds
   no database client at all. In dev that binding is miniflare's local D1 (apply

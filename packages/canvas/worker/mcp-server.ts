@@ -36,6 +36,8 @@ import {
   WriteDataInput,
   buildMcpTools,
 } from './mcp-tools.ts';
+import { NOTEBOOK_TOOL_SPECS, type NotebookCall } from '../web-poc/lib/contract/notebook-tools.ts';
+import { runNotebookCall } from '../web-poc/worker/notebook-tools.ts';
 import { serveWorkspace, warehouseExec } from './sandbox-runtime.ts';
 import type { Env } from './index.ts';
 import { CANVAS_ID_HEADER, DATA_MAX_BYTES, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
@@ -321,6 +323,16 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       },
       async (input) => text(await tools.runDevAgent(input)),
     );
+
+    // The Notebook (ADR-0024): the store agents write and canvas reads. Registered from the
+    // shared spec list so the edge and the container advertise the same surface in the same
+    // words — and deliberately WITHOUT a workspace input: `tools.notebook()` binds the
+    // token user's workspace, so there is nothing here for a caller to name.
+    for (const spec of NOTEBOOK_TOOL_SPECS) {
+      server.registerTool(spec.name, { description: spec.description, inputSchema: spec.schema.shape }, async (input: unknown) =>
+        text(await runNotebookCall(await tools.notebook(), { tool: spec.tool, input } as NotebookCall)),
+      );
+    }
 
     const transport = new StreamableHTTPTransport();
     await server.connect(transport);

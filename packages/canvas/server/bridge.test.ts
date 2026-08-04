@@ -642,6 +642,7 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
       skillList: async () => [],
       dataWrite: async () => ({ rev: 1 }),
       dataRead: async () => null,
+      notebook: async () => ({}),
     };
     return { rpc, started };
   };
@@ -693,6 +694,7 @@ describe('indexSessionStart: a session enters the index when it starts (ADR-0011
           skillList: async () => [],
           dataWrite: async () => ({ rev: 1 }),
           dataRead: async () => null,
+          notebook: async () => ({}),
         },
       });
     } finally {

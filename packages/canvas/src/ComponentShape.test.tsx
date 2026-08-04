@@ -397,6 +397,44 @@ describe('ComponentHost: mart-backed dataSource (#239)', () => {
     await host.unmount();
   });
 
+  // A canvas reads the Notebook live (ADR-0024): the second member of the data-source
+  // union resolves the same way — a NAME plus params, never a URL and never SQL.
+  test('a notebook dataSource resolves its named query into rows props', async () => {
+    const ed = makeEditor({
+      id: 'shape:notebook',
+      type: 'component',
+      props: { w: 360, h: 260, module: 'Probe', data: {}, rev: 0 },
+      meta: {},
+    });
+    const asked: { query: string; params?: Record<string, string | number> }[] = [];
+    const host = render(
+      React.createElement(ComponentHost, {
+        shapeId: 'shape:notebook',
+        editor: ed.editor,
+        module: 'Probe',
+        data: { title: 'Open problems' },
+        rev: 0,
+        dataSource: { kind: 'notebook', query: 'open_problems', params: { limit: 5 } },
+        load: async () => Probe,
+        loadMart: async () => {
+          throw new Error('a notebook source must never take the mart path');
+        },
+        loadNotebook: async (query, params) => {
+          asked.push({ query, params });
+          return [{ id: 'prob_high', title: 'High priority', priority: 9 }];
+        },
+      }),
+    );
+    await host.mount();
+    await act(async () => {});
+    const props = (Probe as unknown as { lastProps: Record<string, unknown> }).lastProps;
+    expect(asked).toEqual([{ query: 'open_problems', params: { limit: 5 } }]);
+    expect(props.rows).toEqual([{ id: 'prob_high', title: 'High priority', priority: 9 }]);
+    expect(props.title).toBe('Open problems'); // static data still reaches the component
+    expect(props.mart).toBeNull(); // a notebook read has no materialize stamp — it is live
+    await host.unmount();
+  });
+
   test('a mart fetch error surfaces on the card as an error badge, without breaking the component', async () => {
     const ed = makeEditor({
       id: 'shape:mart-err',

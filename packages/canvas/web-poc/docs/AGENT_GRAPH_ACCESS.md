@@ -1,6 +1,17 @@
 # Design: AI-Agent Access to the Knowledge Graph
 
-> Status: **Tier 2 + Tier 3 implemented**, hybrid write-time classifier shipped (2026-06-23). See §9.
+> **Status: HISTORICAL — superseded by [ADR-0024](../../../../docs/adr/0024-the-notebook-is-an-agent-first-store.md).**
+> Kept for the reasoning it records, not as a description of the code. Everything
+> below that describes the similarity layer is gone: the embeddings, `searchGraph`,
+> `findSimilarProblems` / `findSimilarObservations`, `findSolvedNeighbors` and the
+> `/v1/problems/{id}/solved-neighbors` endpoint. What survives is `getProblemContext`
+> and `neighborhood` over deliberately-drawn `problem_links` — and, contrary to the
+> "cross-workspace by design" claim repeated throughout, **both are confined to the
+> caller's workspace**, resolved from their token and never a request parameter.
+> Search returns on D1 FTS5. The `packages/config` / `packages/db` / `apps/api`
+> paths named below no longer exist; this module lives at `packages/canvas/web-poc/`.
+>
+> Original status line: **Tier 2 + Tier 3 implemented**, hybrid write-time classifier shipped (2026-06-23). See §9.
 > Related: `CONTRACT_ARCHITECTURE.md`, `CONFIGURATION.md`, `IMPLEMENTATION_PLAN.md`, `SIMILARITY_SCALING.md`.
 >
 > **Retrieval is an exact brute-force cosine scan, not ANN.** The "ANN" wording below is historical — the

@@ -1,8 +1,6 @@
 import {
   Badge,
-  Button,
   Card,
-  Checkbox,
   Group,
   Loader,
   Pagination,
@@ -14,9 +12,8 @@ import {
   TextInput,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { useAppStore } from "../store.js";
 import { useWorkspaceNames } from "../workspaces.js";
@@ -44,32 +41,29 @@ const PAGE_SIZES = ["10", "20", "50"];
 type TypeFilter = "all" | "observations" | "problems";
 
 /**
- * Unified browser for observations and problems. The type filter (All / Observations
- * / Problems) sits on the same row as the "Solved only" switch and defaults to "All",
- * which interleaves both streams newest-first. Observation rows keep their checkbox so
- * a selection can still be synthesized into a problem.
+ * The read surface's index: what agents have recorded, browsable and searchable.
+ *
+ * Two modes, because they answer different questions. With an empty search box
+ * this is the unified feed — observations and problems interleaved newest-first,
+ * filterable by kind and by "has an accepted solution". Type anything and it
+ * becomes ranked FTS5 search (`GET /v1/search`, ADR-0024): hits ordered by
+ * relevance, each carrying the matched excerpt. A hit is a pointer to a record
+ * rather than a row of it, so the feed's filters don't apply to it and are
+ * hidden while it shows.
  */
 export function ItemList() {
-  const qc = useQueryClient();
   const selectedObservationId = useAppStore((s) => s.selectedObservationId);
   const selectedProblemId = useAppStore((s) => s.selectedProblemId);
   const selectObservation = useAppStore((s) => s.selectObservation);
   const selectProblem = useAppStore((s) => s.selectProblem);
-  const setView = useAppStore((s) => s.setView);
   const scope = useAppStore((s) => s.scopeWorkspaceId);
-  // Selection lives in the store so it survives paging, search, scope changes
-  // and view switches — see `synthPicks` there.
-  const synthPicks = useAppStore((s) => s.synthPicks);
-  const toggleSynthPick = useAppStore((s) => s.toggleSynthPick);
-  const clearSynthPicks = useAppStore((s) => s.clearSynthPicks);
-  const pickedSet = useMemo(() => new Set(synthPicks), [synthPicks]);
 
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [search, setSearch] = useState("");
   const [debounced] = useDebouncedValue(search, 250);
   const [solvedOnly, setSolvedOnly] = useState(false);
   // Paging lives in the store so the page survives this list unmounting (view
-  // switches, synthesize returning to the library) — see `listPage` there.
+  // switches) — see `listPage` there.
   const page = useAppStore((s) => s.listPage);
   const setPage = useAppStore((s) => s.setListPage);
   const pageSize = useAppStore((s) => s.listPageSize);
@@ -78,20 +72,22 @@ export function ItemList() {
 
   const workspaceNames = useWorkspaceNames();
 
+  const query = debounced.trim();
+  const searching = query.length > 0;
+
   // Any filter change (incl. the workspace scope) returns to the first page.
   // Re-declaring the same filters on a remount deliberately keeps the page.
   useEffect(
-    () => syncListFilters(JSON.stringify([debounced, solvedOnly, pageSize, scope, typeFilter])),
-    [syncListFilters, debounced, solvedOnly, pageSize, scope, typeFilter],
+    () => syncListFilters(JSON.stringify([query, solvedOnly, pageSize, scope, typeFilter])),
+    [syncListFilters, query, solvedOnly, pageSize, scope, typeFilter],
   );
 
   // One unified, server-paged feed: observations and problems interleaved in a
   // single createdAt order, so pagination is consistent across page boundaries.
-  const itemsQuery = useQuery({
-    queryKey: ["items", { q: debounced, solvedOnly, page, pageSize, workspaceId: scope, typeFilter }],
+  const feedQuery = useQuery({
+    queryKey: ["items", { solvedOnly, page, pageSize, workspaceId: scope, typeFilter }],
     queryFn: () =>
       api.listItems({
-        q: debounced || undefined,
         solved: solvedOnly || undefined,
         workspaceId: scope ?? undefined,
         type: typeFilter,
@@ -99,32 +95,28 @@ export function ItemList() {
         offset: (page - 1) * pageSize,
       }),
     placeholderData: keepPreviousData,
+    enabled: !searching,
   });
 
-  const items = itemsQuery.data?.items ?? [];
-  const total = itemsQuery.data?.total ?? 0;
+  const searchQuery = useQuery({
+    queryKey: ["search", { q: query, page, pageSize }],
+    queryFn: () => api.search({ q: query, limit: pageSize, offset: (page - 1) * pageSize }),
+    placeholderData: keepPreviousData,
+    enabled: searching,
+  });
 
-  type Row =
-    | { kind: "observation"; data: Extract<(typeof items)[number], { kind: "observation" }> }
-    | { kind: "problem"; data: Extract<(typeof items)[number], { kind: "problem" }> };
-  // Server returns them already interleaved and ordered — keep that order.
-  const rows: Row[] = items.map((data) =>
-    data.kind === "observation"
-      ? { kind: "observation" as const, data }
-      : { kind: "problem" as const, data },
-  );
-
+  const active = searching ? searchQuery : feedQuery;
+  const total = active.data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
-  // If the result set shrinks (synthesize consumed observations, a filter narrowed
-  // results), don't strand the user on a now-empty page past the end.
+  // If the result set shrinks (a record was deleted, a filter narrowed results),
+  // don't strand the user on a now-empty page past the end.
   useEffect(() => {
     if (page > pageCount) setPage(pageCount);
   }, [page, pageCount]);
 
-  const isLoading = itemsQuery.isLoading;
-  const isFetching = itemsQuery.isFetching;
-  const error = itemsQuery.error;
+  const select = (kind: "observation" | "problem", id: string) =>
+    kind === "observation" ? selectObservation(id) : selectProblem(id);
 
   return (
     <Stack mt="md" gap="sm">
@@ -146,139 +138,150 @@ export function ItemList() {
         />
       </Group>
       <Group justify="space-between">
-        <Group gap="md">
-          <SegmentedControl
-            size="xs"
-            value={typeFilter}
-            onChange={(v) => setTypeFilter(v as TypeFilter)}
-            data={[
-              { label: "All", value: "all" },
-              { label: "Observations", value: "observations" },
-              { label: "Problems", value: "problems" },
-            ]}
-          />
-          <Switch
-            label="Solved only"
-            checked={solvedOnly}
-            onChange={(e) => setSolvedOnly(e.currentTarget.checked)}
-            size="sm"
-          />
-        </Group>
+        {searching ? (
+          <Text size="xs" c="dimmed">Ranked by relevance</Text>
+        ) : (
+          <Group gap="md">
+            <SegmentedControl
+              size="xs"
+              value={typeFilter}
+              onChange={(v) => setTypeFilter(v as TypeFilter)}
+              data={[
+                { label: "All", value: "all" },
+                { label: "Observations", value: "observations" },
+                { label: "Problems", value: "problems" },
+              ]}
+            />
+            <Switch
+              label="Solved only"
+              checked={solvedOnly}
+              onChange={(e) => setSolvedOnly(e.currentTarget.checked)}
+              size="sm"
+            />
+          </Group>
+        )}
         <Text size="xs" c="dimmed">
           {total} result{total === 1 ? "" : "s"}
         </Text>
       </Group>
-      {synthPicks.length > 0 && (
-        <Group justify="space-between">
-          <Text size="sm">
-            {synthPicks.length} observation{synthPicks.length === 1 ? "" : "s"} selected
-            <Text span size="xs" c="dimmed"> (across all pages &amp; searches)</Text>
-          </Text>
-          <Group gap="xs">
-            <Button size="xs" variant="default" onClick={clearSynthPicks}>
-              Clear
-            </Button>
-          </Group>
-        </Group>
-      )}
 
-      {isLoading ? (
+      {active.isLoading ? (
         <Loader mt="md" />
-      ) : error ? (
-        <Text c="red" mt="md">{String(error)}</Text>
+      ) : active.error ? (
+        <Text c="red" mt="md">{String(active.error)}</Text>
       ) : (
-        <Stack gap="xs" style={{ opacity: isFetching ? 0.6 : 1 }}>
-          {rows.map((row) =>
-            row.kind === "observation" ? (
-              <Card
-                key={`o-${row.data.id}`}
-                withBorder
-                padding="sm"
-                style={{ borderColor: selectedObservationId === row.data.id ? "#228be6" : undefined }}
-              >
-                <Group justify="space-between" wrap="nowrap" align="flex-start">
-                  <Checkbox
-                    checked={pickedSet.has(row.data.id)}
-                    onChange={() => toggleSynthPick(row.data.id)}
-                    aria-label="Select observation"
-                    mt={2}
-                  />
-                  <Stack
-                    gap={2}
-                    flex={1}
-                    style={{ cursor: "pointer" }}
-                    onClick={() => selectObservation(row.data.id)}
+        <Stack gap="xs" style={{ opacity: active.isFetching ? 0.6 : 1 }}>
+          {searching
+            ? (searchQuery.data?.items ?? []).map((hit) => (
+                <Card
+                  key={`${hit.kind}-${hit.id}`}
+                  withBorder
+                  padding="sm"
+                  onClick={() => select(hit.kind, hit.id)}
+                  style={{
+                    cursor: "pointer",
+                    borderColor:
+                      (hit.kind === "observation" ? selectedObservationId : selectedProblemId) ===
+                      hit.id
+                        ? "#228be6"
+                        : undefined,
+                  }}
+                >
+                  <Group justify="space-between" wrap="nowrap">
+                    <Text fw={600} lineClamp={1}>{hit.title}</Text>
+                    <Badge
+                      size="xs"
+                      variant="light"
+                      color={hit.kind === "observation" ? "teal" : "orange"}
+                    >
+                      {hit.kind}
+                    </Badge>
+                  </Group>
+                  <Text size="sm" c="dimmed" lineClamp={2}>{hit.snippet}</Text>
+                </Card>
+              ))
+            : (feedQuery.data?.items ?? []).map((item) =>
+                item.kind === "observation" ? (
+                  <Card
+                    key={`o-${item.id}`}
+                    withBorder
+                    padding="sm"
+                    onClick={() => selectObservation(item.id)}
+                    style={{
+                      cursor: "pointer",
+                      borderColor: selectedObservationId === item.id ? "#228be6" : undefined,
+                    }}
                   >
                     <Group justify="space-between" wrap="nowrap">
-                      <Text fw={600} lineClamp={1}>{row.data.title}</Text>
+                      <Text fw={600} lineClamp={1}>{item.title}</Text>
                       <Group gap="xs" wrap="nowrap">
                         <Badge size="xs" variant="dot" color="indigo">
-                          {workspaceNames[row.data.workspaceId] ?? "workspace"}
+                          {workspaceNames[item.workspaceId] ?? "workspace"}
                         </Badge>
                         <Badge size="xs" variant="light" color="teal">observation</Badge>
                         <Badge
                           size="xs"
                           variant="outline"
-                          color={row.data.origin === "agent" ? "grape" : "gray"}
+                          color={item.origin === "agent" ? "grape" : "gray"}
                         >
-                          {row.data.origin}
+                          {item.origin}
                         </Badge>
-                        <Badge size="xs" color={obsStatusColor[row.data.status] ?? "gray"}>
-                          {row.data.status}
+                        <Badge size="xs" color={obsStatusColor[item.status] ?? "gray"}>
+                          {item.status}
                         </Badge>
                       </Group>
                     </Group>
-                    <Text size="sm" c="dimmed" lineClamp={2}>{row.data.body}</Text>
-                    {row.data.projectTags.length > 0 && (
-                      <Group gap={4}>
-                        {row.data.projectTags.map((t) => (
+                    <Text size="sm" c="dimmed" lineClamp={2}>{item.body}</Text>
+                    {item.projectTags.length > 0 && (
+                      <Group gap={4} mt={4}>
+                        {item.projectTags.map((t) => (
                           <Badge key={t} size="xs" variant="light" color="cyan">{t}</Badge>
                         ))}
                       </Group>
                     )}
-                  </Stack>
-                </Group>
-              </Card>
-            ) : (
-              <Card
-                key={`p-${row.data.id}`}
-                withBorder
-                padding="sm"
-                onClick={() => selectProblem(row.data.id)}
-                style={{
-                  cursor: "pointer",
-                  borderColor: selectedProblemId === row.data.id ? "#228be6" : undefined,
-                }}
-              >
-                <Group justify="space-between" wrap="nowrap">
-                  <Text fw={600} lineClamp={1}>{row.data.title}</Text>
-                  <Group gap="xs" wrap="nowrap">
-                    <Badge size="xs" variant="dot" color="indigo">
-                      {workspaceNames[row.data.workspaceId] ?? "workspace"}
-                    </Badge>
-                    <Badge size="xs" variant="light" color="orange">problem</Badge>
-                    <Badge size="xs" color={urgencyColor[row.data.urgency] ?? "gray"} variant="light">
-                      {row.data.urgency}
-                    </Badge>
-                    <Badge size="xs" color={probStatusColor[row.data.status] ?? "gray"}>
-                      {row.data.status}
-                    </Badge>
-                  </Group>
-                </Group>
-                <Text size="sm" c="dimmed" lineClamp={2}>{row.data.body}</Text>
-                {row.data.projectTags.length > 0 && (
-                  <Group gap={4} mt={4}>
-                    {row.data.projectTags.map((t) => (
-                      <Badge key={t} size="xs" variant="light" color="cyan">{t}</Badge>
-                    ))}
-                  </Group>
-                )}
-              </Card>
-            ),
-          )}
-          {rows.length === 0 ? (
+                  </Card>
+                ) : (
+                  <Card
+                    key={`p-${item.id}`}
+                    withBorder
+                    padding="sm"
+                    onClick={() => selectProblem(item.id)}
+                    style={{
+                      cursor: "pointer",
+                      borderColor: selectedProblemId === item.id ? "#228be6" : undefined,
+                    }}
+                  >
+                    <Group justify="space-between" wrap="nowrap">
+                      <Text fw={600} lineClamp={1}>{item.title}</Text>
+                      <Group gap="xs" wrap="nowrap">
+                        <Badge size="xs" variant="dot" color="indigo">
+                          {workspaceNames[item.workspaceId] ?? "workspace"}
+                        </Badge>
+                        <Badge size="xs" variant="light" color="orange">problem</Badge>
+                        <Badge size="xs" color={urgencyColor[item.urgency] ?? "gray"} variant="light">
+                          {item.urgency}
+                        </Badge>
+                        <Badge size="xs" color={probStatusColor[item.status] ?? "gray"}>
+                          {item.status}
+                        </Badge>
+                      </Group>
+                    </Group>
+                    <Text size="sm" c="dimmed" lineClamp={2}>{item.body}</Text>
+                    {item.projectTags.length > 0 && (
+                      <Group gap={4} mt={4}>
+                        {item.projectTags.map((t) => (
+                          <Badge key={t} size="xs" variant="light" color="cyan">{t}</Badge>
+                        ))}
+                      </Group>
+                    )}
+                  </Card>
+                ),
+              )}
+          {total === 0 ? (
             <Text c="dimmed" size="sm">
-              {debounced || solvedOnly ? "No matching items." : "Nothing yet — capture an observation or problem."}
+              {searching || solvedOnly
+                ? "No matching records."
+                : "Nothing recorded yet — agents write here."}
             </Text>
           ) : null}
         </Stack>
