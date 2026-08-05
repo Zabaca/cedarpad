@@ -28,6 +28,7 @@ export const BASE_COMPONENTS: ReadonlyArray<{ name: string; description: string 
   { name: "LandingV5", description: "" },
   { name: "MarkdownCard", description: "Generic markdown card — renders any `markdown` prop through the same parser as chat bubbles. Pass `title` for an optional header label." },
   { name: "MermaidDiagram", description: "Real npm import example: mermaid is just a dependency now (no sandbox shim). Props: { chart: string } — Mermaid source. Always render with mermaid.render() and inject the returned svg (mermaid.run / <pre class=\"mermaid\"> collapses to 0x0 in" },
+  { name: "Outliner", description: "A Workflowy-style outliner that lives on the canvas. Interactive AND persistent: every edit calls setData({ nodes }), which merges into this shape's `data` (synced to the bridge + saved across reloads — see ComponentShape's setData). Props " },
   { name: "PlanMode", description: "" },
   { name: "PlanModeCards", description: "" },
   { name: "PlanModeContextMenuGuide", description: "" },
