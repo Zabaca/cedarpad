@@ -7,13 +7,25 @@
 // information gained.
 
 /**
- * The page id to put on a write, given the canvas's pages in tldraw's own order and the
- * page currently open. Undefined for the first page — see above; that is the convention,
- * not a missing value.
+ * The page id to put on a write, given the canvas's pages and the page currently open.
+ * Undefined only on a SINGLE-page canvas — that is the convention above, not a missing value.
+ *
+ * It deliberately does NOT ask "am I on the first page?", because the client cannot answer
+ * that. tldraw orders pages by its own fractional index and reorders them as you drag them
+ * about; the canvas lists them in its own order. On a canvas whose pages have been reordered
+ * the two disagree, and the old check — `getPages()[0] === currentPageId` — then reads the OPEN
+ * page as page one, sends nothing, and the server lands the write on ITS first page instead.
+ *
+ * Reported 2026-08-07 on an 11-page canvas: `getPages()[0]` was the open page ("Focus") while
+ * the canvas's first page was another ("Page 1"), so every card added from the open page
+ * appeared on Page 1. Never reproducible on a fresh two-page canvas, where the orders agree.
+ *
+ * Naming the page explicitly costs nothing on a multi-page canvas — `shapesOnPage` matches an
+ * explicit first-page id just as it matches absence — and a single-page canvas still sends
+ * nothing, which is what keeps every pre-pages canvas round-tripping unchanged.
  */
 export function pageToSend(pageIdsInOrder: readonly string[], currentPageId: string): string | undefined {
-  const first = pageIdsInOrder[0];
-  return first !== undefined && first !== currentPageId ? currentPageId : undefined;
+  return pageIdsInOrder.length > 1 ? currentPageId : undefined;
 }
 
 /**

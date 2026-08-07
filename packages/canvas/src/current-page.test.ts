@@ -8,13 +8,27 @@ describe('pageToSend', () => {
     expect(pageToSend(['page:one', 'page:two'], 'page:two')).toBe('page:two');
   });
 
-  test('omits the first page, so a single-page canvas writes exactly as it always did', () => {
-    expect(pageToSend(['page:one', 'page:two'], 'page:one')).toBeUndefined();
+  test('omits on a single-page canvas, so it writes exactly as it always did', () => {
     expect(pageToSend(['page:one'], 'page:one')).toBeUndefined();
   });
 
   test('omits when there is nothing to compare against', () => {
     expect(pageToSend([], 'page:one')).toBeUndefined();
+  });
+
+  /**
+   * The 2026-08-07 bug. tldraw sorts pages by its own fractional index and reorders them as
+   * you drag them, so on a reordered canvas `getPages()[0]` is NOT the canvas's first page.
+   * The open page then looked like page one, nothing was sent, and the server put the card on
+   * ITS first page. Naming the page unconditionally is what makes the disagreement harmless.
+   */
+  test('names the open page even when it sorts FIRST in the editor', () => {
+    // "Focus" leads tldraw's order while the canvas's own first page is "page:page".
+    expect(pageToSend(['page:focus', 'page:page', 'page:other'], 'page:focus')).toBe('page:focus');
+  });
+
+  test('names the first page explicitly on a multi-page canvas, rather than implying it', () => {
+    expect(pageToSend(['page:one', 'page:two'], 'page:one')).toBe('page:one');
   });
 });
 
