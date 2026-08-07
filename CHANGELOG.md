@@ -39,6 +39,27 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.2.0] — 2026-08-07
+
+### Added
+- **Outliner** — a Workflowy-style outliner you can place on any canvas. Enter splits a
+  bullet, Tab and Shift+Tab indent and outdent, Shift+Enter adds a description, ⌘/Ctrl+Enter
+  marks an item done, and clicking a bullet zooms into it. Edits persist across reloads, and
+  an agent can write a whole outline in a single call.
+
+### Fixed
+- An outline that references a missing item no longer crashes the card — the stray row is
+  skipped.
+- An outline containing a loop no longer hangs the tab.
+
+### Internal
+- Outline edit semantics extracted to a pure module (`src/outline-tree.ts`), unit tested
+  without a DOM, keeping Fast Refresh on the component.
+- e2e: pin node on the self-hosted runner. wrangler cannot run under bun, node had gone
+  missing from the box, and every run since 2026-08-04 died at auth setup before testing
+  anything.
+- e2e: reap the dev stack a cancelled run strands — before the suite and after it.
+
 ## [0.1.0] — 2026-08-04
 
 ### Added
