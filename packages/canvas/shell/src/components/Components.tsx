@@ -35,6 +35,19 @@ const TIER_LABEL: Record<Tier, string> = {
   unresolved: 'no source',
 };
 
+/** Tier chips, built-in first: the platform library is the one tier you audit as a set,
+ *  since it ships with the image and nothing in a workspace can edit it. */
+const TIER_ORDER: Tier[] = ['base', 'shared', 'own', 'unresolved'];
+
+/** How many Components sit in each tier. Drives both the chip labels and which chips exist
+ *  at all — a chip is only offered for a tier that has rows, so no filter can empty the list
+ *  and leave the page looking broken. */
+export function tierCounts(entries: Array<{ tier: Tier }>): Record<Tier, number> {
+  const counts: Record<Tier, number> = { own: 0, shared: 0, base: 0, unresolved: 0 };
+  for (const e of entries) counts[e.tier] += 1;
+  return counts;
+}
+
 /** Cards per canvas, for the confirmation. Deleting a Component removes cards the human
  *  cannot see from here, so the prompt has to say where they are and how many. */
 export function instanceSummary(instances: Instance[]): Array<{ canvasName: string; count: number }> {
@@ -69,6 +82,9 @@ export function ComponentsStage({ workspaceId }: { workspaceId: string }) {
   // this list has to stay free — a grid of live thumbnails would wake and compile all of
   // them to draw pictures nobody asked for.
   const [preview, setPreview] = useState<string | null>(null);
+  // Which tier the list is narrowed to. Purely a view filter — it never changes what a
+  // delete resolves against, which still travels as name+tier+canvasId from the row itself.
+  const [filter, setFilter] = useState<Tier | 'all'>('all');
 
   const reload = useCallback(async () => {
     setError(null);
@@ -87,6 +103,9 @@ export function ComponentsStage({ workspaceId }: { workspaceId: string }) {
   }, [reload]);
 
   const keyOf = (e: Entry) => `${e.tier}:${e.canvasId ?? ''}:${e.name}`;
+
+  const counts = tierCounts(entries ?? []);
+  const shown = entries?.filter((e) => filter === 'all' || e.tier === filter);
 
   const remove = async (entry: Entry) => {
     if (!window.confirm(confirmText(entry))) return;
@@ -121,11 +140,29 @@ export function ComponentsStage({ workspaceId }: { workspaceId: string }) {
         Every Component in this workspace and the cards that render it. A card resolves against its own canvas — a canvas
         holding its own copy of a name uses that one — so deleting here removes only the cards that actually use this source.
       </p>
+      {entries && entries.length > 0 && (
+        <div className="cmp-filters">
+          <button type="button" className={`cmp-filter${filter === 'all' ? ' is-on' : ''}`} onClick={() => setFilter('all')}>
+            All <span className="cmp-filter-n">{entries.length}</span>
+          </button>
+          {TIER_ORDER.filter((t) => counts[t] > 0).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`cmp-filter tier-${t}${filter === t ? ' is-on' : ''}`}
+              // Clicking the active chip clears it, so the filter never needs a separate reset.
+              onClick={() => setFilter(filter === t ? 'all' : t)}
+            >
+              {TIER_LABEL[t]} <span className="cmp-filter-n">{counts[t]}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {error && <div className="cmp-error">{error}</div>}
       {entries === null && <div className="cmp-empty">Loading…</div>}
       {entries?.length === 0 && !error && <div className="cmp-empty">No components yet.</div>}
       <div className="cmp-list">
-        {entries?.map((e) => {
+        {shown?.map((e) => {
           const key = keyOf(e);
           return (
             <div key={key} className={`cmp-row tier-${e.tier}`}>

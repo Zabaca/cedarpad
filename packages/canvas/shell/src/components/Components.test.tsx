@@ -7,7 +7,7 @@ import { createRoot, type Root } from 'react-dom/client';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-import { ComponentsStage, instanceSummary } from './Components';
+import { ComponentsStage, instanceSummary, tierCounts } from './Components';
 
 const INVENTORY = {
   components: [
@@ -109,6 +109,50 @@ describe('ComponentsStage', () => {
       await new Promise((r) => setTimeout(r, 20));
     });
     expect(deletes).toEqual([]);
+  });
+});
+
+describe('ComponentsStage tier filter', () => {
+  const chip = (el: HTMLElement, label: string) =>
+    [...el.querySelectorAll('.cmp-filter')].find((b) => (b.textContent ?? '').includes(label)) as HTMLButtonElement;
+
+  test('filtering to built-in narrows the list to the platform tier', async () => {
+    stub([]);
+    const el = await mount();
+    await act(async () => chip(el, 'built-in').click());
+    const rows = rowText(el);
+    expect(rows.some((t) => t.includes('KpiCard'))).toBe(true);
+    expect(rows.some((t) => t.includes('Roadmap'))).toBe(false);
+    expect(rows.some((t) => t.includes('Ghost'))).toBe(false);
+  });
+
+  test('clicking the active chip clears the filter', async () => {
+    stub([]);
+    const el = await mount();
+    await act(async () => chip(el, 'built-in').click());
+    expect(rowText(el).some((t) => t.includes('Roadmap'))).toBe(false);
+    await act(async () => chip(el, 'built-in').click());
+    expect(rowText(el).some((t) => t.includes('Roadmap'))).toBe(true);
+  });
+
+  test('a tier with no Components gets no chip, so no filter can empty the list', async () => {
+    stub([]);
+    const el = await mount();
+    const labels = [...el.querySelectorAll('.cmp-filter')].map((b) => b.textContent ?? '');
+    // The fixture holds own/base/unresolved and nothing shared.
+    expect(labels.some((t) => t.includes('shared'))).toBe(false);
+    expect(labels.some((t) => t.includes('built-in'))).toBe(true);
+  });
+});
+
+describe('tierCounts', () => {
+  test('counts every tier, including the ones with nothing in them', () => {
+    expect(tierCounts([{ tier: 'base' }, { tier: 'base' }, { tier: 'own' }])).toEqual({
+      own: 1,
+      shared: 0,
+      base: 2,
+      unresolved: 0,
+    });
   });
 });
 
