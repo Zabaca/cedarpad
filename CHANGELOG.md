@@ -39,6 +39,25 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.2.1] — 2026-08-07
+
+### Added
+- **Filter the Components page by tier** — chips for built-in, shared, canvas and
+  no-source, each with a count, so you can audit one tier without scrolling past the
+  others. A chip only appears for a tier that has components in it.
+- **State machines in components** — xstate is available to anything built on the
+  canvas, so a component with real states and transitions can model them directly
+  instead of juggling booleans.
+
+### Removed
+- **BarChart** — superseded by ChartCard, which renders Bar, Grouped Bar, Stacked Bar
+  and Histogram among 35 chart types, with axes, scales and legends derived from your
+  data. Any card still placed as a BarChart will show as having no source; place a
+  ChartCard instead.
+
+### Fixed
+- Chart slides no longer render their bar labels in near-invisible text.
+
 ## [0.2.0] — 2026-08-07
 
 ### Added
