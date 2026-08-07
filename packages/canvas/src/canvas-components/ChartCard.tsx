@@ -7,8 +7,10 @@
 //
 // The agent writes INTENT (a chart type + which field goes on which channel) and Flint
 // derives scales, axes, legend, colors and layout from the data + semantic types. So this
-// component takes no chart-drawing code — contrast BarChart.tsx, which hand-rolls one
-// chart type out of divs.
+// component takes no chart-drawing code. It is the ONLY chart component on the platform tier:
+// the hand-rolled `BarChart.tsx` was removed once Flint's Vega-Lite adapter was shipping 35
+// templates (Bar, Grouped Bar, Stacked Bar, Histogram among them), so a one-layout card built
+// out of divs had nothing left to offer.
 //
 // SVG (not canvas) on purpose: the card lives inside tldraw's CSS-scale transform, so a
 // canvas-rendered chart blurs as you zoom the board while SVG stays crisp.
@@ -152,8 +154,8 @@ export default function ChartCard({
 
 /** Repaint Flint's chart chrome in the cedar palette. Vega-Lite's default theme is LIGHT —
  * black axis text on an opaque white plot — which reads as a bright rectangle on the pad's
- * dark `--surface`. Series colors are left alone (they're data, not chrome, the BarChart.tsx
- * rule); only axes, legend, title and the background are re-tokened. Vega bakes colors into
+ * dark `--surface`. Series colors are left alone — they're data, not chrome; only axes, legend,
+ * title and the background are re-tokened. Vega bakes colors into
  * SVG attributes, so the tokens have to be RESOLVED to real values, not passed as `var(…)`. */
 function applyCedarTheme(spec: Record<string, unknown>, host: HTMLElement): void {
   const cs = getComputedStyle(host);

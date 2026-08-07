@@ -722,8 +722,8 @@ describe('GET / — the Shell SPA, served from ASSETS without waking the contain
     const body = (await res.json()) as { components: string[]; details: { name: string; tier: string }[] };
     // The platform tier comes from the manifest bundled with this worker, so the edge can
     // answer it with no filesystem and no container.
-    expect(body.components).toContain('BarChart');
-    expect(body.details.find((d) => d.name === 'BarChart')?.tier).toBe('base');
+    expect(body.components).toContain('KpiCard');
+    expect(body.details.find((d) => d.name === 'KpiCard')?.tier).toBe('base');
     expect(served).toEqual([]);
   });
 

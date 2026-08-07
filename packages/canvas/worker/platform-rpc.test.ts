@@ -645,7 +645,7 @@ describe('platform RPC: component.list', () => {
     expect(components).toContainEqual({ name: 'OwnCard', description: 'Mine.', tier: 'own' });
     expect(components).toContainEqual({ name: 'SharedCard', description: 'The workspace copy.', tier: 'shared' });
     // The platform tier comes from the manifest bundled with the worker — no filesystem.
-    expect(components.find((c) => c.name === 'BarChart')?.tier).toBe('base');
+    expect(components.find((c) => c.name === 'KpiCard')?.tier).toBe('base');
   });
 
   test('the edge refuses a canvas that does not belong to the named workspace', async () => {

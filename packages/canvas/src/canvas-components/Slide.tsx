@@ -1,8 +1,38 @@
 // One slide of a presentation deck. Props: { kind, eyebrow, title, subtitle, stats, chart, timeline, grid, footer }.
 // kind selects the body layout: 'title' | 'stats' | 'chart' | 'timeline' | 'grid'.
-import BarChart from './BarChart';
-
 const PALETTE = ['#6366f1', '#0ea5e9', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6', '#f43f5e'];
+
+/** The deck's own bars, inlined when the platform `BarChart` was dropped in favour of
+ *  `ChartCard` (Flint). It is NOT a reusable chart and deliberately isn't one: a slide paints
+ *  its own LIGHT surface, so it cannot share a component that draws with the pad's dark cedar
+ *  tokens — `var(--text)` labels on this white card rendered near-invisible. Colors here are
+ *  literal and internally consistent with the rest of Slide, which is the documented exception
+ *  to the token rule. Anything wanting a real chart should place `ChartCard`. */
+function Bars({ bars, height }: { bars: Array<{ label: string; value: number; color?: string }>; height: number }) {
+  const max = Math.max(1, ...bars.map((b) => b.value));
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 14, height, padding: '0 8px' }}>
+      {bars.map((b, i) => (
+        <div
+          key={i}
+          style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, height: '100%', justifyContent: 'flex-end' }}
+        >
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', marginBottom: 4 }}>{b.value}</div>
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 44,
+              height: `${Math.max(4, (b.value / max) * (height - 40))}px`,
+              background: b.color || PALETTE[i % PALETTE.length],
+              borderRadius: '6px 6px 0 0',
+            }}
+          />
+          <div style={{ fontSize: 12, color: '#64748b', marginTop: 6, textAlign: 'center' }}>{b.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function Slide({
   kind = 'title',
@@ -70,7 +100,7 @@ export default function Slide({
 
         {kind === 'chart' && chart && (
           <div style={{ marginTop: 8 }}>
-            <BarChart bars={chart.bars} height={260} />
+            <Bars bars={chart.bars} height={260} />
           </div>
         )}
 

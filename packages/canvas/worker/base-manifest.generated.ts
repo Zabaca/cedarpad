@@ -5,7 +5,6 @@
 // worker; `worker/base-manifest.test.ts` fails if it drifts from `src/canvas-components/`.
 export const BASE_COMPONENTS: ReadonlyArray<{ name: string; description: string }> = [
   { name: "AgentChat", description: "Agent-terminal chat. Renders a coding-agent transcript in the visual grammar of Claude Code, Codex CLI, or Grok CLI — header, turns, working line, tool calls, diffs, todos, events, thoughts, writes, permission prompts — with a working compo" },
-  { name: "BarChart", description: "Simple horizontal-axis bar chart, no deps. Props: { bars: [{ label, value, color? }], height?, maxValue? }. Text colors come from the cedar tokens (src/styles.css, DESIGN.md): this component draws on the pad's own surface rather than painti" },
   { name: "CanvasArch", description: "How cedarpad is put together, as of ADR-0023. The previous version of this card predated the edge Worker: it drew three tiers (browser / bridge / agent) and showed canvas writes landing in the bridge's memory. Four ADRs have moved since. Wh" },
   { name: "CedarPalette", description: "cedarpad design-system preview. Renders the warm-graphite neutral system plus a pluggable accent so we can compare accent directions (wood ember vs foliage green) on identical neutrals. Self-contained; accent defaults to cedar-ember." },
   { name: "CedarShell", description: "" },
