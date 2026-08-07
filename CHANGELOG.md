@@ -39,6 +39,16 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.2.2] — 2026-08-07
+
+### Fixed
+- Adding a component now puts it on the page you are looking at. On a canvas whose pages
+  had been reordered, cards added from any page landed on the first one instead.
+
+### Removed
+- **FlintGallery** — the chart showcase. Every chart type it demonstrated is documented in
+  the chart-authoring reference, and ChartCard renders them all.
+
 ## [0.2.1] — 2026-08-07
 
 ### Added
