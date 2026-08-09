@@ -41,6 +41,7 @@ import { runNotebookCall } from '../web-poc/worker/notebook-tools.ts';
 import { serveWorkspace, warehouseExec } from './sandbox-runtime.ts';
 import type { Env } from './index.ts';
 import { CANVAS_ID_HEADER, DATA_MAX_BYTES, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
+import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 
 // The inbound MCP server (ADR-0013 train 3, #177): cedarpad's ONLY programmatic surface.
 // Edge-hosted, stateless per request (workers isolate), OAuth on Better Auth — the bearer
@@ -84,7 +85,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
             [HEADLESS_SEND_HEADER]: '1',
             // Shared-inbox assignment: an MCP send is the token user's act — the bridge
             // assigns the Conversation to them at birth / claims-if-unassigned on a reply.
-            'x-inbox-assign': session.userId,
+            [INBOX_ASSIGN_HEADER]: session.userId,
             ...(canvasId ? { [CANVAS_ID_HEADER]: canvasId } : {}),
           },
           body: JSON.stringify({ message }),

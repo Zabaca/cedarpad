@@ -3,6 +3,7 @@ import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolv
 import type { mintDevAgentGitToken } from './github-app.ts';
 import type { WorkspaceRepoView } from './github-connection.ts';
 import { DEV_AGENT_GIT_TOKEN_HEADER, DEV_AGENT_REPO_HEADER } from '../shared/bridge-wire.ts';
+import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 
 // The dev-agent, edge side (ADR-0010 → ADR-0011) — PURE core. The dev-agent is a ROLE the
 // warm default container plays, and a dev-agent RUN is a chat turn that container's bridge
@@ -55,7 +56,7 @@ export async function kickDevAgentRun(
     return Response.json({ error: `repo not selected for this workspace: ${requestedRepo}` }, { status: 400 });
   }
   const headers = new Headers();
-  if (assignUser) headers.set('x-inbox-assign', assignUser);
+  if (assignUser) headers.set(INBOX_ASSIGN_HEADER, assignUser);
   if (repo) {
     headers.set(DEV_AGENT_REPO_HEADER, repo.repoFullName);
     const token = await deps.mint(env, { nowSec: Math.floor(Date.now() / 1000), ...repo });
