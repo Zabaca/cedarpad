@@ -31,14 +31,22 @@ function bounds(s: CanvasShape): Box | null {
     case 'chat':
     case 'image':
     case 'frame':
+    case 'embed':
       return { minX: s.x, minY: s.y, maxX: s.x + s.w, maxY: s.y + s.h };
     case 'text':
     case 'note':
       return { minX: s.x, minY: s.y, maxX: s.x, maxY: s.y };
     case 'arrow':
       return { minX: Math.min(s.x1, s.x2), minY: Math.min(s.y1, s.y2), maxX: Math.max(s.x1, s.x2), maxY: Math.max(s.y1, s.y2) };
-    default:
+    case 'draw':
+      // Freehand strokes are a point cloud, not a box — nothing to align against.
       return null;
+    default: {
+      // Exhaustiveness guard: a new CanvasShape variant is a compile error here rather
+      // than a silent `null` that drops it out of align/layout (the bug embed hit).
+      const _exhaustive: never = s;
+      return _exhaustive;
+    }
   }
 }
 

@@ -156,6 +156,23 @@ describe('canvas ops (the agent tool logic)', () => {
     }
   });
 
+  test('align includes an embed (a box shape), not just agent-authored ones', () => {
+    // Regression: bounds() dropped `embed` to null via its default branch, so an embed
+    // — a human-only box shape (x/y/w/h) — was silently filtered out of align/layout.
+    // Placed via upsert because the agent can't create embeds.
+    const s = createStore();
+    s.upsert([
+      { id: 'shape:embed1', type: 'embed', x: 300, y: 0, w: 480, h: 270, url: 'https://youtu.be/x', color: 'black' },
+    ]);
+    createShapesOp(s, [{ type: 'rectangle', x: 100, y: 400, w: 50, h: 50 }]);
+    const ids = s.getState().shapes.map((x) => x.id);
+    const r = alignOp(s, ids, 'left');
+    expect(r.isError).toBeFalsy();
+    expect(r.text).toContain('2 shape(s)');
+    const embed = s.getState().shapes.find((x) => x.id === 'shape:embed1');
+    expect(embed && embed.type === 'embed' && embed.x).toBe(100);
+  });
+
   test('align needs at least two alignable shapes', () => {
     const s = createStore();
     createShapesOp(s, [{ type: 'rectangle', x: 0, y: 0 }]);
