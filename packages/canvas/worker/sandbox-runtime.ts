@@ -4,6 +4,7 @@ import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { resolveConnectorEnv } from './connector-secrets.ts';
 import type { Env } from './index.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv, warehouseContainerEnv } from './container-env.ts';
+import type { CanvasBootSpec } from './canvas-boot.ts';
 import { singleFlight } from './single-flight.ts';
 import { type SandboxCoords, decideWarm, localBridgeOrigin, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 
@@ -68,51 +69,18 @@ export const warehouseExec = async (env: Env, coords: SandboxCoords) => {
 
 type SandboxStub = ReturnType<typeof getSandbox>;
 
-// Start (or recover) the dev stack and wait for vite. Mirrors the spike's warm/
-// stale handling: try the running process, else start fresh; on a cold boot give
-// vite + bridge time to come up (node_modules is image-resident, so no install).
-// Write the creds to .env in the container so bun auto-loads them for the bridge
-// and every child. setEnvVars / ProcessOptions.envVars proved racy across recycles
-// (the bridge intermittently came up with no R2 creds and silently used local-fs);
-// a file bun reads at startup is deterministic. Only called before a FRESH start —
-// never while the bridge runs, so `bun --watch` can't restart-loop on .env churn.
-async function writeEnvFile(sandbox: SandboxStub, ev: Record<string, string>): Promise<void> {
-  const body =
-    Object.entries(ev)
-      .map(([k, v]) => `${k}=${v ?? ''}`)
-      .join('\n') + '\n';
-  // Written into the canvas package (the bridge's cwd) so bun auto-loads it for the
-  // bridge and every child — including web-poc's mounted app (auth secrets).
-  await sandbox.writeFile(`${CANVAS_CONTAINER_CWD}/.env`, body).catch(() => {});
-}
-
-async function ensureStack(sandbox: SandboxStub, env: Env, coords: SandboxCoords): Promise<void> {
-  // No git token is minted at boot (ADR-0010): the dev-agent's token is per-turn, minted by the
-  // edge chat proxy onto each dev-agent send (worker/inbox-bridge.ts) — never container env.
-  const ev = containerEnv(env, coords);
-  await sandbox.setEnvVars(ev).catch(() => {}); // kept as a secondary path
-  const opts = { processId: 'canvas', envVars: ev } as const;
-  let proc = await sandbox.getProcess('canvas').catch(() => null);
-  if (!proc) {
-    await writeEnvFile(sandbox, ev); // creds in place BEFORE the bridge starts
-    proc = await sandbox.startProcess(START, opts).catch(() => null);
-  }
-  // Generous first wait: a cold vite boot (esp. the first pull of a new image)
-  // can take tens of seconds; a short timeout would kill a healthy-but-slow boot
-  // and restart it pointlessly. 40s was too short: on a heavy boot vite bound after
-  // it, so the worker killProcess'd a healthy stack — orphaning the already-bound
-  // bridge/extension, so the restart hit EADDRINUSE, exited code 0, and surfaced as
-  // ProcessExitedBeforeReadyError (intermittent 502 / ~100s boots after an idle sleep).
-  // Reproduced + fixed in the sleep spike: 120s lets a slow-but-healthy boot finish.
-  const up = proc
-    ? await proc.waitForPort(VITE_PORT, { timeout: 120000 }).then(() => true).catch(() => false)
-    : false;
-  if (up) return;
-  await sandbox.killProcess('canvas').catch(() => {});
-  await writeEnvFile(sandbox, ev);
-  const fresh = await sandbox.startProcess(START, opts);
-  await fresh.waitForPort(VITE_PORT, { timeout: 120000 });
-}
+/** Everything the container's boot needs, resolved here (the Worker holds the secrets)
+ *  and handed to the DO as one plain object. The `.env` file goes into the canvas package
+ *  — the bridge's cwd — so bun auto-loads it for the bridge and every child, including
+ *  web-poc's mounted app (auth secrets). */
+const bootSpec = (env: Env, coords: SandboxCoords): CanvasBootSpec => ({
+  processId: 'canvas',
+  start: START,
+  port: VITE_PORT,
+  previewToken: PREVIEW_TOKEN,
+  envFilePath: `${CANVAS_CONTAINER_CWD}/.env`,
+  envVars: containerEnv(env, coords),
+});
 
 // Concurrent cold requests for the same container share ONE boot (#138). Module-scoped so it
 // collapses the per-page-load stampede (~40 requests) within an isolate; keyed by sandbox id so a
@@ -183,16 +151,16 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
   // retryable empty event stream instead. Warm-path app responses are untouched.
   const streamReq = wantsEventStream(request.headers.get('accept'));
   try {
-    // Single-flight the boot: without this, every concurrent cold request ran its own
-    // ensureStack (kill+startProcess) and they canceled each other's vite process, so the
-    // container never came up (#138). Concurrent callers now await one boot; each still proxies
-    // its own request afterward. exposePort lives inside so it happens once per boot, not per
-    // request. (`sandbox` here is the first caller's stub, but it's just an RPC handle to the
-    // shared DO, so a later caller proxying with its own stub still hits the exposed port.)
-    await singleFlight(inflightBoot, sandboxId, async () => {
-      await ensureStack(sandbox, env, coords);
-      await sandbox.exposePort(VITE_PORT, { hostname: 'localhost', token: PREVIEW_TOKEN });
-    });
+    // The boot runs INSIDE the DO (`Sandbox.ensureCanvasStack`, worker/index.ts), which is
+    // where the authoritative lock lives: one DO per sandbox id ⇒ one boot per container
+    // across every isolate, and a boot that survives the cancellation of the request that
+    // asked for it (incident 2026-08-13; canvas-boot.ts has the full account).
+    //
+    // This local single-flight stays in front of it as a cheap collapse, not as the
+    // correctness mechanism: a page load fires ~40 requests at a sleeping container (#138),
+    // and there is no reason to send 40 RPCs to learn the same answer. It is module-scoped,
+    // so it only ever covered THIS isolate — which is exactly why the real lock had to move.
+    await singleFlight(inflightBoot, sandboxId, () => sandbox.ensureCanvasStack(bootSpec(env, coords)));
     const res = await proxy(sandbox, retryReq, sandboxId);
     return streamReq && res.status >= 400 ? sseRetryResponse() : res;
   } catch (e: unknown) {

@@ -41,4 +41,14 @@ const down = () => {
 };
 process.on('SIGINT', down);
 process.on('SIGTERM', down);
-await dev.exited;
+
+// EXIT WITH THE CAUSE, NOT WITH 0 (incident 2026-08-13). Falling off the end here exited 0
+// no matter how the stack died, so every failed boot reached the Worker as
+// `ProcessExitedBeforeReadyError: Process exited with code 0` — a message that can never
+// name what happened, and reads like a clean shutdown. Only a signal reaches `down()` above;
+// getting HERE means the dev stack died on its own, which is always a failure, so a 0 from
+// it is still reported as one. The reason itself is in the lines above this one (dev.ts logs
+// which child died) — read them with `/__bootlog`.
+const code = await dev.exited;
+console.error(`[boot] ${ms()} dev stack exited (code ${code}) — see the lines above for which child died`);
+process.exit(code || 1);

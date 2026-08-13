@@ -11,6 +11,8 @@
 
 import { plugin } from 'bun';
 
+import { type BootableSandbox, BootLock, bootCanvasStack, type CanvasBootSpec } from './canvas-boot.ts';
+
 const calls = { getSandboxIds: [] as string[], started: [] as string[], waited: [] as number[], exposed: [] as number[] };
 let fetchN = 0;
 
@@ -22,7 +24,11 @@ plugin({
       exports: {
         getSandbox: (_ns: unknown, id: string) => {
           calls.getSandboxIds.push(id);
-          return {
+          // Stands in for the real `Sandbox` DO: the boot sequence runs on the stub itself,
+          // under the same lock the DO holds, because the DO is what this stub proxies.
+          const lock = new BootLock();
+          const stub = {
+            ensureCanvasStack: (spec: CanvasBootSpec) => lock.run(() => bootCanvasStack(stub as BootableSandbox, spec)),
             // First fetch (warm probe) misses so the cold boot path — the one that starts the
             // stack — runs, exactly as a freshly-woken container with no exposed port would.
             fetch: () => {
@@ -48,6 +54,7 @@ plugin({
               return Promise.resolve();
             },
           };
+          return stub;
         },
       },
     }));

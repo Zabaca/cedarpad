@@ -1,4 +1,5 @@
 import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
+import { BootLock, bootCanvasStack, type CanvasBootSpec } from './canvas-boot.ts';
 import { getWorkspace, getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
@@ -81,6 +82,20 @@ export class Sandbox extends BaseSandbox {
   // won't idle-sleep while an SSE forward is pinned. sleepAfter still covers the
   // never-had-a-client case.
   sleepAfter = '5m';
+
+  // The cold-boot lock lives HERE, on the DO, because the DO is the only thing in the
+  // system there is exactly ONE of per container (incident 2026-08-13 — see
+  // canvas-boot.ts for the full account). Two consequences, both load-bearing:
+  // concurrent cold requests from ANY isolate collapse onto one boot, and `ctx.waitUntil`
+  // keeps that boot alive when the request that triggered it is canceled — which is what
+  // the previous per-isolate, per-request arrangement could not do.
+  #boot = new BootLock({ hold: (p) => this.ctx.waitUntil(p) });
+
+  /** Bring the workspace's dev stack up and publish its port. Called over RPC by
+   *  `serveWorkspace`'s cold path; runs entirely inside this DO. */
+  ensureCanvasStack(spec: CanvasBootSpec): Promise<void> {
+    return this.#boot.run(() => bootCanvasStack(this, spec));
+  }
 }
 
 // The warehouse container class (ADR-0017, #236): python + uv + dbt-duckdb + dlt +

@@ -115,6 +115,15 @@ process.on('SIGTERM', () => {
 });
 
 // If either process dies, take the other down so the operator isn't left with a
-// half-running stack.
-await Promise.race([bridge.exited, web.exited]);
+// half-running stack — and SAY WHICH ONE DIED, then exit non-zero (incident 2026-08-13).
+// Silence here is what made a failed container boot unreadable: the stack died, this
+// process exited 0, and the only thing the Worker could report was
+// `ProcessExitedBeforeReadyError: Process exited with code 0`. The child's own output is
+// already inherited onto this stdout, so this line is the index into it.
+const [which, code] = await Promise.race([
+  bridge.exited.then((c) => ['bridge', c] as const),
+  web.exited.then((c) => ['web', c] as const),
+]);
+console.error(`[dev] ${which} exited (${code}) — taking the stack down`);
 killAll();
+process.exit(code || 1);

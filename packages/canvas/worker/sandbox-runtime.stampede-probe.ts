@@ -9,8 +9,14 @@
 
 import { plugin } from 'bun';
 
+import { type BootableSandbox, BootLock, bootCanvasStack, type CanvasBootSpec } from './canvas-boot.ts';
+
 const calls = { started: [] as string[], exposed: [] as number[] };
 let bootComplete = false;
+// One lock for the whole probe, as production has one per container: `getSandbox` is called
+// per request, but every call resolves to the SAME DO — so a per-stub lock would prove
+// nothing about the stampede.
+const lock = new BootLock();
 
 plugin({
   name: 'stub-cloudflare-sandbox',
@@ -18,32 +24,36 @@ plugin({
     build.module('@cloudflare/sandbox', () => ({
       loader: 'object',
       exports: {
-        getSandbox: () => ({
-          // The warm probe misses for EVERY caller until the boot finishes (exposePort), so all N
-          // concurrent requests fall into the cold path together — exactly the stampede. After the
-          // boot, proxied requests succeed.
-          fetch: () => (bootComplete ? Promise.resolve(new Response('proxied', { status: 200 })) : Promise.reject(new Error('container asleep/gone'))),
-          setEnvVars: () => Promise.resolve(),
-          getProcess: () => Promise.resolve(null),
-          writeFile: () => Promise.resolve(),
-          startProcess: (command: string) => {
-            calls.started.push(command);
-            // A slow boot (like a real vite cold start) — the window in which the OLD code let
-            // other requests barge in with their own kill+start.
-            return Promise.resolve({
-              waitForPort: async (port: number) => {
-                await new Promise((r) => setTimeout(r, 20));
-                void port;
-              },
-            });
-          },
-          killProcess: () => Promise.resolve(),
-          exposePort: (port: number) => {
-            calls.exposed.push(port);
-            bootComplete = true;
-            return Promise.resolve();
-          },
-        }),
+        getSandbox: () => {
+          const stub = {
+            ensureCanvasStack: (spec: CanvasBootSpec) => lock.run(() => bootCanvasStack(stub as BootableSandbox, spec)),
+            // The warm probe misses for EVERY caller until the boot finishes (exposePort), so all N
+            // concurrent requests fall into the cold path together — exactly the stampede. After the
+            // boot, proxied requests succeed.
+            fetch: () => (bootComplete ? Promise.resolve(new Response('proxied', { status: 200 })) : Promise.reject(new Error('container asleep/gone'))),
+            setEnvVars: () => Promise.resolve(),
+            getProcess: () => Promise.resolve(null),
+            writeFile: () => Promise.resolve(),
+            startProcess: (command: string) => {
+              calls.started.push(command);
+              // A slow boot (like a real vite cold start) — the window in which the OLD code let
+              // other requests barge in with their own kill+start.
+              return Promise.resolve({
+                waitForPort: async (port: number) => {
+                  await new Promise((r) => setTimeout(r, 20));
+                  void port;
+                },
+              });
+            },
+            killProcess: () => Promise.resolve(),
+            exposePort: (port: number) => {
+              calls.exposed.push(port);
+              bootComplete = true;
+              return Promise.resolve();
+            },
+          };
+          return stub;
+        },
       },
     }));
   },
