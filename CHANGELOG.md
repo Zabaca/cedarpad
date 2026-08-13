@@ -39,6 +39,20 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.2.3] — 2026-08-13
+
+### Fixed
+- A canvas that had gone to sleep now wakes on the first try. Reopening an idle canvas could
+  fail for minutes with `canvas error: ProcessExitedBeforeReadyError` instead of showing the
+  board. Waking was tied to the request that asked for it, so a browser giving up mid-load
+  canceled the wake — and each retry canceled the one before it. A canvas now wakes once, and
+  finishes waking even when the request that triggered it is gone.
+
+### Internal
+- A container whose dev stack dies now exits with the real cause instead of always reporting
+  code 0, and names which process died — so a failed boot says what happened rather than
+  "Process exited with code 0".
+
 ## [0.2.2] — 2026-08-07
 
 ### Fixed
