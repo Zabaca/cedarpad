@@ -26,6 +26,20 @@
   // prod). Secrets (VOYAGE_API_KEY, BETTER_AUTH_SECRET) are pushed via
   // workerSecrets, not here.
   "vars": {
+    // Workspaces served from our own hardware instead of a Cloudflare Container
+    // (worker/self-hosted.ts). `default` moved to an incus guest on ryzen-9 on
+    // 2026-08-14: the Cloudflare container rebuilds vite's dependency pre-bundle on
+    // every cold boot (its filesystem does not survive sleep), and that raced page
+    // loads into 404s on tldraw's chunks — a blank canvas with no retry. The guest's
+    // disk is persistent, so it pre-bundles once and never again.
+    //
+    // Deliberately NOT set on the preview environment below: that Worker would point
+    // at the same guest and two deploys would fight over one dev stack.
+    //
+    // Data does NOT move: canvas state stays in CanvasSyncRoom, rows in D1, artifacts
+    // in R2 (ADR-0022). Only the process serving the pad changes address. Emptying
+    // this map routes every workspace straight back to its container.
+    "SELF_HOSTED_WORKSPACES": "{\"default\":\"https://ws.cedarpad.com\"}",
     "BETTER_AUTH_URL": "https://app.cedarpad.com",
     "WEB_ORIGIN": "https://app.cedarpad.com",
     // Prod is James-only: Better Auth signup is disabled at the edge (dev leaves it

@@ -6,6 +6,7 @@ import type { Env } from './index.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv, warehouseContainerEnv } from './container-env.ts';
 import type { CanvasBootSpec } from './canvas-boot.ts';
 import { singleFlight } from './single-flight.ts';
+import { selfHostedTarget, serveSelfHosted } from './self-hosted.ts';
 import { type SandboxCoords, decideWarm, localBridgeOrigin, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 
 // The Sandbox resolver's runtime half: the wake/expose/proxy orchestration that used
@@ -112,6 +113,13 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
     const target = new URL(url.pathname + url.search, localBridge);
     return fetch(new Request(target, request));
   }
+  // A workspace whose compute lives on our own hardware (worker/self-hosted.ts).
+  // Placed AFTER the gate and the ownership check upstream, exactly like the E2E
+  // shim above: it changes the transport into the workspace and nothing about who
+  // is allowed to reach it. Returns null unless the workspace is mapped AND all
+  // three credentials are present, so a partial rollout serves from the container.
+  const selfHosted = selfHostedTarget(env, coords.canvasWorkspace);
+  if (selfHosted) return serveSelfHosted(request, selfHosted, containerEnv(env, coords), coords);
   const sandbox = sandboxFor(env, sandboxId);
   // Warm fast path: the container's been up since a prior request, so the port
   // is still exposed — just proxy (1 round-trip). The handshake (setEnvVars,
