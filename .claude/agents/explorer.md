@@ -1,6 +1,6 @@
 ---
 name: explorer
-description: Read-only codebase surveyor for the dev-agent's architecture-explore fan-out (issue #184). Reads a named slice of the repo and reports deepening candidates with evidence; never edits, never judges.
+description: "Read-only codebase surveyor for the dev-agent's architecture-explore fan-out (issue #184). Reads a named slice of the repo and reports deepening candidates with evidence; never edits, never judges."
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
