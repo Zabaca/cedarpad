@@ -163,6 +163,15 @@ export interface Env {
   // it, and for why this is NOT `E2E_MODE` (that one also stubs the agent).
   LOCAL_CONTAINER_SHIM?: string;
   LOCAL_BRIDGE_ORIGIN?: string;
+  // Workspaces served from our own hardware instead of a Cloudflare Container
+  // (worker/self-hosted.ts). JSON map of workspace id -> https origin; absent or
+  // malformed means every workspace stays on the Sandbox DO.
+  SELF_HOSTED_WORKSPACES?: string;
+  // Bearer the guest's supervisor demands on /__boot, and the Cloudflare Access
+  // service token that lets this Worker reach the guest's hostname at all.
+  WS_SUPERVISOR_TOKEN?: string;
+  CF_ACCESS_CLIENT_ID?: string;
+  CF_ACCESS_CLIENT_SECRET?: string;
   // Kill-switch for the scheduled dev-agent run (#63/#66). Default off ("false"); the cron
   // fires but no-ops until repo-connection (#96) lands. Flip to "true" to enable.
   DEV_AGENT_ENABLED?: string;

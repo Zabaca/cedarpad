@@ -58,6 +58,16 @@ export default cloudflareModule.instance({
     workdir: 'packages/canvas',
     accountId: '99a19e584439be0568f33aad0477372b',
     workerSecrets: [
+      // Reaching the self-hosted workspace on ryzen-9 (worker/self-hosted.ts).
+      // WS_SUPERVISOR_TOKEN is the bearer its supervisor demands on /__boot;
+      // the CF_ACCESS pair is the Cloudflare Access service token that lets this
+      // Worker through the gate on ws.cedarpad.com at all. All three must be
+      // present or selfHostedTarget() returns null and the workspace falls back
+      // to its Cloudflare Container — a half-configured target 403s every
+      // request, so "not fully configured" deliberately means "not in effect".
+      'WS_SUPERVISOR_TOKEN',
+      'CF_ACCESS_CLIENT_ID',
+      'CF_ACCESS_CLIENT_SECRET',
       'CLAUDE_CODE_OAUTH_TOKEN',
       'R2_BUCKET',
       'R2_ENDPOINT',
