@@ -26,7 +26,7 @@
 // here. That is why the Access policy carries no email rule: a human who could
 // satisfy Access directly would bypass the ownership check.
 
-import { decideWarm, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
+import { sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
 /**
@@ -48,6 +48,35 @@ import type { SandboxCoords } from './sandbox-resolver.ts';
  */
 export function staysOnContainer(pathname: string): boolean {
   return pathname === '/api/buildrev';
+}
+
+/**
+ * Warm-vs-cold for a request that went through a Cloudflare TUNNEL, which is a
+ * different transport from the Sandbox preview proxy and fails differently.
+ *
+ * `decideWarm` (sandbox-resolver.ts) encodes the sandbox proxy's not-ready
+ * signals: a 410, or a body carrying `INVALID_TOKEN` / `port not exposed`.
+ * cloudflared emits none of those. When the guest's origin is not listening it
+ * answers with Cloudflare's own **502** page, which matched nothing in
+ * `decideWarm` and so was classified `serve` — and on 2026-08-14 that put a
+ * "Bad gateway" error page in front of a user whose guest merely needed
+ * booting. Reusing one decision function for two transports was the bug.
+ *
+ * 502/503/504 from the edge mean the origin is unreachable, unavailable, or
+ * timed out — in every case, not serving. The asymmetry justifies being blunt:
+ * a false positive costs one `/__boot`, which is idempotent and answers
+ * `already: true` in milliseconds when the stack is fine. A false negative is
+ * what you just saw — a permanent error page that never retries. Vite and the
+ * bridge do not produce these statuses in normal operation.
+ *
+ * Everything else is a REAL app response and passes through untouched: a failed
+ * login is a legitimate 401, not a reason to restart the workspace.
+ *
+ * Pure; exported for tests.
+ */
+export function decideGuestWarm(status: number): 'serve' | 'cold-start' {
+  if (status < 400) return 'serve';
+  return status === 502 || status === 503 || status === 504 ? 'cold-start' : 'serve';
 }
 
 /** Everything needed to reach one self-hosted workspace. */
@@ -157,11 +186,7 @@ export async function serveSelfHosted(
   const streamReq = wantsEventStream(request.headers.get('accept'));
   try {
     const res = await fetch(guestRequest(request, target.origin, target));
-    if (res.status < 400) return res;
-    if (res.status !== 410) {
-      const peek = await res.clone().text().catch(() => '');
-      if (decideWarm(res.status, () => peek) === 'serve') return res;
-    }
+    if (decideGuestWarm(res.status) === 'serve') return res;
   } catch {
     /* guest unreachable — fall through and try to boot it */
   }

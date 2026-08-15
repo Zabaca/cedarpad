@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { guestRequest, parseWorkspaceMap, selfHostedTarget, serveSelfHosted, staysOnContainer } from './self-hosted.ts';
+import { decideGuestWarm, guestRequest, parseWorkspaceMap, selfHostedTarget, serveSelfHosted, staysOnContainer } from './self-hosted.ts';
 import type { SelfHostedTarget } from './self-hosted.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
@@ -38,6 +38,21 @@ describe('parseWorkspaceMap', () => {
     expect(parseWorkspaceMap(JSON.stringify({ a: 'https://ws.cedarpad.com/sub' }))).toEqual({
       a: 'https://ws.cedarpad.com',
     });
+  });
+});
+
+describe('decideGuestWarm', () => {
+  // The 2026-08-14 regression: cloudflared answers 502 when the guest's origin
+  // is down, decideWarm() called that 'serve', and a Cloudflare "Bad gateway"
+  // page was handed to the user instead of booting the workspace.
+  test.each([502, 503, 504])('%d from the edge means the origin is not serving', (s) => {
+    expect(decideGuestWarm(s)).toBe('cold-start');
+  });
+
+  test('real app responses pass through — a failed login is not a cold start', () => {
+    for (const s of [200, 204, 302, 401, 403, 404, 500]) {
+      expect(decideGuestWarm(s)).toBe('serve');
+    }
   });
 });
 
@@ -142,6 +157,26 @@ describe('serveSelfHosted', () => {
       'https://ws.cedarpad.com/__boot',
       'https://ws.cedarpad.com/pad',
     ]);
+  });
+
+  test('a 502 from the edge boots the guest instead of serving the error page', async () => {
+    const seen: string[] = [];
+    let booted = false;
+    globalThis.fetch = mock(async (input: Request | string) => {
+      const url = typeof input === 'string' ? input : input.url;
+      seen.push(url);
+      if (url.endsWith('/__boot')) {
+        booted = true;
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      // cloudflared's answer when vite is not listening: a Response, not a throw.
+      return booted ? new Response('pad', { status: 200 }) : new Response('Bad gateway', { status: 502 });
+    }) as unknown as typeof fetch;
+
+    const res = await serveSelfHosted(new Request('https://app.cedarpad.com/pad'), TARGET, {}, COORDS);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('pad');
+    expect(seen.some((u) => u.endsWith('/__boot'))).toBe(true);
   });
 
   test('a failed boot answers a stream with a retryable SSE, never an error page', async () => {
