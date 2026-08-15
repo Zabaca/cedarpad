@@ -6,7 +6,7 @@ import type { Env } from './index.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv, warehouseContainerEnv } from './container-env.ts';
 import type { CanvasBootSpec } from './canvas-boot.ts';
 import { singleFlight } from './single-flight.ts';
-import { selfHostedTarget, serveSelfHosted } from './self-hosted.ts';
+import { selfHostedTarget, serveSelfHosted, staysOnContainer } from './self-hosted.ts';
 import { type SandboxCoords, decideWarm, localBridgeOrigin, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 
 // The Sandbox resolver's runtime half: the wake/expose/proxy orchestration that used
@@ -118,7 +118,9 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
   // shim above: it changes the transport into the workspace and nothing about who
   // is allowed to reach it. Returns null unless the workspace is mapped AND all
   // three credentials are present, so a partial rollout serves from the container.
-  const selfHosted = selfHostedTarget(env, coords.canvasWorkspace);
+  // `staysOnContainer` keeps container-describing routes (/api/buildrev) on the
+  // container even for a self-hosted workspace — see its docstring.
+  const selfHosted = staysOnContainer(url.pathname) ? null : selfHostedTarget(env, coords.canvasWorkspace);
   if (selfHosted) return serveSelfHosted(request, selfHosted, containerEnv(env, coords), coords);
   const sandbox = sandboxFor(env, sandboxId);
   // Warm fast path: the container's been up since a prior request, so the port

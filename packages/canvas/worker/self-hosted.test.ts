@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { guestRequest, parseWorkspaceMap, selfHostedTarget, serveSelfHosted } from './self-hosted.ts';
+import { guestRequest, parseWorkspaceMap, selfHostedTarget, serveSelfHosted, staysOnContainer } from './self-hosted.ts';
 import type { SelfHostedTarget } from './self-hosted.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
@@ -38,6 +38,20 @@ describe('parseWorkspaceMap', () => {
     expect(parseWorkspaceMap(JSON.stringify({ a: 'https://ws.cedarpad.com/sub' }))).toEqual({
       a: 'https://ws.cedarpad.com',
     });
+  });
+});
+
+describe('staysOnContainer', () => {
+  // A question ABOUT the container must be answered BY the container: the guest
+  // runs from a checkout and reports `dev`, which stalled a real deploy poll.
+  test('/api/buildrev never follows a workspace off Cloudflare', () => {
+    expect(staysOnContainer('/api/buildrev')).toBe(true);
+  });
+
+  test('the pad and the API do follow it', () => {
+    expect(staysOnContainer('/w/default/canvas/c1/pad')).toBe(false);
+    expect(staysOnContainer('/api/alive')).toBe(false);
+    expect(staysOnContainer('/src/App.tsx')).toBe(false);
   });
 });
 

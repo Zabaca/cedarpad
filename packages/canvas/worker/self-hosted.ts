@@ -29,6 +29,27 @@
 import { decideWarm, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
+/**
+ * Paths that must be answered by the Cloudflare container even when the
+ * workspace is self-hosted.
+ *
+ * `/api/buildrev` reports the CONTAINER IMAGE's build stamp, and `deploy.sh`
+ * polls it to confirm a rollout is serving the new SHA. A self-hosted guest runs
+ * from a git checkout with no baked stamp, so it answers `dev` — and on
+ * 2026-08-14 that made the deploy poll count 60 attempts against a value that
+ * could never match, failing a deploy whose Worker had in fact shipped fine.
+ *
+ * The rule this encodes is not "special-case the deploy script": it is that a
+ * question ABOUT the container has to be answered BY the container. Moving a
+ * workspace's compute changes where the pad is served from, not what the
+ * container image is.
+ *
+ * Pure; exported for tests.
+ */
+export function staysOnContainer(pathname: string): boolean {
+  return pathname === '/api/buildrev';
+}
+
 /** Everything needed to reach one self-hosted workspace. */
 export interface SelfHostedTarget {
   /** Origin of the guest's tunnel, e.g. `https://ws.cedarpad.com`. */
