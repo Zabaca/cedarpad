@@ -37,6 +37,7 @@ import type { CanvasShape, CanvasState } from '../src/shapes.ts';
 import { assetUrl } from '../src/canvas-sync.ts';
 import { fromTldrawShape, imageAssetId, toTldrawPartial } from '../src/tldraw-conventions.ts';
 import { createCanvasTLSchema } from '../src/tl-schema.ts';
+import { arrowBindingId } from '../src/tl-record-builder.ts';
 
 const PAGE_ID = 'page:page';
 const DOCUMENT_ID = 'document:document';
@@ -383,7 +384,7 @@ function imageAsset(shape: { id: string; src: string; w: number; h: number }, ca
  *  simplified model records only THAT a terminal is bound, never where. */
 function arrowBinding(arrowId: string, terminal: 'start' | 'end', toId: string): TLRecord {
   return {
-    id: `binding:${arrowId.replace(/^shape:/, '')}-${terminal}`,
+    id: arrowBindingId(arrowId, terminal),
     typeName: 'binding',
     type: 'arrow',
     fromId: arrowId,
