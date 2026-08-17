@@ -7,7 +7,16 @@
 #
 # After editing, run: sops updatekeys packages/infra/environments/<env>/secrets.yaml
 creation_rules:
+  # age1d3kn9cr... is Khoa (foureight84@gmail.com), added 2026-08-17. It
+  # REPLACES age1cq0k9s..., which was his and is now deleted from his machine.
+  # Until somebody who can still decrypt runs
+  # `sops updatekeys packages/infra/environments/production/secrets.yaml`
+  # (and the preview one), this line grants him nothing: adding a recipient
+  # does not re-encrypt anything already encrypted, and the file looks
+  # identical either way. He cannot run it himself, which is the whole reason
+  # this is a pull request rather than a commit.
   - age: >-
       age1cq0k9s88fmx7kkaqqvuf290lelyt8gkeglwvsd2r3ezuqyla7aps7x4q2j,
       age187xe7sc7mgxc4m9nwvp6xqgdyel4ualtjecqrvjcteu9h7kf5u8qlscmak,
-      age1mkwj9hhvaer3ks5rd0ujzvmzwq56vdwlzruy2pld4zm6r73jl40qg4p343
+      age1mkwj9hhvaer3ks5rd0ujzvmzwq56vdwlzruy2pld4zm6r73jl40qg4p343,
+      age1d3kn9cr6zrngdjkeeau920tcur9gr9rc9gm2wl5gut2sapjwa99qzhnhxh
