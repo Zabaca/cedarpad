@@ -531,7 +531,8 @@ A `CanvasShape` is one of:
     store models none; a state that reports none has said *nothing* about how many exist —
     never render that as "this canvas has a single page".
 - `id` is shared verbatim with the tldraw shape id (`shape:...`). Agent-created
-  ids are minted `shape:agent_N`.
+  ids are minted `shape:agent_<16 hex>` — random, not sequential (see "Minted shape
+  ids are random" below, `src/normalize.ts`, #327).
 - `color` ∈ `black, grey, blue, green, red, orange, yellow, violet` (a subset of
   tldraw's palette; tldraw's `light-*` variants clamp down to these on read).
 - Coordinates are tldraw **page coordinates** (origin top-left, +x right, +y down),
