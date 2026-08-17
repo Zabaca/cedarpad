@@ -39,7 +39,26 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.2.4] — 2026-08-17
+
+### Fixed
+- **An outline is now shared by everyone on the canvas.** Edits to an Outliner card stayed in
+  the tab that made them — each person was quietly editing a private copy of the same card,
+  and publishing an edit could wipe out rows someone else had added since. Bullets, notes,
+  indents and completions now reach everyone. Which bullet you have zoomed into stays yours.
+
+### Internal
+- The explorer agent's description no longer truncates at its issue number — an unquoted `#`
+  in YAML was discarding over half of it before agent selection ever saw it.
+
 ## [0.2.3] — 2026-08-13
+
+### Changed
+- **The default workspace now runs on hardware we own**, reached over a private tunnel
+  instead of a Cloudflare Container. The container's filesystem did not survive sleep, so
+  every cold start rebuilt its dependency bundle from scratch — and a page load that raced
+  that rebuild got a canvas referring to files that briefly did not exist. A long-lived guest
+  keeps its filesystem, so that way of failing to load is gone.
 
 ### Fixed
 - A canvas that had gone to sleep now wakes on the first try. Reopening an idle canvas could
@@ -47,11 +66,20 @@ from the site.
   board. Waking was tied to the request that asked for it, so a browser giving up mid-load
   canceled the wake — and each retry canceled the one before it. A canvas now wakes once, and
   finishes waking even when the request that triggered it is gone.
+- A workspace that only needed waking no longer answers "Bad gateway". When its stack was not
+  yet listening, the error page went straight to the browser and stayed there, with no retry —
+  for exactly the case a single boot would have fixed.
 
 ### Internal
 - A container whose dev stack dies now exits with the real cause instead of always reporting
   code 0, and names which process died — so a failed boot says what happened rather than
   "Process exited with code 0".
+- A workspace can be served from a self-hosted guest that holds no cedarpad credential at
+  rest: the guest starts nothing until the Worker pushes it the environment the Worker
+  already owns.
+- Deploy verification asks the container image for its build stamp rather than following a
+  self-hosted workspace to hardware that answers `dev` — which had been failing deploys whose
+  Worker had shipped correctly.
 
 ## [0.2.2] — 2026-08-07
 
