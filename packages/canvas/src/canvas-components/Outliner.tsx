@@ -1,6 +1,12 @@
-// A Workflowy-style outliner that lives on the canvas. Interactive AND persistent: every
-// edit calls setData({ nodes }), which merges into this shape's `data` (synced to the
-// bridge + saved across reloads — see ComponentShape's setData).
+// A Workflowy-style outliner that lives on the canvas. Interactive AND SHARED: every edit
+// calls setData({ nodes }), which merges into this shape's `data` (synced to everyone on
+// the canvas + saved across reloads — see ComponentShape's setData).
+//
+// The outline is rendered straight off the `nodes` prop — there is no local mirror of the
+// tree. That is what makes it shared: a collaborator's edit arrives as a new `nodes` prop
+// and renders immediately. `useState` here is only for state that is genuinely per-viewer
+// (which bullet you have zoomed into, whether you're hiding completed items) — your zoom
+// is yours, the outline is everyone's.
 //
 // Props (the `data` you place it with), all optional:
 //   { title?: string, nodes?: Record<id, { id, text, children: id[], collapsed?, completed?, note? }> }
@@ -37,27 +43,21 @@ type Props = Data & { setData?: (patch: Partial<Data>) => void };
 const uid = (): string =>
   typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : `n_${Math.floor(Math.random() * 1e9)}`;
 
-function seed(): OutlineNodes {
-  const [a, b, c, d, e, f, g] = [uid(), uid(), uid(), uid(), uid(), uid(), uid()] as [
-    string,
-    string,
-    string,
-    string,
-    string,
-    string,
-    string,
-  ];
-  return {
-    [ROOT]: { id: ROOT, text: '', children: [a, e] },
-    [a]: { id: a, text: 'Welcome to your outline', children: [b, c, d] },
-    [b]: { id: b, text: 'Press Enter to make a new bullet', children: [] },
-    [c]: { id: c, text: 'Tab to indent · Shift+Tab to outdent', children: [] },
-    [d]: { id: d, text: 'Click a bullet ● to zoom in', children: [] },
-    [e]: { id: e, text: 'Groceries', children: [f, g] },
-    [f]: { id: f, text: 'Coffee', children: [] },
-    [g]: { id: g, text: 'Oat milk', children: [] },
-  };
-}
+// The welcome outline, shown until someone writes `nodes`. Ids are FIXED, like Kanban's
+// DEFAULT_COLUMNS: a random-id seed would give every viewer of an untouched outline a
+// different tree, so the first edit — which persists that viewer's ids — would look to
+// everyone else like the outline being replaced. Never mutated: every edit below clones
+// first (as do the outline-tree functions), so this constant is safe to share.
+const SEED: OutlineNodes = {
+  [ROOT]: { id: ROOT, text: '', children: ['w1', 'w5'] },
+  w1: { id: 'w1', text: 'Welcome to your outline', children: ['w2', 'w3', 'w4'] },
+  w2: { id: 'w2', text: 'Press Enter to make a new bullet', children: [] },
+  w3: { id: 'w3', text: 'Tab to indent · Shift+Tab to outdent', children: [] },
+  w4: { id: 'w4', text: 'Click a bullet ● to zoom in', children: [] },
+  w5: { id: 'w5', text: 'Groceries', children: ['w6', 'w7'] },
+  w6: { id: 'w6', text: 'Coffee', children: [] },
+  w7: { id: 'w7', text: 'Oat milk', children: [] },
+};
 
 // Self-contained light surface. Like Kanban, this card paints its own paper rather than
 // reading the cedar tokens — an outline is a document, and it reads as one on the board.
@@ -160,7 +160,11 @@ function Row(props: {
           }}
           value={node.text}
           rows={1}
-          onChange={(e) => onText(node.id, e.target.value)}
+          // onInput, not onChange (same convention as ChatStarter): for a textarea they
+          // fire on the same native event, but React's onChange is synthesized through a
+          // value tracker that happy-dom defeats — so onChange is untestable here, and
+          // this is the edit path whose sharing the tests exist to pin.
+          onInput={(e) => onText(node.id, (e.target as HTMLTextAreaElement).value)}
           onKeyDown={(e) => onKey(e, node.id)}
           placeholder=" "
           style={{
@@ -190,7 +194,7 @@ function Row(props: {
             }}
             value={node.note}
             rows={1}
-            onChange={(e) => onNoteText(node.id, e.target.value)}
+            onInput={(e) => onNoteText(node.id, (e.target as HTMLTextAreaElement).value)}
             onKeyDown={(e) => onNoteKey(e, node.id)}
             placeholder="Add a description…"
             style={{
@@ -217,7 +221,10 @@ function Row(props: {
 }
 
 export default function Outliner({ nodes: nodesProp, title, setData }: Props) {
-  const [nodes, setNodes] = useState<OutlineNodes>(() => nodesProp ?? seed());
+  // The shared tree. Prop-derived, NOT mirrored into state — see the file header. A
+  // `nodes` without a ROOT is unrenderable (nothing to walk from), so it falls back the
+  // same way a missing one does rather than showing an empty card.
+  const nodes: OutlineNodes = nodesProp?.[ROOT] ? nodesProp : SEED;
   const [zoomId, setZoomId] = useState<string>(ROOT);
   const [showCompleted, setShowCompleted] = useState(true);
   const refs = useRef<Record<string, HTMLTextAreaElement | null>>({});
@@ -238,12 +245,23 @@ export default function Outliner({ nodes: nodesProp, title, setData }: Props) {
     pending.current = null;
   });
 
+  // The ONLY writer. Publishing to the shape is the whole update: the new tree comes back
+  // as a prop on the next render, here and in every other tab on the canvas.
   const commit = (next: OutlineNodes) => {
-    setNodes(next);
     setData?.({ nodes: next });
   };
   const focus = (id: string, caret: number, field?: 'note') => {
     pending.current = { id, caret, field };
+  };
+  /** Move the caret into a textarea that already exists. Used where nothing is committed —
+   *  with no local mirror of the tree, a no-op edit no longer forces a render, so those
+   *  paths can't route through `pending` and must place the caret themselves. */
+  const focusNow = (id: string, caret: number, field?: 'note') => {
+    const el = field === 'note' ? noteRefs.current[id] : refs.current[id];
+    if (!el) return;
+    el.focus();
+    const c = Math.min(caret, el.value.length);
+    el.setSelectionRange(c, c);
   };
   /** Apply one of the pure tree edits, or do nothing if it refused. */
   const apply = (edit: Edit) => {
@@ -287,9 +305,15 @@ export default function Outliner({ nodes: nodesProp, title, setData }: Props) {
   };
 
   const openNote = (id: string) => {
+    // Already open: the textarea is on screen, and re-committing an unchanged tree is not
+    // guaranteed to produce a render for `pending` to ride on. Just go there.
+    if (nodes[id]?.note !== undefined) {
+      focusNow(id, 0, 'note');
+      return;
+    }
     const n = clone();
     const node = n[id];
-    if (node && node.note === undefined) node.note = '';
+    if (node) node.note = '';
     commit(n);
     focus(id, 0, 'note');
   };
@@ -319,7 +343,7 @@ export default function Outliner({ nodes: nodesProp, title, setData }: Props) {
     const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
     if (e.key === 'Escape') {
       e.preventDefault();
-      focus(id, nodes[id]?.text.length ?? 0);
+      focusNow(id, nodes[id]?.text.length ?? 0);
     } else if (e.key === 'Backspace' && atStart && !el.value) {
       e.preventDefault();
       closeNote(id);
@@ -355,15 +379,13 @@ export default function Outliner({ nodes: nodesProp, title, setData }: Props) {
       const prev = flat[index - 1];
       if (prev) {
         e.preventDefault();
-        focus(prev.id, refs.current[prev.id]?.value.length ?? 0);
-        setNodes((s) => ({ ...s })); // no data change — just re-render so the focus effect runs
+        focusNow(prev.id, refs.current[prev.id]?.value.length ?? 0);
       }
     } else if (e.key === 'ArrowDown' && atEnd && index < flat.length - 1) {
       const next = flat[index + 1];
       if (next) {
         e.preventDefault();
-        focus(next.id, 0);
-        setNodes((s) => ({ ...s }));
+        focusNow(next.id, 0);
       }
     }
   };
