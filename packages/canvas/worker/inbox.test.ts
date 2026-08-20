@@ -1,5 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { migrationStatements } from './migration-statements.ts';
 import { beforeAll, describe, expect, mock, test } from 'bun:test';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
@@ -125,19 +124,6 @@ describe('transcriptObjectUrl', () => {
 // The edge Inbox LIST is scoped to the ACTIVE workspace (the `cs_workspace` cookie), exactly
 // how `/api/canvases` scopes (worker/shell.ts's `activeWorkspaceId`) — never a client-sent
 // `?workspace=` param. In-memory DB built from the real migrations (mirrors shell.test.ts).
-const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, 'utf8')
-        .split('--> statement-breakpoint')
-        .map((s) => s.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n').trim())
-        .filter(Boolean),
-    );
-}
-
 const client = createClient({ url: ':memory:' });
 const db = drizzle(client, { schema });
 const USER = { id: 'user_1' };

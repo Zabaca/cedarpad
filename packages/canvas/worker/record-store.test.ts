@@ -1,5 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { migrationStatements } from './migration-statements.ts';
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
@@ -11,19 +10,6 @@ import { d1RecordStore, memRecordStore, type RecordStore } from './record-store.
 // shape (ADR-0022). The SAME suite runs against BOTH implementations: an in-memory one so
 // store logic is testable with no database, and the real row-backed one built from the real
 // migrations. Two implementations of one port only stay honest if one suite judges both.
-const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, 'utf8')
-        .split('--> statement-breakpoint')
-        .map((s) => s.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n').trim())
-        .filter(Boolean),
-    );
-}
-
 const client = createClient({ url: ':memory:' });
 const db = drizzle(client, { schema });
 

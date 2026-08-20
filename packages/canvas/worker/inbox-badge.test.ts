@@ -1,5 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { migrationStatements } from './migration-statements.ts';
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { createClient, type Client, type InArgs, type InStatement } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
@@ -14,19 +13,6 @@ import { inboxBadgeSource, inboxBadgeStream, type HubSocket, type InboxBadgeSour
 // 1,600,703 rows in 24h of production, to recompute one number ~2,000 times per actual
 // change. What is pinned here is the shape that fixes it — a cheap watermark probe that
 // only escalates to a full read when something moved — and the counts it produces.
-
-const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, 'utf8')
-        .split('--> statement-breakpoint')
-        .map((s) => s.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n').trim())
-        .filter(Boolean),
-    );
-}
 
 /** A libSQL client that counts what passes through it, so "rows read per tick" is a
  *  measurement and not a claim. Only `execute` is instrumented — Drizzle's libSQL driver

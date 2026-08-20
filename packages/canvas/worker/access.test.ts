@@ -1,5 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { migrationStatements } from './migration-statements.ts';
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
@@ -18,19 +17,6 @@ import {
 // The access SEAM (#225): membership + ADR-0016 visibility composed once. Driven against a
 // real in-memory libSQL built from the migrations (same harness style as inbox.test.ts), so
 // the join the predicates need is the real one.
-const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, 'utf8')
-        .split('--> statement-breakpoint')
-        .map((s) => s.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n').trim())
-        .filter(Boolean),
-    );
-}
-
 const client = createClient({ url: ':memory:' });
 const db = drizzle(client, { schema });
 const database = db as never;

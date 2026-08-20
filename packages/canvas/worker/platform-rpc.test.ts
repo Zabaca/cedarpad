@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { migrationStatements } from './migration-statements.ts';
 
 import { createClient } from '@libsql/client';
 import { conversations, makeDb } from '../web-poc/lib/db/index.ts';
@@ -39,19 +38,6 @@ import type { PushSend } from './push-notify.ts';
 // The edge half is exercised against a real in-memory platform data layer built from the
 // Drizzle migrations (mirrors server/inbox.test.ts), so these are behaviour tests, not
 // mock choreography — the only injected seam is the push transport.
-
-const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, 'utf8')
-        .split('--> statement-breakpoint')
-        .map((s) => s.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n').trim())
-        .filter(Boolean),
-    );
-}
 
 async function freshDb() {
   const client = createClient({ url: ':memory:' });
