@@ -5,6 +5,7 @@ import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { MCP_TOKENS_HEADER, encodeMcpTokens } from '../server/mcp-registry.ts';
+import { IS_CHAT_SEND } from './mcp-tokens-proxy.ts';
 import type { GateUser } from './auth-gate.ts';
 import { isDevAgentConversation } from '../server/dev-agent-workflow.ts';
 import { mintDevAgentGitToken } from './github-app.ts';
@@ -60,9 +61,9 @@ export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
  * security-load-bearing): an unauthenticated request got `renderLogin()` already and never
  * reaches a bridge; the Inbox LIST (`inbox.ts`) stays edge-only and never wakes a runner.
  */
-// A proxied chat SEND (`POST /api/chat/:chatId/send`) — the human answering. The proxy is the
-// inbox-aware home for the triage flip; `<ChatView>` / the generic `/send` stay unaware of it.
-const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
+// `IS_CHAT_SEND` (the proxied chat SEND, `POST /api/chat/:chatId/send` — the human answering)
+// is imported from `mcp-tokens-proxy.ts`, the single owner shared with the same-origin
+// fallthrough; the inbox proxy is the triage-flip home. `<ChatView>` / generic `/send` stay unaware.
 // The open-conversation GET (`GET /api/inbox/:convId/chat`) — the Shell resolving a thread to
 // its chatId. ADR-0018 / #261: the edge already holds the row, so it forwards it here.
 const IS_OPEN_CONVERSATION = /^\/api\/inbox\/[^/]+\/chat$/;
