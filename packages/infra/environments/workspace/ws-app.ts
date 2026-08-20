@@ -75,6 +75,23 @@ chown -R "\$PROVISION_USER:\$PROVISION_USER" "\$(dirname "\$ROOT")"
 
 echo "[app] checked out \$(git -C "\$ROOT" rev-parse --short HEAD)"
 
+# --- stamps ----------------------------------------------------------------
+# The same two the container's deploy.sh writes, for the same reason (cedarpad
+# ADR-0025): the SHA is the operational truth and the version is the
+# communication truth, and \`bridge.ts\` reads both out of its own directory,
+# answering \`dev\` when they are absent. They are gitignored, so a checkout
+# alone leaves this Guest unable to say what it is running — which made the
+# workspace the one surface a release could not verify.
+#
+# Written from the checkout rather than passed in: this provision IS the thing
+# that decided which commit is here, so anything else would be a second opinion
+# about it. The version comes from the ROOT package.json, as deploy.sh reads it
+# — one product version per release, and the per-package 0.0.1s stay private.
+STAMP_DIR="\$ROOT/packages/canvas/server"
+git -C "\$ROOT" rev-parse --short HEAD | tr -d '\\n' > "\$STAMP_DIR/build-rev.txt"
+python3 -c "import json; print(json.load(open('\$ROOT/package.json'))['version'], end='')" > "\$STAMP_DIR/version.txt"
+echo "[app] stamped \$(cat "\$STAMP_DIR/build-rev.txt") / v\$(cat "\$STAMP_DIR/version.txt")"
+
 # --- dependencies ----------------------------------------------------------
 # --frozen-lockfile with a plain fallback, matching packages/canvas/Dockerfile:
 # the image excludes packages/app from the workspace, so a frozen install can

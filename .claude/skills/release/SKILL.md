@@ -21,14 +21,27 @@ Read the ADR before deviating from anything below — it carries the rejected al
 4. ── GATE ──   the human reviews and edits            ← the only human gate
 5. commit       CHANGELOG.md + version bump → push to main
 6. deploy       deploy.sh (stamps buildRev AND version into the image)
+   +             zbc apply workspace (the ws.cedarpad.com Guest, same commit)
 7. verify       deploy.sh polls /api/buildrev for BOTH stamps
-8. tag          ONLY after 7 passes
+   +             read the Guest's own stamps back over the incus remote
+8. tag          ONLY after BOTH halves of 7 pass
 9. publish      zbc apply production www → check cedarpad.com/changelog
 ```
 
 **Never tag before step 7.** Tagging first mints tags for code that never shipped. Tagging after
 makes `git tag` a ledger of what actually served — so a failed deploy costs nothing, the same
 version number is reused, and `v0.2.0` points at exactly the SHA `/api/buildrev` returns.
+
+**The workspace Guest is inside that rule, not appended after it.** `fb2525a` made it the
+DEFAULT workspace, so a tag with the container live and the Guest stale would claim a version
+most users are not getting. `www` is the opposite case and stays after the tag: the public page
+must never advertise a version that is not serving. Deploy targets go before the tag when the
+tag would over-claim, and after it when the page would.
+
+**This buys a new failure mode, deliberately: a release now fails when ryzen-9 is
+unreachable.** That path had none before. It is the price of the default workspace being
+covered by the tag, and it is cheaper than the alternative — a tag that silently means "the
+container, and whatever the Guest happened to be running".
 
 ---
 
@@ -141,6 +154,43 @@ is reused, and nothing was tagged. Two traps the script's own comments record:
 - A `STALE` stored image is the 2026-07-28 incident (serving instances correct, stored config
   stale → every later cold boot wedges). Investigate by hand; do not blindly re-run.
 
+## 6–7 (the Guest). Converge the workspace and read its stamps back
+
+Run it after `deploy.sh` reports `✅ LIVE`, not beside it: the two share nothing at
+runtime, and serialising keeps one failure legible instead of two interleaved.
+
+```bash
+bunx @zabaca/zbc apply workspace          # from the REPO ROOT
+```
+
+`ws-app` fetches `origin/main`, hard-resets to it, reinstalls, and stamps
+`server/build-rev.txt` and `server/version.txt` from the checkout — the same two
+files `deploy.sh` writes into the image, for the same reason (ADR-0025). `ws-service`
+then restarts the supervisor.
+
+Verify by reading the Guest's own stamps, not by asking the hostname:
+
+```bash
+incus exec ryzen-9:cedarpad-ws --project zabaca -- \
+  sh -c 'cat /app/agent-canvas/packages/canvas/server/build-rev.txt; echo; \
+         cat /app/agent-canvas/packages/canvas/server/version.txt'
+```
+
+Both must match what step 5 pushed. **Why not `curl https://ws.cedarpad.com/api/buildrev`:**
+vite is booted on demand by the supervisor, so the canvas is not serving between
+sessions and a 502 there means "nobody is using it", not "the deploy failed" — and the
+hostname is behind Cloudflare Access, so the check would need the service token as well.
+The stamps are what the bridge will read when it does boot, so reading them answers the
+question one step earlier and with no credentials.
+
+**If the converge fails, do not tag.** Fix forward and re-run — same version number,
+nothing tagged, exactly as on the container side. `zbc apply workspace ws-app` alone is
+enough to retry the checkout; the whole environment is a no-op when it is already right.
+
+**Requires the `ryzen-9` incus remote.** `incus remote list` should show it; if it does
+not, ask foundry for a token (`bun run incus-enrol cedarpad`) and
+`incus remote add ryzen-9 <token>`. See `packages/infra/environments/workspace/README.md`.
+
 ## 8. Tag
 
 Only now, and only on `✅ LIVE`:
@@ -190,3 +240,7 @@ not run, say so — do not imply a green path that was not walked.
   `sops exec-env packages/infra/environments/production/secrets.yaml`; keep it that way.
 - **Never file this as a GitHub issue or a Fredrin ticket.** A release is an act, not work to
   track (`docs/agents/issue-tracker.md`).
+- **Never skip the workspace converge because "nobody is on the canvas right now".** It is the
+  default workspace, so the next person to open one gets whatever was left there — and the tag
+  will already have claimed otherwise. Unreachable ryzen-9 stops the release; it does not make
+  the step optional.
