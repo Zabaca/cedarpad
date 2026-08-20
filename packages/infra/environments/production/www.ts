@@ -1,4 +1,4 @@
-import { cloudflareModule } from '../../modules/cloudflare'
+import { cloudflareModule } from '../../../../vendor/zbc/modules/cloudflare'
 
 /**
  * www — the marketing site at cedarpad.com (ADR-0014). An Astro site on its own

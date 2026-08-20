@@ -1,4 +1,4 @@
-import { cloudflareModule } from '../../modules/cloudflare'
+import { cloudflareModule } from '../../../../vendor/zbc/modules/cloudflare'
 import canvasEmail from './canvas-email'
 
 /**

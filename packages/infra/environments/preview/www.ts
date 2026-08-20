@@ -1,4 +1,4 @@
-import { cloudflareModule } from '../../modules/cloudflare'
+import { cloudflareModule } from '../../../../vendor/zbc/modules/cloudflare'
 
 /**
  * www (preview) — deploys the marketing site as a SEPARATE worker

@@ -10,10 +10,10 @@
     "build": "turbo run build",
     "dev": "turbo run dev"
   },
-  "dependencies": {
-    "@cedarpad/infra": "workspace:*"
-  },
   "devDependencies": {
     "@happy-dom/global-registrator": "^15.11.7"
+  },
+  "dependencies": {
+    "zod": "^3.24.0"
   }
 }

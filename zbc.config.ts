@@ -1,4 +1,4 @@
-import { defineConfig } from '@cedarpad/infra'
+import { defineConfig } from './vendor/zbc/src/index'
 
 export default defineConfig({
   project: 'cedarpad',

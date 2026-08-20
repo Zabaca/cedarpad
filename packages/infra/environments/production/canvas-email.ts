@@ -1,4 +1,4 @@
-import { cloudflareEmailModule } from '../../modules/cloudflare-email'
+import { cloudflareEmailModule } from '../../../../vendor/zbc/modules/cloudflare-email'
 
 /**
  * Cloudflare Email Sending for cedarpad.com — the pipe the canvas worker's `EMAIL`
