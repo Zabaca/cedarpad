@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { DataSourceSchema } from './mart-contract';
+import { zodErrorLine } from './zod-error';
 
 // The edge↔bridge wire: the ONE module that owns the typed contract spoken across the
 // Cloudflare-worker ↔ container-bridge seam (CLAUDE.md §7), the same convention as
@@ -176,10 +177,9 @@ export const PlaceComponentBody = z.object({
 export const WriteComponentBody = z.object({ source: z.string().min(1) });
 export const WriteDataBody = z.object({ source: DataFileSource });
 
-/** One human-readable line out of a failed `safeParse`, for the bridge's `{ error }` 400s. */
-export function wireError(err: z.ZodError): string {
-  return err.issues.map((i) => (i.path.length ? `${i.path.join('.')}: ${i.message}` : i.message)).join('; ');
-}
+/** One human-readable line out of a failed `safeParse`, for the bridge's `{ error }` 400s.
+ *  The single formatter lives in `shared/zod-error.ts`; this name is kept for its call sites. */
+export const wireError = zodErrorLine;
 
 // --- forwarded conversation (INBOX_CONVERSATION_HEADER) -------------------------
 

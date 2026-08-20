@@ -12,6 +12,7 @@ import { z } from 'zod';
 
 import { serviceToken, verifyServiceToken } from './service-token.ts';
 import { DataSourceSchema } from './mart-contract.ts';
+import { zodErrorLine } from './zod-error.ts';
 
 // --- the boundary: where the endpoint is, and who the container is when it calls -------
 
@@ -118,8 +119,7 @@ export type CanvasMutationResult = z.infer<typeof CanvasMutationResult>;
 const _resultIsState: CanvasMutationResult extends CanvasState ? true : never = true;
 void _resultIsState;
 
-/** One human-readable line out of a failed `safeParse` — matches `wireError`'s shape so
- *  an agent sees the same style of message wherever the rejection happened. */
-export function mutationError(err: z.ZodError): string {
-  return err.issues.map((i) => (i.path.length ? `${i.path.join('.')}: ${i.message}` : i.message)).join('; ');
-}
+/** One human-readable line out of a failed `safeParse` — the same formatter the bridge's
+ *  `wireError` uses (`shared/zod-error.ts`), so an agent sees the same style of message
+ *  wherever the rejection happened. */
+export const mutationError = zodErrorLine;
