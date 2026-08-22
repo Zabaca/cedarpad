@@ -1283,22 +1283,58 @@ body,
   font-size: 13px;
   padding: 2px 4px;
 }
+/* The row holds TWO controls (label + ⛶), so it is the bordered container and the
+   label is the button inside it — a button in a button would be invalid markup. */
 .instance-list-row {
-  text-align: left;
+  display: flex;
+  align-items: stretch;
   border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.instance-list-row:hover,
+.instance-list-row:focus-within,
+.instance-list-row[data-active='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.instance-list-row[data-active='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.instance-list-label {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: none;
   background: transparent;
   color: inherit;
-  border-radius: 8px;
+  font: inherit;
   padding: 6px 9px;
-  font-size: 13px;
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.instance-list-row:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+/* Revealed on hover or when anything in the row takes keyboard focus, so the route
+   into fullscreen works without a mouse. */
+.instance-list-expand {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: 12px;
+  opacity: 0;
+}
+.instance-list-row:hover .instance-list-expand,
+.instance-list-row:focus-within .instance-list-expand {
+  opacity: 0.75;
+}
+.instance-list-expand:hover,
+.instance-list-expand:focus-visible {
+  opacity: 1;
 }
 
 /* Panel refinements (user pass 2) */
