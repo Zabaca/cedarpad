@@ -959,11 +959,42 @@ body,
 .component-fullscreen-close:hover {
   color: var(--text);
 }
+/* Head row, then a body row holding the rail beside the component. */
+.component-fullscreen-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.component-fullscreen-rail {
+  flex: none;
+  width: 220px;
+  min-width: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+}
 .component-fullscreen-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   background: var(--surface);
+}
+.component-fullscreen-rail-toggle,
+.component-fullscreen-prev,
+.component-fullscreen-next {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.component-fullscreen-rail-toggle:hover,
+.component-fullscreen-prev:hover,
+.component-fullscreen-next:hover {
+  color: var(--text);
 }
 
 /* Component-guest mode + the fullscreen Share panel (PRD #221). */
