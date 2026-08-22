@@ -48,7 +48,7 @@ export function saveRailOpen(open: boolean): void {
 
 /** Where navigation lands when the viewed shape leaves the list: the entry that took its
  *  place, or the last one if it was the tail. Null once nothing is left to show. */
-export function advanceTarget(ids: ReadonlyArray<string>, goneIndex: number): string | null {
+function advanceTarget(ids: ReadonlyArray<string>, goneIndex: number): string | null {
   if (ids.length === 0) return null;
   return ids[Math.min(goneIndex, ids.length - 1)] ?? null;
 }
