@@ -19,6 +19,7 @@ import {
   CreateCanvasInput,
   CreateShapesInput,
   DeleteShapesInput,
+  EditComponentInput,
   ListCanvasesInput,
   ListComponentsInput,
   SelectPageInput,
@@ -246,7 +247,8 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
     server.registerTool(
       'read_component',
       {
-        description: "Read a component module's .tsx source (to learn conventions before writing, or to edit).",
+        description:
+          "Read a component module's .tsx source (to learn conventions before writing, or to edit). Pass `offset` (the 1-based first line) and/or `limit` (how many lines) to read only a WINDOW of a long file: a windowed read comes back `cat -n` style — `<line number><tab><the line>` — and those numbers are exactly what edit_component's start_line/end_line address, so read the window you intend to edit. With neither, you get the whole file as plain unnumbered source.",
         inputSchema: ReadComponentInput.shape,
       },
       async (input) => text(await tools.readComponent(input)),
@@ -255,10 +257,20 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'write_component',
       {
         description:
-          'Create or overwrite a reusable React component module in a workspace canvas library. Rules: `export default` a React component; it receives the placement `data` as props; imports of react, other components, "mermaid", and "flint-chart/vegalite" + "vega"/"vega-lite" are allowed; inline styles + SVG. For a chart, place the platform `ChartCard` (it takes a Flint spec) rather than drawing one. Placed instances hot-reload; use place_component to render a new instance on a canvas.',
+          'Create or overwrite a reusable React component module in a workspace canvas library. Rules: `export default` a React component; it receives the placement `data` as props; imports of react, other components, "mermaid", and "flint-chart/vegalite" + "vega"/"vega-lite" are allowed; inline styles + SVG. For a chart, place the platform `ChartCard` (it takes a Flint spec) rather than drawing one. Placed instances hot-reload; use place_component to render a new instance on a canvas. To change PART of a module that already exists, use edit_component instead — it takes a line range, so you never re-send the rest of the file.',
         inputSchema: WriteComponentInput.shape,
       },
       async (input) => text(await tools.writeComponent(input)),
+    );
+
+    server.registerTool(
+      'edit_component',
+      {
+        description:
+          'Change part of an existing component module WITHOUT re-sending the rest of it — use this, not write_component, for any small adjustment. It replaces lines start_line..end_line (1-based, INCLUSIVE) with `content`. Read that window first (read_component with offset/limit) so the numbers are ones you have actually seen. The replacement may be any number of lines: more lines inserts, fewer removes, and an empty `content` deletes the range outright; one trailing newline on `content` is the line terminator, not an extra blank line. An edit shifts every line number below it, so re-read before addressing another range. Placed instances hot-reload just as they do after write_component.',
+        inputSchema: EditComponentInput.shape,
+      },
+      async (input) => text(await tools.editComponent(input)),
     );
 
     server.registerTool(

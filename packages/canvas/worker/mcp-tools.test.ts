@@ -7,7 +7,7 @@ import * as schema from '../web-poc/lib/db/schema.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { addWorkspaceMember, createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
-import { buildMcpTools, RunDevAgentInput, WriteComponentInput } from './mcp-tools.ts';
+import { buildMcpTools, EditComponentInput, RunDevAgentInput, WriteComponentInput } from './mcp-tools.ts';
 import { NOTEBOOK_TOOL_SPECS } from '../web-poc/lib/contract/notebook-tools.ts';
 import { d1RecordStore } from './record-store.ts';
 
@@ -32,7 +32,9 @@ const database = db as never;
 let sends: Array<{ workspaceId: string; chatId: string; message: string; canvasId?: string }> = [];
 let skillUploads: Array<{ workspaceId: string; name: string; files: number }> = [];
 let bridgeCalls: Array<{ workspaceId: string; path: string; method: string; headers: Record<string, string>; body?: unknown }> = [];
-// Canned bridge responses by path — set per test; unset paths 404.
+// Canned bridge responses by path — set per test; unset paths 404. A key may be prefixed
+// with a method ("PUT /api/components/X") when one path answers differently per verb, which
+// a read-modify-write tool needs; a bare path still matches any method.
 let bridgeResponses: Record<string, unknown> = {};
 /** Which workspaces the tools rang the events hub for (#383). */
 const rung: string[] = [];
@@ -50,7 +52,7 @@ const tools = buildMcpTools({
   },
   proxyBridge: async (workspaceId, path, init) => {
     bridgeCalls.push({ workspaceId, path, method: init?.method ?? 'GET', headers: init?.headers ?? {}, body: init?.body });
-    const canned = bridgeResponses[path];
+    const canned = bridgeResponses[`${init?.method ?? 'GET'} ${path}`] ?? bridgeResponses[path];
     return canned === undefined
       ? new Response(JSON.stringify({ error: 'not found' }), { status: 404 })
       : new Response(JSON.stringify(canned), { status: 200 });
@@ -353,10 +355,180 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     await expect(tools.readComponent({ workspace_id: OTHER_WS, module: 'KpiCard' })).rejects.toThrow(/not found/);
   });
 
+  // ── Line-addressed read/edit (CEDA-OB5DX6) ──────────────────────────────────────
+  // The point of these two tools is the loop Claude Code runs for a small change: read a
+  // WINDOW, edit a RANGE, never re-supply the file. Both are driven here through the tool
+  // seam — what the read returns, and what the edit PUTs back to the bridge.
+
+  /** Six lines, trailing newline. Every line number expected below is counted off THIS. */
+  const COUNTER_SOURCE =
+    [
+      "import { useState } from 'react';",
+      '',
+      'export default function Counter() {',
+      '  const [n, setN] = useState(0);',
+      '  return <button onClick={() => setN(n + 1)}>{n}</button>;',
+      '}',
+    ].join('\n') + '\n';
+
+  test('read_component takes an offset/limit window and returns just those lines, numbered', async () => {
+    bridgeResponses = { '/api/components/Counter': { module: 'Counter', source: COUNTER_SOURCE } };
+
+    expect(await tools.readComponent({ workspace_id: WS, module: 'Counter', offset: 3, limit: 2 })).toEqual({
+      module: 'Counter',
+      offset: 3,
+      limit: 2,
+      lines: 6,
+      source: '     3\texport default function Counter() {\n     4\t  const [n, setN] = useState(0);',
+    });
+
+    // Nothing asked for → today's shape, the file's actual text (existing callers unchanged).
+    expect(await tools.readComponent({ workspace_id: WS, module: 'Counter' })).toEqual({
+      module: 'Counter',
+      source: COUNTER_SOURCE,
+    });
+  });
+
+  test('read_component clamps a window that overruns the file, and refuses one that starts past it', async () => {
+    bridgeResponses = { '/api/components/Counter': { module: 'Counter', source: COUNTER_SOURCE } };
+
+    // Overrunning the end is ordinary paging — it stops at the last line rather than erroring.
+    expect(await tools.readComponent({ workspace_id: WS, module: 'Counter', offset: 5, limit: 99 })).toEqual({
+      module: 'Counter',
+      offset: 5,
+      limit: 2,
+      lines: 6,
+      source: '     5\t  return <button onClick={() => setN(n + 1)}>{n}</button>;\n     6\t}',
+    });
+
+    // Starting past the end is a mistake, not a page: an empty window looks like an empty
+    // file, and an agent that believes that will overwrite one. Say how long the file is.
+    await expect(tools.readComponent({ workspace_id: WS, module: 'Counter', offset: 9 })).rejects.toThrow(
+      /offset 9 .*past the end.*6 lines/,
+    );
+  });
+
+  test('edit_component replaces a line range and PUTs the spliced source — the caller never re-supplies the file', async () => {
+    bridgeCalls = [];
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'EditBoard' });
+    bridgeResponses = {
+      'GET /api/components/Counter': { module: 'Counter', source: COUNTER_SOURCE },
+      'PUT /api/components/Counter': { ok: true, module: 'Counter', reloaded: 2 },
+    };
+
+    const res = await tools.editComponent({
+      workspace_id: WS,
+      canvas_id: board.id,
+      module: 'Counter',
+      start_line: 4,
+      end_line: 4,
+      content: '  const [n, setN] = useState(10);',
+    });
+    expect(res).toEqual({ ok: true, module: 'Counter', reloaded: 2, lines: 6, replaced: { start_line: 4, end_line: 4 } });
+
+    // The bridge sees the WHOLE file (its PUT is the only writer) — but this literal is the
+    // point of the tool: only line 4 differs from COUNTER_SOURCE, trailing newline included,
+    // and the caller supplied one line.
+    const put = bridgeCalls.at(-1);
+    expect(put).toMatchObject({ path: '/api/components/Counter', method: 'PUT', headers: { 'x-canvas-id': board.id } });
+    expect((put?.body as { source: string }).source).toBe(
+      [
+        "import { useState } from 'react';",
+        '',
+        'export default function Counter() {',
+        '  const [n, setN] = useState(10);',
+        '  return <button onClick={() => setN(n + 1)}>{n}</button>;',
+        '}',
+      ].join('\n') + '\n',
+    );
+
+    // Read it back the way the acceptance check does: the edited window, numbered.
+    bridgeResponses['GET /api/components/Counter'] = { module: 'Counter', source: (put?.body as { source: string }).source };
+    expect((await tools.readComponent({ workspace_id: WS, module: 'Counter', offset: 4, limit: 1 })).source).toBe(
+      '     4\t  const [n, setN] = useState(10);',
+    );
+  });
+
+  test('edit_component inserts and deletes lines, and leaves the file’s final newline as it found it', async () => {
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'SpliceBoard' });
+    const putSource = () => (bridgeCalls.at(-1)?.body as { source: string }).source;
+    const edit = (args: { start_line: number; end_line: number; content: string }) =>
+      tools.editComponent({ workspace_id: WS, canvas_id: board.id, module: 'Counter', ...args });
+
+    // Longer replacement → the file GROWS. The trailing newline on `content` is the line
+    // terminator, not a blank line, so this is two lines and not three.
+    bridgeCalls = [];
+    bridgeResponses = {
+      'GET /api/components/Counter': { module: 'Counter', source: COUNTER_SOURCE },
+      'PUT /api/components/Counter': { ok: true, module: 'Counter', reloaded: 1 },
+    };
+    expect((await edit({ start_line: 2, end_line: 2, content: "import { memo } from 'react';\nimport clsx from 'clsx';\n" })).lines).toBe(7);
+    expect(putSource()).toBe(
+      [
+        "import { useState } from 'react';",
+        "import { memo } from 'react';",
+        "import clsx from 'clsx';",
+        'export default function Counter() {',
+        '  const [n, setN] = useState(0);',
+        '  return <button onClick={() => setN(n + 1)}>{n}</button>;',
+        '}',
+      ].join('\n') + '\n',
+    );
+
+    // Empty content → the range is DELETED.
+    bridgeCalls = [];
+    expect((await edit({ start_line: 1, end_line: 2, content: '' })).lines).toBe(4);
+    expect(putSource()).toBe(
+      [
+        'export default function Counter() {',
+        '  const [n, setN] = useState(0);',
+        '  return <button onClick={() => setN(n + 1)}>{n}</button>;',
+        '}',
+      ].join('\n') + '\n',
+    );
+
+    // A file that does not end in a newline must not acquire one on the way through.
+    bridgeCalls = [];
+    bridgeResponses['GET /api/components/Counter'] = { module: 'Counter', source: 'const a = 1;\nconst b = 2;' };
+    expect((await edit({ start_line: 2, end_line: 2, content: 'const b = 3;' })).lines).toBe(2);
+    expect(putSource()).toBe('const a = 1;\nconst b = 3;');
+  });
+
+  test('edit_component refuses a range the file does not have, and writes nothing when it does', async () => {
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'RangeBoard' });
+    const edit = (args: { start_line: number; end_line: number }) =>
+      tools.editComponent({ workspace_id: WS, canvas_id: board.id, module: 'Counter', content: 'x', ...args });
+
+    bridgeCalls = [];
+    bridgeResponses = {
+      'GET /api/components/Counter': { module: 'Counter', source: COUNTER_SOURCE },
+      'PUT /api/components/Counter': { ok: true, module: 'Counter', reloaded: 1 },
+    };
+
+    // Inverted: silently swapping the two would edit lines the caller never named.
+    await expect(edit({ start_line: 5, end_line: 3 })).rejects.toThrow(/end_line 3 is before start_line 5/);
+    // Past the end, either endpoint. Line numbers shift under an edit, so a stale range is
+    // the expected mistake here — the error says how long the file is now.
+    await expect(edit({ start_line: 4, end_line: 9 })).rejects.toThrow(/end_line 9 .*past the end.*6 lines/);
+    await expect(edit({ start_line: 9, end_line: 9 })).rejects.toThrow(/start_line 9 .*past the end.*6 lines/);
+
+    // Refused BEFORE the write: the component is untouched, not half-edited.
+    expect(bridgeCalls.filter((c) => c.method === 'PUT')).toEqual([]);
+
+    // canvas_id stays mandatory on this write, exactly as it is on write_component.
+    expect(EditComponentInput.safeParse({ workspace_id: WS, module: 'Counter', start_line: 1, end_line: 1, content: 'x' }).success).toBe(
+      false,
+    );
+  });
   test('write_component requires canvas_id — an omitted or unregistered one is rejected before it can land in the wrong canvas', async () => {
     // Schema level: the MCP protocol boundary rejects a missing canvas_id outright (unlike
     // read_component/list_components, which default to the workspace's default canvas).
     expect(WriteComponentInput.safeParse({ workspace_id: WS, module: 'NewCard', source: 'x' }).success).toBe(false);
+
+    // ...and a write advertises NO line window: `.shape` is what the MCP client is shown as
+    // this tool's input schema, so read_component's offset/limit leaking in would offer a
+    // knob write_component ignores.
+    expect(Object.keys(WriteComponentInput.shape)).not.toContain('offset');
 
     // Tool level: a canvas_id that isn't registered to this workspace is rejected too (same
     // guard read_canvas already has for an unknown canvas).

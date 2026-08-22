@@ -76,13 +76,44 @@ export const ListComponentsInput = ReadCanvasInput;
 /** `page` takes a NAME as the human says it, or a `page:` id — `resolvePageRef` accepts
  *  both, so the caller never has to know which one it is holding. */
 export const SelectPageInput = ReadCanvasInput.extend({ page: z.string().min(1) });
-export const ReadComponentInput = ReadCanvasInput.extend({ module: ComponentName });
+/** Addressing one module in one canvas — where read/write/edit all start. Not exported: it is
+ *  shared structure, not a boundary anything parses against. */
+const ComponentRef = ReadCanvasInput.extend({ module: ComponentName });
+export const ReadComponentInput = ComponentRef.extend({
+  // A line WINDOW, Claude Code's parameter names: 1-based `offset`, `limit` lines from it.
+  // Both optional and both opt-in — omitting them keeps the whole-file shape this tool has
+  // always returned, so `source` never quietly stops meaning "the file's actual text".
+  offset: z.number().int().positive().optional(),
+  limit: z.number().int().positive().optional(),
+});
 // canvas_id is REQUIRED here (unlike the read paths' default-canvas fallback): a write
 // silently landing in the default canvas's own dir when the caller meant a specific one
 // is invisible until something tries to place/resolve the module there — an omitted
 // canvas_id here, followed by place_component on a different canvas, 404s with no hint
 // why. Forcing the caller to say which canvas surfaces the mistake immediately.
-export const WriteComponentInput = ReadComponentInput.extend({ canvas_id: z.string().min(1) }).merge(WriteComponentBody);
+// Built from ComponentRef, NOT from ReadComponentInput: a write has no line window, and
+// inheriting one would advertise `offset`/`limit` on write_component that it then ignores.
+export const WriteComponentInput = ComponentRef.extend({ canvas_id: z.string().min(1) }).merge(WriteComponentBody);
+/**
+ * A line-range edit: lines `start_line`..`end_line` (1-based, inclusive) become `content`.
+ * Because the replacement may be any number of lines, inserting and deleting are the same
+ * verb — there is no separate insert or delete tool to keep in step with this one.
+ *
+ * NOT the same shape as `server/agent.ts`'s in-container tool of the same name, which swaps a
+ * unique `old_string` for a `new_string`. Different surface, different client — the in-canvas
+ * agent holds the file's text in its own context and can quote it; an outside MCP client has
+ * just read a numbered window and holds line numbers.
+ *
+ * `canvas_id` is required for the reason `write_component` requires it: this WRITES, and a
+ * write that silently lands in the default canvas stays invisible until something later fails
+ * to resolve it.
+ */
+export const EditComponentInput = ComponentRef.extend({
+  canvas_id: z.string().min(1),
+  start_line: z.number().int().positive(),
+  end_line: z.number().int().positive(),
+  content: z.string(),
+});
 export const WriteDataInput = ReadCanvasInput.extend({ name: DataFileName }).merge(WriteDataBody);
 // Direct canvas mutation: the tool input is the canvas address plus the bridge's own body
 // schema (shared/bridge-wire.ts), so the edge validates exactly what the bridge parses.
@@ -90,6 +121,27 @@ export const CreateShapesInput = ReadCanvasInput.merge(CreateShapesBody);
 export const UpdateShapesInput = ReadCanvasInput.merge(UpdateShapesBody);
 export const DeleteShapesInput = ReadCanvasInput.merge(DeleteShapesBody);
 export const PlaceComponentInput = ReadCanvasInput.merge(PlaceComponentBody);
+
+/**
+ * Line addressing for a component's source (read_component's window, edit_component's range).
+ *
+ * A file ending in a newline splits to a trailing '' — an artifact, not a line: `wc -l` does
+ * not count it and neither does anything a human calls "line 7". It is set aside here and put
+ * back by `joinLines`, so a read reports the count a person would, and an edit round-trips a
+ * file's final newline (or its absence) byte for byte.
+ */
+function splitLines(source: string): { lines: string[]; trailingNewline: boolean } {
+  const parts = source.split('\n');
+  const trailingNewline = parts.length > 1 && parts[parts.length - 1] === '';
+  return { lines: trailingNewline ? parts.slice(0, -1) : parts, trailingNewline };
+}
+
+const joinLines = (lines: string[], trailingNewline: boolean) => lines.join('\n') + (trailingNewline ? '\n' : '');
+
+/** `cat -n`: a right-aligned line number, a tab, the line. The numbers are NOT in the file —
+ *  they exist so the range an agent passes to edit_component is one it actually read. */
+const numberLines = (lines: string[], offset: number) =>
+  lines.map((line, i) => `${String(offset + i).padStart(6)}\t${line}`).join('\n');
 
 export interface McpToolDeps {
   db: Database;
@@ -369,7 +421,26 @@ export function buildMcpTools(deps: McpToolDeps) {
     async readComponent(input: z.infer<typeof ReadComponentInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      return bridgeJson(ws.id, `${BRIDGE_ROUTES.components}/${encodeURIComponent(input.module)}`, { headers });
+      const res = (await bridgeJson(ws.id, `${BRIDGE_ROUTES.components}/${encodeURIComponent(input.module)}`, { headers })) as {
+        module: string;
+        source: string;
+      };
+      if (input.offset === undefined && input.limit === undefined) return res;
+      // The window is applied HERE rather than at the bridge: the source has already crossed
+      // the hop by the time anyone could slice it, so a bridge-side window would save nothing
+      // — what it costs is a second contract to keep in step with this one.
+      const { lines } = splitLines(res.source);
+      const offset = input.offset ?? 1;
+      // Overrunning the END is ordinary paging and clamps. STARTING past the end does not:
+      // an empty window is indistinguishable from an empty file, and an agent that believes
+      // the file is empty writes over it. Report the length instead.
+      if (offset > lines.length) {
+        throw new Error(`read_component ${res.module}: offset ${offset} is past the end of the file (${lines.length} lines)`);
+      }
+      const shown = lines.slice(offset - 1, input.limit === undefined ? undefined : offset - 1 + input.limit);
+      // `limit` reports how many lines actually came back — what was asked for, unless the
+      // window ran off the end, which is how a caller tells paging from the last page.
+      return { module: res.module, offset, limit: shown.length, lines: lines.length, source: numberLines(shown, offset) };
     },
 
     async writeComponent(input: z.infer<typeof WriteComponentInput>) {
@@ -380,6 +451,49 @@ export function buildMcpTools(deps: McpToolDeps) {
         headers,
         body: { source: input.source },
       });
+    },
+
+    /**
+     * Read-modify-write at the EDGE, over the same two bridge routes read/write already use.
+     * The bridge stays the single writer of the container filesystem and needs no new route;
+     * its PUT persists the Record and bumps the hot-reload rev, so a placed instance reloads
+     * from an edit exactly as it does from a write.
+     *
+     * The lost-update window between the GET and the PUT is the one `write_component` already
+     * has — whoever PUTs last wins — and `component_history` in the container can undo it.
+     */
+    async editComponent(input: z.infer<typeof EditComponentInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      const path = `${BRIDGE_ROUTES.components}/${encodeURIComponent(input.module)}`;
+      const current = (await bridgeJson(ws.id, path, { headers })) as { source: string };
+      const { lines, trailingNewline } = splitLines(current.source);
+      // Refuse an impossible range BEFORE the PUT. An out-of-date range is the expected
+      // mistake — every edit shifts the numbers below it — and clamping it would quietly
+      // rewrite lines the caller never named. The count tells them what to re-read against.
+      if (input.end_line < input.start_line) {
+        throw new Error(`edit_component ${input.module}: end_line ${input.end_line} is before start_line ${input.start_line}`);
+      }
+      for (const [field, value] of [
+        ['start_line', input.start_line],
+        ['end_line', input.end_line],
+      ] as const) {
+        if (value > lines.length) {
+          throw new Error(`edit_component ${input.module}: ${field} ${value} is past the end of the file (${lines.length} lines)`);
+        }
+      }
+      // Empty content DELETES the range: "replace these lines with nothing" is the reading an
+      // agent means, and a range replacement of a different length is how it also inserts.
+      const replacement = input.content === '' ? [] : splitLines(input.content).lines;
+      const next = [...lines.slice(0, input.start_line - 1), ...replacement, ...lines.slice(input.end_line)];
+      const res = (await bridgeJson(ws.id, path, {
+        method: 'PUT',
+        headers,
+        body: { source: joinLines(next, trailingNewline) },
+      })) as Record<string, unknown>;
+      // `lines` is the NEW total: an edit that changes the line count shifts every number
+      // below it, and the caller has to know to re-read before addressing another range.
+      return { ...res, lines: next.length, replaced: { start_line: input.start_line, end_line: input.end_line } };
     },
 
     async writeData(input: z.infer<typeof WriteDataInput>) {
