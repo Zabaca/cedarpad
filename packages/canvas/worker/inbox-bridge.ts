@@ -1,6 +1,7 @@
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { resolveConversationById } from './access.ts';
 import { listTokens } from '../web-poc/lib/db/queries/mcp-tokens.ts';
+import { IS_CHAT_SEND } from './mcp-tokens-proxy.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
@@ -62,7 +63,7 @@ export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
  */
 // A proxied chat SEND (`POST /api/chat/:chatId/send`) — the human answering. The proxy is the
 // inbox-aware home for the triage flip; `<ChatView>` / the generic `/send` stay unaware of it.
-const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
+// `IS_CHAT_SEND` is imported from ./mcp-tokens-proxy.ts — the one owner of this predicate.
 // The open-conversation GET (`GET /api/inbox/:convId/chat`) — the Shell resolving a thread to
 // its chatId. ADR-0018 / #261: the edge already holds the row, so it forwards it here.
 const IS_OPEN_CONVERSATION = /^\/api\/inbox\/[^/]+\/chat$/;
