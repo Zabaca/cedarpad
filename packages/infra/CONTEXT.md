@@ -1,6 +1,6 @@
 # Infra
 
-The cedarpad-side consumer of `zbc` modules: per-environment infrastructure instances applied via `zbc apply <env>`.
+The cedarpad-side consumer of `zbc` modules: per-environment infrastructure instances applied via `bun run apply <env>`.
 
 ## Language
 

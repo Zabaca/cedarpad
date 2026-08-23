@@ -34,14 +34,29 @@ reachable with it — foundry's own guests live in `default`, out of reach.
 ## Applying
 
 ```
-zbc apply workspace          # all eight
-zbc apply workspace ws       # the guest alone
+bun run apply workspace          # all eight
+bun run apply workspace ws       # the guest alone
 ```
+
+**`bun run apply`, not a bare `zbc`.** There is no `zbc` on any PATH here; the
+CLI is a devDependency and `bun run` is what puts it on one. This file said
+`zbc apply …` until 2026-08-23 and that command had never worked on this box —
+which is worse than saying nothing, because it stops the reader looking for the
+one that does. A migration found it by trying.
+
+**The CLI version is pinned to the vendored tag and the two must move together.**
+`vendor/zbc/` is a git subtree of `Zabaca/zbc-core` at **`zbc-core-v0.12.0`**,
+and `@zabaca/zbc` in the root `package.json` is `0.12.0`. The subtree is the
+modules an instance imports; the package is the engine that discovers and
+converges them. Pull one without bumping the other and you are running an engine
+against modules it was not released with. Nothing enforces this — it is two
+numbers in two files, and this paragraph is the only thing that says they are
+one number.
 
 A third environment rather than part of `production`, deliberately: an apply of
 production must not require ryzen-9 to be reachable, and the release path's
-`zbc apply production www` would otherwise sweep a VM converge into every page
-deploy.
+`bun run apply production www` would otherwise sweep a VM converge into every
+page deploy.
 
 ## Secrets
 
@@ -63,6 +78,6 @@ that moved these files. Two ways to close it, both fine:
    store it here, and delete `ws-token.ts`, pointing `ws-tunnel` and `ws-access`
    at the secret directly. Narrower blast radius, no rolling.
 
-Until then `zbc apply workspace ws`, `ws-provision`, `ws-app` and `ws-service`
-converge; the tunnel, its token, the Access policy and the in-guest cloudflared
+Until then `bun run apply workspace ws`, `ws-provision`, `ws-app` and
+`ws-service` converge; the tunnel, its token, the Access policy and the in-guest cloudflared
 do not.
