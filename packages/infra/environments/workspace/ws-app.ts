@@ -49,6 +49,15 @@ export default vmProvisionModule.instance({
   name: 'ws-app',
   config: {
     marker: 'app',
+    // A digest cannot express a moving target, and this provision's whole job is
+    // to be at the current commit. {packages, script, env} are all constant here,
+    // so the marker always matched and the fetch-and-reset below never ran: the
+    // guest sat on 71afd0c, stamped 2026-08-20, while origin/main moved six
+    // commits on, and three applies on 2026-08-22 each reported `unchanged`.
+    // BRANCH: 'main' above described an intention the mechanism could not carry
+    // out. The note further up treats a branch pin as the hazard; a frozen digest
+    // is the same hazard without a branch name to give it away.
+    force: true,
     envSecrets: { GIT_TOKEN: 'GITHUB_PAT' },
     env: { REPO: 'Zabaca/cedarpad', BRANCH: 'main', ROOT: '/app/agent-canvas' },
     script: `
