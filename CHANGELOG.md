@@ -39,7 +39,7 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
-## [0.2.5] — 2026-08-22
+## [0.2.5] — 2026-08-23
 
 ### Internal
 - **The workspace Guest now converges to the commit being applied.** `ws-app`'s provision
