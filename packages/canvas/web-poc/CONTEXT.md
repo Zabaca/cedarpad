@@ -171,7 +171,7 @@ surface turns that into a tool error the agent reads.
   `BETTER_AUTH_*`, `WEB_ORIGIN`) rides the canvas worker secrets
   (`packages/infra/environments/production/canvas.ts` `workerSecrets`, all must
   exist in `production/secrets.yaml`, SOPS-encrypted). Deploy is
-  `packages/canvas/scripts/deploy.sh` (`zbc apply production canvas`).
+  `packages/canvas/scripts/deploy.sh` (`bun run apply production canvas`).
 - **Standalone deploy: removed.** The old `infra/.../web-poc.ts` target,
   `wrangler.jsonc`, and the `.github/workflows/production.yml` auto-deploy were
   retired in the merge — there is no longer a `cedarpad-web-poc` worker.

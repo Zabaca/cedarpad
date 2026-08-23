@@ -130,7 +130,7 @@ All tooling runs as `webpoc:*` scripts on the **canvas** package (run from
 Cloudflare container — there is no standalone web-poc worker anymore (its
 `wrangler.jsonc` and `infra/.../web-poc.ts` target were removed in the merge).
 Deploy the whole stack with `packages/canvas/scripts/deploy.sh`
-(`zbc apply production canvas`); web-poc's secrets (`VOYAGE_API_KEY`,
+(`bun run apply production canvas`); web-poc's secrets (`VOYAGE_API_KEY`,
 `BETTER_AUTH_SECRET`) ride the canvas worker (`infra/.../canvas.ts`
 `workerSecrets`, from SOPS `secrets.yaml`). Migrations against the platform D1
 ARE run by the deploy (`deploy.sh` runs `wrangler d1 migrations apply`).

@@ -146,7 +146,7 @@ from scripts/servers are unaffected (no CORS). Cross-origin *browser* callers ne
 CORS on `/v1`; the bridge already answers `OPTIONS` with `access-control-allow-*`
 (`server/bridge.ts`) — widen/verify it there if you add such callers.
 
-**4. Deploy + verify.** Redeploy the worker (`bunx @zabaca/zbc apply <env> canvas`),
+**4. Deploy + verify.** Redeploy the worker (`bun run apply <env> canvas`),
 recycle, then:
 
 ```bash
