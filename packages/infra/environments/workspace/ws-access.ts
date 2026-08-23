@@ -37,12 +37,20 @@ import cedarpadWsToken from './ws-token'
 //
 //   `appLauncherVisible: true` — measured, not guessed. The old module never
 //   sent the field, so Cloudflare's own default applied and the live
-//   application reads `app_launcher_visible: true`. The general module sends it
-//   on every apply and defaults it to `false`, so omitting it here would flip
-//   live state — and, worse, would do it while the apply reported `unchanged`,
-//   because `changed` is computed from name, domain and session duration only.
-//   That is a defect in the module rather than in this file, and it is reported
-//   as one; this line is what keeps the migration a re-expression.
+//   application reads `app_launcher_visible: true`.
+//
+//   This line found a defect rather than merely avoiding one. The general
+//   module sent the field on every apply, defaulted it to `false`, and computed
+//   `changed` from name, domain and session duration alone — so omitting it
+//   here would have flipped live state while the apply printed `unchanged`.
+//   Fixed in zbc-core-v0.12.0: the default is now `true`, matching Cloudflare's
+//   own and therefore matching what omitting the field has always meant, and
+//   the apply compares every field it writes.
+//
+//   KEPT EXPLICIT even though it now equals the default, and that is the point
+//   rather than an oversight: the default is the thing that moved under a live
+//   application. A value visible in production is declared where it is wanted,
+//   not inherited from a module that has already changed its mind once.
 //
 // Everything else migrates by doing nothing, which is the point of the
 // promotion. `emails` defaults to empty, so no people policy is declared.
