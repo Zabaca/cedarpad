@@ -56,9 +56,14 @@ describe('the pin is one number, and the comparison is exact', () => {
   })
 
   test('a prefix match is not a match', () => {
-    // `0.1` must not satisfy `0.12.0`. Comparison is on the whole version.
-    expect(comparePin({ tag: 'zbc-core-v0.12.0', version: '0.1' }).ok).toBe(false)
-    expect(comparePin({ tag: 'zbc-core-v0.1', version: '0.12.0' }).ok).toBe(false)
+    // BOTH VERSIONS ARE WELL-FORMED, and that is the point. The first spelling
+    // used `0.1` and `zbc-core-v0.1`, which the range check above rejects
+    // before the comparison is ever reached — so a mutation turning `!==` into
+    // `startsWith` SURVIVED, and this test's name was a claim about a line it
+    // never exercised. `0.1.2` against `zbc-core-v0.1.20` is the case where a
+    // prefix match and an equality differ and both are three-part versions.
+    expect(comparePin({ tag: 'zbc-core-v0.1.20', version: '0.1.2' }).ok).toBe(false)
+    expect(comparePin({ tag: 'zbc-core-v0.1.2', version: '0.1.20' }).ok).toBe(false)
   })
 
   test('a range is refused rather than resolved', () => {
@@ -66,7 +71,14 @@ describe('the pin is one number, and the comparison is exact', () => {
     // problem in a shorter form, so it fails here rather than being satisfied
     // by whatever it happens to resolve to today.
     for (const version of ['^0.12.0', '~0.12.0', '>=0.12.0', 'latest', '*']) {
-      expect(comparePin({ tag: 'zbc-core-v0.12.0', version }).ok, version).toBe(false)
+      const result = comparePin({ tag: 'zbc-core-v0.12.0', version })
+      expect(result.ok, version).toBe(false)
+      // REFUSED AS A RANGE, not merely refused. Without the dedicated branch a
+      // range still fails — `zbc-core-v^0.12.0` does not equal
+      // `zbc-core-v0.12.0` — so deleting that branch SURVIVED a mutation while
+      // this test kept passing. What the branch exists for is the message: the
+      // reader has to be told the pin is a range, not that two strings differ.
+      expect(result.ok === false && result.why, version).toContain('range')
     }
   })
 })
