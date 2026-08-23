@@ -69,7 +69,10 @@ WORKDIR /app/agent-canvas
 # live in packages/canvas/package.json, so that one manifest is enough for the install graph.
 COPY package.json bun.lock tsconfig.json ./
 COPY packages/canvas/package.json packages/canvas/
-COPY packages/infra/package.json packages/infra/
+# `packages/infra` has no package.json since fc4f0da retired @cedarpad/infra — the
+# engine comes from vendor/zbc now. Copying a manifest that does not exist failed the
+# 0.2.5 build at this line; it was the first deploy after that commit, so nothing had
+# exercised it in between.
 RUN bun install --frozen-lockfile || bun install
 # Source AFTER install — a change here can't bust the cached install layer above. .dockerignore
 # strips **/node_modules from the context, so this can't clobber the install layer's node_modules.
