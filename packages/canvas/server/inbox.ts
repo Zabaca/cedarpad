@@ -10,7 +10,6 @@
 // happens at the edge — either pushed down through the proxy or asked for over the RPC — so
 // this module's only injected collaborators are that RPC, the R2 seam, and a notify seam.
 
-import { findOrCreateConversation } from '../web-poc/lib/db/find-or-create-conversation.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { ForwardedPairing } from '../shared/bridge-wire.ts';
 import type { PlatformRpc } from './platform-rpc-client.ts';
@@ -21,11 +20,6 @@ import type { TranscriptStore } from './transcript-store.ts';
  * watching, which devices they hold) is resolved entirely at the edge. Never throws into the
  * tool path. */
 export type Notify = (conversationId: string, question: string) => void | Promise<void>;
-
-// `findOrCreateConversation` now lives in the platform data layer (ADR-0018): the edge runs it
-// too, for the platform RPC's `conversation.start` operation, and worker code cannot import this
-// module (it reaches node:fs through the transcript seam). Re-exported so call sites are unchanged.
-export { findOrCreateConversation };
 
 /** The seam card placement needs from a canvas session: current shapes (for free-space
  * placement) and an upsert (to place the card). The bridge adapts a room store to
