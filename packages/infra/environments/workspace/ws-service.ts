@@ -25,6 +25,15 @@ import cedarpadWs from './ws'
 // and everything else straight to vite on 4510, so the chat SSE stream and the
 // canvas sync websocket never pass through the supervisor — restarting it cannot
 // drop a live stream.
+//
+// ⚠️ BUT APPLYING THIS INSTANCE STOPS THE CANVAS. The paragraph above is about
+// what a restart INTERRUPTS; vite is the supervisor's CHILD, so a restart also
+// KILLS it, and the stack stays down until cedarpad's edge Worker pushes an
+// environment again — the same cold state as after a reboot, and unreachable from
+// here because this guest holds no credential to boot with. Verified the hard way
+// on 2026-08-23. So an apply of `ws-service` is never routine: it is a deliberate
+// act with a cold canvas on the other side of it, recovered by the next real
+// request. `ws-supervisor.ts`'s header carries the mechanism.
 export default vmProvisionModule.instance({
   name: 'ws-service',
   config: {

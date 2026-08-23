@@ -21,11 +21,11 @@ Read the ADR before deviating from anything below — it carries the rejected al
 4. ── GATE ──   the human reviews and edits            ← the only human gate
 5. commit       CHANGELOG.md + version bump → push to main
 6. deploy       deploy.sh (stamps buildRev AND version into the image)
-   +             zbc apply workspace (the ws.cedarpad.com Guest, same commit)
+   +             bun run apply workspace (the ws.cedarpad.com Guest, same commit)
 7. verify       deploy.sh polls /api/buildrev for BOTH stamps
    +             read the Guest's own stamps back over the incus remote
 8. tag          ONLY after BOTH halves of 7 pass
-9. publish      zbc apply production www → check cedarpad.com/changelog
+9. publish      bun run apply production www → check cedarpad.com/changelog
 ```
 
 **Never tag before step 7.** Tagging first mints tags for code that never shipped. Tagging after
@@ -160,7 +160,7 @@ Run it after `deploy.sh` reports `✅ LIVE`, not beside it: the two share nothin
 runtime, and serialising keeps one failure legible instead of two interleaved.
 
 ```bash
-bunx @zabaca/zbc apply workspace          # from the REPO ROOT
+bun run apply workspace          # from the REPO ROOT
 ```
 
 `ws-app` fetches `origin/main`, hard-resets to it, reinstalls, and stamps
@@ -184,7 +184,7 @@ The stamps are what the bridge will read when it does boot, so reading them answ
 question one step earlier and with no credentials.
 
 **If the converge fails, do not tag.** Fix forward and re-run — same version number,
-nothing tagged, exactly as on the container side. `zbc apply workspace ws-app` alone is
+nothing tagged, exactly as on the container side. `bun run apply workspace ws-app` alone is
 enough to retry the checkout; the whole environment is a no-op when it is already right.
 
 **Requires the `ryzen-9` incus remote.** `incus remote list` should show it; if it does
@@ -202,7 +202,7 @@ git tag v0.2.0 && git push origin v0.2.0
 ## 9. Publish the public changelog
 
 ```bash
-bunx @zabaca/zbc apply production www          # from the REPO ROOT, as deploy.sh runs it
+bun run apply production www          # from the REPO ROOT, as deploy.sh runs it
 curl -sL https://cedarpad.com/changelog | grep -o 'v0\.2\.0'
 ```
 
