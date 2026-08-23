@@ -20,7 +20,7 @@ pages); JS upgrades it to fetch + inline states. The same D1 is bound to the app
 so `/admin` shows the list; invites themselves are manual (admin creates the user,
 ADR-0014).
 
-**Deploy**: `bunx @zabaca/zbc apply production www` (the zbc module runs `bun run build`
+**Deploy**: `bun run apply production www` (the zbc module runs `bun run build`
 then `wrangler deploy`). One-time setup: `wrangler d1 create cedarpad-waitlist`, paste
 the uuid into both `d1_databases` blocks in `wrangler.jsonc`, then
 `bun run db:migrate:remote`. Worktree-safe dev: the port comes from `PORT` (default

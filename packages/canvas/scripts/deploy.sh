@@ -153,8 +153,14 @@ echo "→ migrating the platform data layer on D1 (wrangler, idempotent)"
     "CI=true CLOUDFLARE_ACCOUNT_ID=99a19e584439be0568f33aad0477372b ./node_modules/.bin/wrangler d1 migrations apply PLATFORM_DB --remote" ) \
   || { echo "❌ D1 migration failed — aborting before rollout"; exit 1; }
 
-echo "→ zbc apply production canvas (build + deploy + push secrets — both container images)"
-( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bunx @zabaca/zbc apply production canvas ) || { echo "❌ zbc apply failed"; exit 1; }
+# `bun run apply`, never a bare `bunx @zabaca/zbc`. Unpinned, that resolves to whatever
+# is latest at the moment of the release, against a vendor/zbc subtree pinned to a tag —
+# so the engine converging production was decided by the clock. `bun run apply` uses the
+# version the root package.json pins, and runs check-zbc-pin.ts first, which refuses when
+# that version and the vendored tag disagree. The snapshot symlinks node_modules in
+# (see above), so `zbc` resolves here exactly as it does in the live checkout.
+echo "→ bun run apply production canvas (build + deploy + push secrets — both container images)"
+( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bun run apply production canvas ) || { echo "❌ apply failed"; exit 1; }
 # zbc apply's own success confirms the warehouse image was PUSHED (the call above builds
 # AND pushes both images, so reaching this line means it got further than the local build
 # check). That is NOT the same claim as LIVE — nothing starts or polls the warehouse

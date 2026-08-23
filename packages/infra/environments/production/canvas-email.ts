@@ -34,7 +34,7 @@ import { cloudflareEmailModule } from '../../../../vendor/zbc/modules/cloudflare
  * MX, and taking ownership of catch-all is the inbox work, not this. Flipping
  * `enableRouting` + `catchAll` here is what that step will look like.
  *
- * Deploy just this instance: bunx @zabaca/zbc apply production canvas-email
+ * Deploy just this instance: bun run apply production canvas-email
  *
  * TWO THINGS TO CHECK THE FIRST TIME THIS APPLIES:
  *

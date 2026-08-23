@@ -40,8 +40,8 @@ and `MIGRATION.md` → "Embedded into canvas".
 
 ### Deploys — never without explicit approval
 web-poc ships as part of canvas now: deploying means
-`packages/canvas/scripts/deploy.sh` (`zbc apply production canvas`). Do not run it
-(or any `zbc apply`) unless the user explicitly asks in this session. Local
+`packages/canvas/scripts/deploy.sh` (`bun run apply production canvas`). Do not run it
+(or any `bun run apply`) unless the user explicitly asks in this session. Local
 dev/build/typecheck are always fine.
 
 ### Secrets
