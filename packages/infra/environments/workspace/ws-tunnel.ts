@@ -60,6 +60,13 @@ export default cloudflareTunnelModule.instance({
         // to the bridge, exactly as it does inside the Cloudflare container.
         // Deliberately NOT through the supervisor — restarting the supervisor
         // must never drop a canvas sync socket or a chat stream.
+        //
+        // ⚠️ THAT IS ABOUT TRAFFIC, NOT ABOUT THE STACK. Nothing here traverses
+        // the supervisor, and restarting it still STOPS the canvas — vite is
+        // the supervisor's child process, so it dies with its parent and stays
+        // down until the Worker pushes an environment again.
+        // `packages/canvas/scripts/ws-supervisor.ts` carries the mechanism and
+        // the incident; `ws-service.ts` carries what it costs to apply.
         hostname: 'ws.cedarpad.com',
         service: 'http://127.0.0.1:4510',
       },
