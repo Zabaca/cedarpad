@@ -234,3 +234,49 @@ describe("every read takes a workspace and never crosses it", () => {
     expect(fIds.some((id) => id.endsWith("_b1") || id.endsWith("_b2"))).toBe(false);
   });
 });
+
+// The `?solved=true` filter — the same EXISTS-accepted-solution rule the observations
+// list, the problems list and the unified feed each apply. It had no coverage before the
+// four inline copies were consolidated into `solvedFilter`, so these pin all three
+// surfaces: a DRAFT solution must NOT count, only an accepted one.
+describe("the `solved` filter surfaces only targets with an accepted solution", () => {
+  beforeAll(async () => {
+    await db.insert(schema.problems).values([
+      { id: "prob_solved", workspaceId: WS_A, title: "PS", body: "carries an accepted solution" },
+      { id: "prob_draft", workspaceId: WS_A, title: "PD", body: "only a draft solution" },
+    ]);
+    await db.insert(schema.observations).values([
+      { id: "obs_solved", workspaceId: WS_A, title: "OS", body: "carries an accepted solution" },
+    ]);
+    await db.insert(schema.solutions).values([
+      { id: "sol_ok", body: "the accepted one", origin: "human", status: "accepted" },
+      { id: "sol_draft", body: "still a draft", origin: "human", status: "draft" },
+    ]);
+    await db.insert(schema.solutionLinks).values([
+      { solutionId: "sol_ok", targetKind: "problem", targetId: "prob_solved" },
+      { solutionId: "sol_ok", targetKind: "observation", targetId: "obs_solved" },
+      { solutionId: "sol_draft", targetKind: "problem", targetId: "prob_draft" },
+    ]);
+  });
+
+  const idsOf = async (res: Response) =>
+    ((await res.json()) as { items: { id: string }[] }).items.map((i) => i.id);
+
+  it("narrows the problems list to accepted-only (a draft solution does not count)", async () => {
+    const solved = await idsOf(await call("/v1/problems?solved=true", WS_A));
+    expect(solved).toContain("prob_solved");
+    expect(solved).not.toContain("prob_draft");
+  });
+
+  it("narrows the observations list to accepted-only", async () => {
+    const solved = await idsOf(await call("/v1/observations?solved=true", WS_A));
+    expect(solved).toContain("obs_solved");
+  });
+
+  it("narrows the unified feed the same way across both streams", async () => {
+    const solved = await idsOf(await call("/v1/items?solved=true", WS_A));
+    expect(solved).toContain("prob_solved");
+    expect(solved).toContain("obs_solved");
+    expect(solved).not.toContain("prob_draft");
+  });
+});
