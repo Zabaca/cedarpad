@@ -170,17 +170,34 @@ describe('this repo agrees with itself', () => {
     // they record what was decided when, not what to type today — and
     // `workspace/README.md` narrates what this repo USED to say, which is the
     // one place the old string belongs.
+    //
+    // `CHANGELOG.md` is excluded on the ADRs' reasoning rather than on its own:
+    // an entry is a record of a release that already shipped, written in the
+    // past tense about the command as it was spelled then. The 0.2.5 entry
+    // recounts a `zbc apply workspace` that ran before `bun run apply` existed,
+    // and rewriting it to the current spelling would make the history say
+    // something that was not true at the time. What this test is actually for
+    // is a doc that tells a reader what to type, and no released entry does.
     const { spawnSync } = require('node:child_process') as typeof import('node:child_process')
     const grep = spawnSync('grep', ['-rn', '--include=*.md', '-e', 'zbc apply', root], {
       encoding: 'utf8',
     })
-    const hits = (grep.stdout ?? '')
+    const found = (grep.stdout ?? '')
       .split('\n')
       .filter((l) => l.trim() !== '')
       .map((l) => l.replace(`${root}/`, ''))
       .filter((l) => !l.includes('node_modules/'))
       .filter((l) => !l.startsWith('vendor/zbc/'))
+    // The control. Every line this test judges is one grep found, so a grep
+    // that found nothing — a renamed root, a `grep` that is not GNU grep, an
+    // exec that failed silently — reports a clean repo while having read no
+    // repo at all. The exempted paths are the ones known to carry the string,
+    // so requiring them present proves the corpus is real before the filters
+    // that follow decide it is empty.
+    expect(found.some((l) => l.startsWith('docs/adr/'))).toBe(true)
+    const hits = found
       .filter((l) => !l.startsWith('docs/adr/'))
+      .filter((l) => !l.startsWith('CHANGELOG.md'))
       .filter((l) => !l.startsWith('packages/infra/environments/workspace/README.md'))
       .filter((l) => !/`bun run apply/.test(l))
     expect(hits).toEqual([])

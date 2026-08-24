@@ -78,16 +78,26 @@ systemctl restart cedarpad-ws.service
 
 # Prove it is actually listening rather than merely "started" — systemd calls a
 # process that exits immediately a success right up until Restart= gives up.
+answered=
 for i in \$(seq 1 20); do
   if curl -fsS "http://127.0.0.1:\$SUP_PORT/__status" >/dev/null 2>&1; then
     echo "[service] supervisor answering on \$SUP_PORT"
-    exit 0
+    answered=1
+    break
   fi
   sleep 1
 done
-echo "[service] supervisor did NOT answer on \$SUP_PORT" >&2
-systemctl --no-pager --lines=20 status cedarpad-ws.service >&2 || true
-exit 1
+
+# \`break\`, never \`exit 0\`. vm-provision appends its marker write AFTER this
+# script and relies on \`set -e\` to skip it on failure — so a success path that
+# exits takes the marker with it. This provision ran on every single apply from
+# 2026-08-14 to 2026-08-22, restarting the live supervisor each time and
+# reporting "provisioned" each time, because \`exit 0\` never let the marker land.
+if [ -z "\$answered" ]; then
+  echo "[service] supervisor did NOT answer on \$SUP_PORT" >&2
+  systemctl --no-pager --lines=20 status cedarpad-ws.service >&2 || true
+  exit 1
+fi
 `,
   },
   imports: [cedarpadWs],

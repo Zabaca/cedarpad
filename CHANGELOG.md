@@ -39,6 +39,27 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.2.5] — 2026-08-23
+
+### Internal
+- **The workspace Guest now converges to the commit being applied.** `ws-app`'s provision
+  digest was constant, so `zbc apply workspace` skipped the fetch-and-reset it declares: the
+  Guest sat on whichever commit it happened to fetch when that file was last edited, six
+  behind main by the time anyone looked. A release's "same commit" now holds for the Guest as
+  well as the container.
+- **The workspace supervisor's provision records itself.** Its readiness poll ended in
+  `exit 0`, which returned before the marker write appended after it could run — so it
+  re-provisioned on every apply from 14 to 22 August, restarting the live supervisor each time
+  and reporting success each time.
+- **zbc-core vendored at v0.10.8**, up from v0.10.4. Provision markers moved from
+  `/var/lib/foundry-provision` to `/var/lib/zbc-provision`, and `vm` no longer defaults its
+  `sshUser`. The `exit 0` trap above is fixed upstream in the same version, so no consumer can
+  reach it again.
+- The ws.cedarpad.com Guest is declared here and converged over ryzen-9's incus remote, rather
+  than by the repository that owns the box.
+- The infra engine comes from `vendor/zbc`; `@cedarpad/infra` retires.
+- Khoa's age key, and the re-key that makes it work. (#409)
+
 ## [0.2.4] — 2026-08-17
 
 ### Fixed
