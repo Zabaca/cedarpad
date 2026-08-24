@@ -4,6 +4,7 @@
 
 import { type CanvasShape, type ShapeColor, SHAPE_SIZE_DEFAULTS, isColor } from './shapes';
 import { DataSourceSchema, type DataSource } from '../shared/mart-contract';
+import { COMPONENT_NAME_RE } from '../shared/bridge-wire';
 
 /**
  * Mint a tldraw-compatible shape id: a readable prefix for provenance, then 64 random
@@ -44,9 +45,12 @@ function str(v: unknown): string {
   return v == null ? '' : String(v);
 }
 
-/** A safe component module name: letters/digits/_/-, no path separators or dots. */
+/** A safe component module name: letters/digits/_/-, no path separators or dots.
+ * The rule itself lives in shared/bridge-wire.ts (COMPONENT_NAME_RE), the one place
+ * the edge, the bridge and the filesystem all enforce it — this reuses it rather than
+ * keeping a second copy that could silently drift. */
 function moduleName(v: unknown): string {
-  if (typeof v !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(v)) {
+  if (typeof v !== 'string' || !COMPONENT_NAME_RE.test(v)) {
     throw new Error(`"module" must be a component name like "KpiCard" (letters/digits/_/-, no extension or path), got ${JSON.stringify(v)}`);
   }
   return v;

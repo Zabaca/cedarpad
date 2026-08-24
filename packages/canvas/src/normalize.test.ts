@@ -115,6 +115,19 @@ describe('normalizeShape: component dataSource', () => {
     ).toThrow();
   });
 
+  // The module name obeys COMPONENT_NAME_RE (shared/bridge-wire.ts) — the same rule the
+  // edge and the filesystem enforce. A name with a path separator, extension or space is
+  // rejected at placement, and a plain component name passes.
+  test('a module name with a path separator, dot or space is rejected; a plain name passes', () => {
+    for (const bad of ['../evil', 'Kpi.tsx', 'has space', 'has/slash']) {
+      expect(() =>
+        normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: bad, data: {}, rev: 1 }),
+      ).toThrow();
+    }
+    const ok = normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'Kpi_Card-2', data: {}, rev: 1 });
+    expect(ok.type === 'component' ? ok.module : null).toBe('Kpi_Card-2');
+  });
+
   // MartName (mart-contract.ts) is the same rule the mart route enforces — a name that
   // could never resolve to a real mart is rejected HERE, at placement, not silently
   // stored and left to fail later at render (CLAUDE.md §7: parse at the boundary).
