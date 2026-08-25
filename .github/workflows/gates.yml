@@ -1,0 +1,106 @@
+name: gates
+
+# The unit tests, typechecks and lint that a release requires — run per commit,
+# where the commit that breaks them is still on screen.
+#
+# Until now `e2e.yml` was the only workflow and `bun run test:e2e` its only step,
+# so NONE of the checks below ever ran in CI. They ran for the first time in the
+# release skill's preflight, against a batch of every commit since the last tag
+# — typically 10 to 18 of them, four or five days apart. Everything broken in
+# that window surfaced at once, at the moment someone was trying to ship, which
+# is how "release cedarpad" became a multi-day activity in which no product
+# change shipped between v0.2.4 and now.
+#
+# ── ubuntu-latest, NOT [self-hosted, ryzen] ────────────────────────────────
+# There is exactly one self-hosted runner (`ryzen-cedarpad`). e2e holds it for
+# up to 20 minutes, so a gate added there reports a typecheck error after the
+# playwright suite rather than before it — and a fast gate queued behind a slow
+# one is a gate people learn to route around. Nothing here needs that box:
+# no playwright, no wrangler dev, no D1, no ports, no GPU. Two jobs so canvas
+# and www fail independently and neither waits for the other.
+#
+# e2e stays exactly where it is. It genuinely needs the runner.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canvas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # wrangler refuses to run under bun and resolves `node` off PATH; pinned
+      # here for the same reason e2e.yml pins it rather than assuming it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # NEVER `bun test` bare in packages/canvas — it collects web-poc's vitest
+      # specs under the wrong runner and manufactures ~10 failures that are not
+      # real. The package script scopes the directories. (CLAUDE.md says this;
+      # it is repeated here because this file is where it would be got wrong.)
+      - name: canvas tests
+        run: bun run test
+        working-directory: packages/canvas
+
+      - name: canvas typecheck
+        run: bun run typecheck
+        working-directory: packages/canvas
+
+      - name: web-poc typecheck
+        run: bun run webpoc:typecheck
+        working-directory: packages/canvas
+
+      - name: web-poc tests
+        run: bun run webpoc:test
+        working-directory: packages/canvas
+
+  www:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # This one is the changelog guard: it parses the committed CHANGELOG.md
+      # and throws on a malformed entry. It is the only thing standing between a
+      # format slip and content silently missing from the public page — and with
+      # the release skill's human gate gone, it is now the ONLY thing checking
+      # an entry nobody read before it shipped.
+      - name: www tests
+        run: bun run test
+        working-directory: packages/www
+
+      - name: www typecheck
+        run: bun run typecheck
+        working-directory: packages/www
+
+      - name: www lint
+        run: bun run lint
+        working-directory: packages/www
