@@ -37,6 +37,7 @@
 
 import { createHash } from 'node:crypto';
 
+import type { ComponentTier } from '../shared/platform-rpc.ts';
 import type { PlatformRpc } from './platform-rpc-client.ts';
 
 /** The legacy production workspace — `worker/shell-routing.ts` DEFAULT_WORKSPACE_ID. */
@@ -121,7 +122,7 @@ export interface PlannedRecord {
   /** The Record key's third coordinate — the Component name, no extension. */
   name: string;
   /** `shared` = the workspace library (`canvas_id NULL`); `own` = this canvas's library. */
-  tier: 'own' | 'shared';
+  tier: ComponentTier;
   /** The canvas the write is performed FROM — the edge's entitlement proof, and for an
    *  own-tier write the tier itself. A shared write names the legacy `default` canvas. */
   canvasId: string;
@@ -538,7 +539,7 @@ export async function migrateRecords(
 
 export interface VerifyFinding {
   name: string;
-  tier: 'own' | 'shared';
+  tier: ComponentTier;
   status: 'ok' | 'missing' | 'mismatch';
   expectedBytes: number;
   /** Null when the Record is absent. */
@@ -550,7 +551,7 @@ export interface VerifyReport {
   /** Records in a migrated tier that the plan does not name. Immediately after a migration
    *  there should be none; each one is either junk a sweep imported or a write that arrived
    *  from somewhere else, and both deserve a human look. */
-  unexpected: Array<{ name: string; tier: 'own' | 'shared' }>;
+  unexpected: Array<{ name: string; tier: ComponentTier }>;
   lost: readonly string[];
   ok: boolean;
 }
@@ -579,14 +580,14 @@ export async function verifyMigration(rpc: MigrationRpc, resolved: readonly Reso
   // plan grew a second canvas the moment `WorkflowGraph` joined it, and a check scoped to one
   // canvas would have stopped covering the other without saying so.
   const planned = new Set(resolved.map((r) => r.item.name));
-  const seen = new Map<string, { name: string; tier: 'own' | 'shared' }>();
+  const seen = new Map<string, { name: string; tier: ComponentTier }>();
   for (const canvasId of new Set(resolved.map((r) => r.item.canvasId))) {
     const listed = await rpc.componentList({ workspaceId: MIGRATION_WORKSPACE, canvasId });
     for (const entry of listed) {
       // The platform tier is in there too and is nobody's migration — it ships with the image.
       if (entry.tier === 'base' || planned.has(entry.name)) continue;
       // Shared entries appear once per canvas listed; the same Record is one surprise.
-      seen.set(`${entry.tier}\0${entry.name}`, { name: entry.name, tier: entry.tier as 'own' | 'shared' });
+      seen.set(`${entry.tier}\0${entry.name}`, { name: entry.name, tier: entry.tier as ComponentTier });
     }
   }
   const unexpected = [...seen.values()];
