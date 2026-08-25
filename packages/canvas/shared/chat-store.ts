@@ -344,6 +344,20 @@ function ensureSharedStream(target = ''): void {
 // closed so the CF container can sleep; a plain .close() does not auto-reconnect. On
 // reopen, every known session rehydrates from the server (live frames missed while
 // closed are recovered from the JSONL-derived transcript, ADR 0004).
+// Exported for tests, and only for tests — the idle gate below drives it in
+// production through `registerStream`. The store's SSE stream is module state,
+// so a test file that opens it leaves it open for every file that runs after in
+// the same bun process: `ensureSharedStream` short-circuits on `if (sharedStream)
+// return`, the next test's fake EventSource is never constructed, and an
+// assertion about opening a stream fails somewhere it was never written. That is
+// a test-isolation defect, not a product one — the tests pass alone and fail
+// together — and this is the smallest honest fix, because the reset it needs is
+// a lifecycle transition the module already has rather than a new one invented
+// for the test.
+export function __closeSharedStreamForTests(): void {
+  closeSharedStream();
+}
+
 function closeSharedStream(): void {
   if (!sharedStream) return;
   sharedStream.close();

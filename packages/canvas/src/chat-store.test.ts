@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { type ChatEvent, isChatFrame } from '../shared/chat-wire.ts';
 import type { ChatSnapshot } from '../shared/chat-store';
-import { armFirstPrompt, beatTargets, connectionTarget, ensureSession, forkSession, getSnapshot, interrupt, isSubscribed, openStream, routeChatFrame, send, setCanvasOverride, setConnectionTarget, subscribe, takeFirstPrompt, toolDetail, toolNameOf, toolParts } from '../shared/chat-store';
+import { __closeSharedStreamForTests, armFirstPrompt, beatTargets, connectionTarget, ensureSession, forkSession, getSnapshot, interrupt, isSubscribed, openStream, routeChatFrame, send, setCanvasOverride, setConnectionTarget, subscribe, takeFirstPrompt, toolDetail, toolNameOf, toolParts } from '../shared/chat-store';
 import { aliveUrl } from './idle.ts';
 
 /** Serialize a wire frame the way the bridge does: a ChatEvent tagged with its chatId. */
@@ -351,6 +351,13 @@ describe('isChatFrame', () => {
 });
 
 describe('isSubscribed: the client half of the subscribe-before-send contract', () => {
+  // The shared SSE stream is module state and outlives a test FILE. Whichever
+  // file runs first and opens it leaves `sharedStream` set, and `openStream`
+  // below then attaches to that one instead of constructing this test's fake —
+  // so `esInstance` stays null and this fails for a reason that has nothing to
+  // do with the contract it is checking. Passes alone, fails in the suite.
+  beforeEach(() => __closeSharedStreamForTests());
+
   test('false before the stream opens, true after the EventSource open event; send is suppressed until subscribed', async () => {
     // Stand in a fake EventSource (happy-dom provides none) that captures its
     // instance so the test can fire `onopen` deterministically, and a fetch spy so
