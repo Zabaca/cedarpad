@@ -39,6 +39,29 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.2.6] — 2026-08-25
+
+### Internal
+- **The checks a release requires now run on every commit.** `e2e.yml` was the only workflow,
+  so the unit tests, typechecks and lint ran for the first time during a release — against
+  every commit since the last tag. Anything broken in that window surfaced at once, at the
+  moment someone was trying to ship, which is why releasing had become a multi-day activity.
+  `gates.yml` runs them per push and per PR instead.
+- **Two test files could not pass on their own.** Both leaned on global state another file
+  happened to leave behind: the shared SSE stream in the chat store, and an `EventSource` that
+  happy-dom does not provide. `Shell.test.tsx` run alone was 0 pass / 31 fail. Whether they
+  passed was a function of file ordering, which held on a developer's machine and nowhere else.
+- **The release no longer stops to have its changelog read.** The prose describes work that has
+  already merged and stays editable afterwards, so the gate bought review of wording at the
+  cost of a release that could not run unattended.
+- **The workspace Access policy is expressed against the general `cloudflare-access` module,**
+  with `sessionDuration` and `appLauncherVisible` stated explicitly — both were defaults that
+  moved, and the second found a defect in the module rather than avoiding one.
+- **`bun run apply` refuses when the two halves of the zbc version disagree,** and `vendor/zbc`
+  moved to `zbc-core-v0.12.0`.
+- **Two guards that did not guard what their names claimed,** and a comment in `ws-tunnel` that
+  described a supervisor restart as safe when it is not.
+
 ## [0.2.5] — 2026-08-23
 
 ### Internal
