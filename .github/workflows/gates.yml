@@ -11,13 +11,23 @@ name: gates
 # is how "release cedarpad" became a multi-day activity in which no product
 # change shipped between v0.2.4 and now.
 #
-# ── ubuntu-latest, NOT [self-hosted, ryzen] ────────────────────────────────
-# There is exactly one self-hosted runner (`ryzen-cedarpad`). e2e holds it for
-# up to 20 minutes, so a gate added there reports a typecheck error after the
-# playwright suite rather than before it — and a fast gate queued behind a slow
-# one is a gate people learn to route around. Nothing here needs that box:
-# no playwright, no wrangler dev, no D1, no ports, no GPU. Two jobs so canvas
-# and www fail independently and neither waits for the other.
+# ── Where each job runs, decided by measurement rather than preference ─────
+# This went up on ubuntu-latest for both jobs, on the reasoning that neither
+# needs the box. `www` does not, and stays there. `canvas` does, and the PR that
+# introduced this file is what proved it: 2110 pass / 13 skip / 63 fail on a
+# clean ubuntu runner against 2186 / 0 on a dev machine, spanning the inbox API,
+# git worktree helpers, the `gh` PR path and the UI rail. Adding the local D1
+# migrate below fixed none of it — the count stayed at exactly 63.
+#
+# So the canvas suite is NOT hermetic: it passes on a machine that development
+# has configured and nowhere else. That is worth fixing and is not this change's
+# job; running it here on the one runner where it demonstrably passes is what
+# gets these gates running per commit today. The cost is that canvas queues with
+# e2e on the single `ryzen-cedarpad` runner — tolerable while e2e is ~90s, and
+# the thing to revisit if e2e grows back toward its 20-minute timeout.
+#
+# `www` stays on ubuntu-latest deliberately, so a red there can never be blamed
+# on the box, and so the changelog guard keeps running when the box is down.
 #
 # e2e stays exactly where it is. It genuinely needs the runner.
 
@@ -33,7 +43,7 @@ concurrency:
 
 jobs:
   canvas:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ryzen]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
