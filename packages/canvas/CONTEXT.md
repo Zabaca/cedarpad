@@ -758,9 +758,13 @@ The round-trip:
 - **Platform tier (ADR-0014)**: `src/canvas-components/` is the image-baked seed library —
   visible to every canvas as the last resolution fallback, read-only at runtime (no tool
   writes there; writing a platform name shadows it into the canvas own dir). Persistence
-  follows writability: `canvas-components.tar` (all own dirs) + `shared-components.tar`
-  persist to R2; the platform dir ships with the image (the legacy `components.tar` is
-  still restored at boot for historical content but never flushed again).
+  follows writability: own-dir and shared modules are **Records in D1** (ADR-0022, #366),
+  written one row at a time through the platform RPC — the filesystem is a rendering of
+  them, not the source. The platform dir ships with the image (read-only at runtime). The
+  former `canvas-components.tar` / `shared-components.tar` / `components.tar` R2 sinks are
+  gone: each tarred a directory tree over one R2 key at turn completion, a full-tree replace
+  that once flushed an empty archive over the only copy (2026-07-29). See the "TARBALL SINKS
+  ARE GONE" note in `server/bridge.ts`.
 - The content renders inside an **error boundary**; a load or render failure shows
   a red card in the box and never crashes the canvas. While a module loads you see
   a "loading…" placeholder.
