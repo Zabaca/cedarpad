@@ -7,6 +7,7 @@ import {
   CreateShapesBody,
   DataFileName,
   DeleteShapesBody,
+  EditComponentBody,
   PlaceComponentBody,
   UpdateShapesBody,
   WriteComponentBody,
@@ -81,8 +82,7 @@ export const SelectPageInput = ReadCanvasInput.extend({ page: z.string().min(1) 
 const ComponentRef = ReadCanvasInput.extend({ module: ComponentName });
 export const ReadComponentInput = ComponentRef.extend({
   // A line WINDOW, Claude Code's parameter names: 1-based `offset`, `limit` lines from it.
-  // Both optional and both opt-in — omitting them keeps the whole-file shape this tool has
-  // always returned, so `source` never quietly stops meaning "the file's actual text".
+  // Omitting both reads the whole file — same answer shape either way, just a wider window.
   offset: z.number().int().positive().optional(),
   limit: z.number().int().positive().optional(),
 });
@@ -95,25 +95,21 @@ export const ReadComponentInput = ComponentRef.extend({
 // inheriting one would advertise `offset`/`limit` on write_component that it then ignores.
 export const WriteComponentInput = ComponentRef.extend({ canvas_id: z.string().min(1) }).merge(WriteComponentBody);
 /**
- * A line-range edit: lines `start_line`..`end_line` (1-based, inclusive) become `content`.
- * Because the replacement may be any number of lines, inserting and deleting are the same
- * verb — there is no separate insert or delete tool to keep in step with this one.
+ * A CONTENT-anchored edit — the same shape as Claude Code's `Edit`, and the same shape as the
+ * in-container `edit_component` tool: one contract over one implementation, reached from two
+ * surfaces. It carries the bridge's own body schema, so the edge validates exactly what the
+ * container parses (CLAUDE.md §7).
  *
- * NOT the same shape as `server/agent.ts`'s in-container tool of the same name, which swaps a
- * unique `old_string` for a `new_string`. Different surface, different client — the in-canvas
- * agent holds the file's text in its own context and can quote it; an outside MCP client has
- * just read a numbered window and holds line numbers.
+ * Deliberately NOT a line range. A range catches an out-of-BOUNDS mistake and cannot catch an
+ * out-of-DATE one: a stale `start_line` is still in bounds and rewrites lines the caller never
+ * named. An anchor fails loudly instead, which also makes the match a conflict detector — a
+ * concurrent edit elsewhere in the file is harmless, one that touches this text is caught.
  *
  * `canvas_id` is required for the reason `write_component` requires it: this WRITES, and a
  * write that silently lands in the default canvas stays invisible until something later fails
  * to resolve it.
  */
-export const EditComponentInput = ComponentRef.extend({
-  canvas_id: z.string().min(1),
-  start_line: z.number().int().positive(),
-  end_line: z.number().int().positive(),
-  content: z.string(),
-});
+export const EditComponentInput = ComponentRef.extend({ canvas_id: z.string().min(1) }).merge(EditComponentBody);
 export const WriteDataInput = ReadCanvasInput.extend({ name: DataFileName }).merge(WriteDataBody);
 // Direct canvas mutation: the tool input is the canvas address plus the bridge's own body
 // schema (shared/bridge-wire.ts), so the edge validates exactly what the bridge parses.
@@ -135,8 +131,6 @@ function splitLines(source: string): { lines: string[]; trailingNewline: boolean
   const trailingNewline = parts.length > 1 && parts[parts.length - 1] === '';
   return { lines: trailingNewline ? parts.slice(0, -1) : parts, trailingNewline };
 }
-
-const joinLines = (lines: string[], trailingNewline: boolean) => lines.join('\n') + (trailingNewline ? '\n' : '');
 
 /** `cat -n`: a right-aligned line number, a tab, the line. The numbers are NOT in the file —
  *  they exist so the range an agent passes to edit_component is one it actually read. */
@@ -425,7 +419,11 @@ export function buildMcpTools(deps: McpToolDeps) {
         module: string;
         source: string;
       };
-      if (input.offset === undefined && input.limit === undefined) return res;
+      // ALWAYS numbered, window or no window. Claude Code's Read has one output shape for the
+      // same reason: a reader that never has to work out which mode it is looking at never
+      // pastes a line number into an anchor — and `lines` on every answer is how it tells a
+      // complete file from a page of one.
+      //
       // The window is applied HERE rather than at the bridge: the source has already crossed
       // the hop by the time anyone could slice it, so a bridge-side window would save nothing
       // — what it costs is a second contract to keep in step with this one.
@@ -454,46 +452,25 @@ export function buildMcpTools(deps: McpToolDeps) {
     },
 
     /**
-     * Read-modify-write at the EDGE, over the same two bridge routes read/write already use.
-     * The bridge stays the single writer of the container filesystem and needs no new route;
-     * its PUT persists the Record and bumps the hot-reload rev, so a placed instance reloads
-     * from an edit exactly as it does from a write.
-     *
-     * The lost-update window between the GET and the PUT is the one `write_component` already
-     * has — whoever PUTs last wins — and `component_history` in the container can undo it.
+     * One hop. The container reads and rewrites the file in the process that owns it, so the
+     * edge neither fetches the source nor splices it — and the window in which another writer
+     * could slip between a read and a write shrinks from a network round trip to in-process.
+     * The matching rules, and the errors that explain them, are the container's existing ones.
      */
     async editComponent(input: z.infer<typeof EditComponentInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      const path = `${BRIDGE_ROUTES.components}/${encodeURIComponent(input.module)}`;
-      const current = (await bridgeJson(ws.id, path, { headers })) as { source: string };
-      const { lines, trailingNewline } = splitLines(current.source);
-      // Refuse an impossible range BEFORE the PUT. An out-of-date range is the expected
-      // mistake — every edit shifts the numbers below it — and clamping it would quietly
-      // rewrite lines the caller never named. The count tells them what to re-read against.
-      if (input.end_line < input.start_line) {
-        throw new Error(`edit_component ${input.module}: end_line ${input.end_line} is before start_line ${input.start_line}`);
-      }
-      for (const [field, value] of [
-        ['start_line', input.start_line],
-        ['end_line', input.end_line],
-      ] as const) {
-        if (value > lines.length) {
-          throw new Error(`edit_component ${input.module}: ${field} ${value} is past the end of the file (${lines.length} lines)`);
-        }
-      }
-      // Empty content DELETES the range: "replace these lines with nothing" is the reading an
-      // agent means, and a range replacement of a different length is how it also inserts.
-      const replacement = input.content === '' ? [] : splitLines(input.content).lines;
-      const next = [...lines.slice(0, input.start_line - 1), ...replacement, ...lines.slice(input.end_line)];
-      const res = (await bridgeJson(ws.id, path, {
-        method: 'PUT',
+      return bridgeJson(ws.id, `${BRIDGE_ROUTES.components}/${encodeURIComponent(input.module)}`, {
+        method: 'PATCH',
         headers,
-        body: { source: joinLines(next, trailingNewline) },
-      })) as Record<string, unknown>;
-      // `lines` is the NEW total: an edit that changes the line count shifts every number
-      // below it, and the caller has to know to re-read before addressing another range.
-      return { ...res, lines: next.length, replaced: { start_line: input.start_line, end_line: input.end_line } };
+        body: {
+          old_string: input.old_string,
+          new_string: input.new_string,
+          // Sent only when asked for: an explicit `replace_all: false` on every call would
+          // read as a decision the caller made, when it is just the default.
+          ...(input.replace_all ? { replace_all: true } : {}),
+        },
+      });
     },
 
     async writeData(input: z.infer<typeof WriteDataInput>) {

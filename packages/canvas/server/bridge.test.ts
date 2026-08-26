@@ -916,6 +916,67 @@ describe('GET/PUT /api/components — the component library over the wire', () =
   });
 });
 
+// A PATCH is the SAME edit the in-canvas agent's edit_component makes — ONE implementation
+// (`editComponent`), reached from two surfaces. Anchored to CONTENT rather than to line
+// numbers: the match is what proves the caller is editing the text it believes is there,
+// which a line range cannot do once an earlier edit has shifted the numbers under it.
+describe('PATCH /api/components/:module — edit by anchor text', () => {
+  const MOD = `ZzEditComp${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  const componentsRoot = new URL('../src/canvas-default/components/', import.meta.url).pathname;
+  afterAll(() => {
+    rmSync(`${componentsRoot}${MOD}.tsx`, { force: true });
+  });
+
+  const body = (method: string, payload: unknown) =>
+    handleRequest(
+      new Request(`http://localhost/api/components/${MOD}`, {
+        method,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      }),
+    );
+  const write = (source: string) => body('PUT', { source });
+  const patch = (payload: unknown) => body('PATCH', payload);
+  const onDisk = () => readFileSync(`${componentsRoot}${MOD}.tsx`, 'utf8');
+
+  test('a unique anchor is replaced and nothing else in the file moves', async () => {
+    await write('const label = "v1";\nconst other = "keep";\n');
+
+    expect((await patch({ old_string: '"v1"', new_string: '"v2"' })).status).toBe(200);
+    expect(onDisk()).toBe('const label = "v2";\nconst other = "keep";\n');
+  });
+
+  test('an anchor that is absent, or that occurs twice, is refused — the file is untouched', async () => {
+    await write('const a = "x";\nconst b = "x";\n');
+
+    const missing = await patch({ old_string: '"nope"', new_string: '"y"' });
+    expect(missing.status).toBe(400);
+    expect(((await missing.json()) as { error: string }).error).toMatch(/not found/);
+
+    // Ambiguity is a REFUSAL, not a first-match: picking one of two silently edits the
+    // occurrence the caller did not mean, and both look identical in a diff review.
+    const ambiguous = await patch({ old_string: '"x"', new_string: '"y"' });
+    expect(ambiguous.status).toBe(400);
+    expect(((await ambiguous.json()) as { error: string }).error).toMatch(/not unique/);
+
+    expect(onDisk()).toBe('const a = "x";\nconst b = "x";\n');
+  });
+
+  test('replace_all is how a caller says it meant every occurrence', async () => {
+    await write('const a = "x";\nconst b = "x";\n');
+
+    expect((await patch({ old_string: '"x"', new_string: '"y"', replace_all: true })).status).toBe(200);
+    expect(onDisk()).toBe('const a = "y";\nconst b = "y";\n');
+  });
+
+  test('an anchor with regex punctuation is matched literally, not as a pattern', async () => {
+    await write('const cost = price * (1 + rate);\n');
+
+    expect((await patch({ old_string: '(1 + rate)', new_string: '(1 + rate + fee)' })).status).toBe(200);
+    expect(onDisk()).toBe('const cost = price * (1 + rate + fee);\n');
+  });
+});
+
 describe('PUT /api/components/data/:name — data files over the wire (write_data parity)', () => {
   const DF = `zz_test_data_${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}.json`;
   const componentsRoot = new URL('../src/canvas-default/components/', import.meta.url).pathname; // ADR-0014: default canvas own dir

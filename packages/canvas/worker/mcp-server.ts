@@ -248,7 +248,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'read_component',
       {
         description:
-          "Read a component module's .tsx source (to learn conventions before writing, or to edit). Pass `offset` (the 1-based first line) and/or `limit` (how many lines) to read only a WINDOW of a long file: a windowed read comes back `cat -n` style — `<line number><tab><the line>` — and those numbers are exactly what edit_component's start_line/end_line address, so read the window you intend to edit. With neither, you get the whole file as plain unnumbered source.",
+          "Read a component module's .tsx source — to learn the conventions before writing one, or to get the exact text to hand edit_component. The source always comes back `cat -n` style, `<line number><tab><the line>`; the numbers are a reading aid and are NOT in the file, so strip the prefix before using a line as an edit anchor. `lines` is the file's true length, so you can always tell whether you read all of it. Pass `offset` (the 1-based first line) and/or `limit` (how many lines) to read only a window of a long file; with neither you get the whole thing.",
         inputSchema: ReadComponentInput.shape,
       },
       async (input) => text(await tools.readComponent(input)),
@@ -257,7 +257,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'write_component',
       {
         description:
-          'Create or overwrite a reusable React component module in a workspace canvas library. Rules: `export default` a React component; it receives the placement `data` as props; imports of react, other components, "mermaid", and "flint-chart/vegalite" + "vega"/"vega-lite" are allowed; inline styles + SVG. For a chart, place the platform `ChartCard` (it takes a Flint spec) rather than drawing one. Placed instances hot-reload; use place_component to render a new instance on a canvas. To change PART of a module that already exists, use edit_component instead — it takes a line range, so you never re-send the rest of the file.',
+          'Create or overwrite a reusable React component module in a workspace canvas library. Rules: `export default` a React component; it receives the placement `data` as props; imports of react, other components, "mermaid", and "flint-chart/vegalite" + "vega"/"vega-lite" are allowed; inline styles + SVG. For a chart, place the platform `ChartCard` (it takes a Flint spec) rather than drawing one. Placed instances hot-reload; use place_component to render a new instance on a canvas. To change PART of a module that already exists, use edit_component instead — it takes the snippet to replace, so you never re-send the rest of the file.',
         inputSchema: WriteComponentInput.shape,
       },
       async (input) => text(await tools.writeComponent(input)),
@@ -267,7 +267,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'edit_component',
       {
         description:
-          'Change part of an existing component module WITHOUT re-sending the rest of it — use this, not write_component, for any small adjustment. It replaces lines start_line..end_line (1-based, INCLUSIVE) with `content`. Read that window first (read_component with offset/limit) so the numbers are ones you have actually seen. The replacement may be any number of lines: more lines inserts, fewer removes, and an empty `content` deletes the range outright; one trailing newline on `content` is the line terminator, not an extra blank line. An edit shifts every line number below it, so re-read before addressing another range. Placed instances hot-reload just as they do after write_component.',
+          'Change part of an existing component module WITHOUT re-sending the rest of it — use this, not write_component, for any small adjustment. It replaces `old_string` with `new_string`. read_component first and copy the exact text, stripping the `<number><tab>` prefix the read adds. `old_string` must occur EXACTLY ONCE: if it does not, the edit is refused rather than applied to whichever occurrence came first, so include enough surrounding lines to make it unique — or pass `replace_all` to change every occurrence, which is what you want for a rename. An empty `new_string` deletes the text. A refusal means the file is not what you think it is, so re-read rather than retrying. Placed instances hot-reload just as they do after write_component.',
         inputSchema: EditComponentInput.shape,
       },
       async (input) => text(await tools.editComponent(input)),

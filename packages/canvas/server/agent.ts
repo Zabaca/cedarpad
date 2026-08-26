@@ -431,15 +431,16 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
       ),
       tool(
         'edit_component',
-        'Make a precise edit to a component file: replace a unique snippet of its source. Use this to iterate per-line instead of rewriting the whole file. Read the file first and copy the exact text.',
+        'Make a precise edit to a component file: replace a snippet of its source. Use this to iterate instead of rewriting the whole file. Read the file first and copy the exact text. The snippet must occur exactly once unless you pass replace_all — an ambiguous edit is refused rather than applied to whichever one came first.',
         {
           module: z.string().describe('Component name (no extension).'),
-          old_string: z.string().describe('Exact text to replace (must occur exactly once in the file).'),
-          new_string: z.string().describe('Replacement text.'),
+          old_string: z.string().describe('Exact text to replace (must occur exactly once, unless replace_all).'),
+          new_string: z.string().describe('Replacement text. Empty deletes the snippet.'),
+          replace_all: z.boolean().optional().describe('Replace EVERY occurrence instead of requiring a unique one (renames).'),
         },
-        async ({ module, old_string, new_string }) => {
+        async ({ module, old_string, new_string, replace_all }) => {
           try {
-            await editComponent(module, old_string, new_string, canvasId);
+            await editComponent(module, old_string, new_string, canvasId, replace_all);
             const reloaded = await reloadAfterAuthor(module);
             return result({ text: `Edited ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s)/canvas(es))` : ''}.` });
           } catch (e) {

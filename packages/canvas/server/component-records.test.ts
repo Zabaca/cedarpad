@@ -248,7 +248,7 @@ describe('the shared library is a Record too — own, then shared, then platform
     rmSync(dirPath, { recursive: true, force: true });
     rmSync(sharedPath(SH));
 
-    await editComponent(SH, 'v1', 'v2', CANVAS, records);
+    await editComponent(SH, 'v1', 'v2', CANVAS, false, records);
 
     expect(await stored('shared', SH)).toBe('const v = "v2";');
     expect(await stored('own', SH)).toBeNull();
@@ -334,7 +334,7 @@ describe('edit_component applies against the stored source', () => {
     await writeComponent('Card', 'const label = "v1";', CANVAS, records);
     rmSync(dirPath, { recursive: true, force: true });
 
-    await editComponent('Card', 'v1', 'v2', CANVAS, records);
+    await editComponent('Card', 'v1', 'v2', CANVAS, false, records);
     expect(await stored('own', 'Card')).toBe('const label = "v2";');
   });
 });

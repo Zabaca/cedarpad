@@ -504,21 +504,34 @@ function componentSiblingImports(source: string, tier: ComponentTier): Array<{ t
   return [...new Map(found.map((s) => [`${s.tier}/${s.module}`, s])).values()];
 }
 
-/** Per-line edit: replace a unique `oldStr` occurrence with `newStr`. Reads through
- *  `readComponent`, so an edit after a recycle patches the stored source rather than
- *  racing a file that is not there. */
+/**
+ * Targeted edit: replace an occurrence of `oldStr` with `newStr`. Reads through
+ * `readComponent`, so an edit after a recycle patches the stored source rather than racing a
+ * file that is not there.
+ *
+ * Ambiguity is REFUSED rather than resolved to the first match: two identical snippets are
+ * indistinguishable in a diff review, so silently picking one edits the occurrence the caller
+ * did not mean and looks correct afterwards. `replaceAll` is how a caller says it meant all of
+ * them — the deliberate answer to the same question, which is why it lifts the check.
+ */
 export async function editComponent(
   module: string,
   oldStr: string,
   newStr: string,
   canvasId: string = DEFAULT_CANVAS_ID,
+  replaceAll = false,
   records: ComponentRecords | null = componentRecordStore,
 ): Promise<void> {
   const cur = await readComponent(module, canvasId, records);
   const first = cur.indexOf(oldStr);
   if (first === -1) throw new Error('old_string not found — read_component first and copy the exact text');
-  if (cur.indexOf(oldStr, first + 1) !== -1) throw new Error('old_string is not unique — include more surrounding context');
-  await writeComponent(module, cur.slice(0, first) + newStr + cur.slice(first + oldStr.length), canvasId, records);
+  if (!replaceAll && cur.indexOf(oldStr, first + 1) !== -1) {
+    throw new Error('old_string is not unique — include more surrounding context, or pass replace_all');
+  }
+  // split/join rather than a RegExp: the anchor is arbitrary source text, and escaping it
+  // into a pattern is a bug waiting for the first component containing a `(` or a `$`.
+  const next = replaceAll ? cur.split(oldStr).join(newStr) : cur.slice(0, first) + newStr + cur.slice(first + oldStr.length);
+  await writeComponent(module, next, canvasId, records);
 }
 
 /**
