@@ -25,6 +25,15 @@ import cedarpadWs from './ws'
 // and everything else straight to vite on 4510, so the chat SSE stream and the
 // canvas sync websocket never pass through the supervisor — restarting it cannot
 // drop a live stream.
+//
+// ⚠️ BUT APPLYING THIS INSTANCE STOPS THE CANVAS. The paragraph above is about
+// what a restart INTERRUPTS; vite is the supervisor's CHILD, so a restart also
+// KILLS it, and the stack stays down until cedarpad's edge Worker pushes an
+// environment again — the same cold state as after a reboot, and unreachable from
+// here because this guest holds no credential to boot with. Verified the hard way
+// on 2026-08-23. So an apply of `ws-service` is never routine: it is a deliberate
+// act with a cold canvas on the other side of it, recovered by the next real
+// request. `ws-supervisor.ts`'s header carries the mechanism.
 export default vmProvisionModule.instance({
   name: 'ws-service',
   config: {
@@ -69,16 +78,26 @@ systemctl restart cedarpad-ws.service
 
 # Prove it is actually listening rather than merely "started" — systemd calls a
 # process that exits immediately a success right up until Restart= gives up.
+answered=
 for i in \$(seq 1 20); do
   if curl -fsS "http://127.0.0.1:\$SUP_PORT/__status" >/dev/null 2>&1; then
     echo "[service] supervisor answering on \$SUP_PORT"
-    exit 0
+    answered=1
+    break
   fi
   sleep 1
 done
-echo "[service] supervisor did NOT answer on \$SUP_PORT" >&2
-systemctl --no-pager --lines=20 status cedarpad-ws.service >&2 || true
-exit 1
+
+# \`break\`, never \`exit 0\`. vm-provision appends its marker write AFTER this
+# script and relies on \`set -e\` to skip it on failure — so a success path that
+# exits takes the marker with it. This provision ran on every single apply from
+# 2026-08-14 to 2026-08-22, restarting the live supervisor each time and
+# reporting "provisioned" each time, because \`exit 0\` never let the marker land.
+if [ -z "\$answered" ]; then
+  echo "[service] supervisor did NOT answer on \$SUP_PORT" >&2
+  systemctl --no-pager --lines=20 status cedarpad-ws.service >&2 || true
+  exit 1
+fi
 `,
   },
   imports: [cedarpadWs],

@@ -1,6 +1,6 @@
 {
   "name": "cedarpad",
-  "version": "0.2.4",
+  "version": "0.2.6",
   "private": true,
   "packageManager": "bun@1.3.4",
   "workspaces": [
@@ -8,10 +8,12 @@
   ],
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev"
+    "dev": "turbo run dev",
+    "apply": "bun packages/infra/check-zbc-pin.ts && zbc apply"
   },
   "devDependencies": {
-    "@happy-dom/global-registrator": "^15.11.7"
+    "@happy-dom/global-registrator": "^15.11.7",
+    "@zabaca/zbc": "0.12.0"
   },
   "dependencies": {
     "zod": "^3.24.0"

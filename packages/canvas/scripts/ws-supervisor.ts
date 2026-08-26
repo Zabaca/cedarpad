@@ -15,6 +15,21 @@
 // no upgrade relay, no backpressure to get wrong, and a supervisor restart cannot
 // drop a live stream.
 //
+// ⚠️ THAT IS ABOUT TRAFFIC, NOT ABOUT THE STACK. **vite is this process's CHILD**
+// — `spawn('bun', ['run', 'scripts/dev.ts'])` below — so restarting the
+// supervisor STOPS THE CANVAS. It does not merely decline to relay it. The stack
+// then stays down until the Worker's next request pushes an environment, which is
+// the reboot path described next.
+//
+// The fact was already here, four paragraphs up: "it dies with this process when
+// it stops". It was in the paragraph about CREDENTIALS, while the paragraph a
+// reader consults when asking "is a restart safe?" answered with the reassuring
+// half. On 2026-08-23 a deliberate `apply workspace ws-service` took the dev stack
+// down that way: two readers in a row checked the routing claim, found it correct
+// — it is — and concluded a restart was nearly free. The line above answers *what
+// a restart interrupts*. This one answers *what a restart kills*, which is the
+// question actually being asked.
+//
 // Reboot behaviour is deliberate: after the host restarts, this comes up with no
 // environment and refuses to serve until the Worker's next request pushes one.
 // That is the same cold path the Cloudflare container already has, except it costs

@@ -13,7 +13,7 @@ import { cloudflareModule } from '../../../../vendor/zbc/modules/cloudflare'
  * production config (cedarpad.com apex route) and the --env flag is silently
  * ignored. The env var is what stamps targetEnvironment: "preview".
  *
- * Deploy: bunx @zabaca/zbc apply preview www
+ * Deploy: bun run apply preview www
  */
 export default cloudflareModule.instance({
   name: 'www',

@@ -1,6 +1,6 @@
 # Infra
 
-The cedarpad-side consumer of `zbc` modules: per-environment infrastructure instances applied via `zbc apply <env>`.
+The cedarpad-side consumer of `zbc` modules: per-environment infrastructure instances applied via `bun run apply <env>`.
 
 ## Language
 
@@ -13,7 +13,7 @@ A directory under `packages/infra/environments/<env>/` holding all **Instance** 
 _Avoid_: stage, target, deployment
 
 **Instance**:
-A **Module** bound to specific config for one **Environment** — e.g. `cloudflareModule.instance({ name: 'canvas', config: {...} })`. The unit `zbc apply` operates on.
+A **Module** bound to specific config for one **Environment** — e.g. `cloudflareModule.instance({ name: 'canvas', config: {...} })`. The unit `bun run apply` operates on.
 _Avoid_: resource, deployment
 
 ## Relationships

@@ -22,7 +22,7 @@ import { cloudflareModule } from '../../../../vendor/zbc/modules/cloudflare'
  * anything real. As with production, Docker must be running locally at apply time
  * (the worker is container-backed) on a Workers Paid plan with Containers enabled.
  *
- * Deploy: `bunx @zabaca/zbc apply preview canvas` (or add a --env-aware path to
+ * Deploy: `bun run apply preview canvas` (or add a --env-aware path to
  * scripts/deploy.sh). After the first deploy, set BETTER_AUTH_URL / WEB_ORIGIN in
  * wrangler.jsonc's `env.preview.vars` to the real workers.dev origin, or auth
  * (Better Auth CSRF/Origin checks) will reject the deployed preview.

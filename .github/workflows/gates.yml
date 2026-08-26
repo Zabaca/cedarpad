@@ -1,0 +1,147 @@
+name: gates
+
+# The unit tests, typechecks and lint that a release requires — run per commit,
+# where the commit that breaks them is still on screen.
+#
+# Until now `e2e.yml` was the only workflow and `bun run test:e2e` its only step,
+# so NONE of the checks below ever ran in CI. They ran for the first time in the
+# release skill's preflight, against a batch of every commit since the last tag
+# — typically 10 to 18 of them, four or five days apart. Everything broken in
+# that window surfaced at once, at the moment someone was trying to ship, which
+# is how "release cedarpad" became a multi-day activity in which no product
+# change shipped between v0.2.4 and now.
+#
+# ── Where each job runs, decided by measurement rather than preference ─────
+# This went up on ubuntu-latest for both jobs, on the reasoning that neither
+# needs the box. `www` does not, and stays there. `canvas` does, and the PR that
+# introduced this file is what proved it: 2110 pass / 13 skip / 63 fail on a
+# clean ubuntu runner against 2186 / 0 on a dev machine, spanning the inbox API,
+# git worktree helpers, the `gh` PR path and the UI rail. Adding the local D1
+# migrate below fixed none of it — the count stayed at exactly 63.
+#
+# So the canvas suite is NOT hermetic: it passes on a machine that development
+# has configured and nowhere else. That is worth fixing and is not this change's
+# job; running it here on the one runner where it demonstrably passes is what
+# gets these gates running per commit today. The cost is that canvas queues with
+# e2e on the single `ryzen-cedarpad` runner — tolerable while e2e is ~90s, and
+# the thing to revisit if e2e grows back toward its 20-minute timeout.
+#
+# `www` stays on ubuntu-latest deliberately, so a red there can never be blamed
+# on the box, and so the changelog guard keeps running when the box is down.
+#
+# e2e stays exactly where it is. It genuinely needs the runner.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canvas:
+    runs-on: [self-hosted, ryzen]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # wrangler refuses to run under bun and resolves `node` off PATH; pinned
+      # here for the same reason e2e.yml pins it rather than assuming it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # NEVER `bun test` bare in packages/canvas — it collects web-poc's vitest
+      # specs under the wrong runner and manufactures ~10 failures that are not
+      # real. The package script scopes the directories. (CLAUDE.md says this;
+      # it is repeated here because this file is where it would be got wrong.)
+      # Three tests build scratch git repos and commit into them (the dev-agent's
+      # worktree helpers). `git commit` refuses without an identity, and a runner
+      # has none — `fatal: unable to auto-detect email address (got
+      # 'foundry@ci-shared.(none)')`. Set here rather than left to the box,
+      # because a test that needs ambient machine configuration passes only where
+      # somebody happened to configure it, which is the same defect this whole
+      # workflow exists to stop hiding.
+      #
+      # NOTE the deeper version, deliberately not fixed here: the helpers under
+      # test shell out to `git commit` without `-c user.email`, so they inherit
+      # whatever the host has. That is fine on a developer's machine and is a
+      # latent failure anywhere else, production guests included. Worth closing
+      # in the helpers themselves rather than in every caller's CI.
+      - name: Give git an identity for the worktree tests
+        run: |
+          git config --global user.email "ci@cedarpad.com"
+          git config --global user.name "cedarpad CI"
+
+      # The server tests run against a REAL local D1 (miniflare), not a stub —
+      # `handleInboxApi` and friends create rows and read them back. On a dev box
+      # `.wrangler/state` already exists because someone migrated it once, so this
+      # step is invisible there; on a fresh runner there is no database and 63
+      # tests fail with "the workspace store is unreachable". Found by this
+      # workflow failing on its own PR, which is the reason it went up as a PR.
+      #
+      # Local-only: miniflare's D1 is a file under `.wrangler/state`, so this
+      # needs no Cloudflare credentials and touches nothing remote.
+      - name: Create the local D1
+        run: bun run webpoc:db:migrate:local
+        working-directory: packages/canvas
+
+      - name: canvas tests
+        run: bun run test
+        working-directory: packages/canvas
+
+      - name: canvas typecheck
+        run: bun run typecheck
+        working-directory: packages/canvas
+
+      - name: web-poc typecheck
+        run: bun run webpoc:typecheck
+        working-directory: packages/canvas
+
+      - name: web-poc tests
+        run: bun run webpoc:test
+        working-directory: packages/canvas
+
+  www:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # This one is the changelog guard: it parses the committed CHANGELOG.md
+      # and throws on a malformed entry. It is the only thing standing between a
+      # format slip and content silently missing from the public page — and with
+      # the release skill's human gate gone, it is now the ONLY thing checking
+      # an entry nobody read before it shipped.
+      - name: www tests
+        run: bun run test
+        working-directory: packages/www
+
+      - name: www typecheck
+        run: bun run typecheck
+        working-directory: packages/www
+
+      - name: www lint
+        run: bun run lint
+        working-directory: packages/www

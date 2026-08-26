@@ -15,20 +15,19 @@ Read the ADR before deviating from anything below — it carries the rejected al
 ## The order is not negotiable
 
 ```
-1. preflight    every gate green, or stop
+1. preflight    CI green on HEAD, or stop
 2. range        <last tag>..HEAD → commits + PR bodies
 3. draft        classify, propose the bump, write entries in product voice
-4. ── GATE ──   the human reviews and edits            ← the only human gate
-5. commit       CHANGELOG.md + version bump → push to main
-6. deploy       deploy.sh (stamps buildRev AND version into the image)
-   +             zbc apply workspace (the ws.cedarpad.com Guest, same commit)
-7. verify       deploy.sh polls /api/buildrev for BOTH stamps
+4. commit       CHANGELOG.md + version bump → push to main
+5. deploy       deploy.sh (stamps buildRev AND version into the image)
+   +             bun run apply workspace (the ws.cedarpad.com Guest, same commit)
+6. verify       deploy.sh polls /api/buildrev for BOTH stamps
    +             read the Guest's own stamps back over the incus remote
-8. tag          ONLY after BOTH halves of 7 pass
-9. publish      zbc apply production www → check cedarpad.com/changelog
+7. tag          ONLY after BOTH halves of 6 pass
+8. publish      bun run apply production www → check cedarpad.com/changelog
 ```
 
-**Never tag before step 7.** Tagging first mints tags for code that never shipped. Tagging after
+**Never tag before step 6.** Tagging first mints tags for code that never shipped. Tagging after
 makes `git tag` a ledger of what actually served — so a failed deploy costs nothing, the same
 version number is reused, and `v0.2.0` points at exactly the SHA `/api/buildrev` returns.
 
@@ -61,12 +60,30 @@ cd packages/canvas && bun run test && bun run typecheck && bun run webpoc:typech
 cd ../www && bun run test && bun run typecheck && bun run lint
 ```
 
-`packages/www`'s test is the changelog guard — it parses the committed `CHANGELOG.md` and throws
-on a malformed entry. It is the only thing standing between a format slip and content silently
-missing from the public page.
+**Those commands now run in CI, per commit, and this step only reads the result.**
+`.github/workflows/gates.yml` runs the canvas and www gates on every push and PR;
+`e2e.yml` runs the browser suite. Both must be green **on HEAD**:
 
-**Never `bun test` bare** in `packages/canvas` — it collects `web-poc`'s vitest specs under the
-wrong runner and produces ~10 fake failures. Use the package scripts (CLAUDE.md).
+```bash
+gh run list --branch main --workflow gates --limit 1 --json headSha,conclusion
+gh run list --branch main --workflow e2e   --limit 1 --json headSha,conclusion
+```
+
+Running them locally is still fine and still faster to debug, but it is no longer
+what makes this step pass — a green local run on a tree CI has never seen proves
+nothing about what is being tagged.
+
+**Why this moved.** Until 2026-08-24 `e2e.yml` was the only workflow, so the unit
+tests, typechecks and lint ran for the FIRST time here — against every commit since
+the last tag, typically 10–18 of them across four or five days. Everything that had
+broken in that window surfaced at once, at the moment someone was trying to ship. It
+is the direct cause of releases taking days, and of no product change shipping
+between v0.2.4 and v0.2.6.
+
+`packages/www`'s test is the changelog guard — it parses the committed `CHANGELOG.md`
+and throws on a malformed entry. With the human gate gone (see step 3) it is the only
+thing that reads an entry before it reaches the public page, so a red there is never
+a formatting nit.
 
 Any gate red → **stop and report**. Do not release around a failure.
 
@@ -106,6 +123,15 @@ Those six headings are the entire allowed set — the parser rejects anything el
 change to the MCP tools or `/v1` — the one contract anyone integrates against, and one whose
 consumers are agents that fail silently. Call such a break out in its own entry.
 
+**There is no approval gate after this — write the entry and carry on to step 4.**
+It used to stop here and wait, and that is what made a release need a human present in
+the middle of it rather than at the end: the draft is prose about work that has already
+merged, and holding a deploy on it bought review of the wording and nothing else. The
+CHANGELOG stays editable afterwards; a tag names a commit that provably served, and
+correcting an entry later does not disturb that. What is NOT editable later is the
+version bump, so if the classification is genuinely ambiguous — a change that might be
+a minor rather than a patch — say which you chose and why in the release report.
+
 **Write for the person using cedarpad**, not the person who wrote the code:
 
 - ✅ "Components no longer vanish after a restart."
@@ -114,13 +140,7 @@ consumers are agents that fail silently. Call such a break out in its own entry.
 Keep the `(#393)` reference on the entry — it stays in `CHANGELOG.md` for traceability and is
 stripped from the public page (the repo is private; the link would 404).
 
-## 4. The gate
-
-Present the drafted entry **and** the proposed version, in full, and wait. This is the only
-human gate in the flow, so it carries the whole review: wording, classification, and the bump.
-Iterate until approved.
-
-## 5. Commit and push
+## 4. Commit and push
 
 Prepend the release under the `<!-- Releases below` marker in `CHANGELOG.md` — newest first:
 
@@ -136,7 +156,7 @@ Date is today, UTC: `date -u +%F`. Then set the same version in the **root** `pa
 
 `deploy.sh` refuses an unpushed HEAD, so the push is not optional.
 
-## 6–7. Deploy and verify
+## 5–6. Deploy and verify
 
 ```bash
 bash packages/canvas/scripts/deploy.sh     # run in the BACKGROUND — 10–15 min
@@ -154,13 +174,13 @@ is reused, and nothing was tagged. Two traps the script's own comments record:
 - A `STALE` stored image is the 2026-07-28 incident (serving instances correct, stored config
   stale → every later cold boot wedges). Investigate by hand; do not blindly re-run.
 
-## 6–7 (the Guest). Converge the workspace and read its stamps back
+## 5–6 (the Guest). Converge the workspace and read its stamps back
 
 Run it after `deploy.sh` reports `✅ LIVE`, not beside it: the two share nothing at
 runtime, and serialising keeps one failure legible instead of two interleaved.
 
 ```bash
-bunx @zabaca/zbc apply workspace          # from the REPO ROOT
+bun run apply workspace          # from the REPO ROOT
 ```
 
 `ws-app` fetches `origin/main`, hard-resets to it, reinstalls, and stamps
@@ -176,7 +196,7 @@ incus exec ryzen-9:cedarpad-ws --project zabaca -- \
          cat /app/agent-canvas/packages/canvas/server/version.txt'
 ```
 
-Both must match what step 5 pushed. **Why not `curl https://ws.cedarpad.com/api/buildrev`:**
+Both must match what step 4 pushed. **Why not `curl https://ws.cedarpad.com/api/buildrev`:**
 vite is booted on demand by the supervisor, so the canvas is not serving between
 sessions and a 502 there means "nobody is using it", not "the deploy failed" — and the
 hostname is behind Cloudflare Access, so the check would need the service token as well.
@@ -184,14 +204,14 @@ The stamps are what the bridge will read when it does boot, so reading them answ
 question one step earlier and with no credentials.
 
 **If the converge fails, do not tag.** Fix forward and re-run — same version number,
-nothing tagged, exactly as on the container side. `zbc apply workspace ws-app` alone is
+nothing tagged, exactly as on the container side. `bun run apply workspace ws-app` alone is
 enough to retry the checkout; the whole environment is a no-op when it is already right.
 
 **Requires the `ryzen-9` incus remote.** `incus remote list` should show it; if it does
 not, ask foundry for a token (`bun run incus-enrol cedarpad`) and
 `incus remote add ryzen-9 <token>`. See `packages/infra/environments/workspace/README.md`.
 
-## 8. Tag
+## 7. Tag
 
 Only now, and only on `✅ LIVE`:
 
@@ -199,10 +219,10 @@ Only now, and only on `✅ LIVE`:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-## 9. Publish the public changelog
+## 8. Publish the public changelog
 
 ```bash
-bunx @zabaca/zbc apply production www          # from the REPO ROOT, as deploy.sh runs it
+bun run apply production www          # from the REPO ROOT, as deploy.sh runs it
 curl -sL https://cedarpad.com/changelog | grep -o 'v0\.2\.0'
 ```
 
