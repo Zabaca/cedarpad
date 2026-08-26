@@ -39,6 +39,13 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.3.0] — 2026-08-26
+
+### Added
+- **Fullscreen browses the whole board** — a collapsible rail lists every component on the page and `‹ ›` step between them, wrapping at both ends. The canvas underneath follows along, so Escape lands you on whatever you read last, and deleting the component you are viewing advances to the next instead of dropping you out. A page holding a single component looks exactly as it did. (#415)
+- **Open any component fullscreen from the side panel** — each row of the "On this board" list gains a ⛶, revealed on hover and on keyboard focus. (#415)
+- **Edit a component over MCP without resending it** — `read_component` takes `offset`/`limit` and returns just that window with line numbers, and the new `edit_component` replaces the lines you just read. A one-line change no longer costs the whole module, and an impossible range is refused before anything is written. (#413)
+
 ## [0.2.6] — 2026-08-25
 
 ### Internal
