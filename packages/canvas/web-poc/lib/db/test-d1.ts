@@ -1,40 +1,10 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { drizzle as drizzleD1 } from "drizzle-orm/d1";
 import { Miniflare } from "miniflare";
 import type { Database } from "./client.js";
 import * as schema from "./schema.js";
+import { type MigrationFile, migrationFiles } from "./test-migrations.js";
 
-const MIGRATIONS_DIR = fileURLToPath(new URL("./migrations", import.meta.url).href);
-
-export interface MigrationFile {
-  name: string;
-  statements: string[];
-}
-
-/**
- * The real migration files, in order, split the way `wrangler d1 migrations apply`
- * feeds them to D1 (one file at a time, on drizzle's statement breakpoint). A
- * migration D1 rejects therefore fails in the suite, not on deploy.
- */
-export function migrationFiles(): MigrationFile[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .map((f) => ({
-      name: f,
-      statements: readFileSync(`${MIGRATIONS_DIR}/${f}`, "utf8")
-        .split("--> statement-breakpoint")
-        .map((s) =>
-          s
-            .split("\n")
-            .filter((l) => !l.trim().startsWith("--"))
-            .join("\n")
-            .trim(),
-        )
-        .filter(Boolean),
-    }));
-}
+export { type MigrationFile, migrationFiles } from "./test-migrations.js";
 
 export async function applyMigrations(d1: D1Database, files = migrationFiles()) {
   for (const file of files) {
