@@ -14,6 +14,7 @@ import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolv
 import { serveWorkspace } from './sandbox-runtime.ts';
 import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 import { notifyInboxChanged } from './workspace-events.ts';
+import { IS_CHAT_SEND } from './mcp-tokens-proxy.ts';
 import {
   CANVAS_ID_HEADER,
   CANVAS_VIEWER_HEADER,
@@ -60,9 +61,9 @@ export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
  * security-load-bearing): an unauthenticated request got `renderLogin()` already and never
  * reaches a bridge; the Inbox LIST (`inbox.ts`) stays edge-only and never wakes a runner.
  */
-// A proxied chat SEND (`POST /api/chat/:chatId/send`) — the human answering. The proxy is the
+// `IS_CHAT_SEND` (a proxied chat SEND, `POST /api/chat/:chatId/send`) is imported from
+// `mcp-tokens-proxy.ts` — the one matcher shared with `worker/index.ts`. Here it is the
 // inbox-aware home for the triage flip; `<ChatView>` / the generic `/send` stay unaware of it.
-const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
 // The open-conversation GET (`GET /api/inbox/:convId/chat`) — the Shell resolving a thread to
 // its chatId. ADR-0018 / #261: the edge already holds the row, so it forwards it here.
 const IS_OPEN_CONVERSATION = /^\/api\/inbox\/[^/]+\/chat$/;
