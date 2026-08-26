@@ -36,6 +36,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The release preflight has to be able to ASK for these gates on main. Without
+  # this it could only ever read a run some other event happened to create — and
+  # on 2026-08-26 there was none: pushes to main silently stopped producing runs
+  # after v0.2.6, so the two commits in that release had no gates run at all and
+  # the preflight had nothing to read. e2e.yml already carried this trigger,
+  # which is the only reason half the gate was satisfiable that day.
+  workflow_dispatch:
 
 concurrency:
   group: gates-${{ github.ref }}

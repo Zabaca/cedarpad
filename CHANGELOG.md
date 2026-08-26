@@ -46,6 +46,12 @@ from the site.
 - **Open any component fullscreen from the side panel** — each row of the "On this board" list gains a ⛶, revealed on hover and on keyboard focus. (#415)
 - **Edit a component over MCP without resending it** — `read_component` takes `offset`/`limit` and returns just that window with line numbers, and the new `edit_component` replaces the lines you just read. A one-line change no longer costs the whole module, and an impossible range is refused before anything is written. (#413)
 
+### Internal
+- **The release preflight can ask for the `gates` workflow again.** Pushes to main stopped
+  producing workflow runs after v0.2.6, so this release's two product commits had no `gates`
+  run for the preflight to read, and the workflow had no `workflow_dispatch` trigger to fall
+  back on. It has one now. The dead push trigger itself is unexplained and still open.
+
 ## [0.2.6] — 2026-08-25
 
 ### Internal
