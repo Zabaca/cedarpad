@@ -33,6 +33,7 @@ import {
   DEV_AGENT_GIT_TOKEN_HEADER,
   DEV_AGENT_REPO_HEADER,
   DeleteShapesBody,
+  EditComponentBody,
   GUEST_CANVAS_HEADER,
   GUEST_CAPS_HEADER,
   HEADLESS_SEND_HEADER,
@@ -59,7 +60,7 @@ import { adoptSession, TranscriptStore } from './transcript-store.ts';
 import { type CanvasImage, type ChatEvent, type OpenPr, createCanvasTools, parseCanvasImages, runChat } from './agent.ts';
 import { MCP_TOKENS_HEADER, McpSelectionSchema, applyMcpSelection, decodeMcpTokens, mcpDisallowedTools } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
-import { isShared, listComponentDetails, readComponent, writeComponent, writeDataFile } from './components.ts';
+import { editComponent, isShared, listComponentDetails, readComponent, writeComponent, writeDataFile } from './components.ts';
 import { readGuestCapabilities, type GuestCapabilities } from '../shared/guest-capabilities.ts';
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
@@ -1035,6 +1036,28 @@ export async function handleRequest(req: Request): Promise<Response> {
       }
       // A shared module used to bump every open canvas; that fan-out went with the session
       // registry (#297, see promote above). The caller's canvas reloads either way.
+      return inRoom(canvasId, (store) => ({ ok: true, module, reloaded: bumpAllComponents(store, nextComponentRev(store)) }));
+    }
+
+    // PATCH: the same targeted edit the in-canvas agent's `edit_component` tool makes — one
+    // implementation (`editComponent`), two surfaces. It exists as its own method rather than
+    // as an edge-side read-modify-write over GET+PUT so the read and the write happen in the
+    // process that owns the file: one hop instead of two, and the window in which another
+    // writer can slip between them shrinks to in-process.
+    // Guests never arrive here: `guestMayWrite` allows PUT only, so the door above 403s a
+    // guest PATCH. That is deliberate — re-opening a guest write surface is its own decision.
+    if (componentRoute && req.method === 'PATCH') {
+      const canvasId = canvasIdFrom(req, url);
+      const module = decodeURIComponent(componentRoute[1] as string);
+      const parsed = EditComponentBody.safeParse(await readBody(req));
+      if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
+      try {
+        await editComponent(module, parsed.data.old_string, parsed.data.new_string, canvasId, parsed.data.replace_all);
+      } catch (e) {
+        // A missing or ambiguous anchor is the caller's mistake and its message says what to
+        // do next, so it travels as a 400 rather than being flattened into a 500.
+        return json({ error: (e as Error).message }, 400);
+      }
       return inRoom(canvasId, (store) => ({ ok: true, module, reloaded: bumpAllComponents(store, nextComponentRev(store)) }));
     }
 

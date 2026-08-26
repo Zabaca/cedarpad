@@ -174,6 +174,21 @@ export const PlaceComponentBody = z.object({
   dataSource: DataSourceSchema.optional(),
 });
 export const WriteComponentBody = z.object({ source: z.string().min(1) });
+/**
+ * A CONTENT-anchored edit: `old_string` becomes `new_string`. The anchor must occur exactly
+ * once unless `replace_all` — and that match is the point of the shape. It is the caller's
+ * proof that it is editing the text it believes is there, which is precisely what addressing
+ * by line number cannot do once an earlier edit has shifted the numbers underneath it.
+ *
+ * `new_string` may be empty (delete the anchor); `old_string` may not (an empty anchor
+ * matches everywhere and means nothing).
+ */
+export const EditComponentBody = z.object({
+  old_string: z.string().min(1),
+  new_string: z.string(),
+  replace_all: z.boolean().optional(),
+});
+export type EditComponentBody = z.infer<typeof EditComponentBody>;
 export const WriteDataBody = z.object({ source: DataFileSource });
 
 /** One human-readable line out of a failed `safeParse`, for the bridge's `{ error }` 400s. */
