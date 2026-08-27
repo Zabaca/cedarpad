@@ -13,8 +13,8 @@ describe('leadingComment', () => {
 
 describe('listComponentDetails', () => {
   test('platform modules carry a description and the base tier', async () => {
-    const kpi = (await listComponentDetails()).find((c) => c.name === 'KpiCard');
-    expect(kpi?.tier).toBe('base');
-    expect(kpi?.description).toContain('KPI card');
+    const md = (await listComponentDetails()).find((c) => c.name === 'MarkdownCard');
+    expect(md?.tier).toBe('base');
+    expect(md?.description).toContain('markdown card');
   });
 });

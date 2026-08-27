@@ -143,6 +143,10 @@ platform data layer.
 `dev:e2e` starts a heavier stack than it used to: vite + bridge + **the edge Worker**
 (ADR-0018), because the platform data layer is now served locally by the edge.
 
+To iterate on a **canvas component** without a canvas, board or login, the dev stack also
+serves a bench at `/dev/playground.html?m=<Module>&f=<fixture>` on the same `$PORT` — pick a
+module, feed it a fixture as `data`, watch `setData`. See the `cedarpad-component` skill.
+
 Open multiple worktrees and run these in parallel — each hits a different port
 and a different local D1 state dir. No coordination needed. (`bun run dev` stays on the
 canonical `4510`/`4511`; use `dev:e2e` when you need isolation.)

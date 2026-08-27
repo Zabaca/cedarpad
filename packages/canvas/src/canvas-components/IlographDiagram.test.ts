@@ -2,12 +2,17 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   type Relation,
+  type ResolvedEdge,
   type Resource,
   indexModel,
   layerNodes,
   resolveRelations,
   ribbonPath,
   visibleNodes,
+  connectedNodes,
+  applyPositions,
+  fitCamera,
+  lineage,
 } from './IlographDiagram.tsx';
 
 const RESOURCES: Resource[] = [
@@ -116,5 +121,294 @@ describe('ribbonPath', () => {
     const d = ribbonPath(a, { x: -300, y: 0, w: 100, h: 50 });
     expect(d.startsWith('M50,50')).toBe(true);
     expect(d).toContain('84'); // routed below both boxes: max(bottom) + 34
+  });
+});
+
+describe('connectedNodes', () => {
+  const connected = (relations: Relation[], expanded: Record<string, boolean> = {}) => {
+    const nodes = visibleNodes(RESOURCES, expanded);
+    return connectedNodes(nodes, relate(relations, expanded)).map((n) => n.id);
+  };
+
+  test('drops resources this perspective never relates', () => {
+    // `shell -> api` re-routes to `browser -> edge`; d1 is in the model but not in this
+    // perspective, and used to land unconnected in layer 0 at the far left.
+    expect(connected([{ from: 'shell', to: 'api' }])).toEqual(['browser', 'edge']);
+  });
+
+  test('prunes at whatever level is on screen, not just the top', () => {
+    // browser is open, so `pad -> api` lands on pad — and shell, its own sibling, is as
+    // irrelevant here as d1 is.
+    expect(connected([{ from: 'pad', to: 'api' }], { browser: true })).toEqual(['pad', 'edge']);
+  });
+
+  test('keeps model order, so a perspective never reshuffles the columns', () => {
+    expect(connected([{ from: 'api', to: 'd1' }, { from: 'shell', to: 'api' }]))
+      .toEqual(['browser', 'edge', 'd1']);
+  });
+
+  test('a perspective that relates nothing shows the model whole, not a blank card', () => {
+    // No edges is not "everything is irrelevant" — there is nothing to prune AGAINST, and
+    // pruning to empty would render a card with no content at all.
+    expect(connected([])).toEqual(['browser', 'edge', 'd1']);
+  });
+
+  test('a relation that collapses onto one node prunes like any other absence', () => {
+    // shell -> pad is internal to a collapsed browser, so resolveRelations drops it: the
+    // perspective ends up relating nothing, and the no-edges rule applies.
+    expect(connected([{ from: 'shell', to: 'pad' }])).toEqual(['browser', 'edge', 'd1']);
+  });
+
+  test('the far-left column no longer collects the unrelated — the reported symptom', () => {
+    const nodes = visibleNodes(RESOURCES, {});
+    const edges = relate([{ from: 'shell', to: 'api' }], {});
+    const before = layerNodes(nodes, edges);
+    const after = layerNodes(connectedNodes(nodes, edges), edges);
+    // d1 sat at x=0 beside browser, unconnected; now nothing but browser starts there.
+    expect(before.pos.d1!.x).toBe(before.pos.browser!.x);
+    expect(after.pos.d1).toBeUndefined();
+    expect(Object.keys(after.pos).sort()).toEqual(['browser', 'edge']);
+  });
+});
+
+// The "Doc reads" perspective from the skills model — the diagram that prompted this.
+// Every edge spans the same two columns, so counting inversions IS counting crossings.
+const SKILLS: Resource[] = [
+  { id: 'skills', name: 'Skills', color: '#4a9eff', children: [
+    { id: 'grill', name: 'grill-with-docs' },
+    { id: 'tospec', name: 'to-spec' },
+    { id: 'totickets', name: 'to-tickets' },
+    { id: 'implement', name: 'implement' },
+    { id: 'codereview', name: 'code-review' },
+    { id: 'tdd', name: 'tdd' },
+    { id: 'diagnose', name: 'diagnosing-bugs' },
+  ] },
+  { id: 'docs', name: 'Config docs', color: '#fb923c', children: [
+    { id: 'standards', name: 'standards.md' },
+    { id: 'testing', name: 'testing.md' },
+    { id: 'delivery', name: 'delivery.md' },
+    { id: 'observe', name: 'observe.md' },
+  ] },
+];
+
+const DOC_READS: Relation[] = [
+  { from: 'grill', to: 'delivery' },
+  { from: 'tospec', to: 'delivery' },
+  { from: 'totickets', to: 'delivery' },
+  { from: 'tdd', to: 'testing' },
+  { from: 'implement', to: 'testing' },
+  { from: 'codereview', to: 'standards' },
+  { from: 'diagnose', to: 'observe' },
+];
+
+/** Two edges cross when their endpoints are in opposite vertical order. */
+const crossings = (pos: Record<string, { y: number }>, edges: ResolvedEdge[]) => {
+  let n = 0;
+  for (let i = 0; i < edges.length; i++) {
+    for (let j = i + 1; j < edges.length; j++) {
+      const a = edges[i]!;
+      const b = edges[j]!;
+      if ((pos[a.from]!.y - pos[b.from]!.y) * (pos[a.to]!.y - pos[b.to]!.y) < 0) n++;
+    }
+  }
+  return n;
+};
+
+const docReadsLayout = () => {
+  const expanded = { skills: true, docs: true };
+  const { byId, parentOf } = indexModel(SKILLS);
+  const nodes = visibleNodes(SKILLS, expanded);
+  const edges = resolveRelations(DOC_READS, nodes, byId, parentOf);
+  const shown = connectedNodes(nodes, edges);
+  return { edges, ...layerNodes(shown, edges) };
+};
+
+/** The layout as columns of ids, left to right, each top to bottom. */
+const columnsOf = (pos: Record<string, { x: number; y: number }>) => {
+  const xs = [...new Set(Object.values(pos).map((b) => b.x))].sort((a, b) => a - b);
+  return xs.map((x) =>
+    Object.entries(pos).filter(([, b]) => b.x === x).sort((a, b) => a[1].y - b[1].y).map(([id]) => id),
+  );
+};
+
+describe('column ordering (crossing reduction)', () => {
+  test('the hairball resolves: model order crosses 10 times, ordered crosses 0', () => {
+    const { edges, pos } = docReadsLayout();
+    expect(edges).toHaveLength(7);
+    expect(crossings(pos, edges)).toBe(0);
+  });
+
+  test('readers of one doc end up adjacent, in their doc\'s order', () => {
+    // Pinning the arrangement, not just the count: several orders reach zero crossings and
+    // the heuristic settles on this one (it moved the DOCS column, leaving the readers close
+    // to authoring order, rather than the reverse). Both columns are asserted so a change of
+    // optimum is visible rather than silent.
+    const { pos } = docReadsLayout();
+    expect(columnsOf(pos)).toEqual([
+      [
+        'grill', 'tospec', 'totickets', // -> delivery
+        'codereview', // -> standards
+        'implement', 'tdd', // -> testing
+        'diagnose', // -> observe
+      ],
+      ['delivery', 'standards', 'testing', 'observe'],
+    ]);
+  });
+
+  test('a node with no neighbour in the reference column keeps its relative place', () => {
+    // `d1` has no predecessor, so ordering has nothing to place it BY; it must not be
+    // shuffled to an arbitrary end just because its median is undefined.
+    const nodes = visibleNodes(RESOURCES, {});
+    const edges: ResolvedEdge[] = [{ from: 'browser', to: 'edge' }];
+    const { pos } = layerNodes(nodes, edges);
+    expect(columnsOf(pos)[0]).toEqual(['browser', 'd1']);
+  });
+
+  test('ordering is idempotent — a settled layout does not keep moving', () => {
+    const first = docReadsLayout();
+    const second = docReadsLayout();
+    expect(columnsOf(second.pos)).toEqual(columnsOf(first.pos));
+  });
+});
+
+describe('applyPositions', () => {
+  const base = () => layerNodes(visibleNodes(RESOURCES, {}), [{ from: 'browser', to: 'edge' }]);
+
+  test('no overrides is the computed layout, unchanged', () => {
+    const laid = base();
+    const out = applyPositions(laid.pos, undefined);
+    expect(out.pos).toEqual(laid.pos);
+    expect(out.width).toBe(laid.width);
+    expect(out.height).toBe(laid.height);
+    expect(out.origin).toEqual({ x: 0, y: 0 });
+  });
+
+  test('a dragged node moves and keeps its size; the others do not budge', () => {
+    const laid = base();
+    const out = applyPositions(laid.pos, { edge: { x: 500, y: 200 } });
+    expect(out.pos.edge).toEqual({ x: 500, y: 200, w: laid.pos.edge!.w, h: laid.pos.edge!.h });
+    expect(out.pos.browser).toEqual(laid.pos.browser!);
+    expect(out.pos.d1).toEqual(laid.pos.d1!);
+  });
+
+  test('the drawing grows so a node dragged past the edge stays on it', () => {
+    const laid = base();
+    const out = applyPositions(laid.pos, { edge: { x: 900, y: 700 } });
+    expect(out.width).toBeGreaterThanOrEqual(900 + laid.pos.edge!.w);
+    expect(out.height).toBeGreaterThanOrEqual(700 + laid.pos.edge!.h);
+  });
+
+  test('dragging above or left of the origin shifts it rather than clipping', () => {
+    const laid = base();
+    const out = applyPositions(laid.pos, { browser: { x: -120, y: -60 } });
+    expect(out.origin).toEqual({ x: -120, y: -60 });
+    // width measures the whole occupied span, so the negative side is inside the viewBox.
+    expect(out.width).toBe(laid.width + 120);
+  });
+
+  test('an override for a node that is not on screen is ignored', () => {
+    // Perspectives and expansion change the node set under a saved position; a stale one
+    // must not resurrect a node the layout did not place, nor stretch the drawing to it.
+    const laid = base();
+    const out = applyPositions(laid.pos, { ghost: { x: 4000, y: 4000 } });
+    expect(out.pos.ghost).toBeUndefined();
+    expect(out.width).toBe(laid.width);
+  });
+});
+
+describe('fitCamera', () => {
+  const view = { w: 1000, h: 700 };
+  const content = (width: number, height: number, origin = { x: 0, y: 0 }) => ({ width, height, origin });
+
+  test('centres the content in the window', () => {
+    const { zoom, pan } = fitCamera(content(500, 350), view, 0);
+    // 500x350 into 1000x700 is exactly 2x, but the fit never magnifies past 1:1.
+    expect(zoom).toBe(1);
+    // Centred: 1000/2 - 1*(0 + 250) = 250, 700/2 - 1*(0 + 175) = 175.
+    expect(pan).toEqual({ x: 250, y: 175 });
+  });
+
+  test('shrinks to fit whichever axis is tighter', () => {
+    // 2000 wide into 1000 needs 0.5; 350 tall into 700 would allow 2. The width wins.
+    expect(fitCamera(content(2000, 350), view, 0).zoom).toBe(0.5);
+    expect(fitCamera(content(500, 2800), view, 0).zoom).toBe(0.25);
+  });
+
+  test('never magnifies past 1:1 — a small diagram is centred, not blown up', () => {
+    expect(fitCamera(content(100, 80), view, 0).zoom).toBe(1);
+  });
+
+  test('the margin is real room, taken off both sides', () => {
+    expect(fitCamera(content(900, 100), view, 50).zoom).toBe(1);
+    expect(fitCamera(content(1800, 100), view, 50).zoom).toBe(0.5);
+  });
+
+  test('content in negative space is framed too — origin is honoured', () => {
+    // A node dragged up and left puts the content origin below zero; the camera has to
+    // account for it or the fit centres on the wrong point.
+    const { zoom, pan } = fitCamera(content(500, 350, { x: -500, y: -350 }), view, 0);
+    expect(zoom).toBe(1);
+    expect(pan).toEqual({ x: 1000 / 2 + 250, y: 700 / 2 + 175 });
+  });
+
+  test('empty content does not divide by zero', () => {
+    const { zoom, pan } = fitCamera(content(0, 0), view, 0);
+    expect(zoom).toBe(1);
+    expect(Number.isFinite(pan.x) && Number.isFinite(pan.y)).toBe(true);
+  });
+});
+
+describe('lineage', () => {
+  // The "Doc structure" shape: an entry doc that branches, one branch running on further.
+  const DOCS: ResolvedEdge[] = [
+    { from: 'agents', to: 'context' },
+    { from: 'agents', to: 'standards' },
+    { from: 'agents', to: 'issuetracker' },
+    { from: 'context', to: 'delivery' },
+    { from: 'context', to: 'testing' },
+    { from: 'delivery', to: 'flags' },
+  ];
+
+  test('a leaf lights what leads to it, and nothing off to the side', () => {
+    // Selecting `flags` walks back delivery -> context -> agents. `standards` and
+    // `issuetracker` hang off `agents` and `testing` off `context`, but reaching any of them
+    // means travelling back DOWN another branch, so none of them belong.
+    expect([...lineage(DOCS, 'flags')].sort()).toEqual(['agents', 'context', 'delivery', 'flags']);
+  });
+
+  test('the entry point lights everything that flows from it', () => {
+    expect([...lineage(DOCS, 'agents')].sort())
+      .toEqual(['agents', 'context', 'delivery', 'flags', 'issuetracker', 'standards', 'testing']);
+  });
+
+  test('a side branch is short — its own line and no more', () => {
+    expect([...lineage(DOCS, 'standards')].sort()).toEqual(['agents', 'standards']);
+    expect([...lineage(DOCS, 'testing')].sort()).toEqual(['agents', 'context', 'testing']);
+  });
+
+  test('siblings are NOT related — the case the undirected rule got wrong', () => {
+    // `standards` and `flags` share an ancestor and nothing else. An undirected walk joins
+    // them through `agents`; direction is what keeps them apart.
+    expect(lineage(DOCS, 'flags').has('standards')).toBe(false);
+    expect(lineage(DOCS, 'standards').has('flags')).toBe(false);
+  });
+
+  test('both directions from the middle — a pipeline lights end to end', () => {
+    const chain: ResolvedEdge[] = [
+      { from: 'setup', to: 'grill' },
+      { from: 'grill', to: 'tospec' },
+      { from: 'tospec', to: 'totickets' },
+      { from: 'totickets', to: 'implement' },
+    ];
+    expect([...lineage(chain, 'tospec')].sort())
+      .toEqual(['grill', 'implement', 'setup', 'tospec', 'totickets']);
+  });
+
+  test('an isolated selection is just itself', () => {
+    expect([...lineage(DOCS, 'lonely')]).toEqual(['lonely']);
+  });
+
+  test('no selection means nothing is dimmed', () => {
+    expect(lineage(DOCS, null)).toBeNull();
   });
 });

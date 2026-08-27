@@ -203,6 +203,7 @@ export function ComponentHost({
   loadNotebook = fetchNotebook,
   readShapes = () => readPage(editor),
   post = postMessageToChat,
+  unguarded = false,
 }: {
   shapeId: string;
   editor: Editor;
@@ -222,6 +223,19 @@ export function ComponentHost({
   readShapes?: () => CanvasShape[];
   /** Posts a component's reply into a chat session; injected in tests. */
   post?: (chatId: string, message: string) => Promise<void>;
+  /**
+   * True when this host renders the component OUTSIDE the shape's event guard — fullscreen
+   * and component-guest, both of which mount `ComponentHost` with no tldraw around it.
+   *
+   * A component needs to know because the guard is not neutral. On a card,
+   * `InteractiveBoxShapeUtil` swallows every wheel event before it reaches the content
+   * (so tldraw does not zoom the board), and lets a pointerdown on anything that is not an
+   * `isInteractiveControl` through to tldraw (so the card can still be dragged). A component
+   * that wants to run its own camera therefore CANNOT on a card: its wheel listener never
+   * fires, and its background drag is stolen mid-gesture, which also means it never sees the
+   * matching pointerup. Anything gesture-driven should offer itself only when this is true.
+   */
+  unguarded?: boolean;
 }) {
   const [Comp, setComp] = React.useState<AgentComponent | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -365,7 +379,7 @@ export function ComponentHost({
         <div style={{ width: '100%', height: '100%', overflow: 'auto' }}>
           {/* #211: identity rides alongside data/setData. `currentUser` is null until
               resolved; `setDisplayName` is the ask-once guest naming (no-op for users). */}
-          <Comp {...resolvedData} setData={setData} sendToAgent={sendToAgent} currentUser={currentUser ?? undefined} setDisplayName={setDisplayName} />
+          <Comp {...resolvedData} setData={setData} sendToAgent={sendToAgent} currentUser={currentUser ?? undefined} setDisplayName={setDisplayName} unguarded={unguarded} />
         </div>
       </ComponentErrorBoundary>
       {martName && <MartFreshnessBadge state={martState} />}
@@ -390,8 +404,10 @@ export class ComponentShapeUtil extends InteractiveBoxShapeUtil<
   // clicking a button/input or dragging the scrollbar interacts, while clicking the
   // card background still selects/drags the shape. Wheel: always own it so scrolling
   // a tall component scrolls its content instead of zooming the canvas.
-  // ponytail: wheel:()=>true means hovering a non-scrollable component eats canvas
-  // zoom; move the cursor off the card to zoom. Scope to scrollable regions if that bites.
+  // wheel:()=>true still means a hovered non-scrollable component eats a PLAIN wheel, so
+  // the board does not move under the cursor. The zoom gesture is no longer caught with it:
+  // `InteractiveBoxShapeUtil` lets ctrl+wheel (and trackpad pinch) through ahead of this
+  // predicate, so zooming no longer means finding a gap between cards first.
   override readonly guards: EventGuards = { pointer: isInteractiveControl, wheel: () => true };
   override containerStyle = { background: 'var(--surface)', boxShadow: 'var(--shadow-float), 0 0 0 1px var(--line)' };
 

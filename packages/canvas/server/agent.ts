@@ -371,7 +371,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
       tool(
         'read_component',
         'Read a component module\'s source (so you can edit it, or learn the conventions before writing a new one).',
-        { module: z.string().describe('Component name, e.g. "KpiCard" (no extension).') },
+        { module: z.string().describe('Component name, e.g. "MarkdownCard" (no extension).') },
         async ({ module }) => {
           try {
             return result({ text: await readComponent(module, canvasId) });
@@ -383,7 +383,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
       tool(
         'component_history',
         "A component module's version history: every stored revision, newest first, with who wrote it and when. Use it to answer \"who changed this and when\" and to find the revision to go back to after a bad edit. Own-library modules only — a shared or platform module has no history here.",
-        { module: z.string().describe('Component name, e.g. "KpiCard" (no extension).') },
+        { module: z.string().describe('Component name, e.g. "MarkdownCard" (no extension).') },
         async ({ module }) => {
           try {
             return result({ text: formatComponentHistory(module, await componentHistory(module, canvasId)) });
@@ -396,7 +396,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         'restore_component',
         'Put a component module back the way it was at an earlier version — the fix for a bad edit. Call component_history first to choose the version. This APPENDS a new revision rather than rewinding, so nothing is erased and the restore is itself undoable; it also brings back a module that was deleted. Own-library modules only.',
         {
-          module: z.string().describe('Component name, e.g. "KpiCard" (no extension).'),
+          module: z.string().describe('Component name, e.g. "MarkdownCard" (no extension).'),
           version: z.number().int().positive().describe('The version to bring back, as component_history numbers them.'),
         },
         async ({ module, version }) => {
@@ -413,10 +413,10 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         'write_component',
         [
           "Create or overwrite a reusable React component file in this canvas's own library (writing a platform/shared module name shadows it for this canvas). vite compiles it; place_component then renders it on the canvas.",
-          'Rules: `export default` a React component. It receives the placement `data` as props. You CAN import other modules: react/hooks, other components (`import KpiCard from "./KpiCard"`) for composition, "mermaid" for diagrams, "flint-chart/vegalite" + "vega"/"vega-lite" for data charts, "xstate" + "@xstate/react" (useMachine) when a component has real states and transitions rather than a couple of booleans, and data files you write with write_data. For a CHART, place the platform `ChartCard` instead of drawing one — it takes a Flint spec (`{chartType, encodings, semantic_types, values}`) and derives scales, axes, legend and colors itself; only write your own chart component if no Flint chart type fits. Use inline styles + SVG. COLORS: the pad surface is DARK — use the cedar design tokens (var(--text), var(--muted), var(--faint) for type; var(--surface)/var(--raised)/var(--overlay) for fills; var(--line) for borders; var(--accent) for the one live/active accent; var(--success)/var(--danger)/var(--warning) for status) and NEVER hardcode a hex text color, or your component renders near-invisible against the pad. The one exception is a component that paints its OWN full background — then be internally consistent within it. Prefer small composable components (a leaf like KpiCard, a container like Dashboard that imports it). Read an existing one first (e.g. read_component KpiCard) to match conventions.',
+          'Rules: `export default` a React component. It receives the placement `data` as props. You CAN import other modules: react/hooks, other components (`import Foo from "./Foo"`) for composition, "mermaid" for diagrams, "flint-chart/vegalite" + "vega"/"vega-lite" for data charts, "xstate" + "@xstate/react" (useMachine) when a component has real states and transitions rather than a couple of booleans, and data files you write with write_data. For a CHART, place the platform `ChartCard` instead of drawing one — it takes a Flint spec (`{chartType, encodings, semantic_types, values}`) and derives scales, axes, legend and colors itself; only write your own chart component if no Flint chart type fits. Use inline styles + SVG. COLORS: the pad surface is DARK — use the cedar design tokens (var(--text), var(--muted), var(--faint) for type; var(--surface)/var(--raised)/var(--overlay) for fills; var(--line) for borders; var(--accent) for the one live/active accent; var(--success)/var(--danger)/var(--warning) for status) and NEVER hardcode a hex text color, or your component renders near-invisible against the pad. The one exception is a component that paints its OWN full background — then be internally consistent within it. Prefer small composable components — a leaf that takes props, and a container that imports it. Read an existing one first to match conventions: `read_component MarkdownCard` for a plain leaf, `read_component VariantBoard` for composition (it embeds components by NAME through the tier chain rather than importing them, so copy its shape only when the thing to embed is chosen at placement time; a container that knows its parts should just import them).',
         ].join(' '),
         {
-          module: z.string().describe('Component name, e.g. "KpiCard" (letters/digits/_/-, no extension).'),
+          module: z.string().describe('Component name, e.g. "MarkdownCard" (letters/digits/_/-, no extension).'),
           source: z.string().describe('Full .tsx source. Must `export default` a React component.'),
         },
         async ({ module, source }) => {
@@ -498,7 +498,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         'Put an instance of a component module on the canvas at (x, y), sized w×h, with `data` passed to it as props. YOUR (x, y) IS HONORED (not auto-moved), so when placing several related components lay them out as a deliberate layout near your chat card — e.g. a row at the same y, stepping x by w+20. Place them in/near the visible area (x 0..1000, y 0..700) or, for a chat far from the origin, call read_connected first to get your chat\'s position and lay them out beside it. Each new instance is auto-linked back to your chat with an arrow. Returns the id of the instance it placed — ids are opaque and unguessable, so KEEP it if you intend to move it, re-data it (set_component_data), or delete it later. Pass an existing id to move/retarget/re-data that instance. If this canvas\'s workspace has a materialized mart backing what you\'re about to show (an operational number, a KPI, a table of current records), pass `data_source` instead of a static `data` snapshot — the component then renders LIVE mart rows with no further tool calls needed to stay current, and its freshness ("as of") is shown automatically.',
         {
           id: z.string().optional().describe('Existing component shape id to update; omit to create a new instance.'),
-          module: z.string().describe('Component name to render, e.g. "Dashboard".'),
+          module: z.string().describe('Component name to render, e.g. "MarkdownCard".'),
           x: z.number().describe('Top-left x in page coordinates.'),
           y: z.number().describe('Top-left y in page coordinates.'),
           w: z.number().optional().describe('Box width. Default 360.'),

@@ -17,7 +17,7 @@
       "~/*": ["src/*"]
     }
   },
-  "include": ["src", "server", "shared", "scripts", "shell", "vite.config.ts"],
+  "include": ["src", "server", "shared", "scripts", "shell", "dev", "vite.config.ts"],
   "// canvas-components": "Agent-authored at runtime; vite/esbuild compiles them (no type gate), so keep them out of the project typecheck.",
   "exclude": ["node_modules", "dist", "src/canvas-components"]
 }

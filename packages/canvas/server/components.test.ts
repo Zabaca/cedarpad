@@ -23,27 +23,27 @@ const cleanupShared = () => {
 describe('component file CRUD', () => {
   test('list includes the platform seed library — on EVERY canvas (ADR-0014)', async () => {
     const mods = await listComponents();
-    expect(mods).toContain('KpiCard');
-    expect(mods).toContain('Dashboard');
+    expect(mods).toContain('MarkdownCard');
+    expect(mods).toContain('ChartCard');
     // The MarkdownCard incident: a non-default canvas must see the platform tier too.
     expect(await listComponents('cv_somewhere_else')).toContain('MarkdownCard');
   });
 
   test('read returns source (platform base resolves for any canvas); missing throws', async () => {
-    expect(await readComponent('KpiCard')).toContain('KpiCard');
-    expect(await readComponent('KpiCard', 'cv_somewhere_else')).toContain('KpiCard');
+    expect(await readComponent('MarkdownCard')).toContain('MarkdownCard');
+    expect(await readComponent('MarkdownCard', 'cv_somewhere_else')).toContain('MarkdownCard');
     expect(readComponent('DefinitelyMissing')).rejects.toThrow(/does not exist/);
   });
 
   test('writing a platform module name shadows it into the canvas own dir — base stays untouched', async () => {
-    const basePath = fileURLToPath(new URL('../src/canvas-components/KpiCard.tsx', import.meta.url));
-    const shadowPath = fileURLToPath(new URL('../src/canvas-default/components/KpiCard.tsx', import.meta.url));
+    const basePath = fileURLToPath(new URL('../src/canvas-components/MarkdownCard.tsx', import.meta.url));
+    const shadowPath = fileURLToPath(new URL('../src/canvas-default/components/MarkdownCard.tsx', import.meta.url));
     const baseBefore = readFileSync(basePath, 'utf8');
     try {
-      await writeComponent('KpiCard', 'export default () => <div>shadowed</div>;\n');
+      await writeComponent('MarkdownCard', 'export default () => <div>shadowed</div>;\n');
       expect(readFileSync(basePath, 'utf8')).toBe(baseBefore); // read-only tier
       expect(existsSync(shadowPath)).toBe(true);
-      expect(await readComponent('KpiCard')).toContain('shadowed'); // own wins resolution
+      expect(await readComponent('MarkdownCard')).toContain('shadowed'); // own wins resolution
     } finally {
       if (existsSync(shadowPath)) rmSync(shadowPath);
     }

@@ -47,10 +47,10 @@ them. The agent's file access is scoped to the component library.
 **A reusable component library.** For anything the fixed shapes can't express —
 charts, tables, KPI cards, dashboards — the agent builds **real React files** under
 `src/canvas-components/` and places instances of them on the canvas. They're
-ordinary modules: they **compose** (`import KpiCard from './KpiCard'`), take
+ordinary modules: they **compose** (`import Foo from './Foo'`), take
 **data** (props), and import real npm deps (e.g. `mermaid`). vite compiles each
 file; the canvas dynamic-imports it and re-imports live when the agent edits it.
-Seed library: `KpiCard`, `Dashboard` (composes `KpiCard`), `MermaidDiagram`. Each
+Seed library: `MarkdownCard`, `ChartCard`, `MermaidDiagram`. Each
 instance renders in an error boundary (a bad component shows a red card, never
 crashes the canvas). See CONTEXT.md "Custom components" for the design and the
 dev-server / security tradeoff.

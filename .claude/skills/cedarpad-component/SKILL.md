@@ -78,6 +78,32 @@ container.scrollTo({ top: Math.max(0, el.offsetTop - 8), behavior: 'smooth' });
 - If behavior depends on card width (e.g. auto-open a panel only when wide), measure
   once on mount via `ref.offsetWidth`. Remember the user can resize the shape.
 
+## Seeing it render — the dev playground
+
+`bun run dev`, then **http://localhost:$PORT/dev/playground.html?m=<Module>&f=<fixture>**
+(`$PORT` is 4510 for a plain `bun run dev`; a worktree derives its own — see the
+`worktree` skill).
+
+A bench with no canvas around it: pick a module, pick a fixture, and the card renders with
+that fixture as its `data`. `setData` is wired the way `ComponentHost` wires it (a patch
+MERGES into `data`, it does not replace it), so the card's own controls work here exactly as
+they do on a board; the right pane shows what `setData` has written, which is how you watch
+view state while chasing a bug. The render box is `resize: both` — layout bugs live at odd
+sizes, and the user resizes the shape.
+
+- **Add a fixture** in `dev/fixtures.ts`, keyed by module then fixture name. A fixture is
+  literally a placed instance's `data`. `none` is always offered and means no data at all —
+  the unconfigured case every component has to survive.
+- **Why not `?preview=<Module>`**: that renders one module inside the pad, but a preview
+  passes **no `data`** by design. Any component driven by props renders empty there. Use
+  preview to answer "does this module load"; use the playground to work on one.
+- **It never ships.** The production build runs from `shell/vite.config.ts`, which does not
+  know this entry. No flag, no dead code in the bundle.
+- **It is not a type gate.** Modules load via `import.meta.glob` precisely so
+  `src/canvas-components` stays out of the project typecheck (tsconfig excludes it
+  deliberately). A component can render fine here and still have type errors — see
+  "Typecheck reachability" below.
+
 ## Testing
 
 From `packages/canvas` (never repo root): `bun run test`, `bun run typecheck`.
