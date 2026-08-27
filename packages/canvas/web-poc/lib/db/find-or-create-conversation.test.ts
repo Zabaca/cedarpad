@@ -1,6 +1,5 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { createClient } from "@libsql/client";
+import { migrationStatements } from "./test-d1.js";
 import { describe, expect, it } from "vitest";
 import { makeDb } from "./index.js";
 import * as conversations from "./queries/conversations.js";
@@ -9,20 +8,6 @@ import { findOrCreateConversation } from "./find-or-create-conversation.js";
 // `findOrCreateConversation` is platform data layer (root CONTEXT.md), so its tests belong with
 // it. They lived in `server/inbox.test.ts` while `server/` re-exported it; ADR-0018 / #266 took
 // the container's database away, and with it the last reason for that re-export.
-
-/** In-memory DB built from the real migrations (mirrors conversations.test.ts). */
-const MIGRATIONS_DIR = fileURLToPath(new URL("./migrations", import.meta.url));
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .flatMap((f) =>
-      readFileSync(`${MIGRATIONS_DIR}/${f}`, "utf8")
-        .split("--> statement-breakpoint")
-        .map((s) => s.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n").trim())
-        .filter(Boolean),
-    );
-}
 
 async function freshDb() {
   const client = createClient({ url: ":memory:" });

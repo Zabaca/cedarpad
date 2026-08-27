@@ -42,6 +42,15 @@ export async function applyMigrations(d1: D1Database, files = migrationFiles()) 
   }
 }
 
+/**
+ * The real migrations flattened to a single ordered statement list, for the
+ * libSQL in-memory query tests (`createClient({ url: ":memory:" })`) that apply
+ * them by hand rather than through a D1 binding.
+ */
+export function migrationStatements(): string[] {
+  return migrationFiles().flatMap((f) => f.statements);
+}
+
 export interface TestD1 {
   /** The Drizzle handle to hand to `buildApp({ db })` — the D1 driver, as in production. */
   db: Database;
