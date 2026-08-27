@@ -10,24 +10,36 @@
 // moving along them, and a `sequence` perspective (a request path, in order) is a
 // first-class mode you can step or play through, not a footnote.
 //
-// Layout is computed — the spec carries no coordinates. Nodes are assigned to layers
-// by longest path over the current perspective's relations, then stacked into columns
-// and centred. The drawing fits the shape via the SVG viewBox; pan and zoom are a
-// separate transform on top of that base layout (wheel/drag, or the +/−/Reset controls),
-// synced through `setData` like the rest of the view state.
+// Layout is computed — the spec carries no coordinates. Nodes are assigned to layers by
+// longest path over the current perspective's relations, ordered within each layer to cut
+// edge crossings, then stacked into columns.
 //
-// All view state (perspective, expansion, selection, sequence step, pan/zoom) round-trips
-// through `setData`, so the card is a shared surface: what one viewer opens, steps to, or
-// pans/zooms to, every collaborator sees, and it survives a reload.
+// The surface is an INFINITE CANVAS. The viewBox is a fixed window and the camera (pan/zoom,
+// by wheel, drag, or the +/−/Fit controls) is the only transform; nodes live at world
+// coordinates beneath it, negative ones included. Nothing about the drawing's size feeds
+// back into its scale — which is the point. The earlier version derived the viewBox from
+// the content extents, so anything that grew them rescaled everything on screen: dragging a
+// node shrank the node under the cursor and set the rest of the diagram drifting. Content
+// extents are still computed, but they are read only by `fitCamera`, and only when someone
+// asks to be re-framed.
 //
-// Node dragging is the ONE exception, and deliberately so. A node can be pulled aside to
-// untangle a reading of the diagram, but that position is local to the tab: not synced, not
-// persisted, cleared by Reset and by changing perspective. The line is what the state MEANS
-// — a perspective or an open resource says something about the system and belongs to
-// everyone looking; an arrangement is one reader's aid to their own reading, and pushing it
-// through `setData` would drag a collaborator's diagram around to suit someone else. It
-// stays a hybrid, too: a dragged node pins and every other node keeps its computed place,
-// so moving one box never stops the rest from re-laying out.
+// State splits on what it MEANS, and the split is the design.
+//
+// WHAT THE DIAGRAM SAYS is shared. Perspective, expansion, selection and sequence step
+// round-trip through `setData`, so the card is a shared surface: what one viewer opens or
+// steps to, every collaborator sees, and it survives a reload.
+//
+// HOW YOU ARE LOOKING AT IT is yours. The camera (pan/zoom) and any nodes you have dragged
+// aside are local to the tab — not synced, not persisted, keyed per perspective. Both were
+// once shared, and it was wrong for the same reason in both cases: zooming into a corner to
+// study it dragged everyone else's view along with you. An arrangement, or a vantage point,
+// is one reader's aid to their own reading and says nothing about the system.
+//
+// Two consequences worth naming. A perspective you have not opened is FITTED (`fitCamera`);
+// one you have visited is left exactly where you left it, because carrying a camera between
+// perspectives of different sizes lands you somewhere arbitrary. And dragging stays a
+// hybrid: a dragged node pins while every other node keeps its computed place, so moving one
+// box never stops the rest from re-laying out.
 
 import type * as React from 'react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
@@ -53,10 +65,20 @@ const C = {
 const NW = 140, NH = 50, GX = 96, GY = 34, PAD = 40;
 // Pointer travel (in node coordinates) below which a gesture is still a click, not a drag.
 const DRAG_SLOP = 3;
-// Empty room kept around the drawing. It is not decoration: the SVG is scaled to FIT its
-// own extents, so anything that grows them rescales everything on screen. Slack means an
-// ordinary drag moves a node through space that already exists and changes nothing.
-const SLACK = 160;
+// The window the camera looks through, in world units. FIXED — it is not derived from the
+// content, and that is the whole point: a viewBox computed from the extents means anything
+// that grows them rescales the entire drawing, which is what made dragging a node feel
+// rubbery. With a constant window, growth changes nothing until you ask to re-fit.
+//
+// `preserveAspectRatio="…meet"` guarantees the whole viewBox is visible at any card size or
+// aspect, so content fitted into these bounds is content the reader can actually see — no
+// element measurement, no ResizeObserver, and the same framing for every viewer.
+const VIEW_W = 1000, VIEW_H = 700;
+const VIEW = { w: VIEW_W, h: VIEW_H };
+/** Room left around the content when fitting, so nodes are not flush to the edge. */
+const FIT_MARGIN = 48;
+/** Shared empty map, so an un-arranged perspective does not get a new object each render. */
+const EMPTY_POSITIONS: Record<string, { x: number; y: number }> = {};
 
 // ---------------------------------------------------------------- pure model ops
 
@@ -273,6 +295,38 @@ export function applyPositions(
   };
 }
 
+/**
+ * The camera that brings a drawing of this size into view, centred.
+ *
+ * This is the "start centred" half of an infinite canvas: extents are consumed HERE, once,
+ * on an explicit occasion — first open, a perspective change, or the Fit button — instead of
+ * every frame. That is the difference that matters. When the frame is derived from content
+ * continuously, moving a node changes the scale of everything including the node under the
+ * cursor; when it is derived on demand, the canvas simply holds still and the reader decides
+ * when to re-frame.
+ *
+ * It never magnifies past 1:1. Blowing a three-box diagram up to fill a card makes it look
+ * like a different, bigger thing, and the node sizes stop being comparable between
+ * perspectives.
+ */
+export function fitCamera(
+  content: { width: number; height: number; origin: { x: number; y: number } },
+  view: { w: number; h: number },
+  margin = FIT_MARGIN,
+): { zoom: number; pan: { x: number; y: number } } {
+  const room = { w: Math.max(1, view.w - margin * 2), h: Math.max(1, view.h - margin * 2) };
+  const zoom = content.width > 0 && content.height > 0
+    ? Math.min(1, room.w / content.width, room.h / content.height)
+    : 1;
+  return {
+    zoom,
+    pan: {
+      x: view.w / 2 - zoom * (content.origin.x + content.width / 2),
+      y: view.h / 2 - zoom * (content.origin.y + content.height / 2),
+    },
+  };
+}
+
 /** A ribbon between two boxes: a forward S-curve, or a loop under both when it goes backwards. */
 export function ribbonPath(a: Box, b: Box): string {
   const ax = a.x + a.w, ay = a.y + a.h / 2, bx = b.x, by = b.y + b.h / 2;
@@ -349,9 +403,10 @@ type View = {
   expanded: Record<string, boolean>;
   selected: string | null;
   step: number;
-  zoom: number;
-  pan: { x: number; y: number };
 };
+
+/** Where one perspective is being looked at from. Local to the tab — see the header. */
+type Camera = { zoom: number; pan: { x: number; y: number } };
 
 export default function IlographDiagram(props: {
   resources?: Resource[];
@@ -361,8 +416,6 @@ export default function IlographDiagram(props: {
   expanded?: Record<string, boolean>;
   selected?: string | null;
   step?: number;
-  zoom?: number;
-  pan?: { x: number; y: number };
   setData?: (patch: Record<string, unknown>) => void;
   [k: string]: unknown;
 }) {
@@ -378,45 +431,36 @@ export default function IlographDiagram(props: {
     expanded: props.expanded ?? {},
     selected: props.selected ?? null,
     step: props.step ?? 0,
-    zoom: props.zoom ?? 1,
-    pan: props.pan ?? { x: 0, y: 0 },
   };
   const view: View = setData ? fromProps : { ...fromProps, ...local };
   const commit = (patch: Partial<View>) => (setData ? setData(patch) : setLocal((v) => ({ ...v, ...patch })));
 
-  // Pan/zoom get an optimistic local overlay (`interim`) on top of the synced `view`, for
-  // the same reason `local` exists above: without it, a drag or wheel tick would wait on a
-  // setData round-trip before the drawing visibly moves.
+  // The perspective on screen keys every piece of local state below, so it is resolved first.
+  const current = perspectives.find((p) => p.id === view.perspective) ?? perspectives[0];
+
+  // The camera is LOCAL and per perspective, and never goes through `setData`.
+  //
+  // Sharing it was wrong twice over. It moved other people's view: a reader zooming in to
+  // study one corner dragged every other viewer's diagram there with them, which is the same
+  // objection that already keeps node dragging local — what the diagram SAYS is shared, how
+  // you are looking at it is yours. And keying it per perspective is what makes switching
+  // sane: perspectives differ in size and shape, so carrying one's camera into the next
+  // lands you somewhere arbitrary. Each perspective now remembers where you were, and a
+  // perspective you have not opened yet gets fitted.
+  //
+  // Local state also deletes the debounce this used to need. The optimistic `interim`
+  // overlay, its pending ref and its commit timer existed to hide a `setData` round-trip —
+  // and were the direct cause of a camera that would not change: `interim` was set on every
+  // pan and never cleared, so it permanently shadowed the committed value and a fit computed
+  // on a perspective change was simply never displayed.
   const svgRef = useRef<SVGSVGElement>(null);
-  const [interim, setInterim] = useState<{ zoom: number; pan: { x: number; y: number } } | null>(null);
-  const pendingRef = useRef<{ zoom: number; pan: { x: number; y: number } } | null>(null);
-  const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [cameras, setCameras] = useState<Record<string, Camera>>({});
   const dragRef = useRef<{ pointerId: number; startLocal: { x: number; y: number }; startPan: { x: number; y: number } } | null>(null);
-  useEffect(() => () => { if (commitTimer.current) clearTimeout(commitTimer.current); }, []);
 
-  const zoom = interim?.zoom ?? view.zoom;
-  const pan = interim?.pan ?? view.pan;
-
-  const updateView = (patch: { zoom: number; pan: { x: number; y: number } }, immediate = false) => {
-    setInterim(patch);
-    pendingRef.current = patch;
-    if (commitTimer.current) clearTimeout(commitTimer.current);
-    if (immediate) {
-      commit(patch);
-      pendingRef.current = null;
-      commitTimer.current = null;
-      return;
-    }
-    commitTimer.current = setTimeout(() => {
-      if (pendingRef.current) commit(pendingRef.current);
-      pendingRef.current = null;
-      commitTimer.current = null;
-    }, 400);
-  };
-  const flushPending = () => {
-    if (commitTimer.current) { clearTimeout(commitTimer.current); commitTimer.current = null; }
-    if (pendingRef.current) { commit(pendingRef.current); pendingRef.current = null; }
-  };
+  const camera = cameras[current.id];
+  const zoom = camera?.zoom ?? 1;
+  const pan = camera?.pan ?? { x: 0, y: 0 };
+  const setCamera = (c: Camera) => setCameras((m) => ({ ...m, [current.id]: c }));
 
   /** Client coords -> the SVG's own viewBox space (unaffected by our pan/zoom group), via
    *  getScreenCTM — the same space `pan` is expressed in, so drag deltas need no zoom scaling. */
@@ -431,7 +475,7 @@ export default function IlographDiagram(props: {
     return { x: p.x, y: p.y };
   };
 
-  const zoomAt = (factor: number, clientX: number, clientY: number, immediate = false) => {
+  const zoomAt = (factor: number, clientX: number, clientY: number) => {
     const newZoom = Math.max(0.25, Math.min(4, zoom * factor));
     if (newZoom === zoom) return;
     const p = toLocal(clientX, clientY);
@@ -439,7 +483,7 @@ export default function IlographDiagram(props: {
       x: p.x - (newZoom / zoom) * (p.x - pan.x),
       y: p.y - (newZoom / zoom) * (p.y - pan.y),
     };
-    updateView({ zoom: newZoom, pan: newPan }, immediate);
+    setCamera({ zoom: newZoom, pan: newPan });
   };
   const zoomAtRef = useRef(zoomAt);
   zoomAtRef.current = zoomAt;
@@ -457,11 +501,17 @@ export default function IlographDiagram(props: {
     return () => svg.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Hand-placed node positions are LOCAL and ephemeral — per tab, gone on reload, never
-  // written through setData. Unlike perspective/expansion/step, an arrangement is one
-  // reader's aid to their own reading, not a statement about the system, so pushing it at
-  // collaborators would move their diagram to suit someone else's train of thought.
-  const [dragged, setDragged] = useState<Record<string, { x: number; y: number }>>({});
+
+  // Hand-placed node positions are LOCAL and per perspective, exactly like the camera:
+  // per tab, gone on reload, never written through setData. Unlike perspective/expansion/
+  // step, an arrangement is one reader's aid to their own reading, not a statement about the
+  // system, so pushing it at collaborators would move their diagram to suit someone else's
+  // train of thought. Keyed per perspective so returning to one you have arranged finds it
+  // as you left it, rather than reset.
+  const [draggedBy, setDraggedBy] = useState<Record<string, Record<string, { x: number; y: number }>>>({});
+  const dragged = draggedBy[current.id] ?? EMPTY_POSITIONS;
+  const setDragged = (next: Record<string, { x: number; y: number }>) =>
+    setDraggedBy((m) => ({ ...m, [current.id]: next }));
   // While the pointer is down we hold the position here and paint from it, so a drag tracks
   // the cursor at frame rate rather than through a state round-trip per move.
   const [dragging, setDragging] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -472,7 +522,6 @@ export default function IlographDiagram(props: {
   // moving a resource would also toggle it open.
   const suppressClick = useRef(false);
 
-  const current = perspectives.find((p) => p.id === view.perspective) ?? perspectives[0];
   const { byId, parentOf } = indexModel(resources);
   const nodes = visibleNodes(resources, view.expanded);
   const edges = resolveRelations(current.relations, nodes, byId, parentOf);
@@ -487,8 +536,11 @@ export default function IlographDiagram(props: {
   // whole drawing down to fit them, and the node shrinks away from the cursor it is
   // supposed to be following while every other node drifts. Frozen for the length of the
   // gesture, the diagram holds still and grows once, on release.
-  const { pos } = applyPositions(laid, placed);
-  const { width, height, origin } = applyPositions(laid, dragged);
+  // ONE call now. The drawn-vs-framed split existed only to stop a live drag from
+  // rescaling the drawing, and with a fixed window there is no derived scale left to fight.
+  // Extents survive as `content`, read only when something asks for a fit.
+  const content = applyPositions(laid, placed);
+  const pos = content.pos;
 
   const isSeq = !!current.sequence;
   const step = Math.max(0, Math.min(view.step, edges.length));
@@ -513,6 +565,22 @@ export default function IlographDiagram(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, edges.length]);
   useEffect(() => { if (!isSeq) setPlaying(false); }, [isSeq]);
+
+  // Start centred, and re-centre when the model on screen becomes a different shape.
+  //
+  // Deliberately NOT every render: the camera is shared state, so fitting on every open
+  // would have each viewer rewrite everyone's framing just by looking. It runs when there is
+  // no stored camera at all (a card placed but never framed) and when the perspective
+  // changes — the second is a click someone just made, so a re-frame is the expected answer
+  // rather than a surprise. Any other time, the camera is the reader's and stays put.
+  useEffect(() => {
+    if (cameras[current.id]) return; // been here before — leave the reader where they were
+    setCamera(fitCamera(content, VIEW));
+    // `content` and `cameras` are intentionally out of the dep list: this fires when the
+    // perspective changes, not when the layout does, and the guard above is what makes it
+    // run once per perspective.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current.id]);
 
   const onNode = (id: string) => {
     if (suppressClick.current) { suppressClick.current = false; return; }
@@ -547,7 +615,7 @@ export default function IlographDiagram(props: {
     nodeDragRef.current = null;
     if (d.moved && dragging) {
       suppressClick.current = true;
-      setDragged((p) => ({ ...p, [d.id]: { x: dragging.x, y: dragging.y } }));
+      setDragged({ ...dragged, [d.id]: { x: dragging.x, y: dragging.y } });
     }
     setDragging(null);
   };
@@ -588,7 +656,7 @@ export default function IlographDiagram(props: {
           {perspectives.map((p) => {
             const on = p.id === current.id;
             return (
-              <button key={p.id} type="button" onClick={() => { setPlaying(false); setDragged({}); commit({ perspective: p.id, step: 0, selected: null }); }}
+              <button key={p.id} type="button" onClick={() => { setPlaying(false); commit({ perspective: p.id, step: 0, selected: null }); }}
                 aria-pressed={on}
                 style={{ border: 0, background: on ? 'linear-gradient(180deg,#2b3a52,#1d2738)' : 'transparent',
                   color: on ? '#d9e7ff' : C.dim, borderRadius: 6, padding: '4px 12px', font: 'inherit', fontSize: 11.5, cursor: 'pointer',
@@ -610,19 +678,19 @@ export default function IlographDiagram(props: {
           )}
           <Btn onClick={() => {
             const r = svgRef.current?.getBoundingClientRect();
-            zoomAt(1 / 1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0, true);
+            zoomAt(1 / 1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0);
           }}>−</Btn>
           <span style={{ color: C.dim, fontSize: 11, minWidth: 32, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
           <Btn onClick={() => {
             const r = svgRef.current?.getBoundingClientRect();
-            zoomAt(1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0, true);
+            zoomAt(1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0);
           }}>+</Btn>
-          <Btn onClick={() => { setDragged({}); updateView({ zoom: 1, pan: { x: 0, y: 0 } }, true); }}>Reset</Btn>
+          <Btn onClick={() => { setDragged({}); setCamera(fitCamera(content, VIEW)); }}>Fit</Btn>
         </div>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        <svg ref={svgRef} viewBox={`0 0 ${width + (PAD + SLACK) * 2} ${height + (PAD + SLACK) * 2 + 34}`} preserveAspectRatio="xMidYMid meet"
+        <svg ref={svgRef} viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} preserveAspectRatio="xMidYMid meet"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none', cursor: 'grab' }}
           onPointerDown={(e) => {
             if ((e.target as Element).closest('[data-node]')) return;
@@ -633,17 +701,15 @@ export default function IlographDiagram(props: {
             const d = dragRef.current;
             if (!d || d.pointerId !== e.pointerId) return;
             const cur = toLocal(e.clientX, e.clientY);
-            updateView({ zoom, pan: { x: d.startPan.x + (cur.x - d.startLocal.x), y: d.startPan.y + (cur.y - d.startLocal.y) } });
+            setCamera({ zoom, pan: { x: d.startPan.x + (cur.x - d.startLocal.x), y: d.startPan.y + (cur.y - d.startLocal.y) } });
           }}
           onPointerUp={(e) => {
             if (dragRef.current?.pointerId !== e.pointerId) return;
             dragRef.current = null;
-            flushPending();
           }}
           onPointerCancel={(e) => {
             if (dragRef.current?.pointerId !== e.pointerId) return;
             dragRef.current = null;
-            flushPending();
           }}>
           <defs>
             <filter id="ilo-glow" x="-60%" y="-60%" width="220%" height="220%">
@@ -651,8 +717,11 @@ export default function IlographDiagram(props: {
               <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
           </defs>
+          {/* The camera, and the only transform in the drawing. Nodes are at world
+              coordinates underneath it — negative ones included, which an infinite canvas
+              handles natively and a content-derived viewBox had to fold away. */}
           <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
-          <g transform={`translate(${PAD + SLACK - origin.x},${PAD + SLACK - origin.y})`}>
+          <g>
             {ribbons.map((r) =>
               r.faded ? (
                 <path key={r.i} d={r.d} fill="none" stroke="#1c2130" strokeWidth={7} strokeLinecap="round" />

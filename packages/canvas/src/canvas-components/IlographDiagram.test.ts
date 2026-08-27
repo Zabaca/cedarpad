@@ -11,6 +11,7 @@ import {
   visibleNodes,
   connectedNodes,
   applyPositions,
+  fitCamera,
 } from './IlographDiagram.tsx';
 
 const RESOURCES: Resource[] = [
@@ -311,5 +312,47 @@ describe('applyPositions', () => {
     const out = applyPositions(laid.pos, { ghost: { x: 4000, y: 4000 } });
     expect(out.pos.ghost).toBeUndefined();
     expect(out.width).toBe(laid.width);
+  });
+});
+
+describe('fitCamera', () => {
+  const view = { w: 1000, h: 700 };
+  const content = (width: number, height: number, origin = { x: 0, y: 0 }) => ({ width, height, origin });
+
+  test('centres the content in the window', () => {
+    const { zoom, pan } = fitCamera(content(500, 350), view, 0);
+    // 500x350 into 1000x700 is exactly 2x, but the fit never magnifies past 1:1.
+    expect(zoom).toBe(1);
+    // Centred: 1000/2 - 1*(0 + 250) = 250, 700/2 - 1*(0 + 175) = 175.
+    expect(pan).toEqual({ x: 250, y: 175 });
+  });
+
+  test('shrinks to fit whichever axis is tighter', () => {
+    // 2000 wide into 1000 needs 0.5; 350 tall into 700 would allow 2. The width wins.
+    expect(fitCamera(content(2000, 350), view, 0).zoom).toBe(0.5);
+    expect(fitCamera(content(500, 2800), view, 0).zoom).toBe(0.25);
+  });
+
+  test('never magnifies past 1:1 — a small diagram is centred, not blown up', () => {
+    expect(fitCamera(content(100, 80), view, 0).zoom).toBe(1);
+  });
+
+  test('the margin is real room, taken off both sides', () => {
+    expect(fitCamera(content(900, 100), view, 50).zoom).toBe(1);
+    expect(fitCamera(content(1800, 100), view, 50).zoom).toBe(0.5);
+  });
+
+  test('content in negative space is framed too — origin is honoured', () => {
+    // A node dragged up and left puts the content origin below zero; the camera has to
+    // account for it or the fit centres on the wrong point.
+    const { zoom, pan } = fitCamera(content(500, 350, { x: -500, y: -350 }), view, 0);
+    expect(zoom).toBe(1);
+    expect(pan).toEqual({ x: 1000 / 2 + 250, y: 700 / 2 + 175 });
+  });
+
+  test('empty content does not divide by zero', () => {
+    const { zoom, pan } = fitCamera(content(0, 0), view, 0);
+    expect(zoom).toBe(1);
+    expect(Number.isFinite(pan.x) && Number.isFinite(pan.y)).toBe(true);
   });
 });
