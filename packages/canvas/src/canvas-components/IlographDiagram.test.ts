@@ -10,6 +10,7 @@ import {
   ribbonPath,
   visibleNodes,
   connectedNodes,
+  applyPositions,
 } from './IlographDiagram.tsx';
 
 const RESOURCES: Resource[] = [
@@ -265,5 +266,50 @@ describe('column ordering (crossing reduction)', () => {
     const first = docReadsLayout();
     const second = docReadsLayout();
     expect(columnsOf(second.pos)).toEqual(columnsOf(first.pos));
+  });
+});
+
+describe('applyPositions', () => {
+  const base = () => layerNodes(visibleNodes(RESOURCES, {}), [{ from: 'browser', to: 'edge' }]);
+
+  test('no overrides is the computed layout, unchanged', () => {
+    const laid = base();
+    const out = applyPositions(laid.pos, undefined);
+    expect(out.pos).toEqual(laid.pos);
+    expect(out.width).toBe(laid.width);
+    expect(out.height).toBe(laid.height);
+    expect(out.origin).toEqual({ x: 0, y: 0 });
+  });
+
+  test('a dragged node moves and keeps its size; the others do not budge', () => {
+    const laid = base();
+    const out = applyPositions(laid.pos, { edge: { x: 500, y: 200 } });
+    expect(out.pos.edge).toEqual({ x: 500, y: 200, w: laid.pos.edge!.w, h: laid.pos.edge!.h });
+    expect(out.pos.browser).toEqual(laid.pos.browser!);
+    expect(out.pos.d1).toEqual(laid.pos.d1!);
+  });
+
+  test('the drawing grows so a node dragged past the edge stays on it', () => {
+    const laid = base();
+    const out = applyPositions(laid.pos, { edge: { x: 900, y: 700 } });
+    expect(out.width).toBeGreaterThanOrEqual(900 + laid.pos.edge!.w);
+    expect(out.height).toBeGreaterThanOrEqual(700 + laid.pos.edge!.h);
+  });
+
+  test('dragging above or left of the origin shifts it rather than clipping', () => {
+    const laid = base();
+    const out = applyPositions(laid.pos, { browser: { x: -120, y: -60 } });
+    expect(out.origin).toEqual({ x: -120, y: -60 });
+    // width measures the whole occupied span, so the negative side is inside the viewBox.
+    expect(out.width).toBe(laid.width + 120);
+  });
+
+  test('an override for a node that is not on screen is ignored', () => {
+    // Perspectives and expansion change the node set under a saved position; a stale one
+    // must not resurrect a node the layout did not place, nor stretch the drawing to it.
+    const laid = base();
+    const out = applyPositions(laid.pos, { ghost: { x: 4000, y: 4000 } });
+    expect(out.pos.ghost).toBeUndefined();
+    expect(out.width).toBe(laid.width);
   });
 });

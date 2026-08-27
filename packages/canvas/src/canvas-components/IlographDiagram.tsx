@@ -19,7 +19,17 @@
 // All view state (perspective, expansion, selection, sequence step, pan/zoom) round-trips
 // through `setData`, so the card is a shared surface: what one viewer opens, steps to, or
 // pans/zooms to, every collaborator sees, and it survives a reload.
+//
+// Node dragging is the ONE exception, and deliberately so. A node can be pulled aside to
+// untangle a reading of the diagram, but that position is local to the tab: not synced, not
+// persisted, cleared by Reset and by changing perspective. The line is what the state MEANS
+// — a perspective or an open resource says something about the system and belongs to
+// everyone looking; an arrangement is one reader's aid to their own reading, and pushing it
+// through `setData` would drag a collaborator's diagram around to suit someone else. It
+// stays a hybrid, too: a dragged node pins and every other node keeps its computed place,
+// so moving one box never stops the rest from re-laying out.
 
+import type * as React from 'react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 export type Resource = { id: string; name: string; sub?: string; color?: string; children?: Resource[] };
@@ -41,6 +51,12 @@ const C = {
   active: '#ffd479',
 };
 const NW = 140, NH = 50, GX = 96, GY = 34, PAD = 40;
+// Pointer travel (in node coordinates) below which a gesture is still a click, not a drag.
+const DRAG_SLOP = 3;
+// Empty room kept around the drawing. It is not decoration: the SVG is scaled to FIT its
+// own extents, so anything that grows them rescales everything on screen. Slack means an
+// ordinary drag moves a node through space that already exists and changes nothing.
+const SLACK = 160;
 
 // ---------------------------------------------------------------- pure model ops
 
@@ -216,6 +232,45 @@ export function layerNodes(nodes: VisibleNode[], edges: ResolvedEdge[]) {
     });
   });
   return { pos, width, height };
+}
+
+/**
+ * Overlay hand-placed node positions onto a computed layout.
+ *
+ * Dragging is deliberately a HYBRID rather than a switch to manual: a dragged node pins,
+ * every other node keeps the position layering gave it. Freezing the whole layout on the
+ * first drag would mean moving one box silently stops the diagram from re-laying out when
+ * you change perspective or open a resource.
+ *
+ * An override for a node the layout did not place is IGNORED, and cannot stretch the
+ * drawing. Perspectives and expansion change the node set under a saved position all the
+ * time, and a stale one must not resurrect a node that is not on screen.
+ *
+ * `origin` is the top-left of everything occupied, which is negative once a node is dragged
+ * above or left of where layering starts. The caller offsets the drawing by it so that space
+ * is inside the viewBox instead of clipped away.
+ */
+export function applyPositions(
+  pos: Record<string, Box>,
+  overrides: Record<string, { x: number; y: number }> | undefined,
+): { pos: Record<string, Box>; width: number; height: number; origin: { x: number; y: number } } {
+  const out: Record<string, Box> = {};
+  for (const [id, box] of Object.entries(pos)) {
+    const o = overrides?.[id];
+    out[id] = o ? { ...box, x: o.x, y: o.y } : box;
+  }
+  const boxes = Object.values(out);
+  if (!boxes.length) return { pos: out, width: 0, height: 0, origin: { x: 0, y: 0 } };
+  const origin = {
+    x: Math.min(0, ...boxes.map((b) => b.x)),
+    y: Math.min(0, ...boxes.map((b) => b.y)),
+  };
+  return {
+    pos: out,
+    width: Math.max(...boxes.map((b) => b.x + b.w)) - origin.x,
+    height: Math.max(...boxes.map((b) => b.y + b.h)) - origin.y,
+    origin,
+  };
 }
 
 /** A ribbon between two boxes: a forward S-curve, or a loop under both when it goes backwards. */
@@ -402,6 +457,21 @@ export default function IlographDiagram(props: {
     return () => svg.removeEventListener('wheel', onWheel);
   }, []);
 
+  // Hand-placed node positions are LOCAL and ephemeral — per tab, gone on reload, never
+  // written through setData. Unlike perspective/expansion/step, an arrangement is one
+  // reader's aid to their own reading, not a statement about the system, so pushing it at
+  // collaborators would move their diagram to suit someone else's train of thought.
+  const [dragged, setDragged] = useState<Record<string, { x: number; y: number }>>({});
+  // While the pointer is down we hold the position here and paint from it, so a drag tracks
+  // the cursor at frame rate rather than through a state round-trip per move.
+  const [dragging, setDragging] = useState<{ id: string; x: number; y: number } | null>(null);
+  const nodeDragRef = useRef<
+    { pointerId: number; id: string; from: { x: number; y: number }; at: { x: number; y: number }; moved: boolean } | null
+  >(null);
+  // A drag ends with a click event the browser still fires; without this, letting go after
+  // moving a resource would also toggle it open.
+  const suppressClick = useRef(false);
+
   const current = perspectives.find((p) => p.id === view.perspective) ?? perspectives[0];
   const { byId, parentOf } = indexModel(resources);
   const nodes = visibleNodes(resources, view.expanded);
@@ -410,7 +480,15 @@ export default function IlographDiagram(props: {
   // stepping is a walk through one path, and a node the path has not reached yet is dimmed
   // below, not absent. Dropping it per step would make the layout jump on every press.
   const shown = connectedNodes(nodes, edges);
-  const { pos, width, height } = layerNodes(shown, edges);
+  const laid = layerNodes(shown, edges).pos;
+  const placed = dragging ? { ...dragged, [dragging.id]: { x: dragging.x, y: dragging.y } } : dragged;
+  // Drawn from the live position, but FRAMED from the committed ones. Framing off the
+  // live drag is a feedback loop: the node moves, the extents grow, `meet` scales the
+  // whole drawing down to fit them, and the node shrinks away from the cursor it is
+  // supposed to be following while every other node drifts. Frozen for the length of the
+  // gesture, the diagram holds still and grows once, on release.
+  const { pos } = applyPositions(laid, placed);
+  const { width, height, origin } = applyPositions(laid, dragged);
 
   const isSeq = !!current.sequence;
   const step = Math.max(0, Math.min(view.step, edges.length));
@@ -437,10 +515,41 @@ export default function IlographDiagram(props: {
   useEffect(() => { if (!isSeq) setPlaying(false); }, [isSeq]);
 
   const onNode = (id: string) => {
+    if (suppressClick.current) { suppressClick.current = false; return; }
     const patch: Partial<View> = { selected: view.selected === id ? null : id };
     if (byId[id]?.children?.length) patch.expanded = { ...view.expanded, [id]: !view.expanded[id] };
     setPlaying(false);
     commit(patch);
+  };
+
+  /** Node drag. The svg's own pan handler already ignores pointerdown on `[data-node]`, so
+   *  the two never fight over the same gesture. Deltas are divided by `zoom` because node
+   *  coordinates live INSIDE the scaled group while `toLocal` reports the space outside it. */
+  const onNodeDown = (e: React.PointerEvent<SVGGElement>, id: string, at: Box) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    nodeDragRef.current = { pointerId: e.pointerId, id, from: toLocal(e.clientX, e.clientY), at: { x: at.x, y: at.y }, moved: false };
+  };
+  const onNodeMove = (e: React.PointerEvent<SVGGElement>) => {
+    const d = nodeDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    const cur = toLocal(e.clientX, e.clientY);
+    const dx = (cur.x - d.from.x) / zoom;
+    const dy = (cur.y - d.from.y) / zoom;
+    // Below the slop a gesture is still a click — a resource opens on click, and a couple of
+    // stray pixels must not turn that into a one-pixel move that also pins the node.
+    if (!d.moved && Math.hypot(dx, dy) < DRAG_SLOP) return;
+    d.moved = true;
+    setDragging({ id: d.id, x: d.at.x + dx, y: d.at.y + dy });
+  };
+  const onNodeUp = (e: React.PointerEvent<SVGGElement>) => {
+    const d = nodeDragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    nodeDragRef.current = null;
+    if (d.moved && dragging) {
+      suppressClick.current = true;
+      setDragged((p) => ({ ...p, [d.id]: { x: dragging.x, y: dragging.y } }));
+    }
+    setDragging(null);
   };
 
   const colorOf = (id: string) => byId[id]?.color ?? accent;
@@ -479,7 +588,7 @@ export default function IlographDiagram(props: {
           {perspectives.map((p) => {
             const on = p.id === current.id;
             return (
-              <button key={p.id} type="button" onClick={() => { setPlaying(false); commit({ perspective: p.id, step: 0, selected: null }); }}
+              <button key={p.id} type="button" onClick={() => { setPlaying(false); setDragged({}); commit({ perspective: p.id, step: 0, selected: null }); }}
                 aria-pressed={on}
                 style={{ border: 0, background: on ? 'linear-gradient(180deg,#2b3a52,#1d2738)' : 'transparent',
                   color: on ? '#d9e7ff' : C.dim, borderRadius: 6, padding: '4px 12px', font: 'inherit', fontSize: 11.5, cursor: 'pointer',
@@ -508,12 +617,12 @@ export default function IlographDiagram(props: {
             const r = svgRef.current?.getBoundingClientRect();
             zoomAt(1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0, true);
           }}>+</Btn>
-          <Btn onClick={() => updateView({ zoom: 1, pan: { x: 0, y: 0 } }, true)}>Reset</Btn>
+          <Btn onClick={() => { setDragged({}); updateView({ zoom: 1, pan: { x: 0, y: 0 } }, true); }}>Reset</Btn>
         </div>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        <svg ref={svgRef} viewBox={`0 0 ${width + PAD * 2} ${height + PAD * 2 + 34}`} preserveAspectRatio="xMidYMid meet"
+        <svg ref={svgRef} viewBox={`0 0 ${width + (PAD + SLACK) * 2} ${height + (PAD + SLACK) * 2 + 34}`} preserveAspectRatio="xMidYMid meet"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none', cursor: 'grab' }}
           onPointerDown={(e) => {
             if ((e.target as Element).closest('[data-node]')) return;
@@ -543,7 +652,7 @@ export default function IlographDiagram(props: {
             </filter>
           </defs>
           <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
-          <g transform={`translate(${PAD},${PAD})`}>
+          <g transform={`translate(${PAD + SLACK - origin.x},${PAD + SLACK - origin.y})`}>
             {ribbons.map((r) =>
               r.faded ? (
                 <path key={r.i} d={r.d} fill="none" stroke="#1c2130" strokeWidth={7} strokeLinecap="round" />
@@ -572,7 +681,10 @@ export default function IlographDiagram(props: {
                 // role="button" is what lets the click through the shape's capture-phase
                 // guard (src/predicates.ts) — a bare <g onClick> would silently never fire.
                 <g key={n.id} role="button" tabIndex={0} data-node={n.id} onClick={() => onNode(n.id)}
-                  style={{ cursor: 'pointer' }} opacity={hot ? 1 : 0.3}>
+                  onPointerDown={(e) => onNodeDown(e, n.id, q)} onPointerMove={onNodeMove}
+                  onPointerUp={onNodeUp} onPointerCancel={onNodeUp}
+                  style={{ cursor: dragging?.id === n.id ? 'grabbing' : 'grab', touchAction: 'none' }}
+                  opacity={hot ? 1 : 0.3}>
                   <rect x={q.x} y={q.y} width={q.w} height={q.h} rx={12} fill="#141926"
                     stroke={sel ? col : `${col}44`} strokeWidth={sel ? 2 : 1.2} filter={sel ? 'url(#ilo-glow)' : undefined} />
                   <circle cx={q.x + 15} cy={q.y + q.h / 2} r={4} fill={col} />
