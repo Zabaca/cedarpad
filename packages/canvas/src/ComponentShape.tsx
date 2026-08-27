@@ -404,8 +404,10 @@ export class ComponentShapeUtil extends InteractiveBoxShapeUtil<
   // clicking a button/input or dragging the scrollbar interacts, while clicking the
   // card background still selects/drags the shape. Wheel: always own it so scrolling
   // a tall component scrolls its content instead of zooming the canvas.
-  // ponytail: wheel:()=>true means hovering a non-scrollable component eats canvas
-  // zoom; move the cursor off the card to zoom. Scope to scrollable regions if that bites.
+  // wheel:()=>true still means a hovered non-scrollable component eats a PLAIN wheel, so
+  // the board does not move under the cursor. The zoom gesture is no longer caught with it:
+  // `InteractiveBoxShapeUtil` lets ctrl+wheel (and trackpad pinch) through ahead of this
+  // predicate, so zooming no longer means finding a gap between cards first.
   override readonly guards: EventGuards = { pointer: isInteractiveControl, wheel: () => true };
   override containerStyle = { background: 'var(--surface)', boxShadow: 'var(--shadow-float), 0 0 0 1px var(--line)' };
 

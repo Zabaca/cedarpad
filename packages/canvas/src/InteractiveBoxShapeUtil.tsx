@@ -121,6 +121,15 @@ export abstract class InteractiveBoxShapeUtil<
     }
     if (wheel) {
       props.onWheelCapture = (e) => {
+        // A ZOOM gesture is the board's, wherever the pointer happens to be sitting.
+        //
+        // The wheel guard exists so a wheel over a card scrolls that card's content rather
+        // than moving the board — right for a scroll, wrong for a zoom, and it made any
+        // hovered component a dead zone: `ctrl`+wheel and trackpad pinch (which the browser
+        // also reports as a wheel with `ctrlKey`) did nothing at all, so zooming meant first
+        // finding a gap between cards. Checked BEFORE the predicate, because this holds no
+        // matter which regions a shape claims.
+        if (e.ctrlKey) return;
         if (wheel(e.target as Element | null)) {
           e.stopPropagation();
           e.nativeEvent.stopImmediatePropagation();

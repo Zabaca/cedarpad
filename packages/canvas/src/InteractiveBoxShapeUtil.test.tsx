@@ -120,6 +120,50 @@ describe('InteractiveBoxShapeUtil — guard wiring is conditional on the predica
   });
 });
 
+describe('InteractiveBoxShapeUtil — the zoom gesture is the board\'s', () => {
+  class WheelBox extends TestBox {
+    override readonly guards: EventGuards = { wheel: () => true };
+  }
+
+  /** A wheel event stub: `ctrlKey` is what a pinch-zoom (and ctrl+wheel) sets. */
+  function wheelEvent(target: Element | null, ctrlKey = false) {
+    let stopped = 0;
+    let stoppedImmediate = 0;
+    const nativeEvent = { target, ctrlKey, stopImmediatePropagation: () => void stoppedImmediate++ };
+    return {
+      event: { target, ctrlKey, nativeEvent, stopPropagation: () => void stopped++ },
+      swallowed: () => stopped > 0 || stoppedImmediate > 0,
+    };
+  }
+
+  test('a plain wheel is still swallowed, so a component scrolls its own content', () => {
+    const { guardProps } = mount(new WheelBox({} as never));
+    const w = wheelEvent(makeEl('div'));
+    guardProps.onWheelCapture!(w.event);
+    expect(w.swallowed()).toBe(true);
+  });
+
+  test('ctrl+wheel passes through even over a card — hovering must not disable board zoom', () => {
+    // The guard swallows wheel so a tall component scrolls instead of zooming the board.
+    // A ZOOM gesture is not that: it belongs to the board wherever the pointer happens to
+    // be, and swallowing it made a hovered card a dead zone for zooming.
+    const { guardProps } = mount(new WheelBox({} as never));
+    const w = wheelEvent(makeEl('div'), true);
+    guardProps.onWheelCapture!(w.event);
+    expect(w.swallowed()).toBe(false);
+  });
+
+  test('the pass-through does not depend on the predicate — it precedes it', () => {
+    class NeverBox extends TestBox {
+      override readonly guards: EventGuards = { wheel: () => false };
+    }
+    const { guardProps } = mount(new NeverBox({} as never));
+    const w = wheelEvent(makeEl('div'), true);
+    guardProps.onWheelCapture!(w.event);
+    expect(w.swallowed()).toBe(false);
+  });
+});
+
 describe('InteractiveBoxShapeUtil — onContainerPointerDown hook', () => {
   test('the container pointerdown invokes the hook with the shape; absent hook leaves it unset', () => {
     const seen: string[] = [];
