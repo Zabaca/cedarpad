@@ -106,6 +106,81 @@ export function resolveRelations(
   return out;
 }
 
+/** The resources this perspective actually says something about.
+ *
+ *  A perspective is a VIEW of the model, not an inventory of it: describe the resources
+ *  once and each perspective relates the slice it is about, so a model always carries more
+ *  than any single perspective wires up. Without this, those extras still drew — and since
+ *  `layerNodes` gives an unconnected node layer 0, they collected in a column at the far
+ *  left, which reads as a diagram of something rather than as absence.
+ *
+ *  Pruned AFTER `resolveRelations`, never before: re-routing is what decides whether a
+ *  resource is involved at the level currently on screen — a collapsed parent is connected
+ *  by its children's relations, and expanding it can make some of those children irrelevant.
+ *
+ *  No edges at all is the one case that keeps everything. That is not "nothing is
+ *  relevant", it is nothing to be relevant TO, and pruning against it empties the card. */
+export function connectedNodes(nodes: VisibleNode[], edges: ResolvedEdge[]): VisibleNode[] {
+  if (!edges.length) return nodes;
+  const touched = new Set<string>();
+  for (const e of edges) { touched.add(e.from); touched.add(e.to); }
+  return nodes.filter((n) => touched.has(n.id));
+}
+
+/** How many down-up sweeps the ordering below runs. Four is the usual stopping point for
+ *  the median heuristic: the first two do nearly all the work and it converges after that. */
+const ORDER_PASSES = 4;
+
+/**
+ * Order each column so its edges cross as little as possible — the crossing-reduction step
+ * of a Sugiyama layout, by the median heuristic.
+ *
+ * Layering alone decides which COLUMN a node is in; it says nothing about the order WITHIN
+ * one, and taking that from the model was what produced the hairball: on the skills model's
+ * "Doc reads" the seven readers sit in authoring order while their targets do not, crossing
+ * ten times. Ordering each reader by the median position of what it points at drops that to
+ * zero without moving a single node to a different column.
+ *
+ * A node with no neighbour in the reference column keeps its current index instead: the
+ * heuristic has nothing to place it BY, and inventing a position would fling unrelated
+ * resources to an arbitrary end. Sorting is stable, so equal keys hold their relative order
+ * and a settled layout stops moving.
+ */
+export function orderColumns(columns: VisibleNode[][], edges: ResolvedEdge[]): VisibleNode[][] {
+  const preds: Record<string, string[]> = {};
+  const succs: Record<string, string[]> = {};
+  for (const e of edges) {
+    (succs[e.from] ??= []).push(e.to);
+    (preds[e.to] ??= []).push(e.from);
+  }
+
+  const indexOf = (col: VisibleNode[]) => {
+    const at: Record<string, number> = {};
+    col.forEach((n, i) => { at[n.id] = i; });
+    return at;
+  };
+
+  const median = (ids: string[] | undefined, at: Record<string, number>): number | null => {
+    const ps = (ids ?? []).map((id) => at[id]).filter((p): p is number => p !== undefined).sort((a, b) => a - b);
+    if (!ps.length) return null;
+    const m = ps.length >> 1;
+    return ps.length % 2 ? ps[m]! : (ps[m - 1]! + ps[m]!) / 2;
+  };
+
+  const sweep = (col: VisibleNode[], ref: Record<string, number>, adj: Record<string, string[]>) => {
+    const key: Record<string, number> = {};
+    col.forEach((n, i) => { key[n.id] = median(adj[n.id], ref) ?? i; });
+    return [...col].sort((a, b) => key[a.id]! - key[b.id]!);
+  };
+
+  const out = columns.map((c) => [...c]);
+  for (let pass = 0; pass < ORDER_PASSES; pass++) {
+    for (let i = 1; i < out.length; i++) out[i] = sweep(out[i]!, indexOf(out[i - 1]!), preds);
+    for (let i = out.length - 2; i >= 0; i--) out[i] = sweep(out[i]!, indexOf(out[i + 1]!), succs);
+  }
+  return out;
+}
+
 /** Longest-path layering, then a centred column stack. Iteration-capped, so a cycle in the
  *  relations settles instead of looping forever. */
 export function layerNodes(nodes: VisibleNode[], edges: ResolvedEdge[]) {
@@ -126,12 +201,15 @@ export function layerNodes(nodes: VisibleNode[], edges: ResolvedEdge[]) {
     columns.set(layer[n.id], col);
   }
   const keys = [...columns.keys()].sort((a, b) => a - b);
-  const tallest = Math.max(1, ...keys.map((k) => columns.get(k)!.length));
+  // Compacted to a dense left-to-right array FIRST: the ordering below treats neighbouring
+  // array entries as neighbouring columns, which is only true once gaps in the layer
+  // numbers are gone.
+  const ordered = orderColumns(keys.map((k) => columns.get(k)!), edges);
+  const tallest = Math.max(1, ...ordered.map((c) => c.length));
   const width = keys.length * NW + (keys.length - 1) * GX;
   const height = tallest * NH + (tallest - 1) * GY;
   const pos: Record<string, Box> = {};
-  keys.forEach((k, ci) => {
-    const col = columns.get(k)!;
+  ordered.forEach((col, ci) => {
     const colH = col.length * NH + (col.length - 1) * GY;
     col.forEach((n, ri) => {
       pos[n.id] = { x: ci * (NW + GX), y: (height - colH) / 2 + ri * (NH + GY), w: NW, h: NH };
@@ -328,7 +406,11 @@ export default function IlographDiagram(props: {
   const { byId, parentOf } = indexModel(resources);
   const nodes = visibleNodes(resources, view.expanded);
   const edges = resolveRelations(current.relations, nodes, byId, parentOf);
-  const { pos, width, height } = layerNodes(nodes, edges);
+  // Pruned against the perspective's WHOLE edge set, not the sequence's `drawn` prefix:
+  // stepping is a walk through one path, and a node the path has not reached yet is dimmed
+  // below, not absent. Dropping it per step would make the layout jump on every press.
+  const shown = connectedNodes(nodes, edges);
+  const { pos, width, height } = layerNodes(shown, edges);
 
   const isSeq = !!current.sequence;
   const step = Math.max(0, Math.min(view.step, edges.length));
@@ -362,6 +444,30 @@ export default function IlographDiagram(props: {
   };
 
   const colorOf = (id: string) => byId[id]?.color ?? accent;
+
+  // Geometry resolved ONCE and drawn in two passes, because the two belong on opposite
+  // sides of the nodes: ribbons behind them, labels in front. A label sits at the midpoint
+  // between two columns, which is exactly where a node in an intermediate column stands, so
+  // painting it with its ribbon put it BEHIND that node and clipped the text.
+  const ribbons = drawn
+    .map((e, i) => {
+      const a = pos[e.from];
+      const b = pos[e.to];
+      if (!a || !b) return null;
+      const on = i === cursor;
+      const forward = b.x > a.x;
+      return {
+        i,
+        label: e.label,
+        on,
+        faded: !!view.selected && e.from !== view.selected && e.to !== view.selected,
+        d: ribbonPath(a, b),
+        col: on ? C.active : colorOf(e.from),
+        lx: forward ? (a.x + a.w + b.x) / 2 : (a.x + b.x) / 2 + NW / 2,
+        ly: forward ? (a.y + a.h / 2 + b.y + b.h / 2) / 2 - 11 : Math.max(a.y + a.h, b.y + b.h) + 30,
+      };
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null);
 
   return (
     <div style={{ width: '100%', height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column',
@@ -438,36 +544,25 @@ export default function IlographDiagram(props: {
           </defs>
           <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
           <g transform={`translate(${PAD},${PAD})`}>
-            {drawn.map((e, i) => {
-              const a = pos[e.from], b = pos[e.to];
-              if (!a || !b) return null;
-              const d = ribbonPath(a, b);
-              const on = i === cursor;
-              const faded = !!view.selected && e.from !== view.selected && e.to !== view.selected;
-              const col = on ? C.active : colorOf(e.from);
-              if (faded) return <path key={i} d={d} fill="none" stroke="#1c2130" strokeWidth={7} strokeLinecap="round" />;
-              const forward = b.x > a.x;
-              const lx = forward ? (a.x + a.w + b.x) / 2 : (a.x + b.x) / 2 + NW / 2;
-              const ly = forward ? (a.y + a.h / 2 + b.y + b.h / 2) / 2 - 11 : Math.max(a.y + a.h, b.y + b.h) + 30;
-              return (
-                <g key={i}>
-                  <path d={d} fill="none" stroke={col} strokeOpacity={on ? 0.28 : 0.13} strokeWidth={on ? 13 : 9} strokeLinecap="round" />
-                  <path id={`ilo-r${i}`} d={d} fill="none" stroke={col} strokeOpacity={on ? 0.95 : 0.55} strokeWidth={on ? 2.2 : 1.4} />
-                  {Array.from({ length: on ? 3 : 1 }, (_, k) => (
-                    <circle key={k} r={on ? 3.4 : 2.2} fill={col} filter={on ? 'url(#ilo-glow)' : undefined}>
-                      <animateMotion dur={on ? '1.6s' : '3s'} begin={`${(k * (on ? 0.53 : 1)).toFixed(2)}s`} repeatCount="indefinite">
-                        <mpath href={`#ilo-r${i}`} />
+            {ribbons.map((r) =>
+              r.faded ? (
+                <path key={r.i} d={r.d} fill="none" stroke="#1c2130" strokeWidth={7} strokeLinecap="round" />
+              ) : (
+                <g key={r.i}>
+                  <path d={r.d} fill="none" stroke={r.col} strokeOpacity={r.on ? 0.28 : 0.13} strokeWidth={r.on ? 13 : 9} strokeLinecap="round" />
+                  <path id={`ilo-r${r.i}`} d={r.d} fill="none" stroke={r.col} strokeOpacity={r.on ? 0.95 : 0.55} strokeWidth={r.on ? 2.2 : 1.4} />
+                  {Array.from({ length: r.on ? 3 : 1 }, (_, k) => (
+                    <circle key={k} r={r.on ? 3.4 : 2.2} fill={r.col} filter={r.on ? 'url(#ilo-glow)' : undefined}>
+                      <animateMotion dur={r.on ? '1.6s' : '3s'} begin={`${(k * (r.on ? 0.53 : 1)).toFixed(2)}s`} repeatCount="indefinite">
+                        <mpath href={`#ilo-r${r.i}`} />
                       </animateMotion>
                     </circle>
                   ))}
-                  {e.label && (
-                    <text x={lx} y={ly} fill={col} textAnchor="middle" opacity={on ? 1 : 0.6} fontSize={11}>{e.label}</text>
-                  )}
                 </g>
-              );
-            })}
+              ),
+            )}
 
-            {nodes.map((n) => {
+            {shown.map((n) => {
               const q = pos[n.id];
               if (!q) return null;
               const col = n.color ?? accent;
@@ -491,6 +586,21 @@ export default function IlographDiagram(props: {
                 </g>
               );
             })}
+
+            {/* Labels LAST, so one that lands over a node reads on top of it rather than
+                behind. `paint-order: stroke` draws the background colour as a stroke first
+                and the glyph fill over it — a knockout halo that separates the text from
+                whatever ribbon runs beneath, without needing to measure the text to place a
+                background plate. */}
+            {ribbons.map((r) =>
+              r.faded || !r.label ? null : (
+                <text key={r.i} x={r.lx} y={r.ly} textAnchor="middle" fontSize={11}
+                  fill={r.col} opacity={r.on ? 1 : 0.85}
+                  stroke={C.bg} strokeWidth={3.5} paintOrder="stroke" strokeLinejoin="round">
+                  {r.label}
+                </text>
+              ),
+            )}
           </g>
           </g>
         </svg>
