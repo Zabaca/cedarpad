@@ -12,12 +12,13 @@
 //
 // Layout is computed — the spec carries no coordinates. Nodes are assigned to layers
 // by longest path over the current perspective's relations, then stacked into columns
-// and centred. The whole drawing scales to fit the shape via the SVG viewBox; the card
-// deliberately owns no pan/zoom of its own, so tldraw's canvas zoom keeps working.
+// and centred. The drawing fits the shape via the SVG viewBox; pan and zoom are a
+// separate transform on top of that base layout (wheel/drag, or the +/−/Reset controls),
+// synced through `setData` like the rest of the view state.
 //
-// All view state (perspective, expansion, selection, sequence step) round-trips
-// through `setData`, so the card is a shared surface: what one viewer opens or steps
-// to, every collaborator sees, and it survives a reload.
+// All view state (perspective, expansion, selection, sequence step, pan/zoom) round-trips
+// through `setData`, so the card is a shared surface: what one viewer opens, steps to, or
+// pans/zooms to, every collaborator sees, and it survives a reload.
 
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
@@ -210,7 +211,14 @@ const DEFAULT_PERSPECTIVES: Perspective[] = [
 
 // ------------------------------------------------------------------ component
 
-type View = { perspective: string; expanded: Record<string, boolean>; selected: string | null; step: number };
+type View = {
+  perspective: string;
+  expanded: Record<string, boolean>;
+  selected: string | null;
+  step: number;
+  zoom: number;
+  pan: { x: number; y: number };
+};
 
 export default function IlographDiagram(props: {
   resources?: Resource[];
@@ -220,6 +228,8 @@ export default function IlographDiagram(props: {
   expanded?: Record<string, boolean>;
   selected?: string | null;
   step?: number;
+  zoom?: number;
+  pan?: { x: number; y: number };
   setData?: (patch: Record<string, unknown>) => void;
   [k: string]: unknown;
 }) {
@@ -235,9 +245,84 @@ export default function IlographDiagram(props: {
     expanded: props.expanded ?? {},
     selected: props.selected ?? null,
     step: props.step ?? 0,
+    zoom: props.zoom ?? 1,
+    pan: props.pan ?? { x: 0, y: 0 },
   };
   const view: View = setData ? fromProps : { ...fromProps, ...local };
   const commit = (patch: Partial<View>) => (setData ? setData(patch) : setLocal((v) => ({ ...v, ...patch })));
+
+  // Pan/zoom get an optimistic local overlay (`interim`) on top of the synced `view`, for
+  // the same reason `local` exists above: without it, a drag or wheel tick would wait on a
+  // setData round-trip before the drawing visibly moves.
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [interim, setInterim] = useState<{ zoom: number; pan: { x: number; y: number } } | null>(null);
+  const pendingRef = useRef<{ zoom: number; pan: { x: number; y: number } } | null>(null);
+  const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragRef = useRef<{ pointerId: number; startLocal: { x: number; y: number }; startPan: { x: number; y: number } } | null>(null);
+  useEffect(() => () => { if (commitTimer.current) clearTimeout(commitTimer.current); }, []);
+
+  const zoom = interim?.zoom ?? view.zoom;
+  const pan = interim?.pan ?? view.pan;
+
+  const updateView = (patch: { zoom: number; pan: { x: number; y: number } }, immediate = false) => {
+    setInterim(patch);
+    pendingRef.current = patch;
+    if (commitTimer.current) clearTimeout(commitTimer.current);
+    if (immediate) {
+      commit(patch);
+      pendingRef.current = null;
+      commitTimer.current = null;
+      return;
+    }
+    commitTimer.current = setTimeout(() => {
+      if (pendingRef.current) commit(pendingRef.current);
+      pendingRef.current = null;
+      commitTimer.current = null;
+    }, 400);
+  };
+  const flushPending = () => {
+    if (commitTimer.current) { clearTimeout(commitTimer.current); commitTimer.current = null; }
+    if (pendingRef.current) { commit(pendingRef.current); pendingRef.current = null; }
+  };
+
+  /** Client coords -> the SVG's own viewBox space (unaffected by our pan/zoom group), via
+   *  getScreenCTM — the same space `pan` is expressed in, so drag deltas need no zoom scaling. */
+  const toLocal = (clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    const ctm = svg?.getScreenCTM();
+    if (!svg || !ctm) return { x: 0, y: 0 };
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const p = pt.matrixTransform(ctm.inverse());
+    return { x: p.x, y: p.y };
+  };
+
+  const zoomAt = (factor: number, clientX: number, clientY: number, immediate = false) => {
+    const newZoom = Math.max(0.25, Math.min(4, zoom * factor));
+    if (newZoom === zoom) return;
+    const p = toLocal(clientX, clientY);
+    const newPan = {
+      x: p.x - (newZoom / zoom) * (p.x - pan.x),
+      y: p.y - (newZoom / zoom) * (p.y - pan.y),
+    };
+    updateView({ zoom: newZoom, pan: newPan }, immediate);
+  };
+  const zoomAtRef = useRef(zoomAt);
+  zoomAtRef.current = zoomAt;
+
+  // Wheel needs a non-passive native listener — React's onWheel is passive by default, so
+  // preventDefault() there is a no-op and the page/canvas would scroll instead of zooming.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      zoomAtRef.current(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY);
+    };
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    return () => svg.removeEventListener('wheel', onWheel);
+  }, []);
 
   const current = perspectives.find((p) => p.id === view.perspective) ?? perspectives[0];
   const { byId, parentOf } = indexModel(resources);
@@ -299,25 +384,59 @@ export default function IlographDiagram(props: {
           })}
         </div>
         <span style={{ color: C.muted, fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{current.desc}</span>
-        {isSeq && (
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, paddingRight: 34 }}>
-            <Btn onClick={() => { if (playing) { setPlaying(false); return; } if (step >= edges.length) commit({ step: 0 }); setPlaying(true); }}
-              on={playing}>{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
-            <Btn onClick={() => { setPlaying(false); commit({ step: step - 1 }); }} disabled={step === 0}>‹</Btn>
-            <Btn onClick={() => { setPlaying(false); commit({ step: step + 1 }); }} disabled={step >= edges.length}>›</Btn>
-          </div>
-        )}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, paddingRight: 34 }}>
+          {isSeq && (
+            <>
+              <Btn onClick={() => { if (playing) { setPlaying(false); return; } if (step >= edges.length) commit({ step: 0 }); setPlaying(true); }}
+                on={playing}>{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
+              <Btn onClick={() => { setPlaying(false); commit({ step: step - 1 }); }} disabled={step === 0}>‹</Btn>
+              <Btn onClick={() => { setPlaying(false); commit({ step: step + 1 }); }} disabled={step >= edges.length}>›</Btn>
+            </>
+          )}
+          <Btn onClick={() => {
+            const r = svgRef.current?.getBoundingClientRect();
+            zoomAt(1 / 1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0, true);
+          }}>−</Btn>
+          <span style={{ color: C.dim, fontSize: 11, minWidth: 32, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
+          <Btn onClick={() => {
+            const r = svgRef.current?.getBoundingClientRect();
+            zoomAt(1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0, true);
+          }}>+</Btn>
+          <Btn onClick={() => updateView({ zoom: 1, pan: { x: 0, y: 0 } }, true)}>Reset</Btn>
+        </div>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-        <svg viewBox={`0 0 ${width + PAD * 2} ${height + PAD * 2 + 34}`} preserveAspectRatio="xMidYMid meet"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+        <svg ref={svgRef} viewBox={`0 0 ${width + PAD * 2} ${height + PAD * 2 + 34}`} preserveAspectRatio="xMidYMid meet"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none', cursor: 'grab' }}
+          onPointerDown={(e) => {
+            if ((e.target as Element).closest('[data-node]')) return;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            dragRef.current = { pointerId: e.pointerId, startLocal: toLocal(e.clientX, e.clientY), startPan: pan };
+          }}
+          onPointerMove={(e) => {
+            const d = dragRef.current;
+            if (!d || d.pointerId !== e.pointerId) return;
+            const cur = toLocal(e.clientX, e.clientY);
+            updateView({ zoom, pan: { x: d.startPan.x + (cur.x - d.startLocal.x), y: d.startPan.y + (cur.y - d.startLocal.y) } });
+          }}
+          onPointerUp={(e) => {
+            if (dragRef.current?.pointerId !== e.pointerId) return;
+            dragRef.current = null;
+            flushPending();
+          }}
+          onPointerCancel={(e) => {
+            if (dragRef.current?.pointerId !== e.pointerId) return;
+            dragRef.current = null;
+            flushPending();
+          }}>
           <defs>
             <filter id="ilo-glow" x="-60%" y="-60%" width="220%" height="220%">
               <feGaussianBlur stdDeviation="4" result="b" />
               <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
             </filter>
           </defs>
+          <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
           <g transform={`translate(${PAD},${PAD})`}>
             {drawn.map((e, i) => {
               const a = pos[e.from], b = pos[e.to];
@@ -372,6 +491,7 @@ export default function IlographDiagram(props: {
                 </g>
               );
             })}
+          </g>
           </g>
         </svg>
       </div>
