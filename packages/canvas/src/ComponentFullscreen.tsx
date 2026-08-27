@@ -262,6 +262,7 @@ export function ComponentFullscreenOverlay({
         )}
         <div className="component-fullscreen-body">
           <ComponentHost
+          unguarded
             key={viewedId}
             shapeId={viewedId}
             editor={editor as never}

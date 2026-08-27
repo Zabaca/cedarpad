@@ -99,7 +99,9 @@ function Bench() {
           <div style={{ width: 1000, height: 720, maxWidth: '100%', resize: 'both', overflow: 'hidden',
             border: `1px solid ${C.line}`, borderRadius: 10 }}>
             {error ? <pre style={{ padding: 16, color: '#ff8a8a' }}>{error}</pre>
-              : Comp ? <Comp {...data} setData={patch} />
+              // `unguarded`: the bench has no shape guard around it, exactly like fullscreen,
+              // so gesture-driven components must offer here what they offer there.
+              : Comp ? <Comp {...data} setData={patch} unguarded />
               : <div style={{ padding: 16, color: C.muted }}>loading {module}…</div>}
           </div>
         </div>

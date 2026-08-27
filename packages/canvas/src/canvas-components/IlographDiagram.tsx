@@ -457,9 +457,12 @@ export default function IlographDiagram(props: {
   selected?: string | null;
   step?: number;
   setData?: (patch: Record<string, unknown>) => void;
+  /** Injected by ComponentHost: true only where no shape guard sits between us and the
+   *  pointer — fullscreen and component-guest. See the camera comment below. */
+  unguarded?: boolean;
   [k: string]: unknown;
 }) {
-  const { setData, accent = '#4a9eff' } = props;
+  const { setData, accent = '#4a9eff', unguarded = false } = props;
   const resources = props.resources?.length ? props.resources : DEFAULT_RESOURCES;
   const perspectives = props.perspectives?.length ? props.perspectives : DEFAULT_PERSPECTIVES;
 
@@ -497,6 +500,13 @@ export default function IlographDiagram(props: {
   const [cameras, setCameras] = useState<Record<string, Camera>>({});
   const dragRef = useRef<{ pointerId: number; startLocal: { x: number; y: number }; startPan: { x: number; y: number } } | null>(null);
 
+  // Whether this host lets us run a camera at all. On a CARD the shape's event guard
+  // swallows wheel before it reaches us and hands a background pointerdown to tldraw
+  // mid-gesture — so a wheel-zoom silently does nothing, and a background pan both drags
+  // the card and never receives its own pointerup, leaving the diagram panning on every
+  // mouse move until reload. This is what the base card's original comment meant by
+  // owning no pan/zoom "so tldraw's canvas zoom keeps working": not a preference, a
+  // constraint. Fullscreen has no guard, so there the camera is real.
   const camera = cameras[current.id];
   const zoom = camera?.zoom ?? 1;
   const pan = camera?.pan ?? { x: 0, y: 0 };
@@ -532,14 +542,14 @@ export default function IlographDiagram(props: {
   // preventDefault() there is a no-op and the page/canvas would scroll instead of zooming.
   useEffect(() => {
     const svg = svgRef.current;
-    if (!svg) return;
+    if (!svg || !unguarded) return; // on a card the guard consumes wheel before we see it
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       zoomAtRef.current(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY);
     };
     svg.addEventListener('wheel', onWheel, { passive: false });
     return () => svg.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [unguarded]);
 
 
   // Hand-placed node positions are LOCAL and per perspective, exactly like the camera:
@@ -646,6 +656,7 @@ export default function IlographDiagram(props: {
   const onNodeMove = (e: React.PointerEvent<SVGGElement>) => {
     const d = nodeDragRef.current;
     if (!d || d.pointerId !== e.pointerId) return;
+    if (e.buttons === 0) { nodeDragRef.current = null; setDragging(null); return; } // lost the release
     const cur = toLocal(e.clientX, e.clientY);
     const dx = (cur.x - d.from.x) / zoom;
     const dy = (cur.y - d.from.y) / zoom;
@@ -722,16 +733,24 @@ export default function IlographDiagram(props: {
               <Btn onClick={() => { setPlaying(false); commit({ step: step + 1 }); }} disabled={step >= edges.length}>›</Btn>
             </>
           )}
-          <Btn onClick={() => {
-            const r = svgRef.current?.getBoundingClientRect();
-            zoomAt(1 / 1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0);
-          }}>−</Btn>
-          <span style={{ color: C.dim, fontSize: 11, minWidth: 32, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
-          <Btn onClick={() => {
-            const r = svgRef.current?.getBoundingClientRect();
-            zoomAt(1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0);
-          }}>+</Btn>
-          <Btn onClick={() => { setDragged({}); setCamera(fitCamera(content, VIEW)); }}>Fit</Btn>
+          {/* Zoom without pan is a trap — the buttons WOULD work on a card (they are real
+              <button>s, so the guard lets them through) but wheel and background drag do not,
+              leaving no way back to what scrolled off. So the whole cluster is fullscreen-only
+              and a card keeps the framing it opened with. */}
+          {unguarded && (
+            <>
+              <Btn onClick={() => {
+                const r = svgRef.current?.getBoundingClientRect();
+                zoomAt(1 / 1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0);
+              }}>−</Btn>
+              <span style={{ color: C.dim, fontSize: 11, minWidth: 32, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
+              <Btn onClick={() => {
+                const r = svgRef.current?.getBoundingClientRect();
+                zoomAt(1.2, r ? r.left + r.width / 2 : 0, r ? r.top + r.height / 2 : 0);
+              }}>+</Btn>
+              <Btn onClick={() => { setDragged({}); setCamera(fitCamera(content, VIEW)); }}>Fit</Btn>
+            </>
+          )}
         </div>
       </div>
 
@@ -739,6 +758,10 @@ export default function IlographDiagram(props: {
         <svg ref={svgRef} viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} preserveAspectRatio="xMidYMid meet"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', touchAction: 'none', cursor: 'grab' }}
           onPointerDown={(e) => {
+            // A background pointerdown belongs to tldraw on a card — taking it here starts a
+            // pan the host immediately steals, and the stolen gesture never returns a
+            // pointerup to end it.
+            if (!unguarded) return;
             if ((e.target as Element).closest('[data-node]')) return;
             e.currentTarget.setPointerCapture(e.pointerId);
             dragRef.current = { pointerId: e.pointerId, startLocal: toLocal(e.clientX, e.clientY), startPan: pan };
@@ -746,6 +769,10 @@ export default function IlographDiagram(props: {
           onPointerMove={(e) => {
             const d = dragRef.current;
             if (!d || d.pointerId !== e.pointerId) return;
+            // The button is already up: a pointerup went somewhere else (a host that claimed
+            // the gesture, a release off-window). Without this the drag never ends and the
+            // diagram pans on every mouse move until reload.
+            if (e.buttons === 0) { dragRef.current = null; return; }
             const cur = toLocal(e.clientX, e.clientY);
             setCamera({ zoom, pan: { x: d.startPan.x + (cur.x - d.startLocal.x), y: d.startPan.y + (cur.y - d.startLocal.y) } });
           }}

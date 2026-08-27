@@ -145,6 +145,7 @@ export function GuestComponent({ store, shapeId }: { store: GuestRoomStore; shap
       </div>
       <div className="component-fullscreen-body">
         <ComponentHost
+          unguarded
           shapeId={shapeId}
           editor={adapter.editor as never}
           module={props.module}
