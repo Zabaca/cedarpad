@@ -165,6 +165,46 @@ export function connectedNodes(nodes: VisibleNode[], edges: ResolvedEdge[]): Vis
   return nodes.filter((n) => touched.has(n.id));
 }
 
+/**
+ * Everything upstream and downstream of the selection — what leads to it, and what follows
+ * from it, however far — or null when nothing is selected.
+ *
+ * TRANSITIVE, so selecting any step of a pipeline lights the pipeline end to end. But
+ * DIRECTED, which is the part that is easy to get wrong: an undirected walk reaches a
+ * resource's SIBLINGS by going up to a shared parent and back down a different branch, and
+ * a sibling is not related to you. On the doc model, `packages/flags` should light
+ * `delivery.md`, `CONTEXT.md` and `AGENTS.md` — the line that arrives at it — and leave
+ * `standards.md`, `issue-tracker.md` and `testing.md` dark. Undirected lights all seven and
+ * says nothing.
+ *
+ * Note what this gives up, correctly: members of one lineage do NOT all answer with the same
+ * set. `standards.md` answers with two nodes and `packages/flags` with four. Only on a
+ * straight line does every member agree, which is exactly why a linear perspective is a bad
+ * place to decide this rule.
+ */
+export function lineage(edges: ResolvedEdge[], selected: string | null): Set<string> | null {
+  if (!selected) return null;
+  // TWO closures, kept apart and then unioned. Following relations in both directions from
+  // every node reached — one combined walk — is what collapses this back into the undirected
+  // component, and re-admits the siblings.
+  const walk = (next: (e: ResolvedEdge) => [string, string]) => {
+    const seen = new Set<string>([selected]);
+    // Re-sweeps until nothing new appears, rather than building an adjacency index: an edge
+    // set this size is nowhere near worth one, and the loop is obviously correct.
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const e of edges) {
+        const [at, to] = next(e);
+        if (seen.has(at) && !seen.has(to)) { seen.add(to); grew = true; }
+      }
+    }
+    return seen;
+  };
+  const up = walk((e) => [e.to, e.from]);
+  const down = walk((e) => [e.from, e.to]);
+  return new Set([...up, ...down]);
+}
+
 /** How many down-up sweeps the ordering below runs. Four is the usual stopping point for
  *  the median heuristic: the first two do nearly all the work and it converges after that. */
 const ORDER_PASSES = 4;
@@ -548,6 +588,12 @@ export default function IlographDiagram(props: {
   const idle = isSeq && step === 0;
   const cursor = isSeq && !idle ? step - 1 : -1;
   const drawn = isSeq && !idle ? edges.slice(0, step) : edges;
+  // Selecting a resource asks "what leads here, and what follows?". Only the incident
+  // ribbons used to respond, so the far end of a relation rendered exactly like an unrelated
+  // node and the answer had to be traced along a line rather than read. Now the whole lineage
+  // stays lit and everything else drops back, reusing the dimming sequence mode already uses
+  // so the card has one visual language for "not part of what you are looking at".
+  const near = lineage(edges, view.selected);
   const lit = new Set<string>();
   if (isSeq && !idle) for (const e of drawn) { lit.add(e.from); lit.add(e.to); }
 
@@ -637,7 +683,7 @@ export default function IlographDiagram(props: {
         i,
         label: e.label,
         on,
-        faded: !!view.selected && e.from !== view.selected && e.to !== view.selected,
+        faded: !!near && !(near.has(e.from) && near.has(e.to)),
         d: ribbonPath(a, b),
         col: on ? C.active : colorOf(e.from),
         lx: forward ? (a.x + a.w + b.x) / 2 : (a.x + b.x) / 2 + NW / 2,
@@ -744,7 +790,7 @@ export default function IlographDiagram(props: {
               const q = pos[n.id];
               if (!q) return null;
               const col = n.color ?? accent;
-              const hot = isSeq && !idle ? lit.has(n.id) : true;
+              const hot = isSeq && !idle ? lit.has(n.id) : !near || near.has(n.id);
               const sel = view.selected === n.id;
               return (
                 // role="button" is what lets the click through the shape's capture-phase

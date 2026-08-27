@@ -12,6 +12,7 @@ import {
   connectedNodes,
   applyPositions,
   fitCamera,
+  lineage,
 } from './IlographDiagram.tsx';
 
 const RESOURCES: Resource[] = [
@@ -354,5 +355,60 @@ describe('fitCamera', () => {
     const { zoom, pan } = fitCamera(content(0, 0), view, 0);
     expect(zoom).toBe(1);
     expect(Number.isFinite(pan.x) && Number.isFinite(pan.y)).toBe(true);
+  });
+});
+
+describe('lineage', () => {
+  // The "Doc structure" shape: an entry doc that branches, one branch running on further.
+  const DOCS: ResolvedEdge[] = [
+    { from: 'agents', to: 'context' },
+    { from: 'agents', to: 'standards' },
+    { from: 'agents', to: 'issuetracker' },
+    { from: 'context', to: 'delivery' },
+    { from: 'context', to: 'testing' },
+    { from: 'delivery', to: 'flags' },
+  ];
+
+  test('a leaf lights what leads to it, and nothing off to the side', () => {
+    // Selecting `flags` walks back delivery -> context -> agents. `standards` and
+    // `issuetracker` hang off `agents` and `testing` off `context`, but reaching any of them
+    // means travelling back DOWN another branch, so none of them belong.
+    expect([...lineage(DOCS, 'flags')].sort()).toEqual(['agents', 'context', 'delivery', 'flags']);
+  });
+
+  test('the entry point lights everything that flows from it', () => {
+    expect([...lineage(DOCS, 'agents')].sort())
+      .toEqual(['agents', 'context', 'delivery', 'flags', 'issuetracker', 'standards', 'testing']);
+  });
+
+  test('a side branch is short — its own line and no more', () => {
+    expect([...lineage(DOCS, 'standards')].sort()).toEqual(['agents', 'standards']);
+    expect([...lineage(DOCS, 'testing')].sort()).toEqual(['agents', 'context', 'testing']);
+  });
+
+  test('siblings are NOT related — the case the undirected rule got wrong', () => {
+    // `standards` and `flags` share an ancestor and nothing else. An undirected walk joins
+    // them through `agents`; direction is what keeps them apart.
+    expect(lineage(DOCS, 'flags').has('standards')).toBe(false);
+    expect(lineage(DOCS, 'standards').has('flags')).toBe(false);
+  });
+
+  test('both directions from the middle — a pipeline lights end to end', () => {
+    const chain: ResolvedEdge[] = [
+      { from: 'setup', to: 'grill' },
+      { from: 'grill', to: 'tospec' },
+      { from: 'tospec', to: 'totickets' },
+      { from: 'totickets', to: 'implement' },
+    ];
+    expect([...lineage(chain, 'tospec')].sort())
+      .toEqual(['grill', 'implement', 'setup', 'tospec', 'totickets']);
+  });
+
+  test('an isolated selection is just itself', () => {
+    expect([...lineage(DOCS, 'lonely')]).toEqual(['lonely']);
+  });
+
+  test('no selection means nothing is dimmed', () => {
+    expect(lineage(DOCS, null)).toBeNull();
   });
 });
