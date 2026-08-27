@@ -14,7 +14,7 @@ describe('the platform-tier manifest', () => {
   });
 
   test("carries each module's description, taken from its leading comment", () => {
-    const kpi = BASE_COMPONENTS.find((c) => c.name === 'KpiCard');
-    expect(kpi?.description).toMatch(/KPI card/i);
+    const md = BASE_COMPONENTS.find((c) => c.name === 'MarkdownCard');
+    expect(md?.description).toMatch(/markdown card/i);
   });
 });

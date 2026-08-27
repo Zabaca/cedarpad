@@ -181,10 +181,10 @@ describe('a Component survives the container losing its filesystem', () => {
     // is gone but the Record is not — and own must still beat base, or the canvas silently
     // reverts to the platform component the user deliberately replaced.
     const { records } = fakeRecords();
-    await writeComponent('KpiCard', '// shadowed\n', CANVAS, records);
+    await writeComponent('MarkdownCard', '// shadowed\n', CANVAS, records);
     rmSync(dirPath, { recursive: true, force: true });
 
-    expect(await readComponent('KpiCard', CANVAS, records)).toBe('// shadowed\n');
+    expect(await readComponent('MarkdownCard', CANVAS, records)).toBe('// shadowed\n');
   });
 
   // PRD #354 story 11. The listing is what the agent avoids duplicates with, and after a
@@ -198,7 +198,7 @@ describe('a Component survives the container losing its filesystem', () => {
     const details = await listComponentDetails(CANVAS, records);
     expect(details).toContainEqual({ name: 'Card', description: 'A card.', tier: 'own' });
     // …and the platform tier is still in the same answer, with its label.
-    expect(details.find((d) => d.name === 'KpiCard')?.tier).toBe('base');
+    expect(details.find((d) => d.name === 'MarkdownCard')?.tier).toBe('base');
     expect(await listComponents(CANVAS, records)).toEqual(details.map((d) => d.name));
   });
 

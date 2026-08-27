@@ -59,7 +59,7 @@ describe('the edge component listing', () => {
 
     expect(body.details).toContainEqual({ name: 'SalesCard', description: 'Quarterly sales.', tier: 'own' });
     // The platform tier, which lives only on the image, is in the answer too.
-    expect(body.details.find((d) => d.name === 'KpiCard')?.tier).toBe('base');
+    expect(body.details.find((d) => d.name === 'MarkdownCard')?.tier).toBe('base');
     // `components` is the bare-name list existing callers already read.
     expect(body.components).toEqual(body.details.map((d) => d.name));
   });
@@ -82,7 +82,7 @@ describe('the edge component listing', () => {
     expect(res.status).toBe(200);
     const { details } = (await res.json()) as { details: { name: string; tier: string }[] };
     expect(details).toContainEqual({ name: 'SharedCard', description: 'The workspace copy.', tier: 'shared' });
-    expect(details.find((d) => d.name === 'KpiCard')?.tier).toBe('base');
+    expect(details.find((d) => d.name === 'MarkdownCard')?.tier).toBe('base');
   });
 
   test('a canvas the caller may not read is not a library it can list', async () => {

@@ -317,7 +317,7 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
 
     const res = await tools.listComponents({ workspace_id: WS, canvas_id: board.id });
     expect(res.details).toContainEqual({ name: 'OwnCard', description: 'This canvas.', tier: 'own' });
-    expect(res.details.find((d) => d.name === 'KpiCard')?.tier).toBe('base');
+    expect(res.details.find((d) => d.name === 'MarkdownCard')?.tier).toBe('base');
     expect(res.components).toEqual(res.details.map((d) => d.name));
     expect(bridgeCalls).toEqual([]);
 

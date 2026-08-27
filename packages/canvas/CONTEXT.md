@@ -775,8 +775,8 @@ The round-trip:
   (`declare module '@tldraw/tlschema'` in `ComponentShape.tsx`), so `ShapeUtil` /
   `resizeBox` / `TLResizeInfo` type-check without casts (hence `@tldraw/tlschema`
   is a direct dep). `data` validates as `T.jsonValue`.
-- Seed library (also the agent's reference for conventions): `KpiCard` (leaf, takes
-  props), `Dashboard` (composes `KpiCard`), `MermaidDiagram` (real `mermaid` import,
+- Seed library (also the agent's reference for conventions): `MarkdownCard` (leaf, takes
+  props), `ChartCard` (a Flint spec as props), `MermaidDiagram` (real `mermaid` import,
   render-and-inject). Agent-authored files are excluded from `tsc` (vite/esbuild
   compiles them with no type gate, matching runtime).
 - **Component palette** (`src/ComponentPalette.tsx`) — pad-chrome panel (❖
