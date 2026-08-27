@@ -39,6 +39,29 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.4.0] — 2026-08-27
+
+### Added
+- **Diagrams pan and zoom in fullscreen** — an Ilograph card opened fullscreen is an infinite canvas: drag to pan, scroll or pinch to zoom, and Fit to re-frame. Each perspective remembers where you were looking, and one you have not opened yet is centred for you. The view is yours alone — moving it does not move anyone else's. (#423)
+- **Pull a resource aside** to untangle a diagram while you read it. The arrangement stays in your tab and is remembered per perspective. (#423)
+- **Click a resource to see what it is part of** — everything upstream and downstream of it stays lit and the rest dims, so following a path is one click instead of tracing a line by eye. (#423)
+
+### Changed
+- **A perspective now draws only the resources it relates.** A model carries more than any single perspective wires up, and the surplus used to collect in a column of disconnected boxes down the left-hand side. (#423)
+- **Diagrams lay out with far fewer crossed lines.** On a busy perspective this took ten crossings to none. (#423)
+
+### Fixed
+- **Hovering a component no longer stops you zooming the board.** Ctrl+scroll and trackpad pinch now zoom wherever the pointer is; before, you had to find a gap between cards first. (#423)
+- **Diagram labels read over the lines and boxes they cross** instead of vanishing behind them. (#423)
+
+### Removed
+- **Ten built-in components** — AgentChat, CanvasArch, CedarPalette, CedarShell, CedarpadLogoTest, CedarpadLogos, CedarpadMerch, Dashboard, KpiCard and LandingV5. Any card already placed from one of these will no longer load. (#423)
+
+### Internal
+- A component playground at `/dev/playground.html` renders one component against fixture data — no canvas, no board, no login — so working on a card no longer means placing one first. Local dev only. (#423)
+- `ComponentHost` gains `unguarded`, telling a component whether a shape's event guard sits between it and the pointer; a card cannot host its own camera, and now says so rather than half-working. The platform manifest regenerates from 32 modules to 22, and the agent's component-writing prompt no longer cites deleted examples. (#423)
+- One encrypted key added to the production secrets.
+
 ## [0.3.0] — 2026-08-26
 
 ### Added
