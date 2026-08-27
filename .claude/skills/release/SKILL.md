@@ -118,10 +118,30 @@ Decide from the PR body and the diff:
 
 Those six headings are the entire allowed set — the parser rejects anything else.
 
-**Propose the bump** from the classification: any new user-visible capability → **minor**
-(`0.y.0`); fixes and internal work only → **patch** (`0.0.z`). Reserve **major** for a breaking
-change to the MCP tools or `/v1` — the one contract anyone integrates against, and one whose
-consumers are agents that fail silently. Call such a break out in its own entry.
+**Propose the bump** from the classification:
+
+| Bump | When |
+| --- | --- |
+| **patch** (`0.0.z`) | changes to something that already exists, however substantial — plus removals, fixes, and internal work |
+| **minor** (`0.y.0`) | a genuinely NEW capability: a new component, a new surface, something the product could not do at all before |
+| **major** | nothing, for now. See below. |
+
+**The line is new-thing vs better-thing, not big vs small.** Teaching an existing component
+to pan, zoom, drag and highlight is a patch — the diagram card already existed and the
+release made it better. That is a large diff and a small version bump, and it is meant to be:
+the number says what KIND of change shipped, not how much work it took. Ask "could someone do
+this before?", not "how much changed?".
+
+**Removals are patches too, for now,** even when they break something already on a board.
+v0.4.0 retired ten built-in components and any card placed from one stopped loading — still a
+patch. Pre-1.0 nothing here is stable, and pretending otherwise with the version number would
+be a promise the project is not making yet. Say plainly what broke, in `### Removed`, and let
+the entry carry the warning instead of the number.
+
+**Major is reserved and currently unreachable.** Until `1.0`, nothing is stable, so no release
+earns one. After `1.0`, breaking changes go here — most sharply a break to the MCP tools or
+`/v1`, the one contract anyone integrates against, and one whose consumers are agents that fail
+silently. Call such a break out in its own entry.
 
 **There is no approval gate after this — write the entry and carry on to step 4.**
 It used to stop here and wait, and that is what made a release need a human present in
