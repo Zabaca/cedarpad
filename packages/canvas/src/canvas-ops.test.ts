@@ -420,6 +420,38 @@ describe('canvas ops (the agent tool logic)', () => {
     });
   });
 
+  describe('placeComponentOp honors the (0,0)===unset sentinel (canvas-ops.ts:407)', () => {
+    // The tuck-or-honor decision hinges on (input.x, input.y) === (0,0) meaning "unset".
+    // These pin both sides of that boundary so a future change to the sentinel can't
+    // silently flip layout behavior. The chat sits at (1000, 200); tucking lands a fresh
+    // batch to its LEFT (baseX = 1000 - TUCK_GAP - w), so a tucked card leaves x=0.
+    const seedChat = () => {
+      const st = createStore();
+      st.upsert([normalizeShape({ id: 'shape:chat', type: 'chat', color: 'black', x: 1000, y: 200, w: 380, h: 460, title: 'Chat' })]);
+      return st;
+    };
+
+    test('non-zero coords are honored: the card stays where the agent put it, still linked', () => {
+      const s = seedChat();
+      placeComponentOp(s, { module: 'KpiCard', x: 900, y: 100, w: 360, h: 260, rev: 1 }, 'shape:chat');
+      const comp = s.getState().shapes.find((sh) => sh.type === 'component')!;
+      expect(comp.type === 'component' && comp.x).toBe(900);
+      expect(comp.type === 'component' && comp.y).toBe(100);
+      const arrows = s.getState().shapes.filter((sh) => sh.type === 'arrow');
+      expect(arrows).toHaveLength(1);
+    });
+
+    test('(0,0) is the unset placeholder: the card is tucked beside the chat, not left at the origin', () => {
+      const s = seedChat();
+      placeComponentOp(s, { module: 'KpiCard', x: 0, y: 0, w: 360, h: 260, rev: 1 }, 'shape:chat');
+      const comp = s.getState().shapes.find((sh) => sh.type === 'component')!;
+      // Tucked to the left of the chat — so it no longer sits at the (0,0) placeholder.
+      expect(comp.type === 'component' && comp.x).not.toBe(0);
+      const arrows = s.getState().shapes.filter((sh) => sh.type === 'arrow');
+      expect(arrows).toHaveLength(1);
+    });
+  });
+
   describe('cross-canvas shared rev-bump: the "who reloads" set (#55)', () => {
     // A session is anything carrying a store; the target computation is pure over the set.
     const sessionWith = (id: string, modules: string[]) => {
