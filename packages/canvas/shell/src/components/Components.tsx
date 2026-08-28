@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 
-// The Components stage: every Component in the workspace, and every card rendering it.
+// The Components stage: the workspace-wide library — built-in and shared Components — and
+// every card rendering one.
 //
 // It exists because every other view of the library is scoped to ONE canvas — the pad's
-// palette and gallery answer "what can this canvas place?" — so a Component generated on
-// some other canvas is invisible until you go looking for it. Cleaning them up needs the
+// palette and gallery answer "what can this canvas place?" — so a shared Component is
+// invisible from a canvas until you go looking for it. Cleaning them up needs the
 // cross-canvas view that nothing else provides.
 //
 // The tier label is not decoration. Components resolve own → shared → base, first match
@@ -35,9 +36,12 @@ const TIER_LABEL: Record<Tier, string> = {
   unresolved: 'no source',
 };
 
-/** Tier chips, built-in first: the platform library is the one tier you audit as a set,
- *  since it ships with the image and nothing in a workspace can edit it. */
-const TIER_ORDER: Tier[] = ['base', 'shared', 'own', 'unresolved'];
+/** The tiers this stage lists, built-in first: the platform library is the one tier you audit
+ *  as a set, since it ships with the image and nothing in a workspace can edit it. The two
+ *  left out are deliberate — an `own` Component belongs to its canvas and is audited from
+ *  there, and an `unresolved` name has no source at all — so what remains is the library that
+ *  is genuinely workspace-wide. Doubles as the chip order. */
+const LISTED_TIERS: Tier[] = ['base', 'shared'];
 
 /** How many Components sit in each tier. Drives both the chip labels and which chips exist
  *  at all — a chip is only offered for a tier that has rows, so no filter can empty the list
@@ -91,7 +95,11 @@ export function ComponentsStage({ workspaceId }: { workspaceId: string }) {
     try {
       const r = await fetch(`/api/workspace-components?workspace=${encodeURIComponent(workspaceId)}`, { credentials: 'same-origin' });
       if (!r.ok) throw new Error(`could not load components (${r.status})`);
-      setEntries(((await r.json()) as { components: Entry[] }).components);
+      // Narrowed once, here, rather than at each place that reads `entries`: the inventory
+      // endpoint answers with every tier (its DELETE half resolves a Component by
+      // name+tier+canvasId, so it has to), and everything downstream — the rows, the chips,
+      // the "All" count — should agree on what this stage is a list OF.
+      setEntries(((await r.json()) as { components: Entry[] }).components.filter((e) => LISTED_TIERS.includes(e.tier)));
     } catch (e) {
       setError((e as Error).message);
       setEntries([]);
@@ -137,15 +145,16 @@ export function ComponentsStage({ workspaceId }: { workspaceId: string }) {
         </button>
       </div>
       <p className="cmp-intro">
-        Every Component in this workspace and the cards that render it. A card resolves against its own canvas — a canvas
-        holding its own copy of a name uses that one — so deleting here removes only the cards that actually use this source.
+        The built-in and shared Components in this workspace and the cards that render them. A card resolves against its own
+        canvas — a canvas holding its own copy of a name uses that one — so deleting here removes only the cards that
+        actually use this source.
       </p>
       {entries && entries.length > 0 && (
         <div className="cmp-filters">
           <button type="button" className={`cmp-filter${filter === 'all' ? ' is-on' : ''}`} onClick={() => setFilter('all')}>
             All <span className="cmp-filter-n">{entries.length}</span>
           </button>
-          {TIER_ORDER.filter((t) => counts[t] > 0).map((t) => (
+          {LISTED_TIERS.filter((t) => counts[t] > 0).map((t) => (
             <button
               key={t}
               type="button"

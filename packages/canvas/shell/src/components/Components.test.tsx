@@ -21,6 +21,7 @@ const INVENTORY = {
       ],
     },
     { name: 'KpiCard', tier: 'base', canvasId: null, instances: [] },
+    { name: 'Ledger', tier: 'shared', canvasId: null, instances: [{ canvasId: 'cv_b', canvasName: 'Board B', shapeId: 'shape:b2' }] },
     { name: 'Ghost', tier: 'unresolved', canvasId: null, instances: [{ canvasId: 'cv_b', canvasName: 'Board B', shapeId: 'shape:b1' }] },
   ],
 };
@@ -35,7 +36,7 @@ afterEach(async () => {
   globalThis.confirm = realConfirm;
 });
 
-function stub(deletes: Array<{ method: string; body: unknown }>) {
+function stub(deletes: Array<{ method: string; body: unknown }>, inventory: unknown = INVENTORY) {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.includes('/api/workspace-components')) {
@@ -43,7 +44,7 @@ function stub(deletes: Array<{ method: string; body: unknown }>) {
         deletes.push({ method: 'DELETE', body: JSON.parse(String(init.body)) });
         return Response.json({ instancesRemoved: 2, sourceDeleted: true });
       }
-      return Response.json(INVENTORY);
+      return Response.json(inventory);
     }
     return Response.json({});
   }) as typeof fetch;
@@ -65,15 +66,17 @@ async function mount() {
 const rowText = (el: HTMLElement) => [...el.querySelectorAll('.cmp-row')].map((r) => r.textContent ?? '');
 
 describe('ComponentsStage', () => {
-  test('lists every Component in the workspace with its tier and instance count', async () => {
+  test('lists the workspace library — built-in and shared only, with its tier and instance count', async () => {
     stub([]);
     const el = await mount();
     const rows = rowText(el);
-    expect(rows.some((t) => t.includes('Roadmap') && t.includes('2'))).toBe(true);
     // The base tier is listed because it is placeable — it just is not deletable.
     expect(rows.some((t) => t.includes('KpiCard'))).toBe(true);
-    // Dead cards are the other half of a cleanup, so they are visible rather than hidden.
-    expect(rows.some((t) => t.includes('Ghost'))).toBe(true);
+    expect(rows.some((t) => t.includes('Ledger') && t.includes('1'))).toBe(true);
+    // A canvas-scoped Component belongs to its canvas, not to the workspace library.
+    expect(rows.some((t) => t.includes('Roadmap'))).toBe(false);
+    // A name with no source behind it is not a Component this stage can show a source for.
+    expect(rows.some((t) => t.includes('Ghost'))).toBe(false);
   });
 
   test('a built-in Component offers no delete at all', async () => {
@@ -88,14 +91,14 @@ describe('ComponentsStage', () => {
     stub(deletes);
     globalThis.confirm = () => true;
     const el = await mount();
-    const row = [...el.querySelectorAll('.cmp-row')].find((r) => (r.textContent ?? '').includes('Roadmap'))!;
+    const row = [...el.querySelectorAll('.cmp-row')].find((r) => (r.textContent ?? '').includes('Ledger'))!;
     await act(async () => {
       (row.querySelector('.cmp-delete') as HTMLButtonElement).click();
       await new Promise((r) => setTimeout(r, 20));
     });
     // Tier + canvas travel with the name: a workspace can hold several Components called
-    // `Roadmap`, and the server resolves instances per canvas from exactly these three.
-    expect(deletes).toEqual([{ method: 'DELETE', body: { name: 'Roadmap', tier: 'own', canvasId: 'cv_a' } }]);
+    // `Ledger`, and the server resolves instances per canvas from exactly these three fields.
+    expect(deletes).toEqual([{ method: 'DELETE', body: { name: 'Ledger', tier: 'shared', canvasId: null } }]);
   });
 
   test('declining the confirmation deletes nothing', async () => {
@@ -103,7 +106,7 @@ describe('ComponentsStage', () => {
     stub(deletes);
     globalThis.confirm = () => false;
     const el = await mount();
-    const row = [...el.querySelectorAll('.cmp-row')].find((r) => (r.textContent ?? '').includes('Roadmap'))!;
+    const row = [...el.querySelectorAll('.cmp-row')].find((r) => (r.textContent ?? '').includes('Ledger'))!;
     await act(async () => {
       (row.querySelector('.cmp-delete') as HTMLButtonElement).click();
       await new Promise((r) => setTimeout(r, 20));
@@ -122,26 +125,35 @@ describe('ComponentsStage tier filter', () => {
     await act(async () => chip(el, 'built-in').click());
     const rows = rowText(el);
     expect(rows.some((t) => t.includes('KpiCard'))).toBe(true);
-    expect(rows.some((t) => t.includes('Roadmap'))).toBe(false);
-    expect(rows.some((t) => t.includes('Ghost'))).toBe(false);
+    expect(rows.some((t) => t.includes('Ledger'))).toBe(false);
   });
 
   test('clicking the active chip clears the filter', async () => {
     stub([]);
     const el = await mount();
     await act(async () => chip(el, 'built-in').click());
-    expect(rowText(el).some((t) => t.includes('Roadmap'))).toBe(false);
+    expect(rowText(el).some((t) => t.includes('Ledger'))).toBe(false);
     await act(async () => chip(el, 'built-in').click());
-    expect(rowText(el).some((t) => t.includes('Roadmap'))).toBe(true);
+    expect(rowText(el).some((t) => t.includes('Ledger'))).toBe(true);
   });
 
   test('a tier with no Components gets no chip, so no filter can empty the list', async () => {
+    // A workspace that has never shared a Component: only the built-in tier has rows.
+    stub([], { components: [{ name: 'KpiCard', tier: 'base', canvasId: null, instances: [] }] });
+    const el = await mount();
+    const labels = [...el.querySelectorAll('.cmp-filter')].map((b) => b.textContent ?? '');
+    expect(labels.some((t) => t.includes('shared'))).toBe(false);
+    expect(labels.some((t) => t.includes('built-in'))).toBe(true);
+  });
+
+  test('the excluded tiers are offered no chip and are not counted in All', async () => {
     stub([]);
     const el = await mount();
     const labels = [...el.querySelectorAll('.cmp-filter')].map((b) => b.textContent ?? '');
-    // The fixture holds own/base/unresolved and nothing shared.
-    expect(labels.some((t) => t.includes('shared'))).toBe(false);
-    expect(labels.some((t) => t.includes('built-in'))).toBe(true);
+    expect(labels.some((t) => t.includes('canvas'))).toBe(false);
+    expect(labels.some((t) => t.includes('no source'))).toBe(false);
+    // Two of the fixture's four Components are listed: KpiCard (built-in) and Ledger (shared).
+    expect(labels.find((t) => t.includes('All'))).toBe('All 2');
   });
 });
 
