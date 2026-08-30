@@ -1,7 +1,8 @@
 import type { Database } from "../lib/db/index.js";
 import { schema } from "../lib/db/index.js";
 import type { Graph, ObservationDetail, ProblemDetail } from "../lib/contract/index.js";
-import { aliasedTable, and, desc, eq, inArray } from "drizzle-orm";
+import { aliasedTable, and, desc, eq, exists, inArray, sql } from "drizzle-orm";
+import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { type AccessScope, workspaceFilter } from "./access.js";
 import {
   serializeObservation,
@@ -31,6 +32,28 @@ async function solutionsForTarget(db: Database, kind: TargetKind, id: string) {
     .innerJoin(schema.solutions, eq(schema.solutions.id, schema.solutionLinks.solutionId))
     .where(and(eq(schema.solutionLinks.targetKind, kind), eq(schema.solutionLinks.targetId, id)));
   return rows.map((r) => serializeSolution(r.solution));
+}
+
+/**
+ * A correlated `exists` predicate: the target row (an observation or problem,
+ * named by `targetIdColumn` in the outer query) carries at least one accepted
+ * solution. This is the `solved` list filter — shared by the observations,
+ * problems, and items routes so the four call sites cannot drift.
+ */
+export function hasAcceptedSolution(db: Database, kind: TargetKind, targetIdColumn: SQLiteColumn) {
+  return exists(
+    db
+      .select({ x: sql`1` })
+      .from(schema.solutionLinks)
+      .innerJoin(schema.solutions, eq(schema.solutions.id, schema.solutionLinks.solutionId))
+      .where(
+        and(
+          eq(schema.solutionLinks.targetKind, kind),
+          eq(schema.solutionLinks.targetId, targetIdColumn),
+          eq(schema.solutions.status, "accepted"),
+        ),
+      ),
+  );
 }
 
 /** Remove all solution links for a target before the target is deleted (no DB cascade). */

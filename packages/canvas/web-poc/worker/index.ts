@@ -9,7 +9,7 @@ import * as contract from "../lib/contract/index.js";
 import { swaggerUI } from "@hono/swagger-ui";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { createMiddleware } from "hono/factory";
-import { and, count, desc, eq, exists, inArray, like, or, type SQL, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, like, or, type SQL, sql } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { type AccessScope, accessWhere, canAccessWorkspace, workspaceFilter } from "./access.js";
 import { providerModelLabel } from "./agent.js";
@@ -20,6 +20,7 @@ import {
   getObservationDetail,
   getProblemDetail,
   getWorkspaceGraph,
+  hasAcceptedSolution,
 } from "./data.js";
 import {
   authMiddleware,
@@ -160,22 +161,7 @@ export function buildApp(opts: BuildAppOptions = {}) {
       if (status) conds.push(eq(schema.observations.status, status));
       if (tag) conds.push(tagFilter(schema.observations.projectTags, tag) as never);
       if (solved) {
-        // Only observations that carry at least one accepted solution.
-        conds.push(
-          exists(
-            db
-              .select({ x: sql`1` })
-              .from(schema.solutionLinks)
-              .innerJoin(schema.solutions, eq(schema.solutions.id, schema.solutionLinks.solutionId))
-              .where(
-                and(
-                  eq(schema.solutionLinks.targetKind, "observation"),
-                  eq(schema.solutionLinks.targetId, schema.observations.id),
-                  eq(schema.solutions.status, "accepted"),
-                ),
-              ),
-          ),
-        );
+        conds.push(hasAcceptedSolution(db, "observation", schema.observations.id));
       }
       const where = and(...conds);
       const items = await db
@@ -288,22 +274,7 @@ export function buildApp(opts: BuildAppOptions = {}) {
       }
       if (tag) conds.push(tagFilter(schema.problems.projectTags, tag) as never);
       if (solved) {
-        // Only problems that have at least one accepted solution.
-        conds.push(
-          exists(
-            db
-              .select({ x: sql`1` })
-              .from(schema.solutionLinks)
-              .innerJoin(schema.solutions, eq(schema.solutions.id, schema.solutionLinks.solutionId))
-              .where(
-                and(
-                  eq(schema.solutionLinks.targetKind, "problem"),
-                  eq(schema.solutionLinks.targetId, schema.problems.id),
-                  eq(schema.solutions.status, "accepted"),
-                ),
-              ),
-          ),
-        );
+        conds.push(hasAcceptedSolution(db, "problem", schema.problems.id));
       }
       const where = and(...conds);
       // Summaries only: the columns needed to identify and rank a problem. A
@@ -360,21 +331,7 @@ export function buildApp(opts: BuildAppOptions = {}) {
         if (term) conds.push(or(like(schema.observations.title, term), like(schema.observations.body, term))!);
         if (tag) conds.push(tagFilter(schema.observations.projectTags, tag) as never);
         if (solved) {
-          conds.push(
-            exists(
-              db
-                .select({ x: sql`1` })
-                .from(schema.solutionLinks)
-                .innerJoin(schema.solutions, eq(schema.solutions.id, schema.solutionLinks.solutionId))
-                .where(
-                  and(
-                    eq(schema.solutionLinks.targetKind, "observation"),
-                    eq(schema.solutionLinks.targetId, schema.observations.id),
-                    eq(schema.solutions.status, "accepted"),
-                  ),
-                ),
-            ),
-          );
+          conds.push(hasAcceptedSolution(db, "observation", schema.observations.id));
         }
         const where = and(...conds);
         const rows = await db
@@ -393,21 +350,7 @@ export function buildApp(opts: BuildAppOptions = {}) {
         if (term) conds.push(or(like(schema.problems.title, term), like(schema.problems.body, term))!);
         if (tag) conds.push(tagFilter(schema.problems.projectTags, tag) as never);
         if (solved) {
-          conds.push(
-            exists(
-              db
-                .select({ x: sql`1` })
-                .from(schema.solutionLinks)
-                .innerJoin(schema.solutions, eq(schema.solutions.id, schema.solutionLinks.solutionId))
-                .where(
-                  and(
-                    eq(schema.solutionLinks.targetKind, "problem"),
-                    eq(schema.solutionLinks.targetId, schema.problems.id),
-                    eq(schema.solutions.status, "accepted"),
-                  ),
-                ),
-            ),
-          );
+          conds.push(hasAcceptedSolution(db, "problem", schema.problems.id));
         }
         const where = and(...conds);
         const rows = await db
