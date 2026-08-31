@@ -4,6 +4,7 @@
 
 import { type CanvasShape, type ShapeColor, SHAPE_SIZE_DEFAULTS, isColor } from './shapes';
 import { DataSourceSchema, type DataSource } from '../shared/mart-contract';
+import { COMPONENT_NAME_RE } from '../shared/bridge-wire';
 
 /**
  * Mint a tldraw-compatible shape id: a readable prefix for provenance, then 64 random
@@ -46,7 +47,7 @@ function str(v: unknown): string {
 
 /** A safe component module name: letters/digits/_/-, no path separators or dots. */
 function moduleName(v: unknown): string {
-  if (typeof v !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(v)) {
+  if (typeof v !== 'string' || !COMPONENT_NAME_RE.test(v)) {
     throw new Error(`"module" must be a component name like "KpiCard" (letters/digits/_/-, no extension or path), got ${JSON.stringify(v)}`);
   }
   return v;

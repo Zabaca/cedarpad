@@ -115,6 +115,15 @@ describe('normalizeShape: component dataSource', () => {
     ).toThrow();
   });
 
+  // The module name is validated against the same COMPONENT_NAME_RE the store enforces on
+  // write (shared/bridge-wire.ts) — a name with a path separator or extension is rejected
+  // HERE, at placement, not stored and left to 404 at load.
+  test('a module name that fails COMPONENT_NAME_RE is rejected', () => {
+    expect(() =>
+      normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'Not/Valid.tsx', data: {}, rev: 1 }),
+    ).toThrow();
+  });
+
   // MartName (mart-contract.ts) is the same rule the mart route enforces — a name that
   // could never resolve to a real mart is rejected HERE, at placement, not silently
   // stored and left to fail later at render (CLAUDE.md §7: parse at the boundary).
