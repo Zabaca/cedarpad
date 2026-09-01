@@ -6,8 +6,7 @@
 
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
-import type { ChatEvent } from './agent.ts';
-import type { TaskStatus, TodoStatus } from '../shared/chat-wire.ts';
+import type { ChatEvent, TaskStatus, TodoStatus } from '../shared/chat-wire.ts';
 
 /** The per-turn accumulator runChat threads across messages and folds into the final `done`.
  *  `ctxTokens` tracks the LAST assistant call's input-side tokens = the live context size. */
