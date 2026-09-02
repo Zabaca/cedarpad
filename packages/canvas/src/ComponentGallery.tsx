@@ -8,7 +8,10 @@ import * as React from 'react';
 import { withCanvasHeader } from './active-canvas';
 import { placementAt, filterModules } from './ComponentPalette';
 
-export type GalleryCard = { name: string; description: string; tier: 'own' | 'shared' | 'base' };
+// A gallery card IS one component-catalog entry — the same shape /api/components returns.
+// Bind to the shared contract so the tier enum can't drift here (CLAUDE.md §7).
+import type { ComponentCatalogEntry as GalleryCard } from '../shared/platform-rpc';
+export type { GalleryCard };
 
 const TIER_LABEL: Record<GalleryCard['tier'], string> = { own: 'this canvas', shared: 'shared', base: 'built-in' };
 

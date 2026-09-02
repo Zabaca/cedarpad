@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { resolveModelForSdk } from './agent.ts';
+import { resolveModelForSdk } from './model-resolution.ts';
 
 // The chat's `sonnet` selection must run on Sonnet 5, not the SDK's bundled sonnet alias
 // (claude-sonnet-4-6). opus/haiku behavior is unchanged.
