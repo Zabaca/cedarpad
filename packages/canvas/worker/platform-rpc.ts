@@ -371,12 +371,21 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
     }
   }
 
-  const { conversationId, question } = parsed.data.input;
-  const conv = await conversations.get(deps.db, conversationId);
-  // Push is the doorbell, not the signal: an unknown Conversation or unconfigured VAPID
-  // simply means no ping (the Inbox row is already the durable record).
-  if (conv && deps.send) {
-    await makeAssignmentPushNotify({ db: deps.db, origin: deps.origin, send: deps.send })(conv, question);
+  if (parsed.data.op === 'notify') {
+    const { conversationId, question } = parsed.data.input;
+    const conv = await conversations.get(deps.db, conversationId);
+    // Push is the doorbell, not the signal: an unknown Conversation or unconfigured VAPID
+    // simply means no ping (the Inbox row is already the durable record).
+    if (conv && deps.send) {
+      await makeAssignmentPushNotify({ db: deps.db, origin: deps.origin, send: deps.send })(conv, question);
+    }
+    return new Response(null, { status: 200 });
   }
-  return new Response(null, { status: 200 });
+
+  // Exhaustiveness guard: every op in PlatformRpcRequest is handled above, so a new op must add a
+  // branch here or this fails to compile — a contract change is a deliberate code-review event
+  // (CLAUDE.md §7). The body was already parsed against the union at line 143, so an op reaching
+  // here without a branch is unreachable at runtime; the 400 mirrors that invalid-request answer.
+  const _exhaustive: never = parsed.data;
+  return _exhaustive ?? Response.json({ error: 'invalid request' }, { status: 400 });
 }
