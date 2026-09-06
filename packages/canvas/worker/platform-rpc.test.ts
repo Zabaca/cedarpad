@@ -20,6 +20,7 @@ import {
   ConversationStartOutput,
   DataReadOutput,
   DataWriteOutput,
+  NotebookCallOutput,
   PLATFORM_RPC_PATH,
   SkillListOutput,
   SkillWriteOutput,
@@ -1042,5 +1043,73 @@ describe('platform RPC: component.restore', () => {
       );
       expect(res.status).toBe(400);
     }
+  });
+});
+
+// The Notebook (ADR-0024, #374). The one platform-RPC op whose payload the edge never
+// interprets: it binds the workspace from what the container said, checks it exists the same
+// way a Record verb does, and hands the call to the notebook tools. Every peer op is covered
+// through `handlePlatformRpc` above; this pins the same three behaviours for notebook.call —
+// the dispatch reaches the store, the ownership check refuses an unknown workspace, and a
+// tool refusal travels back as an error-carrying non-2xx the agent can read.
+describe('platform RPC: notebook.call', () => {
+  const makeWorkspace = async (db: Awaited<ReturnType<typeof freshDb>>) => {
+    await db.insert(user).values({ id: 'u_owner', name: 'Owner', email: 'owner@example.com' }).onConflictDoNothing();
+    return (await createWorkspace(db, { name: 'W', ownerUserId: 'u_owner' })).id;
+  };
+
+  test('a recorded observation round-trips through the dispatch to the store', async () => {
+    const db = await freshDb();
+    const workspaceId = await makeWorkspace(db);
+
+    const res = await rpc(
+      {
+        op: 'notebook.call',
+        input: {
+          workspaceId,
+          userId: 'u_1',
+          call: { tool: 'record_observation', input: { title: 'noticed a thing', body: 'the full note' } },
+        },
+      },
+      { db },
+    );
+    expect(res.status).toBe(200);
+    const { result } = NotebookCallOutput.parse(await res.json());
+    const id = (result as { id: string }).id;
+    expect(id).toBeTruthy();
+
+    // and the store actually holds it: reading it back by id succeeds through the same op.
+    const read = await rpc(
+      { op: 'notebook.call', input: { workspaceId, userId: null, call: { tool: 'read_observation', input: { id } } } },
+      { db },
+    );
+    expect(read.status).toBe(200);
+  });
+
+  test('the edge refuses a workspace that does not exist', async () => {
+    const db = await freshDb();
+    const res = await rpc(
+      {
+        op: 'notebook.call',
+        input: {
+          workspaceId: 'ws_never_created',
+          userId: 'u_1',
+          call: { tool: 'record_observation', input: { title: 't', body: 'b' } },
+        },
+      },
+      { db },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test('a tool refusal travels back as an error-carrying 400, not a silent drop', async () => {
+    const db = await freshDb();
+    const workspaceId = await makeWorkspace(db);
+    const res = await rpc(
+      { op: 'notebook.call', input: { workspaceId, userId: null, call: { tool: 'read_observation', input: { id: 'obs_missing' } } } },
+      { db },
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('not found');
   });
 });
