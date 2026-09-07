@@ -135,6 +135,13 @@ async function workspaceExists(db: Database, workspaceId: string): Promise<boole
  */
 const tierCanvas = (tier: 'own' | 'shared', canvasId: string): string | null => (tier === 'shared' ? null : canvasId);
 
+/** Every op above returns, so the dispatcher's tail is unreachable for a valid request; this
+ *  turns "a new op with no branch" into a compile error at that tail rather than a silent
+ *  fall-through. */
+function assertNever(x: never): never {
+  throw new Error(`unhandled platform-rpc op: ${JSON.stringify(x)}`);
+}
+
 /** `POST /api/platform-rpc` — the named operations, nothing else. */
 export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, deps: PlatformRpcDeps): Promise<Response> {
   if (!(await authorized(request, env))) return Response.json({ error: 'unauthorized' }, { status: 401 });
@@ -371,12 +378,17 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
     }
   }
 
-  const { conversationId, question } = parsed.data.input;
-  const conv = await conversations.get(deps.db, conversationId);
-  // Push is the doorbell, not the signal: an unknown Conversation or unconfigured VAPID
-  // simply means no ping (the Inbox row is already the durable record).
-  if (conv && deps.send) {
-    await makeAssignmentPushNotify({ db: deps.db, origin: deps.origin, send: deps.send })(conv, question);
+  if (parsed.data.op === 'notify') {
+    const { conversationId, question } = parsed.data.input;
+    const conv = await conversations.get(deps.db, conversationId);
+    // Push is the doorbell, not the signal: an unknown Conversation or unconfigured VAPID
+    // simply means no ping (the Inbox row is already the durable record).
+    if (conv && deps.send) {
+      await makeAssignmentPushNotify({ db: deps.db, origin: deps.origin, send: deps.send })(conv, question);
+    }
+    return new Response(null, { status: 200 });
   }
-  return new Response(null, { status: 200 });
+
+  // The dispatch above is exhaustive over `PlatformRpcRequest`; `parsed.data` is `never` here.
+  return assertNever(parsed.data);
 }
