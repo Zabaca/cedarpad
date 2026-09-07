@@ -5,10 +5,13 @@
 
 import * as React from 'react';
 
+import type { ComponentCatalogEntry } from '../shared/platform-rpc';
 import { withCanvasHeader } from './active-canvas';
 import { placementAt, filterModules } from './ComponentPalette';
 
-export type GalleryCard = { name: string; description: string; tier: 'own' | 'shared' | 'base' };
+// A gallery card IS one line of the component catalog — GET /api/components `details` returns
+// `ComponentCatalogEntry[]`. Alias the contract type rather than mirror it (CLAUDE.md §7).
+export type GalleryCard = ComponentCatalogEntry;
 
 const TIER_LABEL: Record<GalleryCard['tier'], string> = { own: 'this canvas', shared: 'shared', base: 'built-in' };
 
