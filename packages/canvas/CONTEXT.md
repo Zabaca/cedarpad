@@ -758,9 +758,9 @@ The round-trip:
 - **Platform tier (ADR-0014)**: `src/canvas-components/` is the image-baked seed library —
   visible to every canvas as the last resolution fallback, read-only at runtime (no tool
   writes there; writing a platform name shadows it into the canvas own dir). Persistence
-  follows writability: `canvas-components.tar` (all own dirs) + `shared-components.tar`
-  persist to R2; the platform dir ships with the image (the legacy `components.tar` is
-  still restored at boot for historical content but never flushed again).
+  follows writability: the two writable tiers (canvas own dirs + `shared/components/`)
+  persist as Records (ADR-0022, #366), not R2 tarballs; the platform dir ships with the
+  image. Boot restores nothing — a Component materializes from its Record when vite asks.
 - The content renders inside an **error boundary**; a load or render failure shows
   a red card in the box and never crashes the canvas. While a module loads you see
   a "loading…" placeholder.

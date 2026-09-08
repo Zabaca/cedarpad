@@ -24,7 +24,8 @@
 // same-named PLATFORM component and render with the wrong props — silent substitution, worse
 // than a 404, because a missing card is visible and a wrong card is not.
 //
-// The PLATFORM tier stays image-only, and data files still live only on disk (slice #360).
+// The PLATFORM tier stays image-only; own-tier data files are Records too (#360), while
+// shared-tier data files still live only on disk (a later slice of #354).
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

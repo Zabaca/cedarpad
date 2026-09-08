@@ -27,6 +27,7 @@ import {
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
+import { IS_CHAT_SEND } from './mcp-tokens-proxy.ts';
 
 // The edge chat proxy (ADR-0009, PRD #119 slice #122). Under "one chat system" every chat
 // surface is a LIVE VIEW of its session's runner bridge; a Shell-mounted <ChatView> points
@@ -60,9 +61,6 @@ export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
  * security-load-bearing): an unauthenticated request got `renderLogin()` already and never
  * reaches a bridge; the Inbox LIST (`inbox.ts`) stays edge-only and never wakes a runner.
  */
-// A proxied chat SEND (`POST /api/chat/:chatId/send`) — the human answering. The proxy is the
-// inbox-aware home for the triage flip; `<ChatView>` / the generic `/send` stay unaware of it.
-const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
 // The open-conversation GET (`GET /api/inbox/:convId/chat`) — the Shell resolving a thread to
 // its chatId. ADR-0018 / #261: the edge already holds the row, so it forwards it here.
 const IS_OPEN_CONVERSATION = /^\/api\/inbox\/[^/]+\/chat$/;
