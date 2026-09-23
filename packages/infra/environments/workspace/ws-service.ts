@@ -1,5 +1,11 @@
 import { vmProvisionModule } from '../../../../vendor/zbc/modules/vm-provision'
+import { readFileSync } from 'node:fs'
 import cedarpadWs from './ws'
+
+// The claude-mitm-proxy's CA (a public certificate). The proxy terminates TLS for
+// api.anthropic.com to swap the fleet placeholder for a real token, so the agent
+// has to trust the leaf it presents. Base64 because env values travel as `export`s.
+const PROXY_CA = readFileSync(new URL('./claude-proxy-ca.crt', import.meta.url)).toString('base64')
 
 // The unit that runs the workspace supervisor inside cedarpad-ws.
 //
@@ -14,6 +20,15 @@ import cedarpadWs from './ws'
 // the supervisor exists — a unit that started `dev.ts` directly would need those
 // values on disk and would leave cedarpad worse off than the Cloudflare container
 // it is replacing.
+//
+// ── The agent's credential goes through the fleet proxy ─────────────────────
+// The edge still pushes CLAUDE_CODE_OAUTH_TOKEN, but what it pushes is a
+// claude-mitm-proxy placeholder (client `cedarpad-ws`), worthless off the
+// tailnet. HTTPS_PROXY sends the agent's api.anthropic.com traffic to the proxy
+// on ryzen-9, which swaps in the fleet's current real token; every other host
+// is a passthrough tunnel. foundry's `guest_in` admits this guest to :8807 and
+// nothing else. The supervisor spawns the stack with `{...process.env, ...pushed}`,
+// so these reach the bridge and the SDK's `claude` unless the edge pushes its own.
 //
 // WS_SUPERVISOR_TOKEN is the one secret that DOES rest here, and it is a
 // different kind of thing: a shared bearer minted for this seam alone, not a
@@ -39,12 +54,29 @@ export default vmProvisionModule.instance({
   config: {
     marker: 'service',
     envSecrets: { SUP_TOKEN: 'WS_SUPERVISOR_TOKEN' },
-    env: { CWD: '/app/agent-canvas/packages/canvas', SUP_PORT: '4599', VITE_PORT: '4510' },
+    env: {
+      CWD: '/app/agent-canvas/packages/canvas',
+      SUP_PORT: '4599',
+      VITE_PORT: '4510',
+      PROXY_URL: 'http://100.67.134.53:8807',
+      PROXY_CA_B64: PROXY_CA,
+    },
     script: `
 # The bearer, readable only by the service user. Written before the unit so a
 # restart never races an absent EnvironmentFile.
 install -o "\$PROVISION_USER" -g "\$PROVISION_USER" -m 600 /dev/null /etc/cedarpad-ws.env
 printf 'WS_SUPERVISOR_TOKEN=%s\\n' "\$SUP_TOKEN" > /etc/cedarpad-ws.env
+
+install -d -m 755 /etc/cedarpad-ws
+printf '%s' "\$PROXY_CA_B64" | base64 -d > /etc/cedarpad-ws/claude-proxy-ca.crt
+chmod 644 /etc/cedarpad-ws/claude-proxy-ca.crt
+cat >> /etc/cedarpad-ws.env <<PROXYENV
+HTTPS_PROXY=\$PROXY_URL
+https_proxy=\$PROXY_URL
+NO_PROXY=localhost,127.0.0.1,::1
+no_proxy=localhost,127.0.0.1,::1
+NODE_EXTRA_CA_CERTS=/etc/cedarpad-ws/claude-proxy-ca.crt
+PROXYENV
 chown "\$PROVISION_USER:\$PROVISION_USER" /etc/cedarpad-ws.env
 chmod 600 /etc/cedarpad-ws.env
 
