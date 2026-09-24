@@ -9,7 +9,8 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "apply": "bun packages/infra/check-zbc-pin.ts && zbc apply"
+    "apply": "bun packages/infra/check-zbc-pin.ts && zbc apply",
+    "deploy:vm": "bash packages/canvas/scripts/deploy-vm.sh"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^15.11.7",
