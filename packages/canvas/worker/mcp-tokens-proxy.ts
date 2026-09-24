@@ -17,11 +17,22 @@ export const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
  */
 /** The workspace's effective connected tokens: stored rows, plus the env fallback for the
  *  DEFAULT workspace only (mirroring the GitHub installation fallback, github-connection.ts):
- *  FREDRIN_KEY provisioned as a worker secret connects `fredrin` there until a real
- *  per-workspace token row exists — a stored row wins over the env. */
+ *  FREDRIN_KEY / FREDRIN_<LABEL>_KEY provisioned as worker secrets connect `fredrin` /
+ *  `fredrin-<label>` there until a real per-workspace token row exists — a stored row wins. */
+/** The env half: FREDRIN_KEY connects `fredrin`, and each FREDRIN_<LABEL>_KEY a named
+ *  `fredrin-<label>` connection (one per Fredrin project key — server/mcp-registry.ts). */
+function envFredrinTokens(env: Env): Record<string, string> {
+  const tokens: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    const m = /^FREDRIN(?:_([A-Z0-9]+(?:_[A-Z0-9]+)*))?_KEY$/.exec(name);
+    if (m && typeof value === 'string' && value) tokens[m[1] ? `fredrin-${m[1].toLowerCase().replaceAll('_', '-')}` : 'fredrin'] = value;
+  }
+  return tokens;
+}
+
 export async function effectiveMcpTokens(env: Env, workspaceId: string): Promise<Record<string, string>> {
   const stored = await listTokens(createDbForWorker(env as unknown as Bindings), workspaceId);
-  return workspaceId === 'default' && env.FREDRIN_KEY ? { fredrin: env.FREDRIN_KEY, ...stored } : stored;
+  return workspaceId === 'default' ? { ...envFredrinTokens(env), ...stored } : stored;
 }
 
 export async function withMcpTokensHeader(request: Request, env: Env, workspaceId: string): Promise<Request> {

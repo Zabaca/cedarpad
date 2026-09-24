@@ -194,6 +194,8 @@ export interface Env {
   // env fallback attached per chat send (worker/mcp-tokens-proxy.ts). Unset ⇒ fredrin is
   // simply not connected; a stored per-workspace token row overrides it.
   FREDRIN_KEY?: string;
+  // One per extra Fredrin project (named `fredrin-cedarpad` connection); same fallback rules.
+  FREDRIN_CEDARPAD_KEY?: string;
   // Web push (#87). The edge only ever hands out the PUBLIC half — the browser needs it as
   // `applicationServerKey` to subscribe. The private key now stays HERE too: delivery moved to
   // the edge with ADR-0018 (worker/push-notify.ts), so no VAPID key reaches a container at all

@@ -97,6 +97,8 @@ export default cloudflareModule.instance({
       // fredrin MCP bearer (ADR-0013 train 2) — edge-only; rides each chat send as the
       // x-mcp-tokens header, never container env.
       'FREDRIN_KEY',
+      // One FREDRIN_<LABEL>_KEY per extra Fredrin project → the `fredrin-<label>` connection.
+      'FREDRIN_CEDARPAD_KEY',
       // Web push VAPID keypair (#87). Unlike the secrets above, the PRIVATE half IS
       // forwarded into the container (worker/container-env.ts): the `notify` seam that
       // signs and sends lives in the bridge, not at the edge. Deliberate, narrow exception
