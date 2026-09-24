@@ -17,8 +17,8 @@ function frame(chatId: string, ev: Record<string, unknown>): string {
 
 type Send = { body: string; headers: Record<string, string> };
 
-/** Fake EventSource + fetch stub: /send answers 409 until released, everything else a
- *  transcript body. Returns the captured sends so a test can read their headers. */
+/** Fake EventSource + fetch stub: /send is accepted, everything else answers a transcript
+ *  body. Returns the captured sends so a test can read their bodies and headers. */
 function harness(id: string) {
   const realFetch = globalThis.fetch;
   const realES = (globalThis as Record<string, unknown>).EventSource;
@@ -33,17 +33,16 @@ function harness(id: string) {
     close() {}
   };
   const sends: Send[] = [];
-  const state = { reject409: false };
   globalThis.fetch = (async (url: unknown, init?: { body?: string; headers?: Record<string, string> }) => {
     if (String(url).includes('/send')) {
       sends.push({ body: init!.body!, headers: init?.headers ?? {} });
-      return state.reject409 ? new Response('{"error":"turn_in_flight"}', { status: 409 }) : new Response('{"ok":true}', { status: 202 });
+      return new Response('{"ok":true}', { status: 202 });
     }
     return new Response(JSON.stringify({ config: {}, events: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
   }) as unknown as typeof fetch;
   return {
     sends,
-    state,
+
     messages: () => sends.map((s) => (JSON.parse(s.body) as { message: string }).message),
     subscribe() {
       openStream(id);
