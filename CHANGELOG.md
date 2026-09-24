@@ -39,6 +39,17 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.4.1] — 2026-09-24
+
+### Changed
+- **Choosing Opus in chat now runs Opus 5.5**, still with the full 1M-token context. It used to run Opus 4.8.
+- **The Components stage lists only built-in and shared Components** — the ones it exists to audit — instead of every card-scoped copy in the workspace. (#425)
+
+### Internal
+- The workspace agent reaches Claude through a proxy that uses a fleet placeholder credential.
+- One encrypted key added to the production secrets. (#434)
+- The release guide now says a version bump reflects what kind of change shipped, not how much.
+
 ## [0.4.0] — 2026-08-27
 
 ### Added
