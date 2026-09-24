@@ -42,6 +42,7 @@ function makeEditor(initial: Rec) {
   return {
     editor: editor as unknown as Editor,
     status: () => shapes.get(initial.id)?.meta.status,
+    data: () => shapes.get(initial.id)?.props.data as Record<string, unknown> | undefined,
     metaWrites: () => metaWrites,
   };
 }
@@ -199,6 +200,43 @@ describe('sameStatus: the idempotency guard', () => {
     expect(sameStatus({ phase: 'loading', attempt: 1 }, { phase: 'loading', attempt: 2 })).toBe(false);
     // Different phase always writes.
     expect(sameStatus({ phase: 'loading', attempt: 1 }, { phase: 'ready' })).toBe(false);
+  });
+});
+
+// tldraw validates `props.data` as JSON, and an `undefined` VALUE is not JSON — it throws
+// and the whole tab falls over to "Something went wrong". `setData` therefore drops keys
+// whose value is undefined rather than storing them.
+describe('ComponentHost setData seam — undefined values never reach props.data', () => {
+  test('a patch with an undefined value stores the defined keys only, and clears nothing else', async () => {
+    const ed = makeEditor({
+      id: 'shape:sd',
+      type: 'component',
+      props: { w: 360, h: 260, module: 'Probe', data: { kept: 'before' }, rev: 0 },
+      meta: {},
+    });
+    let seen: { setData: (patch: Record<string, unknown>) => void } | null = null;
+    const Probe: AgentComponent = (props) => {
+      seen = props as unknown as typeof seen;
+      return React.createElement('div', null, 'probe');
+    };
+    const host = render(
+      React.createElement(ComponentHost, {
+        shapeId: 'shape:sd',
+        editor: ed.editor,
+        module: 'Probe',
+        data: { kept: 'before' },
+        rev: 0,
+        load: async () => Probe,
+      }),
+    );
+    await host.mount();
+    await act(async () => {});
+
+    await act(async () => void seen!.setData({ answer: 42, pending: undefined }));
+
+    expect(ed.data()).toEqual({ kept: 'before', answer: 42 });
+    expect(Object.keys(ed.data()!)).toEqual(['kept', 'answer']); // no `pending` key at all
+    await host.unmount();
   });
 });
 
