@@ -26,8 +26,14 @@ name: gates
 # e2e on the single `ryzen-cedarpad` runner — tolerable while e2e is ~90s, and
 # the thing to revisit if e2e grows back toward its 20-minute timeout.
 #
-# `www` stays on ubuntu-latest deliberately, so a red there can never be blamed
-# on the box, and so the changelog guard keeps running when the box is down.
+# `www` moved onto the runner too, on 2026-09-24. It stayed on ubuntu-latest so
+# a red there could never be blamed on the box and the changelog guard would run
+# while the box was down, but GitHub stopped starting it: "recent account
+# payments have failed or your spending limit needs to be increased". Every
+# gates run since at least 2026-09-07 failed on a job that never ran, so the guard was
+# already guarding nothing. A box that is sometimes down beats a runner that
+# never starts. It queues behind canvas and e2e on `ryzen-cedarpad`; it is
+# seconds of work.
 #
 # e2e stays exactly where it is. It genuinely needs the runner.
 
@@ -120,7 +126,7 @@ jobs:
         working-directory: packages/canvas
 
   www:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ryzen]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
