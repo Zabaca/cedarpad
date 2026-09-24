@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 
-import { SKILLS_DIR, type SkillRecords, materializeSkills, writeSkill } from './skills.ts';
+import { SKILLS_DIR, type SkillRecords, materializeSkills, skillRecordStore, writeSkill } from './skills.ts';
 
 // Workspace skills as Records (ADR-0022, #361). These drive the CONTAINER half — the ordering
 // rule (store first, then disk) and the tree materialization a turn depends on — against a fake
@@ -16,6 +16,14 @@ const dirOf = (skill: string) => `${SKILLS_DIR}${skill}`;
 
 afterEach(() => {
   rmSync(dirOf(SKILL), { recursive: true, force: true });
+});
+
+// The unit suite must never reach a real edge. Run inside a bridge's process (an agent's Bash
+// on the VM), it inherited PLATFORM_RPC_ORIGIN + BETTER_AUTH_SECRET, and bridge.test.ts's
+// PUT /api/skills wrote 34 zz-test-skill Records into production's default workspace
+// (2026-08-06 → 2026-09-09). `bun run test` blanks both; this pins that it did.
+test('the unit suite has no platform RPC — nothing here can write a real workspace', () => {
+  expect(skillRecordStore).toBeNull();
 });
 
 /** A store that remembers what it was told, and can be made to fail. */
