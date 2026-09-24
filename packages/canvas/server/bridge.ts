@@ -374,8 +374,8 @@ function chatStream(guestCanvas?: string): Response {
  *     and any end_turn land as dev-agent Conversations (which is exactly what the edge's
  *     per-send token mint keys on; a 'chat'-kinded row would never re-arm). The rows live
  *     in the bridge's own workspace — dev-agent is a session type, not a workspace;
- *   - the skill policy (ADR-0013) — a chat turn enables ALL discovered skills (workspace
- *     skills are content-that-asks; no allowlist), while a token-bearing dev-agent turn
+ *   - the skill policy (ADR-0013) — a chat turn gets every platform + workspace skill
+ *     (server/skills.ts chatSkillSources — two plugin areas, nothing else), while a token-bearing dev-agent turn
  *     keeps a pinned list so a planted workspace skill can never ride an allowlisted name
  *     into a turn that holds a git token. */
 export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId: string; kind: 'chat' | 'dev-agent'; skills?: string[] } {

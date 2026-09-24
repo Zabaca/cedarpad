@@ -7,7 +7,7 @@
 //   bun run scripts/gen-chart-skill.ts
 import { vlGetTemplateChannels, vlTemplateDefs } from 'flint-chart/vegalite';
 
-const SKILL = new URL('../skills/chart-authoring/SKILL.md', import.meta.url);
+const SKILL = new URL('../platform-skills/skills/chart-authoring/SKILL.md', import.meta.url);
 
 const rows: string[] = [];
 // vlTemplateDefs is category -> ChartTemplateDef[]; only `chart` (the type's name) is needed here.
@@ -23,4 +23,4 @@ const doc = await Bun.file(SKILL).text();
 if (!marker.test(doc)) throw new Error(`no GENERATED block in ${SKILL.pathname}`);
 
 await Bun.write(SKILL, doc.replace(marker, `<!-- BEGIN GENERATED -->\n${table}\n<!-- END GENERATED -->`));
-console.log(`[chart-skill] ${rows.length} chart types → skills/chart-authoring/SKILL.md`);
+console.log(`[chart-skill] ${rows.length} chart types → platform-skills/skills/chart-authoring/SKILL.md`);

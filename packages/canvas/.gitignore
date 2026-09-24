@@ -18,3 +18,7 @@ server/version.txt
 src/canvas-*/
 !src/canvas-components/
 huddles/
+
+# workspace skills are Records (ADR-0022) rendered here before each turn — only the plugin
+# manifest is committed (server/skills.ts)
+/workspace-skills/skills/

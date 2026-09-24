@@ -1,0 +1,4 @@
+{
+  "name": "workspace",
+  "description": "This workspace's own skills, rendered from its skill Records before each turn (server/skills.ts)."
+}

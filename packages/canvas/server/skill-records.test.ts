@@ -117,3 +117,25 @@ describe('with no edge in front of the container, the filesystem is all there is
     expect(readFileSync(`${dirOf(SKILL)}/SKILL.md`, 'utf8')).toBe('local');
   });
 });
+
+// Where a chat turn's skills come from: exactly two plugin areas, nothing implicit — not the
+// foundry home (~/.claude), not the repo's own developer .claude/skills, not CLAUDE.md.
+describe('chatSkillSources: platform + workspace, and nothing else', () => {
+  test('both areas are local plugins, and workspace skills render inside the workspace one', async () => {
+    const { chatSkillSources } = await import('./skills.ts');
+    const { plugins } = chatSkillSources();
+    expect(plugins.map((p) => p.path.replace(/\/$/, '').split('/').slice(-1)[0])).toEqual(['platform-skills', 'workspace-skills']);
+    expect(plugins.every((p) => p.type === 'local')).toBe(true);
+    expect(SKILLS_DIR.endsWith('/workspace-skills/skills/')).toBe(true);
+    for (const p of plugins) expect(existsSync(`${p.path}/.claude-plugin/plugin.json`)).toBe(true);
+  });
+
+  test('the allowlist names every platform and workspace skill, plugin-qualified', async () => {
+    const { chatSkillSources } = await import('./skills.ts');
+    await writeSkill(SKILL, [{ path: 'SKILL.md', content: '---\nname: t\n---\nbody' }], fakeRecords().records);
+    const { skills } = chatSkillSources();
+    expect(skills).toContain('cedarpad:chart-authoring');
+    expect(skills).toContain(`workspace:${SKILL}`);
+    expect(skills.every((s) => s.startsWith('cedarpad:') || s.startsWith('workspace:'))).toBe(true);
+  });
+});

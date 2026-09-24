@@ -1114,7 +1114,7 @@ describe('POST /api/canvas/shapes/{create,update} + /api/components/place — di
 // path rules enforced server-side, persisted as Records before the files are written (#361).
 describe('PUT /api/skills/:name — workspace-skill upload (#177)', () => {
   const SKILL = `zz-test-skill-${crypto.randomUUID().slice(0, 8)}`;
-  const skillsRoot = new URL('../.claude/skills/', import.meta.url).pathname;
+  const skillsRoot = new URL('../workspace-skills/skills/', import.meta.url).pathname;
   afterAll(() => {
     rmSync(`${skillsRoot}${SKILL}`, { recursive: true, force: true });
   });

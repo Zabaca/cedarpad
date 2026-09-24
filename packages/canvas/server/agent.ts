@@ -38,6 +38,8 @@ import type { TurnCanvasStore } from './turn-canvas-store.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 import type { ComponentVersion } from '../shared/platform-rpc.ts';
 import { createNotebookMcpServer } from './notebook-agent-tools.ts';
+import { chatSkillSources, writeSkill } from './skills.ts';
+import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
 
 const MODEL = process.env.CANVAS_MODEL ?? 'sonnet';
 
@@ -168,6 +170,27 @@ export function formatComponentHistory(module: string, versions: ComponentVersio
  * five-minute fix turns back into an incident. */
 export function formatComponentRestore(module: string, version: number, rev: number): string {
   return `Restored ${module} to the source of v${version} — that is now v${rev}. Nothing was erased: v${rev - 1} (what it said before this restore) is still in the history, so this is undoable too.`;
+}
+
+/** write_skill: the chat agent authors a workspace skill. Same contract (shared/skills-wire.ts)
+ *  and same writer as the MCP upload_skill — Records first, then the rendered files — so the two
+ *  doors cannot drift. Discovery is a scan at turn start, so the skill is usable next turn. */
+export async function writeSkillOp(
+  name: string,
+  files: Array<{ path: string; content: string }>,
+  write: (skill: string, files: Array<{ path: string; content: string }>) => Promise<void> = writeSkill,
+): Promise<{ text: string; isError?: true }> {
+  const skill = SkillName.safeParse(name);
+  const body = UploadSkillInput.safeParse({ files });
+  if (!skill.success || !body.success) {
+    return { text: `Error: ${(skill.success ? body.error : skill.error)?.issues[0]?.message ?? 'invalid skill'}`, isError: true };
+  }
+  try {
+    await write(skill.data, body.data.files);
+    return { text: `Wrote skill ${skill.data} (${body.data.files.length} file(s)). It is available from the next turn as workspace:${skill.data}.` };
+  } catch (e) {
+    return { text: `Error: ${(e as Error).message}`, isError: true };
+  }
 }
 
 /** The `send_message` tool body, extracted so the guard rails unit-test without the SDK:
@@ -466,6 +489,17 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
           }
         },
+      ),
+      tool(
+        'write_skill',
+        'Create or overwrite a WORKSPACE skill: a SKILL.md (YAML frontmatter with `name` and a `description` that says when to use it, then the instructions) plus any supporting files. Every chat in this workspace gets it from its next turn, as workspace:<name>. Use it when the human asks you to remember a workflow, checklist or convention as a reusable skill. Overwriting replaces those files.',
+        {
+          name: z.string().describe('Skill name: a plain directory name, e.g. "weekly-standup".'),
+          files: z
+            .array(z.object({ path: z.string().describe('Relative path, e.g. "SKILL.md" or "templates/report.md".'), content: z.string() }))
+            .describe('The files, including SKILL.md.'),
+        },
+        async ({ name, files }) => result(await writeSkillOp(name, files)),
       ),
       tool(
         'promote_component',
@@ -804,16 +838,15 @@ export async function* runChat(
     },
     tools: { type: 'preset' as const, preset: 'claude_code' as const }, // all built-in tools (Bash, Read, Write, Edit, Web*, Task...)
     ...(kind === 'chat' ? { disallowedTools: ['Write', 'Edit', 'NotebookEdit', ...(mcpToolOptOuts ?? [])] } : {}),
-    // Load user + project .claude config (ADR-0013): 'user' discovers platform skills (baked
-    // at the container's ~/.claude/skills), 'project' discovers workspace skills (the
-    // package's .claude/skills, rendered from its Records before the turn starts — ADR-0022 /
-    // #361: discovery is a filesystem SCAN, so the tree must already exist by the time this
-    // runs). Discovery and enable are two stages:
-    // the sources find skills, the `skills` filter picks.
-    settingSources: ['user', 'project'] as Array<'user' | 'project' | 'local'>,
-    // The skill policy is per-turn (ADR-0013): dev-agent turns pass a pinned list; chat
-    // turns pass none, and OMITTING the filter enables every discovered skill.
-    ...(skills ? { skills } : {}),
+    // Skills (ADR-0013). A CHAT turn loads no setting source at all — not the process home's
+    // ~/.claude, not the repo's developer .claude/skills or CLAUDE.md — only the two plugin
+    // areas server/skills.ts names (platform + this workspace's rendered Records; discovery is
+    // a filesystem SCAN, so materializeSkills has already run), with an allowlist of exactly
+    // those so the SDK's bundled skills stay out too. A dev-agent turn is unchanged: user +
+    // project sources, and its pinned list.
+    ...(kind === 'chat'
+      ? { settingSources: [] as Array<'user' | 'project' | 'local'>, ...chatSkillSources() }
+      : { settingSources: ['user', 'project'] as Array<'user' | 'project' | 'local'>, ...(skills ? { skills } : {}) }),
     // A dev-agent turn runs in its prepared worktree (ADR-0010 slice 6) — the caller passes
     // that path so edits + resume both scope to it; every product turn keeps the default.
     cwd: cwd ?? process.env.CANVAS_CWD ?? process.cwd(),

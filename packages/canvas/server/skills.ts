@@ -13,14 +13,41 @@
 // starts (server/turn.ts) — the one point that is both after a possible recycle and before
 // discovery.
 
+import { existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 import { loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
 
-/** The workspace skill tree the SDK's `project` source scans. Trailing slash. Platform skills
- *  live at the container's `~/.claude/skills` instead — image-only, never a Record. */
-export const SKILLS_DIR = fileURLToPath(new URL('../.claude/skills/', import.meta.url));
+// A chat turn's skills come from exactly two areas, each a local plugin the SDK is handed
+// explicitly (server/agent.ts) — never from a setting source, so nothing leaks in from the
+// process's home (~/.claude) or the repo's own developer .claude/skills:
+//   platform-skills/   the `cedarpad` plugin: ours, code, reviewed by PR.
+//   workspace-skills/  the `workspace` plugin: this workspace's Records, rendered below.
+const PLATFORM_PLUGIN_DIR = fileURLToPath(new URL('../platform-skills', import.meta.url));
+const WORKSPACE_PLUGIN_DIR = fileURLToPath(new URL('../workspace-skills', import.meta.url));
+
+/** Where workspace skill Records render: the `workspace` plugin's skills dir. Trailing slash. */
+export const SKILLS_DIR = `${WORKSPACE_PLUGIN_DIR}/skills/`;
+
+const skillDirs = (dir: string): string[] =>
+  existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+
+/** A chat turn's skill options: both plugins, and an allowlist naming every skill in them —
+ *  the allowlist is what keeps the SDK's own bundled skills out. Read at turn start, after
+ *  materializeSkills, because discovery is a filesystem scan. */
+export function chatSkillSources(): { plugins: Array<{ type: 'local'; path: string }>; skills: string[] } {
+  return {
+    plugins: [
+      { type: 'local', path: PLATFORM_PLUGIN_DIR },
+      { type: 'local', path: WORKSPACE_PLUGIN_DIR },
+    ],
+    skills: [
+      ...skillDirs(`${PLATFORM_PLUGIN_DIR}/skills`).map((s) => `cedarpad:${s}`),
+      ...skillDirs(SKILLS_DIR).map((s) => `workspace:${s}`),
+    ],
+  };
+}
 
 /** One file of one skill, as both the store and the tree on disk name it. */
 export type SkillFile = { path: string; content: string };

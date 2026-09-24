@@ -317,3 +317,36 @@ describe('select_page is seam-gated', () => {
     expect(tools).toContain('select_page');
   });
 });
+
+// write_skill: the chat agent authors its own workspace skills — through the same writeSkill
+// path as the MCP upload_skill (Records first, then the rendered files), and the same contract.
+import { writeSkillOp } from './agent.ts';
+
+describe('writeSkillOp: the chat agent authoring a workspace skill', () => {
+  const files = [{ path: 'SKILL.md', content: '---\nname: standup\ndescription: Run our standup.\n---\nSteps…' }];
+
+  test('writes through the injected writer and says when the skill becomes usable', async () => {
+    const calls: unknown[] = [];
+    const out = await writeSkillOp('standup', files, async (...args) => void calls.push(args));
+    expect(calls).toEqual([['standup', files]]);
+    expect(out.isError).toBeUndefined();
+    expect(out.text).toContain('workspace:standup');
+    expect(out.text).toContain('next turn');
+  });
+
+  test('the upload contract refuses a bad name or path — nothing is written', async () => {
+    const calls: unknown[] = [];
+    const write = async (...args: unknown[]) => void calls.push(args);
+    expect((await writeSkillOp('../escape', files, write)).isError).toBe(true);
+    expect((await writeSkillOp('ok', [{ path: '../x.md', content: 'x' }], write)).isError).toBe(true);
+    expect((await writeSkillOp('ok', [], write)).isError).toBe(true);
+    expect(calls).toEqual([]);
+  });
+
+  test('a store failure comes back as a tool error, not a thrown turn', async () => {
+    const out = await writeSkillOp('standup', files, async () => {
+      throw new Error('the workspace store refused this write');
+    });
+    expect(out).toEqual({ text: 'Error: the workspace store refused this write', isError: true });
+  });
+});

@@ -64,7 +64,7 @@ export interface TurnDeps {
    *  the one-turn-per-chat 409 guard at the wire). */
   aborters: Map<string, AbortController>;
   /** The edge-minted token is the COMPLETE definition of a dev-agent turn: it decides the
-   *  Inbox workspace tag + the skill policy (bridge.turnFlavor; skills absent = all discovered). */
+   *  Inbox workspace tag + the skill policy (bridge.turnFlavor; skills absent = a chat turn's platform + workspace areas). */
   flavor: (token: string | undefined) => { workspaceId: string; kind: 'chat' | 'dev-agent'; skills?: string[] };
   /** The active canvas's screenshot round-trip (`view_canvas`) — the one rider left on the
    *  bridge's SSE stream after #297 (server/screenshot-channel.ts). */
@@ -79,7 +79,7 @@ export interface TurnDeps {
   /** Where an UNADDRESSED turn routes (the bridge's default canvas id). */
   defaultCanvasId: string;
   /** Render the workspace's skill tree from its Records (ADR-0022, #361). Called FIRST, before
-   *  anything else in the turn: the agent SDK discovers skills by SCANNING `.claude/skills/`
+   *  anything else in the turn: the agent SDK discovers skills by SCANNING `workspace-skills/skills/`
    *  while `runChat` builds the turn's options, so unlike a Component — which vite requests
    *  lazily, and whose 404-then-retry the client already handles — there is no later moment
    *  at which a missing skill file can be fetched. Best-effort: a store failure costs this
