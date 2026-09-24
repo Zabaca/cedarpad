@@ -40,6 +40,8 @@ CANVAS_REL=$(cd "$SCRIPT_DIR" && git rev-parse --show-prefix | sed 's:/*$::')  #
 CF_ACCOUNT=${CLOUDFLARE_ACCOUNT_ID:-99a19e584439be0568f33aad0477372b}
 SANDBOX_APP=${SANDBOX_APP:-$(grep -m1 -o '"name": *"[a-z0-9-]*"' "$SCRIPT_DIR/wrangler.jsonc" | sed 's/.*"\([a-z0-9-]*\)"$/\1/')-sandbox}
 SANDBOX_APP_ID=${SANDBOX_APP_ID:-a03ba78e-7285-4761-b91d-ba494056087c}
+WAREHOUSE_APP=${WAREHOUSE_APP:-${SANDBOX_APP%-sandbox}-warehouse}
+WAREHOUSE_APP_ID=${WAREHOUSE_APP_ID:-a0313006-6af9-4e63-b1d9-397c2cc21ba9}
 
 DC=$(mktemp -d)
 SNAPSHOT=""
@@ -159,8 +161,54 @@ echo "→ migrating the platform data layer on D1 (wrangler, idempotent)"
 # version the root package.json pins, and runs check-zbc-pin.ts first, which refuses when
 # that version and the vendored tag disagree. The snapshot symlinks node_modules in
 # (see above), so `zbc` resolves here exactly as it does in the live checkout.
+#
+# RETRIED, but only for one failure (2026-09-24, v0.4.1). A container-application PATCH that
+# CHANGES the image takes Cloudflare 15-25+s to answer, and its gateway cuts every request
+# at exactly 25s with 408 {"error":"Request timeout"} — measured: 17.4s -> 200, 25s -> 408,
+# and a no-op PATCH (same image) 3.4s. wrangler does not retry it, and by then the Worker is
+# already deployed, so every lost race left a new Worker in front of an old container. A 408
+# modify commits nothing (updated_at moves; version, image and rollouts do not), so trying
+# again is safe — EXCEPT that an app wrangler DID update in the same run has a rollout in
+# flight whose app record still shows the old image, and a re-run would re-modify it and
+# REPLACE that rollout (the v146 trap, below). So every container app is settled — rollout
+# out of `progressing`, stored image at its target — before each retry, and any other
+# failure still exits on the first attempt.
+SECRETS_FILE="$BUILD_ROOT/packages/infra/environments/production/secrets.yaml"
+source "$SCRIPT_DIR/scripts/lib/rollout-wait.sh"
+
+settle_containers() {
+  local id name r
+  for pair in "$SANDBOX_APP_ID:$SANDBOX_APP" "$WAREHOUSE_APP_ID:$WAREHOUSE_APP"; do
+    id=${pair%%:*}; name=${pair#*:}
+    r=$(wait_for_rollout "$SECRETS_FILE" "$CF_ACCOUNT" "$id" "${ROLLOUT_WAIT_TIMEOUT:-600}" 5)
+    case "$r" in
+      DONE*)
+        set -- $r
+        r=$(wait_for_stored_image "$SECRETS_FILE" "$CF_ACCOUNT" "$name" "$4" "${STORED_IMAGE_WAIT_TIMEOUT:-300}" 15)
+        case "$r" in
+          MATCH*) echo "  $name settled ($r)" ;;
+          *) echo "  ⚠️  $name: stored image not confirmed at its rollout target ($r)"; return 1 ;;
+        esac
+        ;;
+      *) echo "  ⚠️  $name: rollout not settled ($r)"; return 1 ;;
+    esac
+  done
+}
+
+APPLY_ATTEMPTS=${APPLY_ATTEMPTS:-4}
 echo "→ bun run apply production canvas (build + deploy + push secrets — both container images)"
-( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bun run apply production canvas ) || { echo "❌ apply failed"; exit 1; }
+for attempt in $(seq 1 "$APPLY_ATTEMPTS"); do
+  ( cd "$BUILD_ROOT" && DOCKER_CONFIG="$DC" bun run apply production canvas ) 2>&1 | tee "$DC/apply.log"
+  [ "${PIPESTATUS[0]}" -eq 0 ] && break
+  if ! grep -q 'Error modifying application' "$DC/apply.log" || ! grep -q 'Request timeout' "$DC/apply.log"; then
+    echo "❌ apply failed"; exit 1
+  fi
+  if [ "$attempt" -ge "$APPLY_ATTEMPTS" ]; then
+    echo "❌ apply failed: Cloudflare timed out a container update on all $APPLY_ATTEMPTS attempts"; exit 1
+  fi
+  echo "⚠️  Cloudflare timed out a container update (attempt $attempt/$APPLY_ATTEMPTS) — settling every container app, then retrying"
+  settle_containers || { echo "❌ a container app did not settle — not retrying over it; check by hand: packages/canvas/scripts/verify-container-image.sh"; exit 1; }
+done
 # zbc apply's own success confirms the warehouse image was PUSHED (the call above builds
 # AND pushes both images, so reaching this line means it got further than the local build
 # check). That is NOT the same claim as LIVE — nothing starts or polls the warehouse
@@ -197,9 +245,6 @@ echo "✅ warehouse image built + pushed (not started — no dispatch path yet, 
 # deploy" — re-running REPLACES the healthy in-flight rollout (v146 -> "replaced",
 # superseded by v147). So wait for the newest rollout to leave "progressing" first, and
 # never suggest a re-run while one is still in flight.
-SECRETS_FILE="$BUILD_ROOT/packages/infra/environments/production/secrets.yaml"
-source "$SCRIPT_DIR/scripts/lib/rollout-wait.sh"
-
 echo "→ waiting for the container rollout to settle before checking the stored image (issue #342)"
 ROLLOUT=$(wait_for_rollout "$SECRETS_FILE" "$CF_ACCOUNT" "$SANDBOX_APP_ID" "${ROLLOUT_WAIT_TIMEOUT:-180}" 5)
 
