@@ -26,6 +26,13 @@ describe('buildExternalMcpServers: this turn’s external MCP servers from a reg
     expect(buildExternalMcpServers({ ledgerbot: 'tok_abc' }, {})).toEqual({});
   });
 
+  test('named connections of one entry each become their own server, with their own token', () => {
+    expect(buildExternalMcpServers({ 'ledgerbot-a': 'tok_a', 'ledgerbot-b': 'tok_b', 'nope-a': 'tok_x' }, fakeRegistry)).toEqual({
+      'ledgerbot-a': { type: 'http', url: 'https://ledgerbot.example/mcp', headers: { authorization: 'Bearer tok_a' } },
+      'ledgerbot-b': { type: 'http', url: 'https://ledgerbot.example/mcp', headers: { authorization: 'Bearer tok_b' } },
+    });
+  });
+
   test('no mcpTokens at all (dev-agent turns) ⇒ no external servers', () => {
     expect(buildExternalMcpServers(undefined, fakeRegistry)).toEqual({});
   });

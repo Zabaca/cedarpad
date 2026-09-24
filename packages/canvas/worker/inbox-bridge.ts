@@ -1,6 +1,6 @@
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { resolveConversationById } from './access.ts';
-import { listTokens } from '../web-poc/lib/db/queries/mcp-tokens.ts';
+import { effectiveMcpTokens } from './mcp-tokens-proxy.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
@@ -250,7 +250,7 @@ export async function handleInboxBridge(
   // header on the send — mirrors x-dev-agent-git-token above. `server/turn.ts` drops this for a
   // dev-agent turn regardless (chat flavor only), but no tokens connected ⇒ no header either way.
   if (isChatSend) {
-    const tokens = await listTokens(database, conv.workspaceId);
+    const tokens = await effectiveMcpTokens(env, conv.workspaceId);
     if (Object.keys(tokens).length > 0) proxied.headers.set(MCP_TOKENS_HEADER, encodeMcpTokens(tokens));
   }
 

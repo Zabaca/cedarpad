@@ -3,6 +3,7 @@ import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { clearToken, setToken } from '../web-poc/lib/db/queries/mcp-tokens.ts';
+import { type McpRegistryEntry, resolveMcpEntry } from '../server/mcp-registry.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
 
@@ -69,7 +70,7 @@ export async function handleMcpReadApi(
   user: GateUser,
   workspaceId: string,
   deps: {
-    registry: Readonly<Record<string, { url: string }>>;
+    registry: Readonly<Record<string, McpRegistryEntry>>;
     tokens: (env: Env, workspaceId: string) => Promise<Record<string, string>>;
     probeTools: (url: string, token: string) => Promise<Array<{ name: string; description?: string }>>;
   },
@@ -81,10 +82,12 @@ export async function handleMcpReadApi(
   const tokens = await deps.tokens(env, workspaceId);
 
   if (!mcpName) {
-    const servers = Object.keys(deps.registry).map((name) => ({ name, connected: !!tokens[name] }));
+    // Registry entries first (connected or not), then each named connection (`fredrin-acme`).
+    const named = Object.keys(tokens).filter((name) => !Object.hasOwn(deps.registry, name) && resolveMcpEntry(name, deps.registry));
+    const servers = [...Object.keys(deps.registry), ...named].map((name) => ({ name, connected: !!tokens[name] }));
     return Response.json({ servers });
   }
-  const entry = deps.registry[mcpName];
+  const entry = resolveMcpEntry(mcpName, deps.registry);
   if (!entry) return Response.json({ error: 'unknown server' }, { status: 404 });
   const token = tokens[mcpName];
   if (!token) return Response.json({ error: `${mcpName} is not connected` }, { status: 409 });

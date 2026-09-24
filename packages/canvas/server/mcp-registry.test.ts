@@ -33,6 +33,28 @@ describe('MCP_REGISTRY: a missing token/env means "not connected", never a failu
   });
 });
 
+describe('resolveMcpEntry: several named connections of one registry entry', () => {
+  const registry = { fredrin: { url: 'https://fredrin.example/mcp', auth: 'bearer' as const } };
+
+  test('the bare registry name resolves to its entry', async () => {
+    const { resolveMcpEntry } = await import('./mcp-registry.ts');
+    expect(resolveMcpEntry('fredrin', registry)).toEqual(registry.fredrin);
+  });
+
+  test('`<entry>-<label>` resolves to the same reviewed entry — the URL never comes from the name', async () => {
+    const { resolveMcpEntry } = await import('./mcp-registry.ts');
+    expect(resolveMcpEntry('fredrin-cedarpad', registry)).toEqual(registry.fredrin);
+    expect(resolveMcpEntry('fredrin-acme-web', registry)).toEqual(registry.fredrin);
+  });
+
+  test('anything else is not a connection', async () => {
+    const { resolveMcpEntry } = await import('./mcp-registry.ts');
+    for (const name of ['nope', 'fredrin-', 'fredrinx', 'fredrin-Acme', 'fredrin_acme', 'nope-fredrin']) {
+      expect(resolveMcpEntry(name, registry)).toBeUndefined();
+    }
+  });
+});
+
 describe('encodeMcpTokens / decodeMcpTokens: the shared per-send header contract', () => {
   test('round-trips a workspace’s connected tokens', async () => {
     const { encodeMcpTokens, decodeMcpTokens } = await import('./mcp-registry.ts');

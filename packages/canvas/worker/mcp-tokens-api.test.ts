@@ -147,6 +147,25 @@ describe('handleMcpReadApi: member-readable list + tool names (per-chat MCP sele
     expect(JSON.stringify(body)).not.toContain('fk_secret');
   });
 
+  test('named connections are listed after the registry entries, and probe with their own token', async () => {
+    workspaceRecord = { id: 'ws_1', ownerUserId: 'someone_else' };
+    const deps = {
+      ...READ_DEPS,
+      tokens: () => Promise.resolve({ 'fredrin-acme': 'fk_secret', 'fredrin-cedarpad': 'fk_other', 'nope-x': 'tok' }),
+    };
+    const res = await handleMcpReadApi(new Request('https://x/y'), {} as never, user, 'ws_1', deps);
+    expect(await res.json()).toEqual({
+      servers: [
+        { name: 'fredrin', connected: false },
+        { name: 'ledgerbot', connected: false },
+        { name: 'fredrin-acme', connected: true },
+        { name: 'fredrin-cedarpad', connected: true },
+      ],
+    });
+    const tools = await handleMcpReadApi(new Request('https://x/y'), {} as never, user, 'ws_1', deps, 'fredrin-acme');
+    expect(await tools.json()).toEqual({ tools: [{ name: 'search' }, { name: 'deploy', description: 'ship it' }] });
+  });
+
   test('unknown server 404, unconnected server 409, invisible workspace 404', async () => {
     workspaceRecord = { id: 'ws_1', ownerUserId: 'u_1' };
     expect((await get('ws_1', 'nope')).status).toBe(404);

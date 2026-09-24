@@ -174,10 +174,10 @@ const mint = () => {
   mintCalls += 1;
   return Promise.resolve(mintResult);
 };
-const proxy = (method: string, subPath: string, convId = 'conv_1') =>
+const proxy = (method: string, subPath: string, convId = 'conv_1', env: object = {}) =>
   handleInboxBridge(
     new Request(`https://poc.cedarpad.com/inbox/${convId}/bridge${subPath}`, { method }),
-    {} as never,
+    env as never,
     user,
     convId,
     subPath,
@@ -643,6 +643,21 @@ describe('handleInboxBridge: the workspace’s external-MCP tokens ride the send
     conv = row({ workspaceId: 'ws_b' });
     await proxy('POST', '/api/chat/chat_1/send');
     expect(servedMcpTokenHeaders).toEqual([null]);
+  });
+
+  test('the default workspace gets the FREDRIN_KEY fallback, as a pad send does; a stored row still wins', async () => {
+    conv = row({ workspaceId: 'default' });
+    await proxy('POST', '/api/chat/chat_1/send', 'conv_1', { FREDRIN_KEY: 'fk_env' });
+    mcpTokensByWorkspace = { default: { fredrin: 'fk_row', 'fredrin-acme': 'fk_acme' } };
+    await proxy('POST', '/api/chat/chat_1/send', 'conv_1', { FREDRIN_KEY: 'fk_env' });
+    conv = row({ workspaceId: 'ws_a' });
+    mcpTokensByWorkspace = {};
+    await proxy('POST', '/api/chat/chat_1/send', 'conv_1', { FREDRIN_KEY: 'fk_env' });
+    expect(servedMcpTokenHeaders).toEqual([
+      JSON.stringify({ fredrin: 'fk_env' }),
+      JSON.stringify({ fredrin: 'fk_row', 'fredrin-acme': 'fk_acme' }),
+      null,
+    ]);
   });
 
   test('a transcript GET never attaches the header (routing the turn, not the read)', async () => {

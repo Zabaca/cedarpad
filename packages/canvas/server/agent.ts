@@ -32,7 +32,7 @@ import { componentHistory, editComponent, isShared, listComponents, readComponen
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { type EndTurnDeps, type EndTurnInput, endTurn } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
-import { type McpRegistryEntry, MCP_REGISTRY } from './mcp-registry.ts';
+import { type McpRegistryEntry, MCP_REGISTRY, resolveMcpEntry } from './mcp-registry.ts';
 import { reposPromptAppend } from './repo-checkout.ts';
 import type { TurnCanvasStore } from './turn-canvas-store.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
@@ -711,12 +711,10 @@ export function buildExternalMcpServers(
 ): Record<string, McpHttpServerConfig> {
   if (!tokens) return {};
   return Object.fromEntries(
-    Object.entries(registry)
-      .filter(([name]) => tokens[name])
-      .map(([name, entry]) => [
-        name,
-        { type: 'http' as const, url: entry.url, headers: { authorization: `Bearer ${tokens[name]}` } },
-      ]),
+    Object.entries(tokens).flatMap(([name, token]) => {
+      const entry = resolveMcpEntry(name, registry);
+      return entry ? [[name, { type: 'http' as const, url: entry.url, headers: { authorization: `Bearer ${token}` } }]] : [];
+    }),
   );
 }
 

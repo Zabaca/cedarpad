@@ -34,6 +34,19 @@ export const MCP_REGISTRY: Readonly<Record<string, McpRegistryEntry>> = {
   ...(process.env.LEDGERBOT_MCP_URL ? { ledgerbot: { url: process.env.LEDGERBOT_MCP_URL, auth: 'bearer' } } : {}),
 };
 
+/** The registry entry a connection name resolves to. A workspace may hold several connections
+ * of one entry, each with its own token — `fredrin` plus `fredrin-cedarpad`, `fredrin-acme`, one
+ * per Fredrin project key — so a name is the entry itself or `<entry>-<label>`. The URL always
+ * comes from the reviewed entry, never from the name, so the registry stays the capability gate. */
+export function resolveMcpEntry(
+  name: string,
+  registry: Readonly<Record<string, McpRegistryEntry>> = MCP_REGISTRY,
+): McpRegistryEntry | undefined {
+  if (Object.hasOwn(registry, name)) return registry[name];
+  const m = /^([a-z0-9]+)-[a-z0-9]+(?:-[a-z0-9]+)*$/.exec(name);
+  return m && Object.hasOwn(registry, m[1]!) ? registry[m[1]!] : undefined;
+}
+
 /** The proxied `/send` header carrying a workspace's connected tokens, keyed by registry
  * server name — the edge's whole answer to "which servers is this workspace enabled for,
  * and with what token" for this turn. A single JSON header (not one-per-server) keeps the
