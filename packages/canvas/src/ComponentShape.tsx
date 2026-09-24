@@ -248,11 +248,14 @@ export function ComponentHost({
 
   // Merge a patch into this shape's `data`. Reads the shape fresh each call so
   // rapid successive updates compose instead of clobbering a stale snapshot.
+  // Keys whose value is `undefined` are dropped: `data` is validated as JSON, and an
+  // undefined value makes that check throw — which blanks the whole tab, not just the card.
   const setData = React.useCallback(
     (patch: Record<string, unknown>) => {
       const cur = editor.getShape(shapeId as never) as { type?: string; props?: { data?: Record<string, unknown> } } | undefined;
       if (!cur || cur.type !== 'component') return;
-      editor.updateShape({ id: shapeId as never, type: 'component', props: { data: { ...(cur.props?.data ?? {}), ...patch } } });
+      const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+      editor.updateShape({ id: shapeId as never, type: 'component', props: { data: { ...(cur.props?.data ?? {}), ...defined } } });
     },
     [editor, shapeId],
   );
