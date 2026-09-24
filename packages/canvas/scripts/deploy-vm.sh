@@ -22,7 +22,7 @@ echo "→ deploying origin/main ($WANT) to $VM"
 
 echo "→ restarting the dev stack onto the new checkout"
 incus exec "$VM" --project zabaca -- sh -c \
-  'P=$(pgrep -f "bun run scripts/dev.ts" | head -1); if [ -n "$P" ]; then kill -TERM "$P"; echo "  stopped pid $P — the next request boots the new code"; else echo "  not running — the next request boots the new code"; fi'
+  'P=$(pgrep -f "[b]un run scripts/dev.ts" | head -1); if [ -n "$P" ]; then kill -TERM "$P"; echo "  stopped pid $P — the next request boots the new code"; else echo "  not running — the next request boots the new code"; fi'
 
 GOT=$(incus exec "$VM" --project zabaca -- cat "$APP/packages/canvas/server/build-rev.txt")
 VERSION=$(incus exec "$VM" --project zabaca -- cat "$APP/packages/canvas/server/version.txt")
