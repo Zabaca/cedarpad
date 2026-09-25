@@ -62,6 +62,7 @@ describe('decideGuestGate — canvas API, scoped by the x-canvas-id the client s
       ['/api/canvas/shapes/update', 'POST'],
       ['/api/canvas/delete', 'POST'],
       ['/api/components/place', 'POST'],
+      ['/api/components/call', 'POST'],
       // Executable component source that hot-reloads into MEMBERS' browsers. Denied on a
       // link that does not grant `guest_edit_source` (#320) — see the capability block below.
       ['/api/components/MyCard', 'PUT'],
@@ -89,6 +90,7 @@ describe('decideGuestGate — canvas API, scoped by the x-canvas-id the client s
       ['/api/canvas/shapes/update', 'POST'],
       ['/api/canvas/delete', 'POST'],
       ['/api/components/place', 'POST'],
+      ['/api/components/call', 'POST'],
       ['/api/canvas/clear', 'POST'],
       // Component DATA files (`write_data` parity) are authoring, not interaction: nothing
       // in #320 grants them, so default-deny keeps them shut.
@@ -113,6 +115,7 @@ describe('decideGuestGate — canvas API, scoped by the x-canvas-id the client s
     expect(allowWith(src, '/api/components/promote', 'PUT', 'cv_g')).toBe(false);
     expect(allowWith(src, '/api/components/adopt', 'PUT', 'cv_g')).toBe(false);
     expect(allowWith(src, '/api/components/place', 'PUT', 'cv_g')).toBe(false);
+    expect(allowWith(src, '/api/components/call', 'PUT', 'cv_g')).toBe(false);
   });
 
   // Interaction and canvas editing happen on the sync socket (#320 §4), so neither adds a

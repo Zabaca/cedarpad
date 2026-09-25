@@ -21,8 +21,7 @@ A component is a React file (`write_component`) rendered inside a card on the ca
 
 ## Actions, commands, methods — what is possible
 
-There is **no way to call a function inside a component**, and a component cannot register
-tools or commands. Two channels exist, one in each direction:
+A component cannot register tools. Three channels exist:
 
 - **Component → you: `sendToAgent(message)`.** The only way a component makes something
   happen outside itself. The message becomes a normal chat turn — a user bubble in the chat,
@@ -40,9 +39,16 @@ tools or commands. Two channels exist, one in each direction:
   receiving turn knows what was asked, and handle the failure — no attached or focused chat
   is a normal state.
 
-- **You → component: data.** `set_component_data` to feed props, `write_data` for a file the
-  component imports (`import rows from "./sales.json"`), a `data_source` to bind a live
-  mart, or `edit_component` to change the code itself.
+- **You → component, preferred: `call_component(id, command, args)`.** When a component
+  exports `commands` (see below), run one of them. `read_component` shows the commands and
+  their `args` schemas. The command runs against the instance's data **as it is now**, so a
+  card someone dragged a second ago survives your edit; bad args come back as an error
+  instead of being written.
+
+- **You → component, raw: data.** `set_component_data` to feed props, `write_data` for a file
+  the component imports (`import rows from "./sales.json"`), a `data_source` to bind a live
+  mart, or `edit_component` to change the code itself. Use `set_component_data` for a
+  component with no commands, or to replace its content wholesale.
 
 Decide which state is whose. State the **component** owns (a selection, a toggle, a draft)
 goes through `setData`; state **you** own (the content you are showing) goes through
@@ -50,7 +56,45 @@ goes through `setData`; state **you** own (the content you are showing) goes thr
 
 **`set_component_data` REPLACES `data`; `setData` merges.** Writing new props wipes anything
 the component saved with `setData` unless you carry it over: `read_canvas` first, then send
-the full object back with your change applied.
+the full object back with your change applied. If the component has commands, use
+`call_component` instead and none of this applies.
+
+## Declaring commands
+
+Declare commands when the data will be edited again and again — boards, lists, trackers,
+checklists. Skip them for a display-only card. Export them from the component's own file,
+next to the default export:
+
+```tsx
+import { z } from 'zod';
+
+export const commands = {
+  addItem: {
+    args: z.object({ text: z.string().min(1) }),
+    run: (data, a) => ({ ...data, items: [...(data.items ?? []), { id: crypto.randomUUID(), text: a.text }] }),
+  },
+};
+
+export default function Checklist({ items = [], setData }) {
+  // The UI calls the SAME reducer, so a button and call_component follow one set of rules.
+  const add = (text) => setData(commands.addItem.run({ items }, { text }));
+  …
+}
+```
+
+Rules:
+
+- **`run(data, args)` is pure.** It gets the current `data` and the parsed args and returns
+  the next `data`. No fetch, no DOM, no React, no `setData` inside it.
+- **Return the whole data object**, spreading what you did not change (`{ ...data, … }`).
+- **Throw an `Error` with a useful message** for a bad reference (an unknown id). The
+  message reaches the caller.
+- **No top-level `window` or `document`** in a file that exports commands. The server
+  imports the file to run the reducers, and there is no DOM there. Touch the DOM inside the
+  component or an effect.
+- Name commands as verbs over the domain (`addCard`, `moveCard`), and give ids and names
+  in `args` a `.describe()`, so the schema reads as documentation.
+- `read_component Kanban` is a worked example.
 
 ## Rules that bite
 

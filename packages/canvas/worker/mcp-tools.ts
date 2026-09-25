@@ -9,6 +9,7 @@ import {
   DeleteShapesBody,
   EditComponentBody,
   PlaceComponentBody,
+  CallComponentBody,
   UpdateShapesBody,
   WriteComponentBody,
   WriteDataBody,
@@ -117,6 +118,7 @@ export const CreateShapesInput = ReadCanvasInput.merge(CreateShapesBody);
 export const UpdateShapesInput = ReadCanvasInput.merge(UpdateShapesBody);
 export const DeleteShapesInput = ReadCanvasInput.merge(DeleteShapesBody);
 export const PlaceComponentInput = ReadCanvasInput.merge(PlaceComponentBody);
+export const CallComponentInput = ReadCanvasInput.merge(CallComponentBody);
 
 /**
  * Line addressing for a component's source (read_component's window, edit_component's range).
@@ -508,6 +510,13 @@ export function buildMcpTools(deps: McpToolDeps) {
       const headers = await canvasHeader(ws.id, input.canvas_id);
       const { workspace_id: _ws, canvas_id: _cv, ...placement } = input;
       return bridgeJson(ws.id, BRIDGE_ROUTES.componentsPlace, { method: 'POST', headers, body: placement });
+    },
+
+    async callComponent(input: z.infer<typeof CallComponentInput>) {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      const { id, command, args } = input;
+      return bridgeJson(ws.id, BRIDGE_ROUTES.componentsCall, { method: 'POST', headers, body: { id, command, args } });
     },
 
     /** Skills are workspace CONTENT (ADR-0013): any member may add one — the same actor

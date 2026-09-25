@@ -9,7 +9,11 @@
 // Interactions (buttons + inputs, so tldraw doesn't steal the pointer — see the
 // isInteractiveControl guard): add a card per column, edit a card's title inline,
 // move a card to the previous/next column (◀ ▶), delete a card (×).
+//
+// Commands: every board edit is a named reducer in `commands`, which the UI calls AND the
+// agent calls through call_component — one set of rules, run against the live data.
 import { type CSSProperties, useState } from 'react';
+import { z } from 'zod';
 
 type Card = { id: string; title: string; desc?: string };
 type Column = { id: string; title: string; cards: Card[] };
@@ -23,6 +27,67 @@ const DEFAULT_COLUMNS: Column[] = [
   { id: 'done', title: 'Done', cards: [] },
 ];
 
+type BoardData = Record<string, unknown>;
+
+const columnsOf = (data: BoardData): Column[] =>
+  Array.isArray(data.columns) && data.columns.length ? (data.columns as Column[]) : DEFAULT_COLUMNS;
+
+const findCard = (cols: Column[], cardId: string): Card => {
+  const card = cols.flatMap((c) => c.cards).find((k) => k.id === cardId);
+  if (!card) throw new Error(`no card "${cardId}"`);
+  return card;
+};
+
+const withoutCard = (cols: Column[], cardId: string): Column[] => cols.map((c) => ({ ...c, cards: c.cards.filter((k) => k.id !== cardId) }));
+
+export const commands = {
+  addCard: {
+    args: z.object({ column: z.string().describe('Column id'), title: z.string().min(1), desc: z.string().optional() }),
+    run: (data: BoardData, a: { column: string; title: string; desc?: string }): BoardData => {
+      const cols = columnsOf(data);
+      if (!cols.some((c) => c.id === a.column)) throw new Error(`no column "${a.column}" (have ${cols.map((c) => c.id).join(', ')})`);
+      const card: Card = { id: uid(), title: a.title, ...(a.desc !== undefined ? { desc: a.desc } : {}) };
+      return { ...data, columns: cols.map((c) => (c.id === a.column ? { ...c, cards: [...c.cards, card] } : c)) };
+    },
+  },
+  moveCard: {
+    args: z.object({ card: z.string().describe('Card id'), to: z.string().describe('Target column id') }),
+    run: (data: BoardData, a: { card: string; to: string }): BoardData => {
+      const cols = columnsOf(data);
+      const card = findCard(cols, a.card);
+      if (!cols.some((c) => c.id === a.to)) throw new Error(`no column "${a.to}" (have ${cols.map((c) => c.id).join(', ')})`);
+      return { ...data, columns: withoutCard(cols, a.card).map((c) => (c.id === a.to ? { ...c, cards: [...c.cards, card] } : c)) };
+    },
+  },
+  editCard: {
+    args: z.object({ card: z.string().describe('Card id'), title: z.string().optional(), desc: z.string().optional() }),
+    run: (data: BoardData, a: { card: string; title?: string; desc?: string }): BoardData => {
+      const cols = columnsOf(data);
+      findCard(cols, a.card);
+      const title = a.title?.trim();
+      return {
+        ...data,
+        columns: cols.map((c) => ({
+          ...c,
+          cards: c.cards.map((k) => (k.id === a.card ? { ...k, ...(title ? { title } : {}), ...(a.desc !== undefined ? { desc: a.desc } : {}) } : k)),
+        })),
+      };
+    },
+  },
+  removeCard: {
+    args: z.object({ card: z.string().describe('Card id') }),
+    run: (data: BoardData, a: { card: string }): BoardData => {
+      const cols = columnsOf(data);
+      findCard(cols, a.card);
+      return { ...data, columns: withoutCard(cols, a.card) };
+    },
+  },
+  renameBoard: {
+    args: z.object({ title: z.string().min(1) }),
+    run: (data: BoardData, a: { title: string }): BoardData => ({ ...data, title: a.title }),
+  },
+};
+
 const COLUMN_ACCENT: Record<string, string> = { todo: '#64748b', doing: '#2563eb', done: '#16a34a' };
 
 export default function Kanban({
@@ -32,47 +97,35 @@ export default function Kanban({
 }: {
   title?: string;
   columns?: Column[];
-  setData?: (patch: { title?: string; columns?: Column[] }) => void;
+  setData?: (patch: BoardData) => void;
 }) {
-  const cols: Column[] = Array.isArray(columns) && columns.length ? columns : DEFAULT_COLUMNS;
-  const commit = (next: Column[]) => setData?.({ columns: next });
+  const cols = columnsOf({ columns });
+  const commit = (next: BoardData) => setData?.({ columns: next.columns });
+  const board: BoardData = { title, columns: cols };
 
   // Local-only UI state: per-column new-card drafts + the card currently being edited.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
 
-  const mapCol = (colId: string, fn: (c: Column) => Column) => cols.map((c) => (c.id === colId ? fn(c) : c));
-
   const addCard = (colId: string) => {
     const t = (drafts[colId] ?? '').trim();
     if (!t) return;
-    commit(mapCol(colId, (c) => ({ ...c, cards: [...c.cards, { id: uid(), title: t }] })));
+    commit(commands.addCard.run(board, { column: colId, title: t }));
     setDrafts((d) => ({ ...d, [colId]: '' }));
   };
 
-  const deleteCard = (colId: string, cardId: string) =>
-    commit(mapCol(colId, (c) => ({ ...c, cards: c.cards.filter((k) => k.id !== cardId) })));
+  const deleteCard = (cardId: string) => commit(commands.removeCard.run(board, { card: cardId }));
 
   // Move a card to the adjacent column (dir -1 = left, +1 = right), keeping it within bounds.
   const moveCard = (colId: string, cardId: string, dir: -1 | 1) => {
-    const from = cols.findIndex((c) => c.id === colId);
-    const to = from + dir;
-    if (from < 0 || to < 0 || to >= cols.length) return;
-    const card = cols[from]?.cards.find((k) => k.id === cardId);
-    if (!card) return;
-    commit(
-      cols.map((c, i) => {
-        if (i === from) return { ...c, cards: c.cards.filter((k) => k.id !== cardId) };
-        if (i === to) return { ...c, cards: [...c.cards, card] };
-        return c;
-      }),
-    );
+    const to = cols[cols.findIndex((c) => c.id === colId) + dir];
+    if (!to) return;
+    commit(commands.moveCard.run(board, { card: cardId, to: to.id }));
   };
 
   const commitEdit = () => {
     if (!editing) return;
-    const value = editing.value.trim();
-    commit(cols.map((c) => ({ ...c, cards: c.cards.map((k) => (k.id === editing.id ? { ...k, title: value || k.title } : k)) })));
+    commit(commands.editCard.run(board, { card: editing.id, title: editing.value }));
     setEditing(null);
   };
 
@@ -123,7 +176,7 @@ export default function Kanban({
                   <div style={{ marginTop: 6, display: 'flex', gap: 4, alignItems: 'center' }}>
                     <button type="button" disabled={ci === 0} onClick={() => moveCard(col.id, card.id, -1)} style={arrowBtn(ci === 0)} title="Move left">◀</button>
                     <button type="button" disabled={ci === cols.length - 1} onClick={() => moveCard(col.id, card.id, 1)} style={arrowBtn(ci === cols.length - 1)} title="Move right">▶</button>
-                    <button type="button" onClick={() => deleteCard(col.id, card.id)} style={{ ...arrowBtn(false), marginLeft: 'auto', color: '#dc2626' }} title="Delete">×</button>
+                    <button type="button" onClick={() => deleteCard(card.id)} style={{ ...arrowBtn(false), marginLeft: 'auto', color: '#dc2626' }} title="Delete">×</button>
                   </div>
                 </div>
               ))}

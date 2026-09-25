@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
-import { bumpAllComponents, nextComponentRev, placeComponentOp, setComponentDataOp } from './canvas-ops';
+import { z } from 'zod';
+
+import { bumpAllComponents, callComponentOp, type ComponentCommands, nextComponentRev, placeComponentOp, setComponentDataOp } from './canvas-ops';
 import { createStore } from './store';
 
 describe('placeComponentOp', () => {
@@ -96,6 +98,76 @@ describe('setComponentDataOp', () => {
     const store = createStore();
     const r = setComponentDataOp(store, 'shape:nope', { a: 1 });
     expect(r.isError).toBe(true);
+  });
+});
+
+describe('callComponentOp', () => {
+  const commands: ComponentCommands = {
+    push: {
+      args: z.object({ item: z.string() }),
+      run: (data: Record<string, unknown>, a: { item: string }) => ({ ...data, items: [...((data.items as string[]) ?? []), a.item] }),
+    },
+  };
+  const placed = (data: Record<string, unknown>) => {
+    const store = createStore();
+    placeComponentOp(store, { module: 'List', x: 0, y: 0, data, rev: 1 });
+    return { store, id: store.getState().shapes[0]!.id };
+  };
+  const dataOf = (store: ReturnType<typeof createStore>) => {
+    const s = store.getState().shapes[0]!;
+    return s.type === 'component' ? s.data : null;
+  };
+
+  test('runs the reducer and stores its result, leaving module/box intact', () => {
+    const { store, id } = placed({ title: 't', items: ['a'] });
+    const r = callComponentOp(store, id, commands, 'push', { item: 'b' });
+    expect(r.isError).toBeUndefined();
+    expect(dataOf(store)).toEqual({ title: 't', items: ['a', 'b'] });
+    expect(store.getState().shapes[0]).toMatchObject({ module: 'List', x: 0, y: 0 });
+  });
+
+  test('the reducer sees the LIVE data, so an edit made after the caller looked survives', () => {
+    const { store, id } = placed({ items: ['a'] });
+    // Someone else edits between the agent reading the canvas and calling the command.
+    setComponentDataOp(store, id, { items: ['a', 'moved-by-human'] });
+    callComponentOp(store, id, commands, 'push', { item: 'from-agent' });
+    expect(dataOf(store)).toEqual({ items: ['a', 'moved-by-human', 'from-agent'] });
+  });
+
+  test('an unknown command lists the available ones and changes nothing', () => {
+    const { store, id } = placed({ items: [] });
+    const r = callComponentOp(store, id, commands, 'pop', {});
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('push');
+    expect(dataOf(store)).toEqual({ items: [] });
+  });
+
+  test('inherited names like "toString" are not commands', () => {
+    const { store, id } = placed({});
+    expect(callComponentOp(store, id, commands, 'toString', {}).isError).toBe(true);
+  });
+
+  test("bad args come back as zod's issues and change nothing", () => {
+    const { store, id } = placed({ items: [] });
+    const r = callComponentOp(store, id, commands, 'push', { item: 3 });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('item');
+    expect(dataOf(store)).toEqual({ items: [] });
+  });
+
+  test('a reducer that throws or returns a non-object is an error, not a write', () => {
+    const { store, id } = placed({ items: [] });
+    const broken: ComponentCommands = {
+      boom: { args: z.object({}), run: () => { throw new Error('nope'); } },
+      bad: { args: z.object({}), run: () => null as unknown as Record<string, unknown> },
+    };
+    expect(callComponentOp(store, id, broken, 'boom', {}).text).toContain('nope');
+    expect(callComponentOp(store, id, broken, 'bad', {}).isError).toBe(true);
+    expect(dataOf(store)).toEqual({ items: [] });
+  });
+
+  test('errors on a non-component id', () => {
+    expect(callComponentOp(createStore(), 'shape:nope', commands, 'push', { item: 'x' }).isError).toBe(true);
   });
 });
 

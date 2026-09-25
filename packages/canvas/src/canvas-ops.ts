@@ -8,6 +8,7 @@ import type { CanvasStore } from './store';
 import { normalizeShape } from './normalize';
 import { shapesOnPage } from './current-page';
 import type { DataSource } from '../shared/mart-contract';
+import type { ZodTypeAny } from 'zod';
 
 export interface OpResult {
   text: string;
@@ -426,6 +427,47 @@ export function setComponentDataOp(store: CanvasStore, id: string, data: Record<
   if (!existing || existing.type !== 'component') return { text: `Error: no component shape with id "${id}"`, isError: true };
   store.upsert([{ ...existing, data, ...(dataSource !== undefined ? { dataSource } : {}) }]);
   return { text: `Updated data for ${id}.` };
+}
+
+/** One named edit a component declares in its `commands` export: a zod schema for the
+ * arguments and a pure reducer from the current data to the next. */
+export interface ComponentCommand {
+  args: ZodTypeAny;
+  run: (data: Record<string, unknown>, args: never) => Record<string, unknown>;
+}
+export type ComponentCommands = Record<string, ComponentCommand>;
+
+/**
+ * Run one of a component's declared commands against an instance. The reducer reads the
+ * instance's data as it is NOW, not a snapshot the caller read earlier, so an edit someone
+ * made a second ago survives — the difference from `setComponentDataOp`, which replaces
+ * whatever is there. Unknown commands and bad args are refused without touching the store.
+ */
+export function callComponentOp(store: CanvasStore, id: string, commands: ComponentCommands, command: string, args: unknown): OpResult {
+  const existing = store.getState().shapes.find((s) => s.id === id);
+  if (!existing || existing.type !== 'component') return { text: `Error: no component shape with id "${id}"`, isError: true };
+  const names = Object.keys(commands);
+  const cmd = Object.hasOwn(commands, command) ? commands[command] : undefined;
+  if (!cmd) {
+    const available = names.length ? names.join(', ') : '(none — this component exports no commands; use set_component_data)';
+    return { text: `Error: <${existing.module}> has no command "${command}". Available: ${available}`, isError: true };
+  }
+  const parsed = cmd.args.safeParse(args);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((i) => `${i.path.join('.') || '(args)'}: ${i.message}`).join('; ');
+    return { text: `Error: bad args for ${existing.module}.${command} — ${issues}`, isError: true };
+  }
+  let data: unknown;
+  try {
+    data = cmd.run(existing.data, parsed.data as never);
+  } catch (e) {
+    return { text: `Error: ${existing.module}.${command} threw: ${(e as Error).message}`, isError: true };
+  }
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return { text: `Error: ${existing.module}.${command} must return the next data object`, isError: true };
+  }
+  store.upsert([{ ...existing, data: data as Record<string, unknown> }]);
+  return { text: `Ran ${existing.module}.${command} on ${id}.` };
 }
 
 /** A rev greater than any component shape's current rev — guarantees a reload. */

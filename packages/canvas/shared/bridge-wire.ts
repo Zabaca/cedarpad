@@ -173,6 +173,13 @@ export const PlaceComponentBody = z.object({
   /** #239 / ADR-0017: a component names a mart, never a URL — this IS the boundary. */
   dataSource: DataSourceSchema.optional(),
 });
+/** Run one of a placed component's declared `commands` against its live data. `args` stays a
+ *  loose record here: the command's own zod schema, exported by the component, validates it. */
+export const CallComponentBody = z.object({
+  id: z.string().min(1),
+  command: z.string().min(1),
+  args: z.record(z.unknown()).default({}),
+});
 export const WriteComponentBody = z.object({ source: z.string().min(1) });
 /**
  * A CONTENT-anchored edit: `old_string` becomes `new_string`. The anchor must occur exactly
@@ -262,6 +269,7 @@ export const BRIDGE_ROUTES = {
   deleteShapes: '/api/canvas/delete',
   components: '/api/components',
   componentsPlace: '/api/components/place',
+  componentsCall: '/api/components/call',
   selectPage: '/api/canvas/select-page',
 } as const;
 

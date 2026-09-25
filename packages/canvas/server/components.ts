@@ -289,18 +289,27 @@ export async function readComponent(
   canvasId: string = DEFAULT_CANVAS_ID,
   records: ComponentRecords | null = componentRecordStore,
 ): Promise<string> {
+  return readFileSync(await resolveComponentFile(module, canvasId, records), 'utf8');
+}
+
+/**
+ * The file a canvas resolves `module` to — the same walk `readComponent` does, materializing
+ * a Record-only tier onto disk on the way — as a PATH, for callers that import the module
+ * rather than read it (`call_component` loads its `commands` export).
+ */
+export async function resolveComponentFile(
+  module: string,
+  canvasId: string = DEFAULT_CANVAS_ID,
+  records: ComponentRecords | null = componentRecordStore,
+): Promise<string> {
   const own = fileIn(ownDir(canvasId), module);
-  if (existsSync(own)) return readFileSync(own, 'utf8');
-  const ownRecord = await materializeComponent(module, canvasId, records);
-  if (ownRecord !== null) return ownRecord;
+  if (existsSync(own) || (await materializeComponent(module, canvasId, records)) !== null) return own;
 
   const shared = fileIn(SHARED_DIR, module);
-  if (existsSync(shared)) return readFileSync(shared, 'utf8');
-  const sharedRecord = await materializeSharedComponent(module, canvasId, records);
-  if (sharedRecord !== null) return sharedRecord;
+  if (existsSync(shared) || (await materializeSharedComponent(module, canvasId, records)) !== null) return shared;
 
   const base = baseFile(module);
-  if (base) return readFileSync(base, 'utf8');
+  if (base) return base;
   throw new Error(`component "${module}" does not exist (list_components to see what does)`);
 }
 

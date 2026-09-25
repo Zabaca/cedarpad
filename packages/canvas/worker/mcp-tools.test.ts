@@ -557,6 +557,22 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(bridgeCalls).toEqual([]);
   });
 
+  test('call_component proxies the call route with only id/command/args, canvas-scoped and access-checked', async () => {
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'Commands' });
+    bridgeResponses = { '/api/components/call': { text: 'Ran Kanban.addCard on cmp_1.' } };
+    bridgeCalls = [];
+
+    await tools.callComponent({ workspace_id: WS, canvas_id: board.id, id: 'cmp_1', command: 'addCard', args: { column: 'todo', title: 'x' } });
+
+    expect(bridgeCalls.map((c) => [c.path, c.method])).toEqual([['/api/components/call', 'POST']]);
+    expect(bridgeCalls[0]?.headers['x-canvas-id']).toBe(board.id);
+    expect(bridgeCalls[0]?.body).toEqual({ id: 'cmp_1', command: 'addCard', args: { column: 'todo', title: 'x' } });
+
+    bridgeCalls = [];
+    await expect(tools.callComponent({ workspace_id: OTHER_WS, id: 'cmp_1', command: 'addCard', args: {} })).rejects.toThrow(/not found/);
+    expect(bridgeCalls).toEqual([]);
+  });
+
   test('list_inbox lists the WHOLE workspace’s conversations (shared inbox), with assigned_to', async () => {
     const res = await tools.listInbox({ workspace_id: WS });
     expect(res.items.map((i) => i.chat_id)).toContain('mcp_test_read');

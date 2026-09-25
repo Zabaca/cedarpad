@@ -45,6 +45,7 @@ import {
   LIVEKIT_API_SECRET_HEADER,
   LIVEKIT_URL_HEADER,
   PlaceComponentBody,
+  CallComponentBody,
   SelectPageBody,
   UpdateShapesBody,
   WriteComponentBody,
@@ -53,6 +54,7 @@ import {
   decodeForwardedPairing,
   wireError,
 } from '../shared/bridge-wire.ts';
+import { callComponent } from './component-commands.ts';
 import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { refreshCheckout, removeCheckout } from './repo-checkout.ts';
 import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
@@ -977,6 +979,13 @@ export async function handleRequest(req: Request): Promise<Response> {
       const parsed = PlaceComponentBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
       return inRoom(canvasIdFrom(req, url), (store) => placeComponentOp(store, { ...parsed.data, rev: nextComponentRev(store) }));
+    }
+    if (path === BRIDGE_ROUTES.componentsCall && req.method === 'POST') {
+      const parsed = CallComponentBody.safeParse(await readBody(req));
+      if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
+      const { id, command, args } = parsed.data;
+      const cid = canvasIdFrom(req, url);
+      return inRoom(cid, (store) => callComponent(store, cid, id, command, args));
     }
 
     // The component library over the wire (MCP full access): the edge MCP tools proxy

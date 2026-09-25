@@ -39,7 +39,7 @@ const VITE_PREFIXES = ['/src/', '/shared/', '/@vite/', '/@fs/', '/@id/', '/node_
  *    /api/canvas/stream`) are served by the read-only room connection now (#294). Leaving
  *    them listed would have authorized a guest to reach a route that no longer answers.
  *  - The canvas WRITES (`/api/canvas/shapes`, `/shapes/create`, `/shapes/update`,
- *    `/api/canvas/delete`, `/api/components/place`) contradicted #294's read-only
+ *    `/api/canvas/delete`, `/api/components/place`, and later `/api/components/call`) contradicted #294's read-only
  *    WebSocket, and since #305 they wrote to the room under the CONTAINER's service
  *    credential — a guest's write, authorized as the container. Closed here.
  *
@@ -54,7 +54,7 @@ const COMPONENT_MODULE = /^\/api\/components\/(?:data\/)?([^/]+)$/;
  * here and nowhere else (#320): the data-file route is authoring with no grant behind it,
  * and promote/adopt reach the workspace-shared tier, outside the invite under every flag. */
 const COMPONENT_SOURCE = /^\/api\/components\/([^/]+)$/;
-const COMPONENT_DENY = new Set(['promote', 'adopt', 'place']);
+const COMPONENT_DENY = new Set(['promote', 'adopt', 'place', 'call']);
 
 /**
  * @param caps What this link permits, from `guestCapabilities(liveLinkRow)` — the ONE

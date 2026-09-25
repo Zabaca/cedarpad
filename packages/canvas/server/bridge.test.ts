@@ -1049,6 +1049,31 @@ describe('POST /api/canvas/shapes/{create,update} + /api/components/place — di
     expect(typeof comp.rev).toBe('number');
   });
 
+  // Component commands over the wire: the bridge resolves the instance's module, imports its
+  // `commands`, and runs one against the live data. Kanban is the platform pilot.
+  test('call_component: runs a platform component command against the instance data', async () => {
+    await post('/api/components/place', { module: 'Kanban', x: 0, y: 0, data: { title: 'Ops' } });
+    const board = (await readShapes()).find((s) => s.type === 'component' && s.module === 'Kanban')!;
+    const called = await post('/api/components/call', { id: board.id, command: 'addCard', args: { column: 'doing', title: 'Ship it' } });
+    expect(called.status).toBe(200);
+    const after = (await readShapes()).find((s) => s.id === board.id)!;
+    const cols = (after.data as { title: string; columns: Array<{ id: string; cards: Array<{ title: string }> }> }).columns;
+    expect((after.data as { title: string }).title).toBe('Ops');
+    expect(cols.find((c) => c.id === 'doing')?.cards.map((k) => k.title)).toEqual(['Ship it']);
+  });
+
+  test('call_component: an unknown command, bad args, or a missing id is a 400 naming the problem', async () => {
+    await post('/api/components/place', { module: 'Kanban', x: 0, y: 0 });
+    const board = (await readShapes()).find((s) => s.type === 'component' && s.module === 'Kanban')!;
+    const unknown = await post('/api/components/call', { id: board.id, command: 'launch', args: {} });
+    expect(unknown.status).toBe(400);
+    expect(((await unknown.json()) as { error: string }).error).toContain('addCard');
+    const bad = await post('/api/components/call', { id: board.id, command: 'addCard', args: { column: 'todo' } });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toContain('title');
+    expect((await post('/api/components/call', { command: 'addCard' })).status).toBe(400);
+  });
+
   test('bad inputs are 400s: empty batch, unknown update id, missing module', async () => {
     expect((await post('/api/canvas/shapes/create', { shapes: [] })).status).toBe(400);
     expect((await post('/api/canvas/shapes/update', { shapes: [{ id: 'zz_ghost', text: 'x' }] })).status).toBe(400);

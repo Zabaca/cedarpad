@@ -25,6 +25,7 @@ import {
   SelectPageInput,
   ListInboxInput,
   PlaceComponentInput,
+  CallComponentInput,
   ReadCanvasPageInput,
   ReadComponentInput,
   ReadConversationInput,
@@ -314,6 +315,15 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         inputSchema: PlaceComponentInput.shape,
       },
       async (input) => text(await tools.placeComponent(input)),
+    );
+    server.registerTool(
+      'call_component',
+      {
+        description:
+          "Run one of a placed component's declared COMMANDS — a named, typed edit the component exports as `commands` (read_component shows them and their zod `args`). The command runs against the instance's data as it is NOW, so it never overwrites someone's concurrent edit, and its args are checked. Prefer it over re-sending the whole `data` via place_component whenever the component exports commands.",
+        inputSchema: CallComponentInput.shape,
+      },
+      async (input) => text(await tools.callComponent(input)),
     );
 
     server.registerTool(

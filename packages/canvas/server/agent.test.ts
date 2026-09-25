@@ -159,6 +159,28 @@ describe('the minting tools tell the agent to keep the ids they return (#327)', 
   });
 });
 
+// Component commands: a raw data write replaces whatever is there, so the agent has to be
+// told to reach for the component's own typed edit when one exists — and the prompt must
+// only promise a tool that is actually registered (#357's rule).
+describe('call_component is the offered way to edit a component that declares commands', () => {
+  const tools = () => createCanvasTools(createStore([])) as Array<{ name: string; description: string }>;
+
+  test('the tool is registered and says it edits the live data', () => {
+    const def = tools().find((t) => t.name === 'call_component');
+    expect(def?.description).toMatch(/commands/);
+    expect(def?.description).toMatch(/as it is NOW/);
+  });
+
+  test('set_component_data points at call_component, and so does the prompt', () => {
+    expect(tools().find((t) => t.name === 'set_component_data')?.description).toContain('use call_component');
+    expect(CANVAS_APPEND).toContain('call_component');
+  });
+
+  test('write_component allows zod for command args', () => {
+    expect(tools().find((t) => t.name === 'write_component')?.description).toMatch(/"zod"/);
+  });
+});
+
 // #357: the custom-handler feature is gone. It was only ever reachable through the shell —
 // no tool authored one — so the prompt was telling the agent it had a capability the
 // registered tool surface never gave it. The prompt must not name it, and must not name its

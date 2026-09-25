@@ -34,6 +34,18 @@ New platform components go in `src/canvas-components/`. See `src/component-loade
   an `accent` prop defaulting to `#4a9eff` is the house pattern. Match the terse style
   of existing cards (`MarkdownCard.tsx`, `JsonCard.tsx`).
 
+## Commands — editable data
+
+A platform component whose `data` gets edited (a board, list, tracker) exports
+`commands`: named `{ args: zod schema, run: (data, args) => nextData }` pure reducers.
+The agent runs them with `call_component`, which reads the instance's LIVE data, so
+concurrent edits survive; the UI calls the same `run` and passes the result to `setData`.
+`Kanban.tsx` is the pilot. Loading goes through `server/component-commands.ts`, which
+imports the file under Bun on the server, so no top-level `window`/`document` in a file
+with commands. Unit-test every reducer in a plain `.test.ts` (`Kanban.test.ts`). The
+authoring rules the chat agent follows are in
+`platform-skills/skills/component-authoring/SKILL.md`.
+
 ## Pointer events — the #1 trap
 
 `ComponentShape` (via `InteractiveBoxShapeUtil`) uses **capture-phase guards**: a
