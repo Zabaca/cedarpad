@@ -5,7 +5,7 @@ import { type CanvasRow, canvases } from "../schema.js";
 /**
  * Canvas registry (ADR-0007, PRD #48). The per-workspace, edge-queryable INDEX
  * of canvases — which canvases exist and their names. Canvas *state* lives in R2
- * (ADR-0001), never here. Backend only; nothing consumes it until slice #53.
+ * (ADR-0001), never here.
  */
 
 const newCanvasId = () => `cv_${crypto.randomUUID()}`;
