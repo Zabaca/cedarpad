@@ -5,6 +5,7 @@ import { onChatFrame, openFrameSignal, setChatKind, setConnectionTarget } from '
 import { DEV_AGENT_CHAT_KIND } from '../../../shared/bridge-wire';
 import { FOCUS_CHAT, postToPad } from '../../../shared/dock-messages';
 import type { InboxChatResponse, InboxItem, InboxListResponse, InboxView } from './contract';
+import type { WorkspaceMemberView } from '../../../web-poc/lib/db/queries/workspaces.js';
 import { padUrlFor } from './inbox-pad-url';
 import { thirdPane } from './inbox-third-pane';
 import {
@@ -55,7 +56,7 @@ const bridgePrefix = (convId: string): string => `/inbox/${encodeURIComponent(co
 const preview = (it: InboxItem): string => it.lastMessagePreview ?? it.summary ?? '';
 
 /** One roster row (worker/members.ts GET) — the assignee filter's options + chip names. */
-type Member = { userId: string; name: string; email: string; role: 'owner' | 'member' };
+type Member = WorkspaceMemberView;
 
 export function InboxStage({ workspaceId }: { workspaceId?: string } = {}) {
   // Filters + selection are URL-persisted: a reload lands back on the same view/selected

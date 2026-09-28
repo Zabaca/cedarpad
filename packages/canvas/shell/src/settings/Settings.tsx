@@ -9,7 +9,9 @@ import { disablePush, enablePush, pushState, type PushState } from '../push.ts';
 //
 // The Repository-connection section (#193) joins this stage next.
 
-type MemberView = { userId: string; name: string; email: string; role: 'owner' | 'member' };
+// The roster row is the platform data layer's own type (CLAUDE.md §7) — type-only, so the
+// shell bundle never pulls the query module in.
+import type { WorkspaceMemberView as MemberView } from '../../../web-poc/lib/db/queries/workspaces.js';
 type InvitationView = { token: string; email: string; url: string; expiresAt: number };
 type GrantedRepo = { fullName: string; defaultBranch: string; protected: boolean };
 // ADR-0016: a PAT-backed repo row with its live badges. `unreachable` = the stored token
