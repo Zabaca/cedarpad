@@ -652,7 +652,7 @@ chat-card means a single tab with a few chats + the canvas stream saturates the 
 and starves every POST (`/send`, shape upserts) into "pending". A session's output
 is visible regardless of who triggered it (the chat card, another client, or an
 on-canvas component posting to `/send`). Session state (transcript, resume token,
-SSE subscription) lives in the client-side `src/chat-store.ts` singleton, keyed
+SSE subscription) lives in the client-side `shared/chat-store.ts` singleton, keyed
 by chat id and **independent of any React component** — so a chat card culled by
 tldraw when scrolled off-screen keeps streaming; the SSE closes only when the
 chat shape is deleted (`App` watches the editor for removed `chat` shapes).
@@ -665,12 +665,12 @@ resume token (echo the last `done`'s `sessionId` back on the next `/send`); it i
 distinct from the chat `:id`.
 
 Each frame on that stream is a **`ChatFrame`** (a `ChatEvent` tagged with its
-`chatId`). **`ChatEvent`** is discriminated on `kind` ∈ `delta`, `tool_start`,
-`tool`, `thinking`, `tool_progress`, `task`, `todo`, `done`. The canonical type, its
+`chatId`). **`ChatEvent`** is discriminated on `kind` ∈ `init`, `delta`, `tool_start`,
+`tool`, `thinking`, `tool_progress`, `task`, `todo`, `done`, `config`. The canonical type, its
 kind list, and the `isChatFrame` routing guard live in ONE place (code:
 `shared/chat-wire.ts`), imported by the producer (`server/bridge.ts`), the
 source-of-truth stream (`server/agent.ts`), and the consumer/router
-(`src/chat-store.ts`), so a new kind is added once and read once.
+(`shared/chat-store.ts`, whose router fails to compile on an unrouted kind), so a new kind is added once and read once.
 _Avoid_: re-declaring the kinds in any of those three modules.
 
 ## Agent tools (`server/agent.ts` → `src/canvas-ops.ts`)

@@ -506,7 +506,8 @@ function applyEvent(chatId: string, ev: ChatEvent) {
     update(chatId, (s) => ({ ...s, sdk: ev.sessionId, busy: true, status: s.busy ? s.status : 'working' }));
     return;
   }
-  if (ev.kind === 'delta' && ev.text) {
+  if (ev.kind === 'delta') {
+    if (!ev.text) return;
     const key = bubbleKey(chatId, ev.parentId);
     if (ev.role === 'user') {
       // Replay-only: the human's own message (live path adds these locally). A standalone
@@ -559,7 +560,8 @@ function applyEvent(chatId: string, ev: ChatEvent) {
     if (typeof q === 'string' && q) {
       update(chatId, (s) => ({ ...s, items: [...s.items, { id: nextItemId(), kind: 'msg', role: 'agent', text: q }] }));
     }
-  } else if (ev.kind === 'task' && ev.taskId) {
+  } else if (ev.kind === 'task') {
+    if (!ev.taskId) return;
     const taskId = ev.taskId;
     const terminal = !!ev.status && TERMINAL.has(ev.status);
     update(chatId, (s) => {
@@ -588,7 +590,8 @@ function applyEvent(chatId: string, ev: ChatEvent) {
         : s.items;
       return { ...s, tasks, items };
     });
-  } else if (ev.kind === 'todo' && ev.todoId) {
+  } else if (ev.kind === 'todo') {
+    if (!ev.todoId) return;
     const todoId = ev.todoId;
     update(chatId, (s) => {
       const todos = { ...s.todos };
@@ -620,6 +623,11 @@ function applyEvent(chatId: string, ev: ChatEvent) {
       update(chatId, (s) => ({ ...s, queue: s.queue.slice(1) }));
       void dispatchSend(chatId, next.message, next.images);
     }
+  } else {
+    // Exhaustiveness guard: a new ChatEvent kind (shared/chat-wire.ts) must be routed
+    // above, or this fails to compile — the wire's "added once, read once" contract.
+    const _exhaustive: never = ev;
+    return _exhaustive;
   }
 }
 

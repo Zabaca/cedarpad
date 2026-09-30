@@ -323,6 +323,16 @@ describe('routeChatFrame: the SSE chat routing seam', () => {
       c.check(getSnapshot(id));
     });
   }
+
+  test('an empty delta, an id-less task, and an id-less todo are no-ops', () => {
+    const id = 'chat_kind_empty';
+    ensureSession(id);
+    const before = getSnapshot(id);
+    routeChatFrame(frame(id, { kind: 'delta', text: '' }));
+    routeChatFrame(frame(id, { kind: 'task', taskId: '', status: 'running' }));
+    routeChatFrame(frame(id, { kind: 'todo', todoId: '', subject: 'x' }));
+    expect(getSnapshot(id)).toEqual(before);
+  });
 });
 
 describe('isChatFrame', () => {
