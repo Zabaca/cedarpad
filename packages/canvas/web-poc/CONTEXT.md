@@ -66,8 +66,10 @@ A resolution attached to an Observation or a Problem.
   are **Origin** and **Source**, and they are different columns.
 - Root CONTEXT.md says Notebook records are isolated per platform workspace; the
   surviving graph reads in `lib/db/queries/graph.ts` (problem context, neighborhood,
-  solved neighbours) still are not — resolved: **isolation is the rule**, one shared
-  pool *per workspace*, and those unscoped reads are a defect to close.
+  solved neighbours) were not — resolved: **isolation is the rule**, one shared
+  pool *per workspace*. Closed in #395: `getProblemContext` and `neighborhood` are
+  confined to their `workspaceId`, and the solved-neighbours read is gone
+  (pinned by `worker/workspace-scoping.test.ts`).
 
 ## Layout
 
