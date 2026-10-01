@@ -172,9 +172,9 @@ Inbox row, no `ChatMeta`, no assignee, no `waiting_on`. It is an **operator surf
 nearer `wrangler tail` than a chat, so [ADR-0012](../../docs/adr/0012-every-turn-ends-with-end-turn.md)'s
 end-turn law never applies to it — a tty has no turns to end. Owner-only is a
 deliberate hold on capability, **not** a containment claim: a *member* already has an
-unsandboxed root shell via chat (`server/agent.ts:693` disallows only
-`Write`/`Edit`/`NotebookEdit` — "Bash remains, so this steers the model rather than
-sandboxing it"), so the narrower gate buys the option to tighten later, not isolation
+unsandboxed root shell via chat (`runChat`'s `disallowedTools` in `server/agent.ts` disallows only
+`Write`/`Edit`/`NotebookEdit` — Bash remains, so this steers the model rather than
+sandboxing it), so the narrower gate buys the option to tighten later, not isolation
 today. Guests are denied by construction (`worker/guest-gate.ts` is a default-deny path
 allowlist). Never a wake-lock — a dismissed Console releases its socket after a grace
 period so the container's normal idle sleep proceeds; continuity across a sleep comes
@@ -652,7 +652,7 @@ chat-card means a single tab with a few chats + the canvas stream saturates the 
 and starves every POST (`/send`, shape upserts) into "pending". A session's output
 is visible regardless of who triggered it (the chat card, another client, or an
 on-canvas component posting to `/send`). Session state (transcript, resume token,
-SSE subscription) lives in the client-side `src/chat-store.ts` singleton, keyed
+SSE subscription) lives in the client-side `shared/chat-store.ts` singleton, keyed
 by chat id and **independent of any React component** — so a chat card culled by
 tldraw when scrolled off-screen keeps streaming; the SSE closes only when the
 chat shape is deleted (`App` watches the editor for removed `chat` shapes).
@@ -670,7 +670,7 @@ Each frame on that stream is a **`ChatFrame`** (a `ChatEvent` tagged with its
 kind list, and the `isChatFrame` routing guard live in ONE place (code:
 `shared/chat-wire.ts`), imported by the producer (`server/bridge.ts`), the
 source-of-truth stream (`server/agent.ts`), and the consumer/router
-(`src/chat-store.ts`), so a new kind is added once and read once.
+(`shared/chat-store.ts`), so a new kind is added once and read once.
 _Avoid_: re-declaring the kinds in any of those three modules.
 
 ## Agent tools (`server/agent.ts` → `src/canvas-ops.ts`)
