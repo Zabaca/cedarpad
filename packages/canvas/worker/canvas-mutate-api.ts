@@ -30,8 +30,7 @@ async function isContainer(request: Request, env: Env): Promise<boolean> {
   return !!secret && !!presented && (await verifyCanvasMutateToken(secret, presented));
 }
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 /**
  * Authorize, parse the contract, and hand the mutation to the canvas's room.

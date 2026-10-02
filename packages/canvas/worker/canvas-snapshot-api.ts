@@ -47,8 +47,7 @@ export function parseCanvasSnapshotPath(pathname: string): string | null {
   return SNAPSHOT_ROUTE.exec(pathname)?.[1] ?? null;
 }
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 /** Better Auth's admin role — the same `user.role === 'admin'` the waitlist view gates on
  *  (worker/admin.ts, ADR-0014). No signup path sets it. */
