@@ -5,7 +5,7 @@ The cedarpad-side consumer of `zbc` modules: per-environment infrastructure inst
 ## Language
 
 **Module**:
-A reusable infrastructure primitive — a zod `configSchema` + `apply`/`destroy` logic, defined via `defineModule`. Lives under `packages/infra/modules/<name>/` (consumed from zbc; not authored here). Embodies the **infrastructure-as-code** principle.
+A reusable infrastructure primitive — a zod `configSchema` + `apply`/`destroy` logic, defined via `defineModule`. Lives under `vendor/zbc/modules/<name>/` (the vendored zbc subtree, imported by relative path from `environments/`; not authored here). Embodies the **infrastructure-as-code** principle.
 _Avoid_: provider, plugin, resource type
 
 **Environment**:
