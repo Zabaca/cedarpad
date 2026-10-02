@@ -172,9 +172,9 @@ Inbox row, no `ChatMeta`, no assignee, no `waiting_on`. It is an **operator surf
 nearer `wrangler tail` than a chat, so [ADR-0012](../../docs/adr/0012-every-turn-ends-with-end-turn.md)'s
 end-turn law never applies to it — a tty has no turns to end. Owner-only is a
 deliberate hold on capability, **not** a containment claim: a *member* already has an
-unsandboxed root shell via chat (`server/agent.ts:693` disallows only
-`Write`/`Edit`/`NotebookEdit` — "Bash remains, so this steers the model rather than
-sandboxing it"), so the narrower gate buys the option to tighten later, not isolation
+unsandboxed root shell via chat (a chat turn's `disallowedTools` in `server/agent.ts`
+drops only `Write`/`Edit`/`NotebookEdit`, plus any MCP tools the chat de-selected — Bash
+remains, so this steers the model rather than sandboxing it), so the narrower gate buys the option to tighten later, not isolation
 today. Guests are denied by construction (`worker/guest-gate.ts` is a default-deny path
 allowlist). Never a wake-lock — a dismissed Console releases its socket after a grace
 period so the container's normal idle sleep proceeds; continuity across a sleep comes
