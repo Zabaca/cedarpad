@@ -15,8 +15,8 @@ export type TaskStatus = 'running' | 'pending' | 'paused' | 'completed' | 'faile
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'deleted';
 
 /**
- * The typed event stream one chat turn emits, discriminated on `kind`. The 9 kinds:
- * `init` | `delta` | `tool_start` | `tool` | `thinking` | `tool_progress` | `task` | `todo` | `done`.
+ * The typed event stream one chat turn emits, discriminated on `kind`. The 10 kinds:
+ * `init` | `delta` | `tool_start` | `tool` | `thinking` | `tool_progress` | `task` | `todo` | `done` | `config`.
  *
  * `parentId` (= the spawning Task tool_use id) is set on events that came from a
  * subagent, so the UI nests them under that Task chip. Absent = the main agent.
