@@ -2,7 +2,6 @@ import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { resolveConversationById } from './access.ts';
 import { effectiveMcpTokens } from './mcp-tokens-proxy.ts';
 import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
-import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { MCP_TOKENS_HEADER, encodeMcpTokens } from '../server/mcp-registry.ts';
 import type { GateUser } from './auth-gate.ts';
@@ -36,7 +35,7 @@ import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 // proxy, kept SEPARATE from the edge Inbox list/detail API (`inbox.ts`) so the Worker's test
 // can exercise the real proxy while still stubbing that D1/R2-backed list handler.
 
-const db = (env: Env) => createDbForWorker(env as unknown as Bindings);
+const db = (env: Env) => createDbForWorker(env);
 
 /**
  * Resolve a Conversation's workspace to its owning runner's coordinates: the legacy

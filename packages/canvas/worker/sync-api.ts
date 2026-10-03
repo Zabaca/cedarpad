@@ -1,4 +1,3 @@
-import type { Bindings } from '../web-poc/worker/context.ts';
 import { resolveCanvasWorkspace } from './access.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
@@ -23,7 +22,7 @@ export function parseSyncPath(pathname: string): string | null {
 /** May this user reach this canvas? `resolveCanvasWorkspace` is the existing composition
  *  seam (worker/access.ts): workspace membership AND ADR-0016 visibility, failing closed. */
 export async function canReachCanvas(env: Env, canvasId: string, userId: string): Promise<boolean> {
-  const db = createDbForWorker(env as unknown as Bindings);
+  const db = createDbForWorker(env);
   return !!(await resolveCanvasWorkspace(db, canvasId, userId));
 }
 
@@ -61,7 +60,7 @@ export async function resolveSyncGuest(
   const guest = await readGuestSession(request.headers.get('cookie'), env.BETTER_AUTH_SECRET);
   if (!guest || guest.canvasId !== canvasId) return null;
   const lookup =
-    getLink ?? ((id: string) => getActiveShareLink(createDbForWorker(env as unknown as Bindings), id));
+    getLink ?? ((id: string) => getActiveShareLink(createDbForWorker(env), id));
   const live = await lookup(guest.linkId);
   if (!live || live.canvasId !== canvasId) return null;
   // The component-scoped narrowing is the COOKIE's (the link row carries it too, but the

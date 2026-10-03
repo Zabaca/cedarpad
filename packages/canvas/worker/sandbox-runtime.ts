@@ -1,5 +1,4 @@
 import { getSandbox } from '@cloudflare/sandbox';
-import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { resolveConnectorEnv } from './connector-secrets.ts';
 import type { Env } from './index.ts';
@@ -58,7 +57,7 @@ export const warehouseExec = async (env: Env, coords: SandboxCoords) => {
   // Connector secrets (#241): decrypted per-workspace so the pipeline's dlt sources can
   // read from them. `coords.canvasWorkspace` is the same id the R2 prefix and the DB
   // workspace row share (v1: one container = one workspace).
-  const connectorEnv = await resolveConnectorEnv(env, createDbForWorker(env as unknown as Bindings), coords.canvasWorkspace);
+  const connectorEnv = await resolveConnectorEnv(env, createDbForWorker(env), coords.canvasWorkspace);
   const result = await sandbox.exec(MATERIALIZE_COMMAND, {
     cwd: CANVAS_CONTAINER_CWD,
     // CANVAS_WORKSPACE scopes the pipeline's R2 read/write, same key the canvas

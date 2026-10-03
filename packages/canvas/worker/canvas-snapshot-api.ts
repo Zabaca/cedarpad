@@ -33,7 +33,6 @@ import {
   verifyCanvasOperatorToken,
 } from '../shared/canvas-operator-token.ts';
 import { user as userTable } from '../web-poc/lib/db/schema.ts';
-import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
@@ -53,7 +52,7 @@ const json = (body: unknown, status = 200) =>
 /** Better Auth's admin role — the same `user.role === 'admin'` the waitlist view gates on
  *  (worker/admin.ts, ADR-0014). No signup path sets it. */
 async function isAdminUser(env: Env, userId: string): Promise<boolean> {
-  const db = createDbForWorker(env as unknown as Bindings);
+  const db = createDbForWorker(env);
   const [row] = await db.select({ role: userTable.role }).from(userTable).where(eq(userTable.id, userId)).limit(1);
   return row?.role === 'admin';
 }

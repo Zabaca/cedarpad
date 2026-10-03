@@ -1,4 +1,3 @@
-import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { listTokens } from '../web-poc/lib/db/queries/mcp-tokens.ts';
 import { MCP_TOKENS_HEADER, encodeMcpTokens } from '../server/mcp-registry.ts';
@@ -31,7 +30,7 @@ function envFredrinTokens(env: Env): Record<string, string> {
 }
 
 export async function effectiveMcpTokens(env: Env, workspaceId: string): Promise<Record<string, string>> {
-  const stored = await listTokens(createDbForWorker(env as unknown as Bindings), workspaceId);
+  const stored = await listTokens(createDbForWorker(env), workspaceId);
   return workspaceId === 'default' ? { ...envFredrinTokens(env), ...stored } : stored;
 }
 

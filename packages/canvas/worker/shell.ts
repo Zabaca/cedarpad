@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { Bindings } from '../web-poc/worker/context.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { createWorkspace, getWorkspace, listWorkspaces, setCanvasOrder } from '../web-poc/lib/db/queries/workspaces.ts';
@@ -17,7 +16,7 @@ import { canvasHiddenFrom, mayFlipCanvas } from './visibility.ts';
 // listing/creating a workspace never wakes a container. The PURE routing/selection
 // decisions live in `shell-routing.ts`.
 
-const db = (env: Env) => createDbForWorker(env as unknown as Bindings);
+const db = (env: Env) => createDbForWorker(env);
 
 // Single contract for the registry API payloads (CLAUDE.md §7): both the launcher's
 // inline client and this handler speak these shapes.

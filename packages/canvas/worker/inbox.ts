@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { getWorkspace, setInboxReadAt } from '../web-poc/lib/db/queries/workspaces.ts';
-import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
 import { inboxBadgeSource, inboxBadgeStream } from './inbox-badge.ts';
@@ -24,7 +23,7 @@ import type { Env } from './index.ts';
 // Only a reply / opening the thread wakes the runner. The PURE list-ordering lives here too,
 // unit-tested without the edge runtime.
 
-const db = (env: Env) => createDbForWorker(env as unknown as Bindings);
+const db = (env: Env) => createDbForWorker(env);
 
 /** POST /api/inbox/:id/assign body (CLAUDE.md §7 — parse at the boundary): a workspace
  *  member's user id, or null to unassign. */

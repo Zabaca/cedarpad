@@ -1,5 +1,4 @@
 import { PushSubscriptionInput, PushUnsubscribeInput } from '../shared/push-contract.ts';
-import type { Bindings } from '../web-poc/worker/context.ts';
 import * as pushStore from '../web-poc/lib/db/queries/push-subscriptions.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import type { GateUser } from './auth-gate.ts';
@@ -34,7 +33,7 @@ export async function handlePushApi(
   if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
 
   const body = await request.json().catch(() => null);
-  const db = createDbForWorker(env as unknown as Bindings);
+  const db = createDbForWorker(env);
 
   if (action === 'subscribe') {
     const parsed = PushSubscriptionInput.safeParse(body);

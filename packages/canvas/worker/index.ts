@@ -2,7 +2,6 @@ import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
 import { BootLock, bootCanvasStack, type CanvasBootSpec } from './canvas-boot.ts';
 import { getWorkspace, getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
-import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, sendSignInLink } from './auth-gate.ts';
@@ -234,7 +233,7 @@ const notebookApi = buildApp();
 // Best-effort like the mint itself: a DB failure kicks token-less rather than failing the run.
 const defaultWorkspaceRepo = async (env: Env, requested?: string) => {
   try {
-    return await resolveDevAgentRepo(env, createDbForWorker(env as unknown as Bindings), DEFAULT_WORKSPACE_ID, requested);
+    return await resolveDevAgentRepo(env, createDbForWorker(env), DEFAULT_WORKSPACE_ID, requested);
   } catch (e: unknown) {
     console.error(`[dev-agent] repo resolution failed — kicking token-less: ${String(e)}`);
     return null;
@@ -281,7 +280,7 @@ export default {
     // container is asleep — refresh-on-add and the Settings button cover the gaps.
     ctx.waitUntil(
       (async () => {
-        const database = createDbForWorker(env as unknown as Bindings);
+        const database = createDbForWorker(env);
         const ws = await getWorkspaceRecord(database, DEFAULT_WORKSPACE_ID);
         if (!ws) return;
         const views = await workspaceRepoSet(env, database, ws);
@@ -298,7 +297,7 @@ export default {
     // DEV_AGENT_ENABLED stays the master breaker for scheduled work; best-effort — an
     // evaluator failure never breaks the tick.
     if (env.DEV_AGENT_ENABLED === 'true') {
-      const database = createDbForWorker(env as unknown as Bindings);
+      const database = createDbForWorker(env);
       ctx.waitUntil(
         evaluateScheduledJobs(database, DEFAULT_WORKSPACE_ID, {
           nowMs: Date.now(),
@@ -377,7 +376,7 @@ export default {
     // same trust root the guest cookie is signed with), so an unauthenticated request cannot
     // invoke either operation.
     if (url.pathname === PLATFORM_RPC_PATH) {
-      return handlePlatformRpc(request, env, platformRpcDeps(env, createDbForWorker(env as unknown as Bindings)));
+      return handlePlatformRpc(request, env, platformRpcDeps(env, createDbForWorker(env)));
     }
 
     const session = await authenticate(request, env);
@@ -421,7 +420,7 @@ export default {
     if (inviteMatch) {
       return handleInviteAccept(
         request,
-        createDbForWorker(env as unknown as Bindings),
+        createDbForWorker(env),
         session?.user ?? null,
         // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
         inviteMatch[1]!,
@@ -436,7 +435,7 @@ export default {
     if (shareMatch) {
       return handleShareAccept(
         request,
-        createDbForWorker(env as unknown as Bindings),
+        createDbForWorker(env),
         env.BETTER_AUTH_SECRET ?? '',
         shareMatch[1] as string,
       );
@@ -483,14 +482,14 @@ export default {
         // grants at mint time; a link that has since been downgraded must not keep what it
         // was minted with, exactly as a revoked one does not. One derivation
         // (`guestCapabilities`) feeds this door, the sync handshake and the bridge.
-        const live = await getActiveShareLink(createDbForWorker(env as unknown as Bindings), guest.linkId);
+        const live = await getActiveShareLink(createDbForWorker(env), guest.linkId);
         if (live && live.canvasId === guest.canvasId) {
           const caps = guestCapabilities({ ...live, shapeId: live.shapeId ?? guest.shapeId });
           const guestGate = decideGuestGate({ pathname: url.pathname, method: request.method, canvas }, guest, caps);
           if (isGuestProbe || guestHuddleMatch || guestMartMatch || guestNotebookMatch || guestGate.decision === 'allow') {
             if (guestNotebookMatch) {
               return handleNotebookApi(
-                createDbForWorker(env as unknown as Bindings),
+                createDbForWorker(env),
                 guest.workspaceId,
                 guestNotebookMatch[2] as string,
                 Object.fromEntries(url.searchParams),
@@ -620,7 +619,7 @@ export default {
     if (invitationsMatch) {
       return handleInvitationsApi(
         request,
-        createDbForWorker(env as unknown as Bindings),
+        createDbForWorker(env),
         user,
         // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
         invitationsMatch[1]!,
@@ -635,7 +634,7 @@ export default {
     if (membersMatch) {
       return handleMembersApi(
         request,
-        createDbForWorker(env as unknown as Bindings),
+        createDbForWorker(env),
         user,
         // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
         membersMatch[1]!,
@@ -650,7 +649,7 @@ export default {
     if (recordPurgeMatch) {
       return handleRecordPurgeApi(
         request,
-        createDbForWorker(env as unknown as Bindings),
+        createDbForWorker(env),
         user,
         // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
         recordPurgeMatch[1]!,
@@ -664,7 +663,7 @@ export default {
     if (martMatch) {
       const wsId = martMatch[1] as string;
       const name = martMatch[2] as string;
-      if (!(await getWorkspace(createDbForWorker(env as unknown as Bindings), wsId, user.id))) {
+      if (!(await getWorkspace(createDbForWorker(env), wsId, user.id))) {
         return Response.json({ error: 'not found' }, { status: 404 });
       }
       return handleMartApi(env.MART_BUCKET, wsId, name, { kind: 'member' });
@@ -677,7 +676,7 @@ export default {
     const notebookMatch = NOTEBOOK_ROUTE.exec(url.pathname);
     if (notebookMatch) {
       const wsId = notebookMatch[1] as string;
-      const db = createDbForWorker(env as unknown as Bindings);
+      const db = createDbForWorker(env);
       if (!(await getWorkspace(db, wsId, user.id))) {
         return Response.json({ error: 'not found' }, { status: 404 });
       }
@@ -686,7 +685,7 @@ export default {
 
     // Admin surface (ADR-0014): waitlist view, role=admin only. Edge-served.
     if (url.pathname === '/api/admin/waitlist') {
-      return handleAdminApi(request, createDbForWorker(env as unknown as Bindings), user, env.WAITLIST);
+      return handleAdminApi(request, createDbForWorker(env), user, env.WAITLIST);
     }
 
     // Repository connection (#193, ADR-0015): status / connect redirect / repo selection /
@@ -697,7 +696,7 @@ export default {
       return handleGithubApi(
         request,
         env,
-        createDbForWorker(env as unknown as Bindings),
+        createDbForWorker(env),
         user,
         wsId,
         githubMatch[2] as 'connect' | 'repos' | 'external' | 'refresh' | 'public' | undefined,
@@ -709,7 +708,7 @@ export default {
       );
     }
     if (url.pathname === '/api/github/setup') {
-      return handleGithubSetup(request, env, createDbForWorker(env as unknown as Bindings), user, { nowMs: Date.now() });
+      return handleGithubSetup(request, env, createDbForWorker(env), user, { nowMs: Date.now() });
     }
 
     // Connector secrets (#241): per-workspace encrypted third-party credentials (dlt
@@ -718,17 +717,17 @@ export default {
     const connectorsMatch = /^\/api\/workspaces\/([^/]+)\/connectors$/.exec(url.pathname);
     if (connectorsMatch) {
       const wsId = connectorsMatch[1] as string;
-      return handleConnectorSecretsApi(request, env, createDbForWorker(env as unknown as Bindings), user, wsId);
+      return handleConnectorSecretsApi(request, env, createDbForWorker(env), user, wsId);
     }
 
     // Canvas registry API (Canvas app index), scoped to the active workspace via the
     // cs_workspace cookie. Served at the edge like /api/workspaces — no container woken.
     if (url.pathname === '/api/canvases') {
-      return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user);
+      return handleCanvasesApi(request, createDbForWorker(env), user);
     }
     const canvasApiMatch = /^\/api\/canvases\/([^/]+)$/.exec(url.pathname);
     if (canvasApiMatch) {
-      return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user, canvasApiMatch[1], (ws) =>
+      return handleCanvasesApi(request, createDbForWorker(env), user, canvasApiMatch[1], (ws) =>
         notifyInboxChanged(env.WORKSPACE_EVENTS, ws),
       );
     }
@@ -743,7 +742,7 @@ export default {
       }
       const lk = { LIVEKIT_URL: env.LIVEKIT_URL, LIVEKIT_API_KEY: env.LIVEKIT_API_KEY, LIVEKIT_API_SECRET: env.LIVEKIT_API_SECRET };
       const huddleCanvasId = huddleJoinMatch[1] as string;
-      const workerDb = createDbForWorker(env as unknown as Bindings);
+      const workerDb = createDbForWorker(env);
       const res = await handleHuddleJoin(request, workerDb, user, huddleCanvasId, lk);
       if (res.ok) {
         const cvRow = huddleCanvasId === DEFAULT_CANVAS_ID ? null : await getCanvas(workerDb, huddleCanvasId);
@@ -760,7 +759,7 @@ export default {
     if (shareLinksMatch) {
       return handleShareLinksApi(
         request,
-        createDbForWorker(env as unknown as Bindings),
+        createDbForWorker(env),
         user,
         shareLinksMatch[1] as string,
         shareLinksMatch[2],
@@ -832,7 +831,7 @@ export default {
           serve: serveWorkspace,
           resolveRepo: defaultWorkspaceRepo,
           discover: (e) =>
-            discoverJobs(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
+            discoverJobs(e, createDbForWorker(e), DEFAULT_WORKSPACE_ID, {
               nowSec: Math.floor(Date.now() / 1000),
             }),
           kickWarehouse: () => kickWarehouseMaterialize(env, { exec: warehouseExec }),
@@ -848,7 +847,7 @@ export default {
     // (the run path re-reads it — the list is a rendering surface, not a prompt channel).
     const jobsMatch = /^\/api\/workspaces\/([^/]+)\/jobs$/.exec(url.pathname);
     if (jobsMatch && request.method === 'GET') {
-      const database = createDbForWorker(env as unknown as Bindings);
+      const database = createDbForWorker(env);
       const ws = await getWorkspace(database, jobsMatch[1] as string, user.id);
       if (!ws) return Response.json({ error: 'workspace not found' }, { status: 404 });
       const jobs = await discoverJobs(env, database, ws.id, { nowSec: Math.floor(Date.now() / 1000) });
@@ -881,7 +880,7 @@ export default {
     // request is 404'd here and never proxied. This branch is BELOW the auth gate above,
     // so an unauthenticated request can never reach it — nor cold-boot a container.
     const ownedCanvas = async (workspaceId: string, canvasId: string) => {
-      const workerDb = createDbForWorker(env as unknown as Bindings);
+      const workerDb = createDbForWorker(env);
       // #179: EVERY workspace — `default` included (it has a seeded row) — is looked up
       // owner-OR-member; a missing row fails closed. No bypass. The canvas leg (registered
       // to this workspace + ADR-0016 visible) is the access seam: a private canvas is 404
@@ -940,7 +939,7 @@ export default {
     const route = parseWorkspaceRoute(url.pathname);
     if (route) {
       // #179: `default` is access-checked like any workspace (seeded row; owner-OR-member).
-      const record = await getWorkspace(createDbForWorker(env as unknown as Bindings), route.workspaceId, user.id);
+      const record = await getWorkspace(createDbForWorker(env), route.workspaceId, user.id);
       if (decideWorkspaceRoute(route.workspaceId, record).decision === 'not-found') {
         return new Response('workspace not found', { status: 404 });
       }
@@ -970,7 +969,7 @@ export default {
     // container filesystem.
     if (url.pathname === BRIDGE_ROUTES.components && request.method === 'GET') {
       return handleComponentsApi(
-        createDbForWorker(env as unknown as Bindings),
+        createDbForWorker(env),
         user,
         workspaceId,
         request.headers.get(CANVAS_ID_HEADER) ?? DEFAULT_CANVAS_ID,
@@ -987,7 +986,7 @@ export default {
       // put the wrong Components in front of a delete button. Access is re-checked inside
       // either way, so naming a workspace is never a way into one.
       const named = url.searchParams.get('workspace');
-      return handleComponentInventory(request, env, createDbForWorker(env as unknown as Bindings), user, named || workspaceId);
+      return handleComponentInventory(request, env, createDbForWorker(env), user, named || workspaceId);
     }
 
     // Force the container to recycle so a freshly deployed image takes effect (CF
@@ -1049,7 +1048,7 @@ export default {
       if (asksDevAgent) {
         // Best-effort, exactly as the Inbox proxy's mint is: a workspace with no connected repo
         // proxies the send unarmed, and the chat simply files as an ordinary one.
-        const resolved = await resolveDevAgentRepo(env, createDbForWorker(env as unknown as Bindings), workspaceId).catch(
+        const resolved = await resolveDevAgentRepo(env, createDbForWorker(env), workspaceId).catch(
           (e: unknown) => {
             console.error(`[dev-agent] repo resolution failed — new chat starts token-less: ${String(e)}`);
             return null;

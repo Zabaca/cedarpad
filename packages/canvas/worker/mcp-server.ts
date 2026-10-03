@@ -2,7 +2,6 @@ import { StreamableHTTPTransport } from '@hono/mcp';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { oAuthDiscoveryMetadata, oAuthProtectedResourceMetadata, withMcpAuth } from 'better-auth/plugins';
 import { Hono } from 'hono';
-import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { edgeAuth } from './auth-gate.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
@@ -66,7 +65,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
     // Every issued token carries the human who consented; a token without one (e.g. a
     // client-credentials grant we never enable) acts as no one.
     if (!session.userId) return new Response('unauthorized', { status: 401 });
-    const db = createDbForWorker(env as unknown as Bindings);
+    const db = createDbForWorker(env);
 
     const tools = buildMcpTools({
       db,
@@ -135,14 +134,14 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
             serve: serveWorkspace,
             resolveRepo: async (e, requested) => {
               try {
-                return await resolveDevAgentRepo(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, requested);
+                return await resolveDevAgentRepo(e, createDbForWorker(e), DEFAULT_WORKSPACE_ID, requested);
               } catch (err: unknown) {
                 console.error(`[dev-agent] repo resolution failed — kicking token-less: ${String(err)}`);
                 return null;
               }
             },
             discover: (e) =>
-              discoverJobs(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
+              discoverJobs(e, createDbForWorker(e), DEFAULT_WORKSPACE_ID, {
                 nowSec: Math.floor(Date.now() / 1000),
               }),
             kickWarehouse: () => kickWarehouseMaterialize(env, { exec: warehouseExec }),

@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { clearToken, setToken } from '../web-poc/lib/db/queries/mcp-tokens.ts';
@@ -22,7 +21,7 @@ const SetTokenInput = z.object({ token: z.string().trim().min(1) });
  * so the owner column decides the rest. `default` has a real seeded row — no bypass; a
  * missing row fails closed. */
 async function workspaceAccess(env: Env, workspaceId: string, user: GateUser): Promise<'owner' | 'member' | 'none'> {
-  const ws = await getWorkspace(createDbForWorker(env as unknown as Bindings), workspaceId, user.id);
+  const ws = await getWorkspace(createDbForWorker(env), workspaceId, user.id);
   if (!ws) return 'none';
   return ws.ownerUserId === user.id ? 'owner' : 'member';
 }
@@ -43,7 +42,7 @@ export async function handleMcpTokenApi(
   const access = await workspaceAccess(env, workspaceId, user);
   if (access === 'none') return Response.json({ error: 'workspace not found' }, { status: 404 });
   if (access === 'member') return Response.json({ error: 'owner only' }, { status: 403 });
-  const db = createDbForWorker(env as unknown as Bindings);
+  const db = createDbForWorker(env);
   if (request.method === 'PUT') {
     const parsed = SetTokenInput.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return Response.json({ error: 'invalid token' }, { status: 400 });
