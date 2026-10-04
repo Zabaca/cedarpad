@@ -30,7 +30,7 @@ describe('guest sends (#220 slice 6)', () => {
   beforeEach(() => {
     dispatched = [];
     chatHub.subscribe(fakeSubscriber()); // sends need a subscriber (425 guard)
-    restore = setChatTurnDispatcher((chatId) => {
+    restore = setChatTurnDispatcher(({ chatId }) => {
       dispatched.push(chatId);
     });
   });

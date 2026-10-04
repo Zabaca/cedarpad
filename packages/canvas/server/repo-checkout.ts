@@ -1,6 +1,7 @@
 import { mkdir, rm } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { git } from './git.ts';
 
 // Read-only repo checkouts (ADR-0016): the bridge maintains a shallow copy of each of the
 // workspace's Repos under `<root>/.repos/<owner__name>` so CHAT turns can read repo content
@@ -27,17 +28,6 @@ export interface RepoCheckoutConfig {
   /** Test override: a local path (or any URL) standing in for the GitHub remote. */
   remoteUrl?: string;
 }
-
-const git = async (cwd: string, args: string[]): Promise<string> => {
-  const proc = Bun.spawn(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' });
-  const [out, err, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (code !== 0) throw new Error(`git ${args.join(' ')} failed (${code}): ${err.trim()}`);
-  return out.trim();
-};
 
 /** Clone-or-update the repo's read-only checkout. Shallow; follows the branch the clone
  *  landed on (the remote's default); discards any local drift (the checkout is a cache). */

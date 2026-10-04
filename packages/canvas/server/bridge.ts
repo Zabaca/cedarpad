@@ -59,12 +59,12 @@ import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
 import { refreshCheckout, removeCheckout } from './repo-checkout.ts';
 import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
 import { adoptSession, TranscriptStore } from './transcript-store.ts';
-import { type CanvasImage, type ChatEvent, type OpenPr, createCanvasTools, parseCanvasImages, runChat } from './agent.ts';
+import { type ChatEvent, type OpenPr, createCanvasTools, parseCanvasImages, runChat } from './agent.ts';
 import { MCP_TOKENS_HEADER, McpSelectionSchema, applyMcpSelection, decodeMcpTokens, mcpDisallowedTools } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { editComponent, isShared, listComponentDetails, readComponent, writeComponent, writeDataFile } from './components.ts';
 import { readGuestCapabilities, type GuestCapabilities } from '../shared/guest-capabilities.ts';
-import { type TurnDeps, runTurn } from './turn.ts';
+import { type TurnDeps, type TurnInput, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
 import { materializeSkills, writeSkill } from './skills.ts';
@@ -587,7 +587,7 @@ export function sendToChat(targetChatId: string, message: string, canvasId?: str
   const effort = meta.effort && meta.effort !== 'default' ? meta.effort : undefined;
   // The SENDER's canvas routes the turn (the target card was validated against that store);
   // the recycled-away hub canvas binding is the fallback, not the source of truth.
-  dispatchChatTurn(targetChatId, message, meta.sessionId, [], meta.model, false, effort, canvasId ?? chatHub.canvasOf(targetChatId));
+  dispatchChatTurn({ chatId: targetChatId, message, sessionId: meta.sessionId, images: [], model: meta.model, forkSession: false, effort, canvasId: canvasId ?? chatHub.canvasOf(targetChatId) });
   return { ok: true };
 }
 
@@ -672,14 +672,14 @@ export function setTurnRunChat(fn: TurnDeps['runChat']): () => void {
 }
 
 /** Run one turn for a chat and broadcast its events. Fire-and-forget (output is the SSE).
- * The turn runs against the session for `requestCanvasId` (the request's active canvas, #79)
+ * The turn runs against the session for `canvasId` (the request's active canvas, #79)
  * so the agent reads/draws on the canvas the human is on; absent ⇒ the default store,
  * unchanged — BUT absence also means the turn claims no chat→canvas edge for the
  * Conversation (an inbox reply must never link a chat to the Default canvas by default).
  * `devAgentGitToken` (edge-minted, per dev-agent send) arms the `open_pr` tool for THIS turn
  * only — see prepareDevAgentTurn. The lifecycle itself lives in `server/turn.ts`. */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string, mcpTokens?: Record<string, string>, devAgentRepo?: string, assignTo?: string, mcpDisallowed?: string[], viewer?: string): void {
-  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo, mcpDisallowedTools: mcpDisallowed, viewer }, turnDeps);
+function runChatTurn(input: TurnInput): void {
+  runTurn(input, turnDeps);
 }
 
 // The dev-agent run's prompt — this IS the workflow now (ADR-0011: the harness dissolved
@@ -1109,7 +1109,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const runAssignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
       // A fresh session every run (sessionId null); the run's later grill turns resume it
       // through the normal conversation path.
-      dispatchChatTurn(chatId, composeRunPrompt(jobPrompt), null, [], DEV_AGENT_RUN_MODEL, undefined, undefined, undefined, token, undefined, repo, runAssignTo);
+      dispatchChatTurn({ chatId, message: composeRunPrompt(jobPrompt), sessionId: null, images: [], model: DEV_AGENT_RUN_MODEL, devAgentGitToken: token, devAgentRepo: repo, assignTo: runAssignTo });
       return json({ chatId, joined: false }, 202);
     }
     // Read-only repo checkouts (ADR-0016): the edge pushes a refresh with a transient read
@@ -1218,26 +1218,26 @@ export async function handleRequest(req: Request): Promise<Response> {
       const viewer = req.headers.get(CANVAS_VIEWER_HEADER) ?? undefined;
       // Belt on top of the edge gate: a guest turn is a PLAIN chat turn on the link's canvas —
       // never a dev-agent turn, never armed with the workspace's external-MCP tokens.
-      dispatchChatTurn(
+      dispatchChatTurn({
         chatId,
         message,
-        meta.sessionId,
+        sessionId: meta.sessionId,
         images,
-        meta.model,
+        model: meta.model,
         forkSession,
         effort,
-        requestCanvasId,
-        guestCanvas ? undefined : devAgentGitToken,
-        guestCanvas ? undefined : mcpTokens,
-        guestCanvas ? undefined : devAgentRepo,
+        canvasId: requestCanvasId,
+        devAgentGitToken: guestCanvas ? undefined : devAgentGitToken,
+        mcpTokens: guestCanvas ? undefined : mcpTokens,
+        devAgentRepo: guestCanvas ? undefined : devAgentRepo,
         assignTo,
-        guestCanvas ? undefined : mcpDisallowedTools(mcpSelection),
+        mcpDisallowedTools: guestCanvas ? undefined : mcpDisallowedTools(mcpSelection),
         // A guest is never a select_page target: their per-browser identity lives in
         // localStorage and never reaches the edge, so there is no id here to match a
         // subscriber against. Explicit rather than incidental — it must stay undefined
         // even if the edge later learns to stamp something for guests.
-        guestCanvas ? undefined : viewer,
-      );
+        viewer: guestCanvas ? undefined : viewer,
+      });
       return json({ ok: true }, 202);
     }
     // POST /api/chat/:id/config — update server-owned ChatMeta (model/effort/forkNext),

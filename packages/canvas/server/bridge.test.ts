@@ -52,7 +52,7 @@ describe('/api/chat/:id/send: subscribe-before-send (425)', () => {
   beforeEach(() => {
     chatHub.resetForTests(); // no subscribers by default
     dispatched = [];
-    restore = setChatTurnDispatcher((chatId, message, _sessionId, images) => {
+    restore = setChatTurnDispatcher(({ chatId, message, images }) => {
       dispatched.push({ chatId, message, images });
     });
   });
@@ -124,7 +124,7 @@ describe('/api/chat/:id/send: the x-dev-agent-git-token header reaches the dispa
   beforeEach(() => {
     dispatched = [];
     chatHub.subscribe(fakeSubscriber());
-    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, devAgentGitToken, _mcpTokens, devAgentRepo) => {
+    restore = setChatTurnDispatcher(({ chatId, devAgentGitToken, devAgentRepo }) => {
       dispatched.push({ chatId, devAgentGitToken, devAgentRepo });
     });
   });
@@ -166,7 +166,7 @@ describe('/api/chat/:id/send: the x-inbox-assign header reaches the dispatched t
   beforeEach(() => {
     dispatched = [];
     chatHub.subscribe(fakeSubscriber());
-    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, _tok, _mcp, _repo, assignTo) => {
+    restore = setChatTurnDispatcher(({ chatId, assignTo }) => {
       dispatched.push({ chatId, assignTo });
     });
   });
@@ -217,7 +217,7 @@ describe('/api/chat/:id/send: the x-mcp-tokens header reaches the dispatched tur
   beforeEach(() => {
     dispatched = [];
     chatHub.subscribe(fakeSubscriber());
-    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, _devAgentGitToken, mcpTokens, _repo, _assign, mcpDisallowed) => {
+    restore = setChatTurnDispatcher(({ chatId, mcpTokens, mcpDisallowedTools: mcpDisallowed }) => {
       dispatched.push({ chatId, mcpTokens, ...(mcpDisallowed && mcpDisallowed.length > 0 ? { mcpDisallowed } : {}) });
     });
   });
@@ -431,7 +431,7 @@ describe('/api/chat/:id/send: 409 turn_in_flight while the chat’s turn runs', 
   beforeEach(() => {
     dispatched = [];
     chatHub.subscribe(fakeSubscriber());
-    restore = setChatTurnDispatcher((chatId) => {
+    restore = setChatTurnDispatcher(({ chatId }) => {
       dispatched.push(chatId);
     });
   });
@@ -492,7 +492,7 @@ describe('POST /api/dev-agent/run — a headless dev-agent chat turn', () => {
     dispatched = [];
     // NO chat subscriber — the kick is headless by design.
     chatHub.resetForTests();
-    restore = setChatTurnDispatcher((chatId, message, sessionId, _images, model, _fork, _effort, _canvasId, devAgentGitToken, _mcpTokens, devAgentRepo) => {
+    restore = setChatTurnDispatcher(({ chatId, message, sessionId, model, devAgentGitToken, devAgentRepo }) => {
       dispatched.push({ chatId, message, sessionId, model, devAgentGitToken, devAgentRepo });
     });
   });
@@ -797,7 +797,7 @@ describe('/api/chat/:id/send: the explicit canvas reaches the dispatch; absence 
   beforeEach(() => {
     dispatched = [];
     chatHub.subscribe(fakeSubscriber());
-    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, canvasId) => {
+    restore = setChatTurnDispatcher(({ chatId, canvasId }) => {
       dispatched.push({ chatId, canvasId });
     });
   });
@@ -1218,7 +1218,7 @@ import { sendToChat } from './bridge.ts';
 describe('sendToChat (agent cross-chat messaging)', () => {
   test('dispatches a turn for the target chat on the sender canvas', () => {
     const dispatched: Array<{ chatId: string; message: string; canvasId?: string }> = [];
-    const restore = setChatTurnDispatcher((chatId, message, _sid, _img, _model, _fork, _effort, canvasId) => {
+    const restore = setChatTurnDispatcher(({ chatId, message, canvasId }) => {
       dispatched.push({ chatId, message, canvasId });
     });
     try {

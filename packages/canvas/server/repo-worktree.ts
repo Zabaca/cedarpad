@@ -13,6 +13,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { git } from './git.ts';
 
 // ── Config / secret ────────────────────────────────────────────────────────────────────
 //
@@ -100,22 +101,6 @@ export interface Worktree {
   /** The hub clone this worktree was added to (for `worktree remove` / `branch -D`). */
   hub: string;
 }
-
-const git = async (cwd: string, args: string[], env?: Record<string, string>): Promise<string> => {
-  const proc = Bun.spawn(['git', ...args], {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    env: env ? { ...process.env, ...env } : process.env,
-  });
-  const [out, err, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (code !== 0) throw new Error(`git ${args.join(' ')} failed (${code}): ${err.trim()}`);
-  return out.trim();
-};
 
 const cfg = (c: RepoWorktreeConfig) => ({
   token: c.token ?? process.env[GITHUB_TOKEN_ENV],
