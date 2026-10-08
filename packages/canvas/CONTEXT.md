@@ -172,7 +172,7 @@ Inbox row, no `ChatMeta`, no assignee, no `waiting_on`. It is an **operator surf
 nearer `wrangler tail` than a chat, so [ADR-0012](../../docs/adr/0012-every-turn-ends-with-end-turn.md)'s
 end-turn law never applies to it — a tty has no turns to end. Owner-only is a
 deliberate hold on capability, **not** a containment claim: a *member* already has an
-unsandboxed root shell via chat (`server/agent.ts:693` disallows only
+unsandboxed root shell via chat (`server/agent.ts`'s chat-turn `disallowedTools` lists only
 `Write`/`Edit`/`NotebookEdit` — "Bash remains, so this steers the model rather than
 sandboxing it"), so the narrower gate buys the option to tighten later, not isolation
 today. Guests are denied by construction (`worker/guest-gate.ts` is a default-deny path
