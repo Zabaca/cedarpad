@@ -17,6 +17,7 @@ import { handleMembersApi } from './members.ts';
 import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { kickDevAgentRun, triggerDevAgentRun } from './dev-agent.ts';
+import { defaultWorkspaceRepo, devAgentTriggerDeps } from './dev-agent-deps.ts';
 import { kickWarehouseMaterialize } from './warehouse-dispatch.ts';
 import { mintDevAgentGitToken, mintRepoReadToken } from './github-app.ts';
 import { DEFAULT_WORKSPACE, resolve, type SandboxCoords } from './sandbox-resolver.ts';
@@ -228,18 +229,6 @@ export interface Env {
 // `/v1/*` runs here without ever waking a container. Built once per isolate (route
 // setup is pure); the db is per-request.
 const notebookApi = buildApp();
-
-// The kick's repo resolution (ADR-0015): runs target the default workspace's container, so
-// its repository connection (row, else the transitional env fallback) names the repo set.
-// Best-effort like the mint itself: a DB failure kicks token-less rather than failing the run.
-const defaultWorkspaceRepo = async (env: Env, requested?: string) => {
-  try {
-    return await resolveDevAgentRepo(env, createDbForWorker(env as unknown as Bindings), DEFAULT_WORKSPACE_ID, requested);
-  } catch (e: unknown) {
-    console.error(`[dev-agent] repo resolution failed — kicking token-less: ${String(e)}`);
-    return null;
-  }
-};
 
 /** Push one repo's read-only checkout refresh into a workspace's container (ADR-0016):
  *  the read token rides a header, transient — the bridge fetches then scrubs it. Public
@@ -827,16 +816,7 @@ export default {
       const body = (await request.json().catch(() => null)) as { repo?: string; job?: string } | null;
       return triggerDevAgentRun(
         env,
-        {
-          mint: mintDevAgentGitToken,
-          serve: serveWorkspace,
-          resolveRepo: defaultWorkspaceRepo,
-          discover: (e) =>
-            discoverJobs(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
-              nowSec: Math.floor(Date.now() / 1000),
-            }),
-          kickWarehouse: () => kickWarehouseMaterialize(env, { exec: warehouseExec }),
-        },
+        devAgentTriggerDeps(env),
         body,
         // Shared inbox: the manual trigger's Conversation is assigned to who clicked.
         user.id,

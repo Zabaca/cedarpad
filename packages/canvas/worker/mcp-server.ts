@@ -8,11 +8,7 @@ import { edgeAuth } from './auth-gate.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
 import { withMcpTokensHeader } from './mcp-tokens-proxy.ts';
 import { triggerDevAgentRun } from './dev-agent.ts';
-import { kickWarehouseMaterialize } from './warehouse-dispatch.ts';
-import { mintDevAgentGitToken } from './github-app.ts';
-import { resolveDevAgentRepo } from './github-connection.ts';
-import { discoverJobs } from './repo-jobs.ts';
-import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { devAgentTriggerDeps } from './dev-agent-deps.ts';
 import { notifyInboxChanged } from './workspace-events.ts';
 import {
   AssignConversationInput,
@@ -40,7 +36,7 @@ import {
 } from './mcp-tools.ts';
 import { NOTEBOOK_TOOL_SPECS, type NotebookCall } from '../web-poc/lib/contract/notebook-tools.ts';
 import { runNotebookCall } from '../web-poc/worker/notebook-tools.ts';
-import { serveWorkspace, warehouseExec } from './sandbox-runtime.ts';
+import { serveWorkspace } from './sandbox-runtime.ts';
 import type { Env } from './index.ts';
 import { CANVAS_ID_HEADER, DATA_MAX_BYTES, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
 
@@ -116,10 +112,9 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         });
         return serveWorkspace(target, env, coordsForWorkspace(workspaceId));
       },
-      // Manual dev-agent trigger (mirrors the /api/jobs/dev-agent/run wiring in
-      // worker/index.ts — not imported from there, that would be an import cycle):
-      // resolve the default workspace's repo connection, mint the per-turn git token,
-      // proxy the kick to the warm bridge. Repo resolution is best-effort like the route's.
+      // Manual dev-agent trigger — the same deps as the /api/jobs/dev-agent/run route
+      // (worker/dev-agent-deps.ts): resolve the default workspace's repo connection, mint the
+      // per-turn git token, proxy the kick to the warm bridge.
       // A `target: warehouse` job routes to kickWarehouseMaterialize instead (#248) — the
       // MCP surface gets the same "Run now" parity as the HTTP route: it's the SAME shared
       // triggerDevAgentRun core with the SAME OAuth-token-acts-as-a-human authorization, so
@@ -130,23 +125,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       kickDevAgent: (body) =>
         triggerDevAgentRun(
           env,
-          {
-            mint: mintDevAgentGitToken,
-            serve: serveWorkspace,
-            resolveRepo: async (e, requested) => {
-              try {
-                return await resolveDevAgentRepo(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, requested);
-              } catch (err: unknown) {
-                console.error(`[dev-agent] repo resolution failed — kicking token-less: ${String(err)}`);
-                return null;
-              }
-            },
-            discover: (e) =>
-              discoverJobs(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
-                nowSec: Math.floor(Date.now() / 1000),
-              }),
-            kickWarehouse: () => kickWarehouseMaterialize(env, { exec: warehouseExec }),
-          },
+          devAgentTriggerDeps(env),
           body,
           // A run_dev_agent call is the token user's explicit act — assign the run to them.
           session.userId,
