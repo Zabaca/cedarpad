@@ -194,6 +194,17 @@ describe('fromTldrawShape', () => {
     expect(s).toEqual({ id: 'shape:c', type: 'component', x: 2, y: 3, w: 360, h: 260, module: 'KpiCard', data: { v: 1 }, rev: 4, color: 'black' });
   });
 
+  // A room record placed before the warehouse was retired (ADR-0017) still holds a mart
+  // reference. It decodes as no source, so the component renders its static data.
+  test('component with a retired mart dataSource decodes with no dataSource', () => {
+    const s = decode(
+      { id: 'shape:c', type: 'component', x: 0, y: 0, props: { w: 360, h: 260, module: 'KpiCard', data: { v: 1 }, rev: 1, dataSource: { kind: 'mart', name: 'mart_runway' } } },
+      { plaintext: '' },
+    );
+    expect(s).not.toHaveProperty('dataSource');
+    expect(s).toMatchObject({ type: 'component', data: { v: 1 } });
+  });
+
   test('component lifts meta.status onto the model — the read_canvas bridge', () => {
     // The whole point of the status feature: the host writes the load/render lifecycle
     // to tldraw `meta.status`, and read_canvas must expose it so the agent can see a

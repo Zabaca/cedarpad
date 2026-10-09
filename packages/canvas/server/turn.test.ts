@@ -24,7 +24,7 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
   const calls: string[] = [];
   const deps: TurnDeps = {
     aborters: new Map(),
-    flavor: () => ({ workspaceId: 'default', kind: 'chat' as const, skills: ['impeccable', 'tdd'] }),
+    workspaceId: 'default',
     materializeSkills: async () => {
       calls.push('materializeSkills');
     },
@@ -35,10 +35,6 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
       return fakeRoomStore();
     },
     defaultCanvasId: 'default',
-    prepareDevAgent: async () => {
-      calls.push('prepareDevAgent');
-      return undefined;
-    },
     // Default fake turn: init (assigns the session id) then done. Overridable per test.
     runChat: (async function* () {
       calls.push('runChat');
@@ -91,7 +87,6 @@ describe('runTurnAsync: the turn phase order', () => {
       // is for a Component module.
       'materializeSkills',
       'openCanvasRoom',
-      'prepareDevAgent',
       'runChat',
       'indexSession', // row-at-start, on the init event
       'broadcast:init',
@@ -145,9 +140,6 @@ describe('runTurnAsync: resume materializes its own session', () => {
     await runTurnAsync(input({ sessionId: 'sess_cold' }), deps);
 
     expect(fetched).toEqual(['sess_cold']);
-    // Before prepareDevAgent too: a dev-agent turn ADOPTS (moves) the JSONL into its worktree,
-    // and can only move a file that is already on disk.
-    expect(calls.indexOf('materializeTranscript')).toBeLessThan(calls.indexOf('prepareDevAgent'));
     expect(calls.indexOf('materializeTranscript')).toBeLessThan(calls.indexOf('runChat'));
   });
 
@@ -355,74 +347,28 @@ describe('the request canvas: routing vs edge claim', () => {
   });
 });
 
-// ADR-0013 train 2 (#176): external MCP is CHAT FLAVOR ONLY. `input.mcpTokens` is whatever rode
-// the request (decoded from the edge's x-mcp-tokens header, server/bridge.ts); this turn must
-// only ever hand it to runChat when `flavor.kind === 'chat'` — a dev-agent turn gets none, no
-// matter what the request carried (defense in depth alongside the edge's own gating).
-describe('mcpTokens: dropped for a dev-agent turn regardless of what rode the request', () => {
-  test('a chat-flavor turn passes mcpTokens through to runChat', async () => {
-    let seen: Record<string, string> | undefined;
-    const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
-      seen = args[16] as Record<string, string> | undefined;
-      yield { kind: 'init', sessionId: 'sess_1' } satisfies ChatEvent;
-      yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
-    }) as unknown as TurnDeps['runChat'];
-    const { deps } = recordingDeps({
-      flavor: () => ({ workspaceId: 'default', kind: 'chat' as const }),
-      runChat,
-    });
-
-    await runTurnAsync(input({ mcpTokens: { ledgerbot: 'tok_a' } }), deps);
-
-    expect(seen).toEqual({ ledgerbot: 'tok_a' });
-  });
-
-  test('a dev-agent-flavor turn never passes mcpTokens to runChat, even if the request carried some', async () => {
-    let seen: Record<string, string> | undefined = { should: 'not-see-this' };
-    const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
-      seen = args[16] as Record<string, string> | undefined;
-      yield { kind: 'init', sessionId: 'sess_1' } satisfies ChatEvent;
-      yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
-    }) as unknown as TurnDeps['runChat'];
-    const { deps } = recordingDeps({
-      flavor: () => ({ workspaceId: 'default', kind: 'dev-agent' as const, skills: ['impeccable'] }),
-      runChat,
-    });
-
-    await runTurnAsync(input({ mcpTokens: { ledgerbot: 'tok_a' }, devAgentGitToken: 'ghs_x' }), deps);
-
-    expect(seen).toBeUndefined();
-  });
-
-  test('the flavor kind reaches runChat (chat gets no shell or file tools there; dev-agent keeps them)', async () => {
+// ADR-0013 train 2 (#176): `input.mcpTokens` is whatever rode the request (decoded from the
+// edge's x-mcp-tokens header, server/bridge.ts); the turn hands it to runChat as-is.
+describe('mcpTokens reach runChat', () => {
+  const recordTokens = () => {
     const seen: unknown[] = [];
     const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
-      seen.push(args[17]);
+      seen.push(args[13]);
       yield { kind: 'init', sessionId: 'sess_1' } satisfies ChatEvent;
       yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
     }) as unknown as TurnDeps['runChat'];
-    const chat = recordingDeps({ flavor: () => ({ workspaceId: 'default', kind: 'chat' as const }), runChat });
-    await runTurnAsync(input(), chat.deps);
-    const dev = recordingDeps({
-      flavor: () => ({ workspaceId: 'default', kind: 'dev-agent' as const, skills: ['impeccable'] }),
-      runChat,
-    });
-    await runTurnAsync(input({ devAgentGitToken: 'ghs_x' }), dev.deps);
+    return { seen, runChat };
+  };
 
-    expect(seen).toEqual(['chat', 'dev-agent']);
+  test('the request’s tokens pass through to runChat', async () => {
+    const { seen, runChat } = recordTokens();
+    await runTurnAsync(input({ mcpTokens: { ledgerbot: 'tok_a' } }), recordingDeps({ runChat }).deps);
+    expect(seen).toEqual([{ ledgerbot: 'tok_a' }]);
   });
 
-  test('no mcpTokens on the request ⇒ undefined reaches runChat for a chat turn too', async () => {
-    let seen: Record<string, string> | undefined = { should: 'not-see-this' };
-    const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
-      seen = args[16] as Record<string, string> | undefined;
-      yield { kind: 'init', sessionId: 'sess_1' } satisfies ChatEvent;
-      yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
-    }) as unknown as TurnDeps['runChat'];
-    const { deps } = recordingDeps({ flavor: () => ({ workspaceId: 'default', kind: 'chat' as const }), runChat });
-
-    await runTurnAsync(input(), deps);
-
-    expect(seen).toBeUndefined();
+  test('no mcpTokens on the request ⇒ undefined reaches runChat', async () => {
+    const { seen, runChat } = recordTokens();
+    await runTurnAsync(input(), recordingDeps({ runChat }).deps);
+    expect(seen).toEqual([undefined]);
   });
 });

@@ -52,8 +52,8 @@ export function parseJsonc(text: string): unknown {
  * `packages/canvas`. The generated config lives elsewhere (the state dir), so every
  * path it carries is made absolute.
  *
- * What local dev drops: `routes` (production custom domains), `triggers` (the daily
- * cron), `containers` (a docker image build the dev loop doesn't need — the container
+ * What local dev drops: `routes` (production custom domains), `triggers` (crons),
+ * `containers` (a docker image build the dev loop doesn't need — the container
  * is reached through the deployed worker, not this one), and `env` (named environments
  * are deploy targets).
  */
@@ -79,8 +79,7 @@ export function devWorkerConfig(
       // browser talks to, not the production domain baked into wrangler.jsonc.
       WEB_ORIGIN: origin,
       BETTER_AUTH_URL: origin,
-      // Signup is open in dev (prod is James-only); scheduled work never runs locally.
-      DEV_AGENT_ENABLED: 'false',
+      // Signup is open in dev (prod is James-only).
       // The platform RPC's trust root (ADR-0018 / #266): the container half of the dev stack
       // is the bun bridge, which derives its bearer from the same value. A real
       // `web-poc/.dev.vars` overrides this — wrangler gives `.dev.vars` precedence over

@@ -393,8 +393,8 @@ describe('the rail remembers each stage’s URL state across navigation', () => 
   });
 
   test('a stage’s first visit still gets the bare urlForStage default', async () => {
-    await click(byTitle('Jobs'));
-    expect(window.location.search).toBe('?stage=jobs');
+    await click(byTitle('Settings'));
+    expect(window.location.search).toBe('?stage=settings');
   });
 });
 

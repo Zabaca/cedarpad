@@ -11,7 +11,7 @@
 import { z } from 'zod';
 
 import { serviceToken, verifyServiceToken } from './service-token.ts';
-import { DataSourceSchema } from './mart-contract.ts';
+import { DataSourceSchema } from './data-source.ts';
 
 // --- the boundary: where the endpoint is, and who the container is when it calls -------
 

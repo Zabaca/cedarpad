@@ -11,7 +11,7 @@
 import type { SchemaPropsInfo } from '@tldraw/tlschema';
 import { T } from '@tldraw/validate';
 
-import type { DataSource } from '../shared/mart-contract';
+import type { DataSource } from '../shared/data-source';
 
 export const componentShapeProps = {
   w: T.number,

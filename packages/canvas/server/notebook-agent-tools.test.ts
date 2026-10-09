@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import type { NotebookCall } from '../web-poc/lib/contract/notebook-tools.ts';
 import { containerNotebookCaller, createNotebookToolDefs } from './notebook-agent-tools.ts';
 
-// What a container turn (the in-canvas chat, the dev-agent) is actually offered for the
+// What a container turn (the in-canvas chat) is actually offered for the
 // Notebook (ADR-0024 / CEDA-X6OIAO). The tools' BEHAVIOUR lives at its own seam
 // (web-poc/worker/notebook-tools.test.ts); this covers the wiring: the names a turn sees, the
 // call each one makes, and what a refusal looks like to the agent.

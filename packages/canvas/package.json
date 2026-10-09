@@ -59,7 +59,6 @@
     "drizzle-orm": "^0.38.3",
     "flint-chart": "^0.4.1",
     "hono": "^4.6.20",
-    "hyparquet": "^1.26.2",
     "livekit-client": "^2.20.1",
     "livekit-server-sdk": "^2.17.0",
     "mermaid": "^11.15.0",

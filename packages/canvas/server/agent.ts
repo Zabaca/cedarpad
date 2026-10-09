@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { DATA_MAX_BYTES, type ScreenshotTarget } from '../shared/bridge-wire.ts';
 import { resolvePageRef } from '../shared/canvas-pages.ts';
 import { SHAPE_COLORS } from '../src/shapes.ts';
-import { DataSourceSchema, type MartSidecar } from '../shared/mart-contract.ts';
+import { DataSourceSchema } from '../shared/data-source.ts';
 import type { CanvasStore } from '../src/store.ts';
 import {
   type FetchAsset,
@@ -34,7 +34,6 @@ import { callComponent } from './component-commands.ts';
 import { type EndTurnDeps, type EndTurnInput, endTurn } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
 import { type McpRegistryEntry, MCP_REGISTRY, resolveMcpEntry } from './mcp-registry.ts';
-import { reposPromptAppend } from './repo-checkout.ts';
 import type { TurnCanvasStore } from './turn-canvas-store.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 import type { ComponentVersion } from '../shared/platform-rpc.ts';
@@ -100,11 +99,6 @@ export type BumpShared = (module: string) => number;
  * ⇒ both are omitted, unchanged. */
 export type EndTurn = (input: EndTurnInput) => Promise<string>;
 
-/** The `open_pr` tool body (bridge binds it on the dev-agent runner to `openDevAgentPr`). Present ⇒
- * the agent gets an `open_pr` tool that commits its worktree + opens a PR; absent (every product
- * chat, tests) ⇒ the tool is omitted, unchanged. ADR-0009 Tier 2 / #126. */
-export type OpenPr = (input: { title: string; body: string; commitMessage: string }) => Promise<string>;
-
 /** The `send_message` tool body (bridge binds it — it holds ChatMeta + the turn dispatcher).
  * Posts a message into ANOTHER chat card's thread and kicks its turn, fire-and-forget (the
  * reply streams into that card; the sender polls read_canvas/read_connected). Present ⇒ the
@@ -120,38 +114,12 @@ export type SendToChat = (targetChatId: string, message: string, canvasId?: stri
  * The viewer is ALREADY BOUND by the binder, which is the point of the seam's shape: the
  * bridge read the edge-stamped identity and closed over it, so agent.ts and canvas-ops.ts
  * never handle a user id and cannot accidentally treat one as authorization. Absent
- * (tests, dev-agent turns, any turn with no identifiable initiator) ⇒ the tool is omitted
+ * (tests, any turn with no identifiable initiator) ⇒ the tool is omitted
  * rather than broadcasting to everyone.
  */
 export type SelectPage = (pageId: string) => number;
 
-/** The `list_marts` tool body (bridge binds it — it holds the workspace's BlobStore). Marts
- * live only in R2, never on the container filesystem, so WITHOUT this seam the agent has no
- * way to learn a mart exists or what columns it has: it can only guess a name at
- * `place_component`, and a wrong guess renders an empty component indistinguishable from
- * "no data yet". Present ⇒ the agent gets a `list_marts` tool; absent (tests, non-bridge
- * contexts) ⇒ omitted, and the `data_source` params stay usable for a caller who already
- * knows the name. */
-export type ListMarts = () => Promise<MartSidecar[]>;
-
-/** The `list_marts` tool body, extracted so it unit-tests without the SDK. Renders each mart's
- * schema + freshness for the model. The EMPTY case is not an error — it is the answer to "does
- * a mart back this?", and it must steer the agent to static `data` rather than leave it to
- * invent a name (an unknown mart renders an empty component that reads as "no data yet"). */
-export function formatMartListing(marts: MartSidecar[]): string {
-  if (marts.length === 0) {
-    return 'No marts are materialized in this workspace. Use static `data` (or write_data) instead of `data_source`.';
-  }
-  return marts
-    .map((m) => {
-      const cols = m.columns.map((c) => `    - ${c.name} (${c.type}) — ${c.description}`).join('\n');
-      return `${m.name} — ${m.description}\n  as of ${m.generatedAt} · ${m.rowCount} rows\n  columns:\n${cols}`;
-    })
-    .join('\n\n');
-}
-
-/** The `component_history` tool body, extracted so it unit-tests without the SDK (the
- * `formatMartListing` precedent). One line per version — newest first, with WHO and WHEN,
+/** The `component_history` tool body, extracted so it unit-tests without the SDK. One line per version — newest first, with WHO and WHEN,
  * which is exactly the question ADR-0022 decision 4 exists to make answerable.
  *
  * An unattributed version renders as `unknown` rather than being hidden or guessed: a write
@@ -288,7 +256,7 @@ const isTurnStore = (s: CanvasStore): s is TurnCanvasStore => typeof (s as TurnC
  * tools are what most need it: the next `read_canvas` then answers from a mirror taken after the
  * previous tool call, which is how a human's mid-turn edit becomes visible to the agent.
  */
-export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
+export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
   const settle = <T extends { handler: (args: never, extra: never) => Promise<{ isError?: boolean }> }>(def: T): T => {
     if (!isTurnStore(store)) return def;
     const inner = def.handler;
@@ -309,18 +277,18 @@ export function createCanvasTools(store: CanvasStore, captureView?: CaptureView,
       },
     };
   };
-  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts, fetchAsset, selectPage).map(settle);
+  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, endTurn, sendToChat, fetchAsset, selectPage).map(settle);
 }
 
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
   return createSdkMcpServer({
     name: 'canvas',
     version: '0.1.0',
-    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, endTurn, openPr, sendToChat, listMarts, fetchAsset, selectPage),
+    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, endTurn, sendToChat, fetchAsset, selectPage),
   });
 }
 
-function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, openPr?: OpenPr, sendToChat?: SendToChat, listMarts?: ListMarts, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
+function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -554,7 +522,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
       ),
       tool(
         'place_component',
-        'Put an instance of a component module on the canvas at (x, y), sized w×h, with `data` passed to it as props. YOUR (x, y) IS HONORED (not auto-moved), so when placing several related components lay them out as a deliberate layout near your chat card — e.g. a row at the same y, stepping x by w+20. Place them in/near the visible area (x 0..1000, y 0..700) or, for a chat far from the origin, call read_connected first to get your chat\'s position and lay them out beside it. Each new instance is auto-linked back to your chat with an arrow. Returns the id of the instance it placed — ids are opaque and unguessable, so KEEP it if you intend to move it, re-data it (set_component_data), or delete it later. Pass an existing id to move/retarget/re-data that instance. If this canvas\'s workspace has a materialized mart backing what you\'re about to show (an operational number, a KPI, a table of current records), pass `data_source` instead of a static `data` snapshot — the component then renders LIVE mart rows with no further tool calls needed to stay current, and its freshness ("as of") is shown automatically.',
+        'Put an instance of a component module on the canvas at (x, y), sized w×h, with `data` passed to it as props. YOUR (x, y) IS HONORED (not auto-moved), so when placing several related components lay them out as a deliberate layout near your chat card — e.g. a row at the same y, stepping x by w+20. Place them in/near the visible area (x 0..1000, y 0..700) or, for a chat far from the origin, call read_connected first to get your chat\'s position and lay them out beside it. Each new instance is auto-linked back to your chat with an arrow. Returns the id of the instance it placed — ids are opaque and unguessable, so KEEP it if you intend to move it, re-data it (set_component_data), or delete it later. Pass an existing id to move/retarget/re-data that instance.',
         {
           id: z.string().optional().describe('Existing component shape id to update; omit to create a new instance.'),
           module: z.string().describe('Component name to render, e.g. "MarkdownCard".'),
@@ -564,7 +532,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
           h: z.number().optional().describe('Box height. Default 260.'),
           data: z.record(z.unknown()).optional().describe('Static props object passed to the component (the data channel). Omit when using data_source.'),
           data_source: DataSourceSchema.optional().describe(
-            'Names the data this component should render LIVE — never a URL, never SQL. Either `{kind:"mart", name}` (a mart from `list_marts`; never a guess — an unknown mart renders EMPTY) or `{kind:"notebook", query, params}`, where query is one of open_problems / problem_observations (params.problemId) / recent_observations (params.sourceId optional), reading the workspace Notebook as of right now. Rows are resolved at render time in the browser (a mart also shows its "as of"), so the canvas stays current without you re-calling this tool.',
+            'Names the data this component should render LIVE — never a URL, never SQL: `{kind:"notebook", query, params}`, where query is one of open_problems / problem_observations (params.problemId) / recent_observations (params.sourceId optional), reading the workspace Notebook as of right now. Rows are resolved at render time in the browser, so the canvas stays current without you re-calling this tool.',
           ),
         },
         async ({ id, module, x, y, w, h, data, data_source }) =>
@@ -572,11 +540,11 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
       ),
       tool(
         'set_component_data',
-        'Update just the props (data) of a placed component instance, without touching its module or box. REPLACES the whole data object, so a concurrent edit by someone else is lost: if the component exports `commands`, use call_component instead. Pass `data_source` to attach/retarget a live mart instead of (or in addition to) static data; omit it to leave an existing mart reference untouched.',
+        'Update just the props (data) of a placed component instance, without touching its module or box. REPLACES the whole data object, so a concurrent edit by someone else is lost: if the component exports `commands`, use call_component instead. Pass `data_source` to attach/retarget a live Notebook query instead of (or in addition to) static data; omit it to leave an existing reference untouched.',
         {
           id: z.string().describe('The component shape id.'),
           data: z.record(z.unknown()).describe('New props object for the component.'),
-          data_source: DataSourceSchema.optional().describe('Names a workspace mart this component should render LIVE — a name from `list_marts`, never a URL and never a guess.'),
+          data_source: DataSourceSchema.optional().describe('Names a Notebook query this component should render LIVE — never a URL.'),
         },
         async ({ id, data, data_source }) => result(setComponentDataOp(store, id, data, data_source)),
       ),
@@ -603,19 +571,6 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         { ids: z.array(z.string()).min(2), edge: z.enum(['left', 'right', 'top', 'bottom', 'center-x', 'center-y']) },
         async ({ ids, edge }) => result(alignOp(store, ids, edge)),
       ),
-      // Mart discovery: present only when the bridge injected the seam (it holds the
-      // workspace's BlobStore). This is the ONLY way the agent learns what marts exist and
-      // what columns they have — see the ListMarts type.
-      ...(listMarts
-        ? [
-            tool(
-              'list_marts',
-              'List this workspace\'s materialized warehouse MARTS — each one\'s name, what it covers, its columns (name + type + meaning), and how fresh it is ("as of" + row count). Call this BEFORE placing anything that shows an operational number, a KPI, or a table of current records, the same way you call list_components before authoring: it tells you whether a mart already backs the request, and its column names are what your component must read. Pass a name you saw here as `data_source` on place_component. NEVER guess a mart name — an unknown name renders an EMPTY component that looks like "no data yet". An empty list means this workspace has no marts, so use static `data` instead. Read each mart\'s description before you label a card with it: a mart may cover a narrower slice than its name suggests, and that caveat belongs on the card.',
-              {},
-              async () => result({ text: formatMartListing(await listMarts()) }),
-            ),
-          ]
-        : []),
       // Cross-chat messaging: present only when the bridge injected the seam (it holds ChatMeta
       // + the turn dispatcher). Mirrors the edge MCP's send_message, scoped to chat cards on
       // THIS canvas. Fire-and-forget; the origin chat is stamped into the delivered message so
@@ -673,25 +628,6 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
             ),
           ]
         : []),
-      // Dev-agent PR (ADR-0009 Tier 2 / #126): present only when the bridge injected the open_pr
-      // seam (the dev-agent runner's chat context). The agent makes its edits during the chat,
-      // then calls this when aligned with the human — it commits the runner's worktree and opens
-      // the PR. Supplies title/body/commit message from the thread it is in; the git auth/branch
-      // are the runner's (dark until #96). Every product chat omits this tool, unchanged.
-      ...(openPr
-        ? [
-            tool(
-              'open_pr',
-              'Open a pull request for the changes you have made in this worktree during this conversation. Call it ONCE you and the human are aligned on the change: it stages + commits your edits and opens the PR. Supply the PR title, body (markdown), and commit message from this thread; branching, push, and auth are handled for you. Returns the PR url (or tells you the tree was clean — make your edits first, then call it).',
-              {
-                title: z.string().describe('PR title.'),
-                body: z.string().describe('PR description (markdown).'),
-                commitMessage: z.string().describe('Git commit message for your staged changes.'),
-              },
-              async ({ title, body, commitMessage }) => result({ text: await openPr({ title, body, commitMessage }) }),
-            ),
-          ]
-        : []),
     ];
 }
 
@@ -719,7 +655,7 @@ export function turnEnv(env: Record<string, string | undefined>): Record<string,
   return out;
 }
 
-export const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and have canvas tools (mcp__canvas__*): read_canvas, read_connected (call with no args to get YOUR own connected subgraph — the shapes arrow-linked to your chat card, each with full state — since shapes you create are auto-linked back to you), read_image (see a screenshot/photo the human pasted onto the canvas; read_canvas/read_connected list image shapes but redact the pixels), view_canvas, select_page (when a canvas has several PAGES, read_canvas lists them and this switches the human you are talking to over to one — by the name they use; it moves only their view, never the canvas and never anyone else, and your own chat card does not follow them), create_shapes, update_shapes, delete_shapes, clear_canvas, align_shapes (primitives: rectangle, ellipse, text, note, arrow in colors ${SHAPE_COLORS.join(', ')}; page coordinates, visible area roughly x 0..1000 y 0..700). Plus a reusable COMPONENT library: list_components / read_component / write_component / edit_component author real React files in this canvas's own component dir (with the workspace shared library and the read-only platform library as fallbacks), write_data authors sibling data files (.json/.csv/.txt/.md) a component can import, component_history says who changed a module and when (use it when the human asks what happened to a component, or before overwriting one you did not write) with restore_component putting one back to a version it lists (the fix for a bad edit — it appends a revision rather than rewinding, so it erases nothing and is itself undoable), and place_component / set_component_data render instances on the canvas with a \`data\` props object. When a component exports \`commands\` (named, typed edits — read_component shows them), change its data with call_component rather than set_component_data: a command edits the data as it is now, so it cannot clobber what someone else just changed. \`list_marts\` shows this workspace's materialized warehouse MARTS — their columns, meaning, and freshness. CALL IT FIRST, like list_components, whenever the human asks for an operational KPI, a live table, or anything that should reflect current reality rather than a point-in-time snapshot; then pass \`data_source: {kind:'mart', name:'<a name list_marts returned>'}\` instead of a static \`data\` snapshot — the component then renders the mart's current rows with NO further tool call needed to stay fresh, and the canvas shows the mart's "as of"/row-count itself so nobody mistakes it for live-live. A component names a mart, never a URL or endpoint — there is no fetch/poll capability, so don't reach for one. NEVER invent a mart name: an unknown one renders an EMPTY component that looks like "no data yet", so if list_marts returns nothing (or nothing that fits), use static \`data\` and say so. A mart's description may narrow what it actually covers — read it, and put that caveat on the card's label rather than titling it more broadly than the data supports. Static \`data\` (or write_data files) is still the right choice for anything point-in-time, illustrative, or not backed by a mart. These registered tools are the ONLY way to author component and data files — you have no shell and no filesystem tools. Components compose (import each other) and take data — prefer them over hand-placed primitives for charts/tables/cards/dashboards/diagrams. For a CHART, place the platform \`ChartCard\`: its \`data\` is a Flint spec (\`{chartType, encodings, semantic_types, values}\` — or omit \`values\` and pass \`data_source\` for a live mart) and Flint derives scales, axes, legend and colors from it, so you never hand-draw a chart. Read the \`chart-authoring\` skill for the chart types and their channels — a channel a chart type does not declare is SILENTLY DROPPED, so guessing produces a wrong chart rather than an error. Components you author also receive a \`setData(patch)\` prop that persists their own state (merges into the instance data, syncs to everyone, survives reload); use real controls (button/input/select/[role=button]) so clicks reach the component instead of dragging the shape. They also receive \`currentUser\` (\`{id, name?, email?, color, kind: 'user'|'guest'}\`, null-ish until resolved) — the viewer's identity — and \`setDisplayName(name)\` (persists a GUEST's chosen name browser-wide; no-op for logged-in users). For anything attributing actions to a person (comments, votes, Q&A), prefer \`currentUser.name\`/\`currentUser.id\` and only fall back to asking for a name (via setDisplayName) when it is unset — never ask per-component. ALWAYS \`list_components\` FIRST before authoring anything — the library already has many components and creating a duplicate (e.g. a new "Markdown" when "MarkdownCard" exists) is a mistake. If one already fits the request, \`place_component\` it (or \`edit_component\` to extend it); \`read_component\` a close match for its conventions; only \`write_component\` a NEW module when nothing suitable exists. When unsure whether something exists, list and read before writing. Use all of this to visualize, diagram, or build whatever the human asks — e.g. draw an architecture, or build a data-driven dashboard, on the canvas.
+export const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human and have canvas tools (mcp__canvas__*): read_canvas, read_connected (call with no args to get YOUR own connected subgraph — the shapes arrow-linked to your chat card, each with full state — since shapes you create are auto-linked back to you), read_image (see a screenshot/photo the human pasted onto the canvas; read_canvas/read_connected list image shapes but redact the pixels), view_canvas, select_page (when a canvas has several PAGES, read_canvas lists them and this switches the human you are talking to over to one — by the name they use; it moves only their view, never the canvas and never anyone else, and your own chat card does not follow them), create_shapes, update_shapes, delete_shapes, clear_canvas, align_shapes (primitives: rectangle, ellipse, text, note, arrow in colors ${SHAPE_COLORS.join(', ')}; page coordinates, visible area roughly x 0..1000 y 0..700). Plus a reusable COMPONENT library: list_components / read_component / write_component / edit_component author real React files in this canvas's own component dir (with the workspace shared library and the read-only platform library as fallbacks), write_data authors sibling data files (.json/.csv/.txt/.md) a component can import, component_history says who changed a module and when (use it when the human asks what happened to a component, or before overwriting one you did not write) with restore_component putting one back to a version it lists (the fix for a bad edit — it appends a revision rather than rewinding, so it erases nothing and is itself undoable), and place_component / set_component_data render instances on the canvas with a \`data\` props object. When a component exports \`commands\` (named, typed edits — read_component shows them), change its data with call_component rather than set_component_data: a command edits the data as it is now, so it cannot clobber what someone else just changed. These registered tools are the ONLY way to author component and data files — you have no shell and no filesystem tools. Components compose (import each other) and take data — prefer them over hand-placed primitives for charts/tables/cards/dashboards/diagrams. For a CHART, place the platform \`ChartCard\`: its \`data\` is a Flint spec (\`{chartType, encodings, semantic_types, values}\`) and Flint derives scales, axes, legend and colors from it, so you never hand-draw a chart. Read the \`chart-authoring\` skill for the chart types and their channels — a channel a chart type does not declare is SILENTLY DROPPED, so guessing produces a wrong chart rather than an error. Components you author also receive a \`setData(patch)\` prop that persists their own state (merges into the instance data, syncs to everyone, survives reload); use real controls (button/input/select/[role=button]) so clicks reach the component instead of dragging the shape. They also receive \`currentUser\` (\`{id, name?, email?, color, kind: 'user'|'guest'}\`, null-ish until resolved) — the viewer's identity — and \`setDisplayName(name)\` (persists a GUEST's chosen name browser-wide; no-op for logged-in users). For anything attributing actions to a person (comments, votes, Q&A), prefer \`currentUser.name\`/\`currentUser.id\` and only fall back to asking for a name (via setDisplayName) when it is unset — never ask per-component. ALWAYS \`list_components\` FIRST before authoring anything — the library already has many components and creating a duplicate (e.g. a new "Markdown" when "MarkdownCard" exists) is a mistake. If one already fits the request, \`place_component\` it (or \`edit_component\` to extend it); \`read_component\` a close match for its conventions; only \`write_component\` a NEW module when nothing suitable exists. When unsure whether something exists, list and read before writing. Use all of this to visualize, diagram, or build whatever the human asks — e.g. draw an architecture, or build a data-driven dashboard, on the canvas.
 
 BOUNDARY (important): you may author ONLY through the component/data tools (which write per-canvas \`src/canvas-<id>/components/\` dirs and the workspace \`shared/components/\` library — both persist across restarts and hot-reload). There is no backend-handler capability: a component cannot get a server-side route of its own, so do not plan around one. Do NOT modify the CORE: the app shell, \`src/canvas-components/\` (the read-only platform library), anything else in \`src/\`, or anything in \`server/\` (especially \`bridge.ts\`). The core is image-only — edits there will NOT persist and can break the live canvas for everyone.
 
@@ -791,7 +727,7 @@ function buildPrompt(message: string, images: CanvasImage[]): string | AsyncIter
  * the request actually named a token for (`server/mcp-registry.ts`'s decoded `x-mcp-tokens`
  * header). A registry entry with no token in `tokens` is simply absent — no connection
  * attempt, ever, and an unreachable server just degrades this turn's toolset (the SDK's
- * concern, not ours). No `tokens` at all (dev-agent turns never pass any) ⇒ no servers. */
+ * concern, not ours). No `tokens` at all ⇒ no servers. */
 export function buildExternalMcpServers(
   tokens: Record<string, string> | undefined,
   // Default-parameter test seam: production always reads the real registry; tests inject a
@@ -825,26 +761,16 @@ export async function* runChat(
   canvasId: string = 'default',
   bumpShared?: BumpShared,
   inbox?: Omit<EndTurnDeps, 'getSessionId'>,
-  openPr?: OpenPr,
-  cwd?: string,
-  skills?: string[],
   // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, keyed by registry
-  // server name (already decoded from the proxied `x-mcp-tokens` header). CHAT FLAVOR ONLY —
-  // `server/turn.ts` never passes this for a dev-agent turn. Absent/empty ⇒ no external server.
+  // server name (already decoded from the proxied `x-mcp-tokens` header). Absent/empty ⇒ no
+  // external server.
   mcpTokens?: Record<string, string>,
-  // The turn flavor (server/turn.ts passes flavor.kind). A CHAT turn gets CHAT_TOOLS only, so
-  // the canvas MCP tools are its one way to change anything. Dev-agent turns keep the full
-  // preset: editing repo files in the prepared worktree is their whole job.
-  kind: 'chat' | 'dev-agent' = 'chat',
   // Cross-chat messaging seam (bridge-bound: ChatMeta + the turn dispatcher). Present ⇒ the
   // agent gets a `send_message` tool targeting other chat cards on this canvas.
   sendToChat?: SendToChat,
   // Per-chat MCP tool opt-outs (`mcp__<server>__<tool>`, from the chat's ChatMeta selection):
   // appended to disallowedTools so a de-selected tool never reaches the model this turn.
   mcpToolOptOuts?: string[],
-  // Mart discovery seam (bridge-bound: it holds the workspace's BlobStore). Present ⇒ the
-  // agent gets `list_marts` and can discover what the warehouse actually holds.
-  listMarts?: ListMarts,
   // Asset-fetch seam (bridge-bound: it holds the edge origin + the service secret). Since #290
   // an image shape's pixels live behind the edge's asset route, so WITHOUT this `read_image` can
   // only serve the legacy inline data URLs. Absent (tests) ⇒ exactly that, and it says so.
@@ -867,7 +793,7 @@ export async function* runChat(
         return text;
       }
     : undefined;
-  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, openPr, sendToChat, listMarts, fetchAsset, selectPage);
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, sendToChat, fetchAsset, selectPage);
   // The Notebook (ADR-0024): the store agents write and canvas reads. Null when this process
   // has no edge in front of it (local dev without the Worker, the unit suite) — the turn then
   // simply has no notebook tools, rather than tools that quietly write nowhere.
@@ -880,29 +806,18 @@ export async function* runChat(
     : undefined;
 
   const fullOptions = {
-    // Repo checkouts are advertised per turn from what's on disk (ADR-0016): always the
-    // workspace root's .repos/, even when a dev-agent turn runs in its own worktree cwd. A chat
-    // turn has no tool that could read them, so it isn't told they exist.
-    systemPrompt: {
-      type: 'preset' as const,
-      preset: 'claude_code' as const,
-      append: CANVAS_APPEND + (kind === 'chat' ? '' : reposPromptAppend(process.env.CANVAS_CWD ?? process.cwd())),
-    },
-    ...(kind === 'chat'
-      ? { tools: [...CHAT_TOOLS], disallowedTools: mcpToolOptOuts ?? [] }
-      : { tools: { type: 'preset' as const, preset: 'claude_code' as const } }),
-    // Skills (ADR-0013). A CHAT turn loads no setting source at all — not the process home's
+    systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: CANVAS_APPEND },
+    // CHAT_TOOLS only: the canvas MCP tools are a turn's one way to change anything.
+    tools: [...CHAT_TOOLS],
+    disallowedTools: mcpToolOptOuts ?? [],
+    // Skills (ADR-0013). A turn loads no setting source at all — not the process home's
     // ~/.claude, not the repo's developer .claude/skills or CLAUDE.md — only the two plugin
     // areas server/skills.ts names (platform + this workspace's rendered Records; discovery is
     // a filesystem SCAN, so materializeSkills has already run), with an allowlist of exactly
-    // those so the SDK's bundled skills stay out too. A dev-agent turn is unchanged: user +
-    // project sources, and its pinned list.
-    ...(kind === 'chat'
-      ? { settingSources: [] as Array<'user' | 'project' | 'local'>, ...chatSkillSources() }
-      : { settingSources: ['user', 'project'] as Array<'user' | 'project' | 'local'>, ...(skills ? { skills } : {}) }),
-    // A dev-agent turn runs in its prepared worktree (ADR-0010 slice 6) — the caller passes
-    // that path so edits + resume both scope to it; every product turn keeps the default.
-    cwd: cwd ?? process.env.CANVAS_CWD ?? process.cwd(),
+    // those so the SDK's bundled skills stay out too.
+    settingSources: [] as Array<'user' | 'project' | 'local'>,
+    ...chatSkillSources(),
+    cwd: process.env.CANVAS_CWD ?? process.cwd(),
     maxTurns: 50,
   };
 

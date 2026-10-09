@@ -65,9 +65,7 @@ AUTHED="https://x-access-token:\$GIT_TOKEN@github.com/\$REPO.git"
 PUBLIC="https://github.com/\$REPO.git"
 
 # --- checkout --------------------------------------------------------------
-# Full clone, not --depth 1: the dev-agent builds worktrees off this checkout
-# (packages/canvas/server/repo-worktree.ts) and a shallow history makes branch
-# work fail in ways that surface far from here.
+# Full clone, not --depth 1.
 if [ ! -d "\$ROOT/.git" ]; then
   mkdir -p "\$(dirname "\$ROOT")"
   git clone "\$AUTHED" "\$ROOT"

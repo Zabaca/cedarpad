@@ -1,6 +1,6 @@
 # The dev-agent is a role, not a container
 
-Status: accepted (design). Amends [ADR-0007](./0007-workspace-platform-topology.md) (the
+Status: **superseded (2026-10-09)** — the dev agent was removed: the canvas never changes code, so there is no git-token turn, worktree or `open_pr`. Kept as history. Was: accepted (design). Amends [ADR-0007](./0007-workspace-platform-topology.md) (the
 dev-agent's place in the topology) and revises [ADR-0009](./0009-one-chat-system-live-bridge-view.md)
 Tier 2 ("the dev-agent sandbox must run the interactive bridge"). The batch-exec half of this
 ADR is itself revised by [ADR-0011](./0011-a-dev-agent-run-is-a-chat-turn.md) — the run is a

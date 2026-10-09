@@ -21,7 +21,6 @@ function recordingRpc(overrides: Partial<PlatformRpc> = {}) {
   const rpc: PlatformRpc = {
     conversationStart: async () => {},
     conversationSettle: async () => {},
-    conversationPrOpened: async () => {},
     turnEnd: async (input) => {
       turnEnds.push(input);
       return { conversationId: `conv_for_${input.sessionId}` };
@@ -72,7 +71,6 @@ describe('end_turn protocol (ADR-0012)', () => {
         sessionId,
         userId: 'user_a',
         workspaceId: 'ws_a',
-        kind: undefined,
         ownerRef: 'chat_ask',
         summary: 'Need approval',
         outcome: 'needs_human',

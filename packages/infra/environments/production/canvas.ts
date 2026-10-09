@@ -78,22 +78,11 @@ export default cloudflareModule.instance({
       // WEB_ORIGIN are non-secret vars in the package's wrangler.jsonc.)
       'VOYAGE_API_KEY',
       'BETTER_AUTH_SECRET',
-      // Dev-agent GitHub App auth (#96). The EDGE mints short-lived, repo-scoped
-      // installation tokens from these; the private key stays at the edge and is NEVER
-      // forwarded into the container (containerEnv) — the container is the RCE boundary
-      // (ADR-0008), so only the ~1h minted token ever reaches it. Provisioned in
-      // production/secrets.yaml.
-      'GITHUB_APP_ID',
-      'GITHUB_APP_INSTALLATION_ID',
-      'GITHUB_APP_PRIVATE_KEY',
       // Huddles (ADR-0017): LiveKit Cloud signing keys, edge-only — the container gets
       // short-lived minted room tokens, never these. Provisioned in production/secrets.yaml.
       'LIVEKIT_URL',
       'LIVEKIT_API_KEY',
       'LIVEKIT_API_SECRET',
-      // Per-repo PAT sealing key (ADR-0016, worker/secret-box.ts) — edge-only; the
-      // container sees opened tokens transiently per turn/fetch, never this key.
-      'REPO_TOKEN_KEY',
       // fredrin MCP bearer (ADR-0013 train 2) — edge-only; rides each chat send as the
       // x-mcp-tokens header, never container env.
       'FREDRIN_KEY',

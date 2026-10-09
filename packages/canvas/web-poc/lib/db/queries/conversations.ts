@@ -20,10 +20,8 @@ export async function create(
     sessionId: string;
     userId: string;
     workspaceId: string;
-    kind?: (typeof conversations.kind.enumValues)[number];
     ownerRef?: string | null;
     canvasId?: string | null;
-    repo?: string | null;
     summary?: string | null;
     lastMessagePreview?: string | null;
     /** The assignee at birth: a human initiator claims their session; unattended
@@ -42,10 +40,8 @@ export async function create(
       workspaceId: input.workspaceId,
       assignedTo: input.assignedTo ?? null,
       createdBy: input.createdBy ?? null,
-      kind: input.kind ?? "chat",
       ownerRef: input.ownerRef ?? null,
       canvasId: input.canvasId ?? null,
-      repo: input.repo ?? null,
       summary: input.summary ?? null,
       lastMessagePreview: input.lastMessagePreview ?? null,
       // Stamped rather than left to the column default (#383). That default is
@@ -99,8 +95,8 @@ export async function list(
   const filters = [];
   if (opts.status) filters.push(eq(conversations.status, opts.status));
   if (opts.workspaceId) filters.push(eq(conversations.workspaceId, opts.workspaceId));
-  // waiting_on:human is the attention subset; "All" omits it so every session — canvas
-  // chats, dev-agent runs — shows in the unified index (#unified-index).
+  // waiting_on:human is the attention subset; "All" omits it so every session shows in the
+  // unified index (#unified-index).
   if (opts.waitingOn) filters.push(eq(conversations.waitingOn, opts.waitingOn));
   if (opts.assigned) {
     filters.push(opts.assigned === "unassigned" ? isNull(conversations.assignedTo) : eq(conversations.assignedTo, opts.assigned));
@@ -221,30 +217,6 @@ export async function attachCanvas(db: Database, id: string, canvasId: string): 
     .set({ canvasId, updatedAt: now() })
     .where(and(eq(conversations.id, id), isNull(conversations.canvasId)));
   return get(db, id);
-}
-
-/** Set the run→repo edge, first-wins (mirrors attachCanvas): only when the row has no
- * repo yet — a dev-agent conversation operates on exactly one repo for its lifetime
- * (ADR-0015: one run = one repo). */
-export async function attachRepo(db: Database, id: string, repo: string): Promise<ConversationRow | null> {
-  await db
-    .update(conversations)
-    .set({ repo, updatedAt: now() })
-    .where(and(eq(conversations.id, id), isNull(conversations.repo)));
-  return get(db, id);
-}
-
-/** Record the PR this dev-agent run opened (CONTEXT.md "Open PR"). Last-wins, unlike the
- * first-wins edges above: a run may open a second PR after the first is merged or closed,
- * and the row names the one currently in play. Stamping a new PR clears any merge mark. */
-export async function recordPr(db: Database, id: string, prUrl: string): Promise<ConversationRow | null> {
-  return patch(db, id, { prUrl, prMergedAt: null });
-}
-
-/** Land the recorded PR: stamp the merge and CLOSE the conversation in one act — landing
- * the PR is what ends a dev-agent run (grill 2026-07-29). */
-export async function markPrMerged(db: Database, id: string, at: Date = now()): Promise<ConversationRow | null> {
-  return patch(db, id, { prMergedAt: at, status: "closed", waitingOn: "none" });
 }
 
 /** Hard-delete a Conversation row (legacy-duplicate cleanup only — product flows archive

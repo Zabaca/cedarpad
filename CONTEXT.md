@@ -23,7 +23,7 @@ way in ADR-0001), its own sleep timer. A workspace is **NOT tied to one repo**; 
 have **many** workspaces (a project/desk), switched in the Shell; each gets its own
 per-workspace sandbox ID + R2 prefix. Within a workspace it's still one container hosting N
 canvases + one shared component library (the "one container, N canvases" model applies *per
-workspace*). A workspace **attaches 0..N Repos** (see below). A Workspace **is** the isolated
+workspace*). A Workspace **is** the isolated
 deployment + org/tenant + membership unit (see Tenancy). _Avoid_: "sandbox", "instance".
 
 ## Tenancy — a Workspace IS a deployment (control plane)
@@ -65,7 +65,7 @@ as a *sub*-thing inside a bigger tenant — the Workspace **is** the tenant/depl
 
 **Platform data layer**: the Workspace's relational store — its schema, query modules, and
 migrations. It holds the **platform's** rows (`workspaces`, `canvases`, `conversations`,
-`workspace_members`/`_connectors`/`_repos`, `agent_jobs`/`_runs`, `share_links`,
+`workspace_members`, `share_links`,
 `push_subscriptions`) **and every Better Auth table** (the org plugin's `workspace`/`member`/
 `invitation`, plus `user`/`session`/`account`/`apikey`). Each **App** is a *consumer* of it; none
 owns it. It lives under `packages/canvas/web-poc/lib/db/` for historical reasons — that path is a
@@ -119,28 +119,11 @@ cross-project solution-reuse in the graph is intentionally dropped (a possible f
 opt-in). Absent a selection, requests fall back to the legacy `default` workspace, where
 pre-#57 rows are backfilled. The **Inbox is user-scoped** — one attention
 inbox for James, aggregating Conversations across all his workspaces, each Conversation
-tagged with its `workspace_id` (filterable by workspace). The **dev-agent workflow operates
-on a workspace's attached Repos** (see **Repo**): its scheduled `/improve-codebase-architecture`
-runs against a repo the workspace attaches and promotes into the one user Inbox. [per-repo
-run granularity — being resolved]
+tagged with its `workspace_id` (filterable by workspace).
 
-**Repo**: a first-class **GitHub repository attached to a Workspace** (0..N per workspace — a
-canvas-only workspace has zero; a dev project attaches several, e.g. app + infra + docs).
-Repos are the codebases a workspace's code-aware work (the dev-agent, and future code
-surfaces) operates on. There is a global set of repos granted to the platform (via GitHub
-auth); each workspace **attaches a subset**, and attachment is **many-to-many** — the same
-repo may be attached to several workspaces (it lives on GitHub, cloned transiently, so two
-workspaces = two independent clones/PRs). _Avoid_: conflating "workspace" with "repo" — a
-workspace is the project/runtime; repos are resources it attaches.
-
-**GitHub auth** (per Workspace): a **GitHub App** installed on the Workspace's GitHub org/account
-is the connection — the install matches the Workspace (= org) boundary. Granted repos = the
-Workspace's attachable pool; the workspace attaches a subset. The runtime mints **short-lived, per-repo installation tokens** (from
-the App private key) for clone/push/PR; commits/PRs are the bot's identity, not tied to any one
-member (survives member changes). **"Connect GitHub"** lives in the **Shell** (the owner's
-session). This **supersedes `DEV_AGENT_GITHUB_TOKEN`** — the single-repo PAT #64 stubbed in
-(`server/repo-worktree.ts`, `GITHUB_TOKEN_ENV`); that becomes the App-token path. Rejected: an
-OAuth user token (acts as one person, breaks on member changes, fights the team model).
+**Repos and GitHub auth** — _retired 2026-10-09_. A workspace no longer connects GitHub or
+checks repos out: the canvas never changes code, so nothing in it needs a repository. The
+`workspace_repos` table and the GitHub App secrets remain until the data cleanup.
 
 ## Canvas as a shared surface (not owned by the Canvas app)
 
@@ -206,9 +189,8 @@ to be re-homed.)
   Conversation** (inbox app). "Conversation" is deliberately Intercom's word, to avoid the
   canvas glossary's `session = chat` collision.
 - **Conversation** = Session + inbox state (open/closed, read/unread, needs-attention,
-  last-activity). May own a Canvas (the owner edge above). Carries a **kind**
-  (`chat | dev-agent`) — the session TYPE. Background-agent sessions are a kind, never a
-  fake workspace: they file under the workspace they run in.
+  last-activity). May own a Canvas (the owner edge above). Carries a **kind** — every new
+  row is `chat`; `dev-agent` survives only on rows from before the dev agent was retired.
 - **Canvas edge** (`canvas_id`, nullable): a Conversation links to **at most one canvas** —
   the canvas its chat card lives on. Direction matters: this is chat → canvas (one canvas
   hosts many chat cards, each pointing back at it), the *reverse* of the canvas's own
@@ -307,85 +289,15 @@ off. One channel only; email is deliberately not wired.
 **Runners** (where sessions execute — the Inbox is agnostic, it only coordinates). **Every
 runner runs the interactive bridge** (the SDK chat multiplexer), so every Session is a
 *chat* regardless of runner — a reply always **resumes the Session as a chat turn on its
-owning runner's bridge**, streaming back like a canvas chat. There is **no** separate
-"approval" interaction: a dev-agent Conversation is a chat too, and the **PR is a tool
-action the agent takes mid-conversation**, not a hardcoded consequence of the reply.
+owning runner's bridge**, streaming back like a canvas chat.
 - **Product runtime**: the workspace container (canvas/notebook chats + inbox chats I
   start about my content). Sleeps aggressively (5m) to bound cost.
-- **Dev-agent**: a **role the warm workspace container plays**, not a separate container
-  (ADR-0010) — and a **session KIND, not a workspace**: the Conversation carries
-  `kind: 'dev-agent'` and lives in the workspace it runs in (`default`), so `workspace_id`
-  means one thing everywhere. (The former `workspaceId: 'dev-agent'` logical tag overloaded
-  the workspace field as a type; retired, rows backfilled.) A **dev-agent turn** is any
-  bridge chat turn armed with the **edge-minted git-token header** (the App private key
-  never leaves the edge); that one signal drives everything dev-agent about it: the
-  `'dev-agent'` kind, the **prepared `Zabaca/cedarpad` worktree** it runs in (hub clone +
-  worktree off `origin/main`, per-chat branch, reused across turns — never the live app
-  tree), and the **`open_pr` tool committing that tree → PR** (durable artifact; a non-git
-  baked `/app` edit would evaporate). **Worktree per conversation** (ADR-0003). A
-  **dev-agent run** (the Jobs "Run now" / daily cron) is just such a turn kicked headlessly
-  on the warm bridge — there is no separate batch execution path — single-flighted with
-  join semantics (a kick during a run returns the running run's conversation). Its session
-  appears in the Inbox at start like any session, streams live when opened, and can be
-  interrupted like any chat. First workflow: `/improve-codebase-architecture`'s Explore →
-  the agent itself drops declined candidates (`docs/adr/declined/`) and ends its turn with
-  `end_turn needs_human` listing survivors (`waiting-on: human`) — or `done` with none; I
-  **grill it through that thread** (a real chat), and it opens the PR when we align.
+- **Dev-agent** — _retired 2026-10-09_ (ADR-0010/0011 superseded). The canvas never changes
+  code: there is no git-token turn, no worktree, no `open_pr`, no Jobs and no cron.
 
-## Data — the workspace warehouse (ADR-0017)
+## Data — the workspace warehouse — _retired 2026-10-09_
 
-> **Status: live** — components read marts by name (`shared/mart-contract.ts`,
-> `shared/mart-scope.ts`, `src/mart-data.ts`). Designed in the 2026-07-26 grill session as a
-> **greenfield capability**, deliberately *not* a 1:1 port of `ceo`'s 93 dbt models. Decisions
-> and the measurements behind them: ADR-0017.
->
-> The one part still unwired is **dispatch**: nothing starts the warehouse container to run a
-> Materialize Job (#240 — `deploy.sh` builds and pushes that image but never starts it). Read
-> is live; automatic rewrite is not.
-
-**Warehouse**: a workspace's analytical store — parquet files under its own R2 prefix
-(`workspaces/<ws>/warehouse/…`). It is **storage, not a server**: DuckDB is a *stateless
-engine* that queries those files from the container, never a durable file the container
-holds (container disk caps at 20 GB; `ceo`'s warehouse is 22.3 GiB). _Avoid_: "the DuckDB",
-"the database" — D1 is the metadata store and is not part of the warehouse.
-
-**Connector**: a declared source that lands raw data in the warehouse. Slice 1 needs none:
-the workspace's own **Claude session JSONL is already in the same bucket**
-(`sessions/<session_id>/transcript.jsonl`, one object per session, persisted so `resume`
-survives a recycle), so the first
-source is a *read*, not an extraction — and third-party extraction secrets stay
-deferred. _Avoid_: "source" alone (ambiguous with a dbt `source`), "integration".
-
-**Mart**: the published unit of meaning — **exactly one parquet artifact**, with a
-**declared column schema and freshness** (never inferred; a mart without its schema is not
-a mart). Two readers, no copies: DuckDB in the container, and a pure-JS parquet reader in
-the edge Worker for cold renders. _Avoid_: "report", "dataset", "table".
-
-**Materialize Job**: a `.claude/jobs/<name>.md` (ADR-0015) that runs the pipeline one-shot
-in the container and rewrites mart artifacts. Merge arms it; delete disarms it. There is no
-scheduler daemon — the edge cron is the evaluator. _Avoid_: "the pipeline run", "the DAG".
-
-### Relationships
-
-- A **Workspace** owns exactly one **Warehouse** (its R2 prefix); a **Warehouse** holds 0..N **Marts**
-- A **Materialize Job** rewrites 1..N **Marts**; a **Mart** is rewritten by exactly one Job
-- A **Component** references a **Mart** *by name* — `dataSource: { kind: 'mart', name }`, never a URL (#219)
-- A **Guest** (canvas ADR-0015 share link) reads only the **Marts the shared canvas references**, resolved from its component instances — not the workspace's mart list
-
-### Flagged ambiguities
-
-- **"mart" vs "data file"** — both feed components, and conflating them forks definitions.
-  A **Mart** is warehouse-owned, singular, schema-declared, and read in place. A **data
-  file** (`write_data`) is canvas-local ad-hoc data *copied* into a canvas dir. Marts are
-  never served via `write_data`: copying a mart per-canvas yields N artifacts with N
-  freshness stamps and no way to tell they diverged.
-- **"session"** — the pipeline's first source is the Inbox's **Session** (a Claude
-  conversation), already glossed above. A session-derived mart covers only turns that ran
-  **in the container** (canvas chats + dev-agent runs); local terminal sessions are never
-  stored, so "cost per shipped PR" is a container-side figure. The **Console**
-  (owner-only terminal, canvas [CONTEXT.md](./packages/canvas/CONTEXT.md)) is the one
-  container-side exception: its Claude sessions *do* get a stored Transcript — that sync is
-  what makes `--resume` survive a container sleep — but the mart **excludes them by their
-  pinned session id**. Operator poking has cost and no shipped output, so counting it would
-  degrade "cost per shipped PR" precisely as the Console gets more use. Total container
-  spend is a different metric, not this one.
+ADR-0017 is superseded. There is no Warehouse, Mart, Connector or Materialize Job: a
+component's live data is a named Notebook query (`shared/data-source.ts`), and a component
+that still names a mart renders its static data. The `Warehouse` container class stays bound
+in `wrangler.jsonc` only until the Cloudflare container migration deletes it.

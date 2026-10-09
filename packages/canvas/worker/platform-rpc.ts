@@ -143,7 +143,7 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
   const parsed = PlatformRpcRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: 'invalid request' }, { status: 400 });
 
-  // Each of the four conversation operations below rings the workspace's events hub after
+  // Each of the three conversation operations below rings the workspace's events hub after
   // its row work lands (#383), so an open Shell's badge follows an agent turn within a hub
   // hop instead of a poll interval. `ring` never throws (`notifyInboxChanged` swallows) —
   // and it is deliberately caught here as well, because `notify` is a DEP and a test or a
@@ -168,17 +168,6 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
   if (parsed.data.op === 'conversation.settle') {
     const conv = await findOrCreateConversation(deps.db, parsed.data.input);
     await conversations.markActivity(deps.db, conv.id);
-    await ring(conv.workspaceId);
-    return new Response(null, { status: 200 });
-  }
-
-  // The run opened a PR (CONTEXT.md "Open PR"): find-or-create by chat exactly as a settle
-  // does — a PR can be the first thing a turn reports — then stamp the url. The row is what
-  // the Inbox renders its Merge action from; the container never learns it.
-  if (parsed.data.op === 'conversation.prOpened') {
-    const { prUrl, ...identity } = parsed.data.input;
-    const conv = await findOrCreateConversation(deps.db, identity);
-    await conversations.recordPr(deps.db, conv.id, prUrl);
     await ring(conv.workspaceId);
     return new Response(null, { status: 200 });
   }

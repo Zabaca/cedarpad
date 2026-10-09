@@ -12,7 +12,7 @@ import { activeCanvasId } from './active-canvas';
 import { ComponentInstanceList, instanceLabels, readComponentInstances } from './ComponentInstanceList';
 import { ComponentHost } from './ComponentShape';
 import { useGuestScope } from '../shared/guest-scope';
-import type { DataSource } from '../shared/mart-contract';
+import type { DataSource } from '../shared/data-source';
 
 /** The minimal editor surface the overlay needs — narrowed for testability. The four
  *  page/camera operations are what the rail added; nothing wider is imported, so the

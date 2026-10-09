@@ -44,7 +44,6 @@ export const ListCanvasesInput = z.object({ workspace_id: z.string().min(1) });
 export const CreateCanvasInput = z.object({ workspace_id: z.string().min(1), name: z.string().trim().min(1).max(100) });
 // `job` is required (#100): a run's task is always a repo-defined job's body — there is no
 // built-in default prompt to fall back to.
-export const RunDevAgentInput = z.object({ job: z.string().min(1), repo: z.string().min(1).optional() });
 export const ListInboxInput = z.object({
   workspace_id: z.string().min(1),
   view: z.enum(['open', 'all', 'closed']).optional(),
@@ -173,9 +172,6 @@ export interface McpToolDeps {
     path: string,
     init?: { method?: string; headers?: Record<string, string>; body?: unknown },
   ) => Promise<Response>;
-  /** Kick a dev-agent run (the same manual trigger as the Jobs "Run now" route). Wired to
-   * triggerDevAgentRun in worker/mcp-server.ts; stubbed in tests. */
-  kickDevAgent: (body: { job: string; repo?: string }) => Promise<Response>;
 }
 
 const conversationView = (row: {
@@ -279,14 +275,6 @@ export function buildMcpTools(deps: McpToolDeps) {
       return { id: row.id, name: row.name, workspace_id: ws.id };
     },
 
-    /** Manual dev-agent trigger — an explicit user action, same as the Jobs "Run now"
-     * button (never gated on DEV_AGENT_ENABLED; the bridge single-flights with JOIN). */
-    async runDevAgent(input: z.infer<typeof RunDevAgentInput>) {
-      const res = await deps.kickDevAgent(input);
-      if (!res.ok) throw new Error(`dev-agent kick failed (${res.status}): ${await res.text().catch(() => '')}`);
-      return res.json();
-    },
-
     async listInbox(input: z.infer<typeof ListInboxInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       const view = input.view ?? 'open';
@@ -328,8 +316,7 @@ export function buildMcpTools(deps: McpToolDeps) {
     },
 
     /** Async by design: returns the chat_id immediately (the bridge 202s and runs the turn
-     * fire-and-forget); callers poll read_conversation. Always plain chat flavor — a
-     * dev-agent conversation is not reachable through this tool. */
+     * fire-and-forget); callers poll read_conversation. */
     async sendMessage(input: z.infer<typeof SendMessageInput>) {
       const ws = await requireWorkspace(input.workspace_id);
       let chatId = input.chat_id;
@@ -337,10 +324,10 @@ export function buildMcpTools(deps: McpToolDeps) {
       if (chatId) {
         // Membership suffices (shared inbox): requireWorkspace gated ws already; any member
         // may reply to any chat conversation in it — never creator-gated.
-        // The workspace-match and kind legs stay here: they are this tool's own contract
-        // (a chat in THIS workspace), not access — the seam covers membership + visibility.
+        // The workspace-match leg stays here: it is this tool's own contract (a chat in THIS
+        // workspace), not access — the seam covers membership + visibility.
         const existing = await resolveConversationByOwnerRef(deps.db, chatId, deps.userId);
-        if (!existing || existing.workspaceId !== ws.id || existing.kind !== 'chat') {
+        if (!existing || existing.workspaceId !== ws.id) {
           throw new Error(`no chat conversation ${chatId} in workspace ${ws.id}`);
         }
         // A canvas-paired conversation stays addressed to its canvas (the row's canvasId —

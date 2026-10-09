@@ -1,3 +1,0 @@
-{"type":"file-history-snapshot","messageId":"m1","snapshot":{},"isSnapshotUpdate":false}
-{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"another chat"}]},"timestamp":"2026-07-21T09:00:00.000Z","cwd":"/app/agent-canvas/packages/canvas","sessionId":"sess-bbb"}
-{"type":"assistant","isSidechain":false,"message":{"model":"claude-opus-5","role":"assistant","content":[{"type":"text","text":"sure"}],"usage":{"input_tokens":5,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"timestamp":"2026-07-21T09:00:03.000Z","cwd":"/app/agent-canvas/packages/canvas","sessionId":"sess-bbb"}

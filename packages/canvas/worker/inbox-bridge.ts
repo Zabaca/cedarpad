@@ -6,9 +6,6 @@ import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { MCP_TOKENS_HEADER, encodeMcpTokens } from '../server/mcp-registry.ts';
 import type { GateUser } from './auth-gate.ts';
-import { isDevAgentConversation } from '../server/dev-agent-workflow.ts';
-import { mintDevAgentGitToken } from './github-app.ts';
-import { resolveDevAgentRepo } from './github-connection.ts';
 import type { Env } from './index.ts';
 import { DEFAULT_WORKSPACE, type SandboxCoords, resolve } from './sandbox-resolver.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
@@ -17,8 +14,6 @@ import { notifyInboxChanged } from './workspace-events.ts';
 import {
   CANVAS_ID_HEADER,
   CANVAS_VIEWER_HEADER,
-  DEV_AGENT_GIT_TOKEN_HEADER,
-  DEV_AGENT_REPO_HEADER,
   INBOX_CONVERSATION_HEADER,
   INBOX_PAIRING_HEADER,
   encodeForwardedConversation,
@@ -41,8 +36,7 @@ const db = (env: Env) => createDbForWorker(env as unknown as Bindings);
 /**
  * Resolve a Conversation's workspace to its owning runner's coordinates: the legacy
  * `default` id → the legacy/prod container; any other id → its derived per-workspace
- * container. (Dev-agent rows need no special case anymore — dev-agent is a Conversation
- * KIND now, and the rows live in the workspace they run in, i.e. `default`.)
+ * container.
  */
 export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
   resolve(workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : { id: workspaceId });
@@ -110,9 +104,6 @@ export async function handleInboxBridge(
   user: GateUser,
   convId: string,
   subPath: string,
-  // Default-parameter test seams: production always mints/resolves for real; tests inject recorders.
-  mint: typeof mintDevAgentGitToken = mintDevAgentGitToken,
-  resolveRepo: typeof resolveDevAgentRepo = resolveDevAgentRepo,
 ): Promise<Response> {
   const database = db(env);
   // Membership gate (shared inbox, CONTEXT.md): any member of the Conversation's workspace
@@ -156,22 +147,6 @@ export async function handleInboxBridge(
     attachBody === null
       ? new Request(target, request)
       : new Request(target, { method: request.method, headers: request.headers, body: attachBody });
-
-  // ADR-0010 → ADR-0015: a dev-agent Conversation's SEND — and only a send — carries a
-  // freshly-minted, ~1h git token scoped to the conversation's OWN repo (`conv.repo`, the
-  // run→repo edge stamped at run start; legacy rows without one fall back to the workspace's
-  // first selected repo). The bridge arms `open_pr` for exactly that turn against exactly
-  // that repo (`x-dev-agent-repo`). The App private key never leaves the edge (ADR-0008);
-  // the token is per-turn, never env-injected, never persisted. Best-effort: a failed
-  // resolve/mint proxies the send token-less rather than blocking the reply.
-  if (isChatSend && isDevAgentConversation(conv)) {
-    const resolved = await resolveRepo(env, database, conv.workspaceId, conv.repo ?? undefined);
-    if (resolved) {
-      proxied.headers.set(DEV_AGENT_REPO_HEADER, resolved.repoFullName);
-      const token = await mint(env, { nowSec: Math.floor(Date.now() / 1000), ...resolved });
-      if (token) proxied.headers.set(DEV_AGENT_GIT_TOKEN_HEADER, token);
-    }
-  }
 
   // Shared-inbox assignment (CONTEXT.md): a SEND is a human act, so it carries its initiator —
   // the bridge assigns the Conversation at birth / claims-if-unassigned on a reply. Overwrites
@@ -247,8 +222,7 @@ export async function handleInboxBridge(
   }
 
   // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens ride a single JSON
-  // header on the send — mirrors x-dev-agent-git-token above. `server/turn.ts` drops this for a
-  // dev-agent turn regardless (chat flavor only), but no tokens connected ⇒ no header either way.
+  // header on the send; no tokens connected ⇒ no header.
   if (isChatSend) {
     const tokens = await effectiveMcpTokens(env, conv.workspaceId);
     if (Object.keys(tokens).length > 0) proxied.headers.set(MCP_TOKENS_HEADER, encodeMcpTokens(tokens));

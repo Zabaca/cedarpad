@@ -25,7 +25,7 @@ type Item = {
   id: string;
   status: 'open' | 'closed';
   waitingOn: 'human' | 'agent' | 'none';
-  kind: 'chat' | 'dev-agent';
+  kind: 'chat';
   unread: boolean;
   summary: string | null;
   lastMessagePreview: string | null;
@@ -35,19 +35,11 @@ type Item = {
   assignedTo: string | null;
   /** The chatId that birthed the row — how a draft is matched back to its Conversation. */
   ownerRef?: string;
-  /** The run's PR state (CONTEXT.md "Open PR") — what the merge action is rendered from. */
-  repo?: string | null;
-  prUrl?: string | null;
-  prMergedAt?: number | null;
 };
 
 const realFetch = globalThis.fetch;
 let calls: string[] = [];
 let store: Item[] = [];
-/** Every same-origin chat SEND, with the chat-kind the client declared on it (CEDA-N67Y50). */
-let sends: Array<{ url: string; kind: string | null }> = [];
-/** When set, the stubbed merge route refuses with this as GitHub's reason. */
-let mergeFails: string | null = null;
 
 const item = (o: Partial<Item> & { id: string }): Item => ({
   status: 'open',
@@ -60,9 +52,6 @@ const item = (o: Partial<Item> & { id: string }): Item => ({
   lastActivity: 0,
   canvasId: null,
   assignedTo: null,
-  repo: null,
-  prUrl: null,
-  prMergedAt: null,
   ...o,
 });
 
@@ -75,10 +64,7 @@ function stubInbox() {
     const method = init?.method ?? 'GET';
     calls.push(`${method} ${url}`);
     const u = new URL(url, 'https://poc.cedarpad.com');
-    if (method === 'POST' && u.pathname.endsWith('/send')) {
-      sends.push({ url, kind: new Headers(init?.headers).get('x-chat-kind') });
-      return Response.json({ ok: true });
-    }
+    if (method === 'POST' && u.pathname.endsWith('/send')) return Response.json({ ok: true });
 
     // GET /api/inbox?view=  — the edge list (D1, no wake; server-side workspace-scoped, no
     // client ?workspace= param). view maps to the same status filter the edge's
@@ -112,18 +98,6 @@ function stubInbox() {
       // <ChatView>'s rehydrate on connect (JSONL-derived transcript under the proxy prefix).
       if (sub.endsWith('/transcript')) return Response.json({ config: {}, events: [] });
       return Response.json({ ok: true });
-    }
-
-    // Merge — the edge lands the run's PR, stamps it merged and closes the row in one act.
-    const mergeRoute = /^\/api\/inbox\/([^/]+)\/merge$/.exec(u.pathname);
-    if (mergeRoute && method === 'POST') {
-      const row = store.find((r) => r.id === mergeRoute[1]);
-      if (mergeFails) return Response.json({ error: mergeFails }, { status: 409 });
-      if (row) {
-        row.prMergedAt = 1234;
-        row.status = 'closed';
-      }
-      return Response.json({ conversation: row });
     }
 
     // Close / reopen — edge store transitions (no transcript, no wake).
@@ -192,8 +166,6 @@ const viewFilter = () => container.querySelector('[aria-label="View filter"]');
 
 beforeEach(() => {
   calls = [];
-  sends = [];
-  mergeFails = null;
   store = [];
   stubInbox();
   (globalThis as { EventSource?: unknown }).EventSource = StubEventSource as unknown;
@@ -308,8 +280,7 @@ describe('the assignee filter and chip', () => {
   });
 });
 
-// The row decorations ported verbatim from INBOX_HTML's render(), plus the dev-agent badge
-// (dev-agent rows now live in the `default` workspace, `kind: 'dev-agent'`, no special-casing).
+// The row decorations ported verbatim from INBOX_HTML's render().
 describe('the item row badges and dot', () => {
   test('waiting_on:human renders the waiting badge', async () => {
     store = [item({ id: 'c1', waitingOn: 'human' })];
@@ -332,19 +303,6 @@ describe('the item row badges and dot', () => {
     const badge = container.querySelector('.inbox-badge');
     expect(badge?.textContent).toBe('closed');
     expect(badge?.className).toContain('closed');
-  });
-
-  test('a dev-agent row renders the dev-agent badge', async () => {
-    store = [item({ id: 'c1', kind: 'dev-agent' })];
-    await mount();
-    const badge = container.querySelector('.inbox-badge.dev-agent');
-    expect(badge?.textContent).toBe('dev-agent');
-  });
-
-  test('a plain chat row does not render the dev-agent badge', async () => {
-    store = [item({ id: 'c1', kind: 'chat' })];
-    await mount();
-    expect(container.querySelector('.inbox-badge.dev-agent')).toBeNull();
   });
 });
 
@@ -671,176 +629,5 @@ describe('starting a new chat', () => {
     // One draft row, and the SAME chat — a second click must not discard a half-typed message.
     expect(container.querySelectorAll('.inbox-item.draft').length).toBe(1);
     expect(draftChatId()).toBe(first as string);
-  });
-});
-
-// Choosing the chat KIND for a new chat (CEDA-N67Y50, approved design: the split "New chat"
-// button). The primary button is unchanged — one click still starts an ordinary chat. A caret
-// beside it opens a two-item menu; picking "Dev-agent" starts the draft as a dev-agent chat,
-// which the draft's FIRST send declares to the edge on `x-chat-kind` (there is no Conversation
-// row yet, so the edge's row-driven arming has nothing to key on — see worker/index.ts).
-describe('choosing the chat kind for a new chat', () => {
-  const newChatButton = () => container.querySelector('.inbox-new-chat');
-  const caret = () => container.querySelector('.inbox-new-kind');
-  const menuItems = () => [...container.querySelectorAll('.inbox-kind-menu button')];
-
-  /** The draft's client-minted chatId, read off the same-origin transcript request its
-   *  <ChatView> makes on mount — an observable of the component, not a peek at its state. */
-  const draftChatId = (): string => {
-    let found: string | null = null;
-    for (const c of calls) {
-      const m = /^GET .*\/api\/chat\/(chat_[^/]+)\/transcript$/.exec(c);
-      if (m && !c.includes('/bridge/')) found = m[1] as string;
-    }
-    expect(found).not.toBeNull();
-    return found as string;
-  };
-
-  /** Send the draft's first message — the send that BIRTHS the Conversation, and the one the
-   *  declared kind rides on. Driven through `chat-store`'s exported `send`, the same entry
-   *  point <ChatView>'s composer calls, so the assertion stays on the public interface. */
-  const sendFirstMessage = async (text: string) => {
-    await act(async () => {
-      await send(draftChatId(), text, []);
-    });
-    await flush();
-  };
-
-  test('the caret opens a two-item menu naming both kinds', async () => {
-    await mount();
-    expect(menuItems()).toEqual([]);
-
-    await click(caret());
-
-    expect(menuItems().map((b) => b.textContent)).toEqual([
-      expect.stringContaining('Chat'),
-      expect.stringContaining('Dev-agent'),
-    ]);
-  });
-
-  test('picking Dev-agent starts a draft whose first send declares the dev-agent kind', async () => {
-    await mount();
-    await click(caret());
-
-    await click(menuItems()[1] ?? null);
-
-    expect(container.querySelector('.inbox-item.draft')).not.toBeNull();
-    await sendFirstMessage('open a PR for the sync seam');
-    expect(sends.map((s) => s.kind)).toEqual(['dev-agent']);
-  });
-
-  test('the plain button still starts an ordinary chat — nothing declared', async () => {
-    await mount();
-
-    await click(newChatButton());
-    await sendFirstMessage('what is a nostr relay');
-
-    expect(sends.map((s) => s.kind)).toEqual([null]);
-  });
-
-  test('the draft row is badged with the kind it will be born as', async () => {
-    await mount();
-    await click(caret());
-    await click(menuItems()[1] ?? null);
-
-    expect(container.querySelector('.inbox-item.draft')?.textContent).toContain('dev-agent');
-  });
-
-  test('the picked kind sticks: the plain button starts the next chat as dev-agent too', async () => {
-    await mount();
-    await click(caret());
-    await click(menuItems()[1] ?? null);
-    await sendFirstMessage('first');
-    await act(async () => root.unmount());
-    await mount();
-
-    await click(newChatButton());
-    await sendFirstMessage('second');
-
-    expect(sends.map((s) => s.kind)).toEqual(['dev-agent', 'dev-agent']);
-  });
-});
-
-// The Inbox merge (CONTEXT.md "Open PR"). The run's PR takes the third pane — the slot the
-// linked canvas otherwise holds — so the artifact you opened the row for gets the same
-// first-class space, and a conversation that has both lets you switch between them.
-describe('the PR pane: landing a dev-agent run without leaving the Inbox', () => {
-  const PR = 'https://github.com/Zabaca/cedarpad/pull/283';
-  const prPane = () => container.querySelector('.inbox-pr');
-  const mergeBtn = () => container.querySelector('.inbox-pr-merge') as HTMLButtonElement | null;
-  const paneToggle = () => [...container.querySelectorAll('.inbox-pane-switch button')];
-  const openFirst = async () => {
-    await mount();
-    await flush();
-    await click(items()[0] as Element);
-  };
-
-  test('a run with an open PR shows the PR pane, with the PR it opened', async () => {
-    store = [item({ id: 'c1', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: PR })];
-    await openFirst();
-
-    expect(prPane() !== null).toBe(true);
-    expect(prPane()?.textContent).toContain('#283');
-    expect(prPane()?.textContent).toContain('Zabaca/cedarpad');
-    expect(mergeBtn() !== null).toBe(true);
-    // The pane replaces the canvas — this conversation has no canvas to attach anyway.
-    expect(container.querySelector('.inbox-canvas-empty') === null).toBe(true);
-  });
-
-  test('an ordinary chat has no PR pane and no merge action', async () => {
-    store = [item({ id: 'c1', canvasId: 'cv_1' })];
-    await openFirst();
-
-    expect(prPane() === null).toBe(true);
-    expect(mergeBtn() === null).toBe(true);
-  });
-
-  test('merging calls the edge merge route and the row lands merged + closed', async () => {
-    store = [item({ id: 'c1', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: PR })];
-    await openFirst();
-
-    await click(mergeBtn());
-
-    expect(calls).toContain('POST /api/inbox/c1/merge');
-    expect(store[0]?.prMergedAt).toBe(1234);
-    expect(store[0]?.status).toBe('closed');
-    // The pane becomes the receipt: no second merge is offered.
-    expect(mergeBtn() === null).toBe(true);
-    expect(prPane()?.textContent).toContain('Merged');
-  });
-
-  test('a refusal shows GitHub‘s own reason and leaves the PR mergeable', async () => {
-    store = [item({ id: 'c1', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: PR })];
-    mergeFails = 'Pull Request is not mergeable';
-    await openFirst();
-
-    await click(mergeBtn());
-
-    expect(prPane()?.textContent).toContain('Pull Request is not mergeable');
-    expect(store[0]?.prMergedAt).toBeNull();
-    // Retrying after CI goes green is one click — the button is still there.
-    expect(mergeBtn() !== null).toBe(true);
-  });
-
-  test('with a canvas AND an open PR the pane leads with the PR and offers the switch', async () => {
-    store = [item({ id: 'c1', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: PR, canvasId: 'cv_1' })];
-    await openFirst();
-
-    expect(prPane() !== null).toBe(true);
-    expect(paneToggle().map((b) => b.textContent)).toEqual(['PR', 'Canvas']);
-
-    await click(paneToggle()[1] as Element);
-    expect(prPane() === null).toBe(true);
-    expect(container.querySelector('.inbox-canvas-frame') !== null).toBe(true);
-
-    await click(paneToggle()[0] as Element);
-    expect(prPane() !== null).toBe(true);
-  });
-
-  test('with no canvas there is nothing to switch between, so no switch is rendered', async () => {
-    store = [item({ id: 'c1', kind: 'dev-agent', repo: 'Zabaca/cedarpad', prUrl: PR })];
-    await openFirst();
-
-    expect(paneToggle()).toEqual([]);
   });
 });

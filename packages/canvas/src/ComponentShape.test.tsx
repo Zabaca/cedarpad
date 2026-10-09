@@ -357,22 +357,22 @@ describe('ComponentHost injects a link-bound sendToAgent', () => {
   });
 });
 
-// #239 / ADR-0017: a component names a mart, never a URL — ComponentHost is where the
-// name resolves into rows + freshness at render time, with no agent tool call.
-describe('ComponentHost: mart-backed dataSource (#239)', () => {
+// ADR-0024: a component names a query, never a URL — ComponentHost is where the name resolves
+// into rows at render time, with no agent tool call.
+describe('ComponentHost: live dataSource', () => {
   const Probe: AgentComponent = (props) => {
     (Probe as unknown as { lastProps: unknown }).lastProps = props;
     return React.createElement('div', null, 'probe');
   };
 
-  test('no dataSource is fully backward compatible: static data reaches the component unchanged, no freshness badge', async () => {
+  test('no dataSource is fully backward compatible: static data reaches the component unchanged', async () => {
     const ed = makeEditor({
       id: 'shape:static',
       type: 'component',
       props: { w: 360, h: 260, module: 'Probe', data: { x: 1 }, rev: 0 },
       meta: {},
     });
-    let calledLoadMart = false;
+    let calledLoadNotebook = false;
     const host = render(
       React.createElement(ComponentHost, {
         shapeId: 'shape:static',
@@ -381,8 +381,8 @@ describe('ComponentHost: mart-backed dataSource (#239)', () => {
         data: { x: 1 },
         rev: 0,
         load: async () => Probe,
-        loadMart: async () => {
-          calledLoadMart = true;
+        loadNotebook: async () => {
+          calledLoadNotebook = true;
           throw new Error('should never be called');
         },
       }),
@@ -391,52 +391,11 @@ describe('ComponentHost: mart-backed dataSource (#239)', () => {
     await act(async () => {});
     const props = (Probe as unknown as { lastProps: Record<string, unknown> }).lastProps;
     expect(props.x).toBe(1);
-    expect(props.rows).toBeUndefined(); // no dataSource ⇒ no rows/mart keys added at all
-    expect(props.mart).toBeUndefined();
-    expect(calledLoadMart).toBe(false);
-    expect(document.body.textContent).not.toContain('as of');
+    expect(props.rows).toBeUndefined(); // no dataSource ⇒ no rows key added at all
+    expect(calledLoadNotebook).toBe(false);
     await host.unmount();
   });
 
-  test('a mart dataSource resolves rows + sidecar into props and shows freshness on the card', async () => {
-    const ed = makeEditor({
-      id: 'shape:mart',
-      type: 'component',
-      props: { w: 360, h: 260, module: 'Probe', data: {}, rev: 0 },
-      meta: {},
-    });
-    const generatedAt = '2026-07-01T00:00:00.000Z';
-    const host = render(
-      React.createElement(ComponentHost, {
-        shapeId: 'shape:mart',
-        editor: ed.editor,
-        module: 'Probe',
-        data: {},
-        rev: 0,
-        dataSource: { kind: 'mart', name: 'mart_runway' },
-        load: async () => Probe,
-        loadMart: async (name: string) => {
-          expect(name).toBe('mart_runway');
-          return {
-            rows: [{ month: 'Jan', burn: 1000 }],
-            sidecar: { name: 'mart_runway', description: 'd', columns: [], generatedAt, rowCount: 1 },
-          };
-        },
-      }),
-    );
-    await host.mount();
-    await act(async () => {});
-    const props = (Probe as unknown as { lastProps: Record<string, unknown> }).lastProps;
-    expect(props.rows).toEqual([{ month: 'Jan', burn: 1000 }]);
-    expect((props.mart as { rowCount: number }).rowCount).toBe(1);
-    // Freshness is on the CARD itself, not dependent on the component using the props.
-    expect(document.body.textContent).toContain('as of');
-    expect(document.body.textContent).toContain('1 row');
-    await host.unmount();
-  });
-
-  // A canvas reads the Notebook live (ADR-0024): the second member of the data-source
-  // union resolves the same way — a NAME plus params, never a URL and never SQL.
   test('a notebook dataSource resolves its named query into rows props', async () => {
     const ed = makeEditor({
       id: 'shape:notebook',
@@ -454,9 +413,6 @@ describe('ComponentHost: mart-backed dataSource (#239)', () => {
         rev: 0,
         dataSource: { kind: 'notebook', query: 'open_problems', params: { limit: 5 } },
         load: async () => Probe,
-        loadMart: async () => {
-          throw new Error('a notebook source must never take the mart path');
-        },
         loadNotebook: async (query, params) => {
           asked.push({ query, params });
           return [{ id: 'prob_high', title: 'High priority', priority: 9 }];
@@ -469,34 +425,6 @@ describe('ComponentHost: mart-backed dataSource (#239)', () => {
     expect(asked).toEqual([{ query: 'open_problems', params: { limit: 5 } }]);
     expect(props.rows).toEqual([{ id: 'prob_high', title: 'High priority', priority: 9 }]);
     expect(props.title).toBe('Open problems'); // static data still reaches the component
-    expect(props.mart).toBeNull(); // a notebook read has no materialize stamp — it is live
-    await host.unmount();
-  });
-
-  test('a mart fetch error surfaces on the card as an error badge, without breaking the component', async () => {
-    const ed = makeEditor({
-      id: 'shape:mart-err',
-      type: 'component',
-      props: { w: 360, h: 260, module: 'Probe', data: {}, rev: 0 },
-      meta: {},
-    });
-    const host = render(
-      React.createElement(ComponentHost, {
-        shapeId: 'shape:mart-err',
-        editor: ed.editor,
-        module: 'Probe',
-        data: {},
-        rev: 0,
-        dataSource: { kind: 'mart', name: 'mart_missing' },
-        load: async () => Probe,
-        loadMart: async () => {
-          throw new Error('mart "mart_missing" not found');
-        },
-      }),
-    );
-    await host.mount();
-    await act(async () => {});
-    expect(document.body.textContent).toContain('mart error');
     await host.unmount();
   });
 });

@@ -1,6 +1,6 @@
 # Repos are workspace assets; PAT-backed repos with encrypted-at-rest tokens
 
-Status: accepted (design). Extends [ADR-0015](./0015-repos-are-workspace-config-jobs-are-repo-content.md)
+Status: **superseded (2026-10-09)** — repos (installation, PAT and public) were removed with the dev agent. Kept as history. Was: accepted (design). Extends [ADR-0015](./0015-repos-are-workspace-config-jobs-are-repo-content.md)
 (repository connection, jobs) and [ADR-0010](./0010-dev-agent-is-a-role-not-a-container.md)
 (token custody); respects the gated-layer rule of
 [ADR-0013](./0013-mcp-and-workspace-content-are-the-integration-seam.md). Vocabulary: canvas

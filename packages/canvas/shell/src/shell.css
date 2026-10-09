@@ -449,62 +449,6 @@ body,
   background: var(--accent-hi);
   border-color: var(--accent-hi);
 }
-/* The kind picker (CEDA-N67Y50): a caret welded to the primary button's right edge, so the
-   one-click path is untouched and choosing a kind is a deliberate second gesture. */
-.inbox-newsplit {
-  display: flex;
-}
-.inbox-newsplit .inbox-new-chat {
-  border-radius: 7px 0 0 7px;
-  border-right-color: color-mix(in oklch, var(--accent) 70%, var(--void));
-}
-.inbox-new-kind {
-  flex: none;
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  border-left: none;
-  color: var(--on-accent);
-  border-radius: 0 7px 7px 0;
-  padding: 7px 11px;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-.inbox-new-kind:hover {
-  background: var(--accent-hi);
-  border-color: var(--accent-hi);
-}
-.inbox-kind-menu {
-  flex: none;
-  margin: 6px 12px 0;
-  background: var(--raised);
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  padding: 5px;
-  box-shadow: var(--shadow-lift);
-}
-.inbox-kind-menu button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  color: var(--text);
-  font: inherit;
-  padding: 8px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.inbox-kind-menu button:hover,
-.inbox-kind-menu button.on {
-  background: var(--overlay);
-}
-.inbox-kind-menu small {
-  display: block;
-  color: var(--faint);
-  font-size: 11px;
-  margin-top: 2px;
-}
 /* Row zero: the draft. Dashed edge + muted title so it reads as not-yet-saved next to real rows. */
 .inbox-item.draft {
   border-bottom-style: dashed;
@@ -587,14 +531,6 @@ body,
   background: var(--overlay);
   color: var(--muted);
 }
-/* A dev-agent row's kind badge (#143 scoping pass): a muted chip, distinct from the
-   attention/closed badges above. */
-.inbox-badge.dev-agent {
-  background: var(--overlay);
-  color: var(--muted);
-  text-transform: none;
-  letter-spacing: normal;
-}
 .inbox-thread {
   flex: 1.3;
   min-width: 380px;
@@ -626,10 +562,8 @@ body,
   border-color: var(--accent);
   color: var(--accent);
 }
-/* Third pane: the conversation's linked canvas, live (#161) — or, for a dev-agent run that
-   opened a PR, the PR panel (CONTEXT.md "Open PR"). Column layout so the pane switch can sit
-   above whichever of the two is showing. Shares the thread's remaining space with a larger
-   weight — whatever is in here is the thing being worked on. */
+/* Third pane: the conversation's linked canvas, live (#161). Shares the thread's remaining
+   space with a larger weight — whatever is in here is the thing being worked on. */
 .inbox-canvas {
   flex: 1;
   min-width: 0;
@@ -642,122 +576,6 @@ body,
   flex: 1;
   width: 100%;
   border: 0;
-}
-/* PR | Canvas — rendered ONLY when the conversation has both, so there is never a switch
-   with nothing to switch to. */
-.inbox-pane-switch {
-  flex: none;
-  display: flex;
-  gap: 4px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--line);
-}
-.inbox-pane-switch button {
-  background: transparent;
-  border: 1px solid var(--line);
-  color: var(--muted);
-  padding: 3px 12px;
-  border-radius: 6px;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.inbox-pane-switch button.on {
-  background: var(--overlay);
-  border-color: var(--line-strong);
-  color: var(--text);
-}
-/* The PR panel: the run's artifact, and the merge that lands it. */
-.inbox-pr {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface);
-}
-.inbox-pr-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 15px;
-  border-bottom: 1px solid var(--line);
-}
-.inbox-pr-num {
-  font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 600;
-}
-.inbox-badge.pr {
-  background: oklch(0.3 0.06 300);
-  color: oklch(0.78 0.13 300);
-  text-transform: none;
-  letter-spacing: normal;
-}
-.inbox-badge.pr.merged {
-  background: var(--overlay);
-  color: var(--muted);
-}
-.inbox-pr-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 14px 15px;
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-.inbox-pr-repo {
-  font-family: var(--mono);
-  color: var(--muted);
-}
-.inbox-pr-link {
-  display: block;
-  margin-top: 8px;
-  color: var(--faint);
-  font-size: 11.5px;
-  word-break: break-all;
-}
-.inbox-pr-merged {
-  margin-top: 12px;
-  color: var(--success);
-}
-.inbox-pr-actions {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 15px;
-  border-top: 1px solid var(--line);
-}
-/* Merging is the one irreversible action in the Inbox, so it gets its own colour rather than
-   the accent every other primary shares — it should never be clicked by muscle memory. */
-.inbox-pr-merge {
-  background: oklch(0.6 0.16 300);
-  border: 1px solid oklch(0.6 0.16 300);
-  color: oklch(0.98 0 0);
-  padding: 7px 12px;
-  border-radius: 7px;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-.inbox-pr-merge:hover:not(:disabled) {
-  background: oklch(0.68 0.16 300);
-  border-color: oklch(0.68 0.16 300);
-}
-.inbox-pr-merge:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.inbox-pr-review {
-  text-align: center;
-  color: var(--muted);
-  font-size: 12px;
-}
-.inbox-pr-error {
-  color: var(--danger);
-  font-size: 12px;
-  line-height: 1.5;
 }
 .inbox-canvas-empty {
   margin: auto;
@@ -927,77 +745,7 @@ body,
   background: var(--accent);
 }
 
-/* Jobs stage (trigger background-agent runs; observation lives in the Inbox). */
-.stage-jobs {
-  display: flex;
-  color: var(--text);
-  font-size: 14px;
-}
-.jobs-list {
-  width: 520px;
-  max-width: 100%;
-  margin: 0 auto;
-  padding: 28px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.jobs-title {
-  margin: 0 0 4px;
-  font-size: 15px;
-  font-weight: 600;
-}
-.jobs-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 16px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
-.jobs-card-main {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  flex: 1;
-}
-.jobs-card-sub {
-  color: var(--muted, #9aa);
-  font-size: 12.5px;
-}
-.jobs-run {
-  flex: none;
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-.jobs-run:hover {
-  background: var(--accent-hi);
-}
-.jobs-run:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-.jobs-note {
-  padding: 10px 14px;
-  background: var(--raised);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  font-size: 13px;
-}
-.jobs-note.jobs-error {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* Settings stage (#192): workspace administration — members now, repos next (#193). */
+/* Settings stage (#192): workspace administration. */
 .stage-settings {
   display: flex;
   color: var(--text);
@@ -1130,79 +878,6 @@ body,
 .settings-reset-password:hover {
   border-color: var(--accent);
   color: var(--accent);
-}
-
-/* Settings: repository connection (#193). */
-.settings-connect {
-  display: inline-block;
-  background: var(--accent);
-  color: #fff;
-  text-decoration: none;
-  padding: 8px 14px;
-  border-radius: 8px;
-  font-weight: 600;
-  margin-top: 8px;
-}
-.settings-connect:hover {
-  background: var(--accent-hi);
-}
-.settings-disconnect,
-.settings-add-external,
-.settings-refresh-checkouts {
-  background: none;
-  border: 1px solid var(--line);
-  color: var(--muted, #9aa);
-  padding: 4px 10px;
-  border-radius: 7px;
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.settings-disconnect:hover,
-.settings-add-external:hover,
-.settings-refresh-checkouts:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.settings-repo-toggle {
-  flex: none;
-  accent-color: var(--accent);
-}
-.settings-repo-dot {
-  flex: none;
-  color: var(--muted, #9aa);
-  font-size: 11px;
-}
-.settings-protected,
-.settings-unprotected {
-  flex: none;
-  font-size: 11.5px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-}
-.settings-protected {
-  color: #4cc38a;
-  border-color: #2c6e4f;
-}
-.settings-unprotected {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-.settings-empty p {
-  margin: 0 0 6px;
-}
-
-/* Jobs: the platform-job repo picker (ADR-0015, shown only when >1 repo is selected). */
-.jobs-repo-picker {
-  flex: none;
-  background: var(--raised);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 7px 10px;
-  font: inherit;
-  font-size: 12.5px;
 }
 
 /* #220: the Share panel (guest links) under the canvas picker head */

@@ -15,7 +15,7 @@ import type { TLShape, TLShapePartial, TLShapeId } from 'tldraw';
 
 import { SHAPE_COLORS, SHAPE_SIZE_DEFAULTS } from './shapes';
 import type { CanvasShape, ComponentStatus, ShapeColor } from './shapes';
-import type { DataSource } from '../shared/mart-contract';
+import { isRetiredDataSource, type DataSource } from '../shared/data-source';
 
 const KNOWN = new Set<string>(SHAPE_COLORS);
 const LIGHT_MAP: Record<string, ShapeColor> = {
@@ -262,9 +262,9 @@ function decodeFromTldraw(
         // model so read_canvas exposes it — without this the agent never sees that
         // a component it placed failed to load. Absent on a never-mounted/legacy shape.
         ...(shape.meta?.status ? { status: shape.meta.status as ComponentStatus } : {}),
-        // #239 / ADR-0017: a mart reference, never a URL. null (the tldraw-total default)
-        // decodes back to absent, matching the model's optional field.
-        ...(p.dataSource ? { dataSource: p.dataSource as DataSource } : {}),
+        // A named live query, never a URL. null (the tldraw-total default) and a retired mart
+        // reference both decode back to absent, matching the model's optional field.
+        ...(p.dataSource && !isRetiredDataSource(p.dataSource) ? { dataSource: p.dataSource as DataSource } : {}),
       };
     case 'chat':
       return {

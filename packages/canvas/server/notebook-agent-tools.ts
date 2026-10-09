@@ -3,10 +3,10 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { NOTEBOOK_TOOL_SPECS, type NotebookCall } from '../web-poc/lib/contract/notebook-tools.ts';
 import { loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
 
-// The Notebook, as an agent INSIDE the container holds it (ADR-0024). The in-canvas chat and
-// the dev-agent are the agents the Notebook exists for — "an agent records what it notices
-// while working with a human or running a workflow" — so they get the same ten tools the
-// remote MCP surface offers, from the same spec list and with the same descriptions.
+// The Notebook, as an agent INSIDE the container holds it (ADR-0024). The in-canvas chat is
+// an agent the Notebook exists for — "an agent records what it notices while working with a
+// human" — so it gets the same ten tools the remote MCP surface offers, from the same spec
+// list and with the same descriptions.
 //
 // A separate MCP server rather than more tools on `canvas`: these are a different surface
 // (they touch no canvas, need no store settle) and a turn can be given one without the other.

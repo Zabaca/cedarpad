@@ -80,8 +80,6 @@ export interface EndTurnDeps {
   getSessionId: () => string | null;
   userId: string;
   workspaceId: string;
-  /** Session type ('chat' default): dev-agent turns file their Conversation under this kind. */
-  kind?: 'chat' | 'dev-agent';
   /** The bridge chatId owning this turn — the Conversation's identity key (ownerRef). */
   ownerRef?: string;
   notify?: Notify;
@@ -114,7 +112,6 @@ export async function endTurn(deps: EndTurnDeps, input: EndTurnInput): Promise<s
     sessionId,
     userId: deps.userId,
     workspaceId: deps.workspaceId,
-    kind: deps.kind,
     ownerRef: deps.ownerRef,
     summary: input.summary,
     outcome: input.outcome,

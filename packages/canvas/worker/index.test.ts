@@ -3,8 +3,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'b
 import * as realAuthGate from './auth-gate.ts';
 import * as realCanvases from '../web-poc/lib/db/queries/canvases.ts';
 import * as realWorkspaces from '../web-poc/lib/db/queries/workspaces.ts';
-import * as realRepoJobs from './repo-jobs.ts';
-import * as realGithubConnection from './github-connection.ts';
 import * as realShareLinks from '../web-poc/lib/db/queries/share-links.ts';
 import { mintGuestCookie } from './guest-session.ts';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
@@ -26,26 +24,14 @@ let servedReqs: Array<{ path: string; method: string }> = [];
 let servedMcpTokenHeaders: Array<string | null> = [];
 let servedGuestCanvasHeaders: Array<string | null> = [];
 let servedViewerHeaders: Array<string | null> = [];
-// The dev-agent arming pair the fall-through stamps when a same-origin send DECLARES the
-// dev-agent kind (there is no Conversation row yet — see the `x-chat-kind` describe below).
-let servedDevAgentHeaders: Array<{ token: string | null; repo: string | null; kind: string | null }> = [];
 let assets: string[] = [];
 let inboxCalls: Array<{ id?: string; action?: string }> = [];
 let conv: ConversationRow | null = null;
 let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
 
-// #240: `getSandbox` backs `warehouseExec` (worker/index.ts) — a materialize job execs
-// against the Warehouse container's stub directly (no bridge, no proxy). Recorded so the
-// scheduled() tests below can assert the warehouse dispatch actually fires, with what.
-let warehouseExecCalls: Array<{ namespace: unknown; sandboxId: string; command: string; env: Record<string, string> }> = [];
 mock.module('@cloudflare/sandbox', () => ({
   Sandbox: class {},
-  getSandbox: (namespace: unknown, sandboxId: string) => ({
-    exec: async (command: string, opts: { env: Record<string, string> }) => {
-      warehouseExecCalls.push({ namespace, sandboxId, command, env: opts.env });
-      return { success: true, stdout: 'materialize: wrote mart_session_events (1 rows).', stderr: '' };
-    },
-  }),
+  getSandbox: () => ({}),
 }));
 mock.module('./sandbox-runtime.ts', () => ({
   serveWorkspace: (req: Request, _env: unknown, coords: SandboxCoords) => {
@@ -55,69 +41,10 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     servedGuestCanvasHeaders.push(req.headers.get('x-guest-canvas'));
     servedViewerHeaders.push(req.headers.get('x-canvas-viewer'));
-    servedDevAgentHeaders.push({
-      token: req.headers.get('x-dev-agent-git-token'),
-      repo: req.headers.get('x-dev-agent-repo'),
-      kind: req.headers.get('x-chat-kind'),
-    });
     return new Response('pad-html');
   },
   sandboxFor: () => ({}),
-  // #240/#248: mirrors the real warehouseExec (sandbox-runtime.ts), which this file's
-  // full-module mock otherwise shadows — recorded into the SAME warehouseExecCalls the
-  // '@cloudflare/sandbox' mock above used to populate, so both the cron and the manual
-  // "Run now" trigger tests can assert against it identically.
-  warehouseExec: async (env: { Warehouse: unknown; R2_BUCKET?: string; R2_ACCESS_KEY_ID?: string; R2_SECRET_ACCESS_KEY?: string; R2_ENDPOINT?: string }, coords: SandboxCoords) => {
-    warehouseExecCalls.push({
-      namespace: env.Warehouse,
-      sandboxId: coords.sandboxId,
-      command: 'bun run warehouse/materialize.ts',
-      env: {
-        R2_BUCKET: env.R2_BUCKET,
-        R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
-        R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
-        R2_ENDPOINT: env.R2_ENDPOINT,
-        CANVAS_WORKSPACE: coords.canvasWorkspace,
-      },
-    });
-    return { success: true, stdout: 'materialize: wrote mart_session_events (1 rows).', stderr: '' };
-  },
 }));
-// Job discovery is the ONLY source of scheduled work now (#100), so the cron tests need to
-// steer it. Delegate-and-restore, same reason as getWorkspace below: repo-jobs.test.ts runs
-// the real discovery later in the same process.
-const realDiscoverJobs = realRepoJobs.discoverJobs;
-let discoverJobsImpl: typeof realDiscoverJobs = () => Promise.resolve([]);
-mock.module('./repo-jobs.ts', () => ({
-  ...realRepoJobs,
-  discoverJobs: (...args: Parameters<typeof realDiscoverJobs>) => discoverJobsImpl(...args),
-}));
-afterAll(() => {
-  discoverJobsImpl = realDiscoverJobs;
-});
-// A kick always names a repo now (a job's home repo, #100), and an unresolvable repo is a
-// 400 — so the cron/route tests need the workspace's repo set to resolve. Delegate-and-restore.
-const realResolveDevAgentRepo = realGithubConnection.resolveDevAgentRepo;
-let resolveDevAgentRepoImpl: typeof realResolveDevAgentRepo = (...args) => realResolveDevAgentRepo(...args);
-mock.module('./github-connection.ts', () => ({
-  ...realGithubConnection,
-  resolveDevAgentRepo: (...args: Parameters<typeof realResolveDevAgentRepo>) => resolveDevAgentRepoImpl(...args),
-}));
-afterAll(() => {
-  resolveDevAgentRepoImpl = realResolveDevAgentRepo;
-});
-// The dev-agent git-token mint. Same delegate-and-restore discipline as resolveDevAgentRepo
-// above: github-app.test.ts exercises the REAL mint later in this process.
-const realGithubApp = await import('./github-app.ts');
-const realMintDevAgentGitToken = realGithubApp.mintDevAgentGitToken;
-let mintDevAgentGitTokenImpl: typeof realMintDevAgentGitToken = (...args) => realMintDevAgentGitToken(...args);
-mock.module('./github-app.ts', () => ({
-  ...realGithubApp,
-  mintDevAgentGitToken: (...args: Parameters<typeof realMintDevAgentGitToken>) => mintDevAgentGitTokenImpl(...args),
-}));
-afterAll(() => {
-  mintDevAgentGitTokenImpl = realMintDevAgentGitToken;
-});
 mock.module('./auth-gate.ts', () => ({
   ...realAuthGate,
   authenticate: () => Promise.resolve(session),
@@ -450,188 +377,12 @@ describe('guest session gate (#220)', () => {
   });
 });
 
-describe('POST /api/jobs/dev-agent/run — manual Jobs trigger (ADR-0011: a proxied kick)', () => {
-  // #100: one mechanism. A kick names a repo-defined job or it is an error — the built-in
-  // jobless run (a default prompt against an arbitrary repo) is retired.
-  test('a jobless POST is a 400 naming .claude/jobs/ — nothing proxied', async () => {
-    const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', { method: 'POST' }),
-      env, // no DEV_AGENT_ENABLED set — a manual trigger runs anyway, but it still needs a job
-    );
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toContain('.claude/jobs/');
-    expect(served).toEqual([]);
-  });
-
-  test('a named job kicks the warm default container’s bridge and returns its answer through', async () => {
-    discoverJobsImpl = async () => [{ repo: 'Zabaca/cedarpad', name: 'deps-audit', description: '', schedule: 'daily', prompt: 'Audit deps.' }];
-    resolveDevAgentRepoImpl = async () => ({ installationId: '1', repoFullName: 'Zabaca/cedarpad', auth: { kind: 'installation', installationId: '1' } }) as never;
-    const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ job: 'deps-audit' }),
-      }),
-      env,
-    );
-    // The bridge's response ({chatId, joined}) is returned verbatim — here the stub's body.
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('pad-html');
-    // The kick is a chat-turn dispatch on the warm default container — no separate sandbox.
-    expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
-    expect(servedReqs).toEqual([{ path: '/api/dev-agent/run', method: 'POST' }]);
-  });
-
-  test('an unknown job is a 404 — nothing proxied', async () => {
-    const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ job: 'nope' }),
-      }),
-      env,
-    );
-    expect(res.status).toBe(404);
-    expect(served).toEqual([]);
-  });
-
-  test('rejects a non-POST (405)', async () => {
-    const res = await GET('/api/jobs/dev-agent/run');
-    expect(res.status).toBe(405);
-    expect(served).toEqual([]);
-  });
-
-  // #248: "Run now" parity — a target: warehouse job execs against the Warehouse container
-  // via the SAME route a dev-agent job uses, never the bridge, and creates no Conversation
-  // (nothing proxied to serveWorkspace — `served` stays empty).
-  test('a target: warehouse job triggers on demand and execs the materialize command against the Warehouse container', async () => {
-    discoverJobsImpl = async () => [
-      { repo: 'Zabaca/cedarpad', name: 'materialize-mart', description: '', schedule: 'daily', target: 'warehouse', prompt: 'Materialize.' },
-    ];
-    const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ job: 'materialize-mart' }),
-      }),
-      env,
-    );
-    expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ joined: false }); // reports a run kicked, not a chat turn
-    expect(served).toEqual([]); // never the bridge — no Conversation, no chat-turn proxy
-    expect(warehouseExecCalls).toEqual([
-      {
-        namespace: env.Warehouse,
-        sandboxId: resolve(DEFAULT_WORKSPACE).sandboxId,
-        command: 'bun run warehouse/materialize.ts',
-        env: {
-          R2_BUCKET: undefined,
-          R2_ACCESS_KEY_ID: undefined,
-          R2_SECRET_ACCESS_KEY: undefined,
-          R2_ENDPOINT: undefined,
-          CANVAS_WORKSPACE: resolve(DEFAULT_WORKSPACE).canvasWorkspace,
-        },
-      },
-    ]);
-  });
-
-  // Owner-gated exactly like an agent job's trigger: this route reuses the SAME edge
-  // session gate (worker/auth-gate.ts decideGate) for every job regardless of target —
-  // no second authorization model was invented for warehouse jobs. An unauthenticated
-  // caller never reaches triggerDevAgentRun, so it can't reach kickWarehouse either.
-  test('an unauthenticated (non-owner) request cannot trigger a target: warehouse job — same gate as an agent job, nothing execs', async () => {
-    discoverJobsImpl = async () => [
-      { repo: 'Zabaca/cedarpad', name: 'materialize-mart', description: '', schedule: 'daily', target: 'warehouse', prompt: 'Materialize.' },
-    ];
-    session = null;
-    const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/jobs/dev-agent/run', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ job: 'materialize-mart' }),
-      }),
-      env,
-    );
-    expect(res.status).not.toBe(202);
-    expect(served).toEqual([]);
-    expect(warehouseExecCalls).toEqual([]);
-    session = { user: { id: 'u_1' } };
-  });
-});
-
-// #100: the scheduled tick is an EVALUATOR of repo-defined jobs and nothing else — there is
-// no built-in jobless run. DEV_AGENT_ENABLED stays the master breaker.
-describe('scheduled — the cron dispatches only repo-defined jobs (#100, ADR-0015)', () => {
-  const tick = async (envOverride: object = {}) => {
-    // Await the waitUntil'd work: the kick is multi-hop async (discovery → repo resolution →
-    // mint), so asserting without draining it is a race.
-    const pending: Promise<unknown>[] = [];
-    const ctx = {
-      waitUntil: (p: Promise<unknown>) => void pending.push((p as Promise<unknown>).catch(() => {})),
-    } as unknown as ExecutionContext;
-    await worker.scheduled(
-      { cron: '0 9 * * *', scheduledTime: 0 } as ScheduledController,
-      { ...(env as object), ...envOverride } as Parameters<typeof worker.fetch>[1],
-      ctx,
-    );
-    await Promise.all(pending);
-  };
-
-  test('an enabled tick kicks a DUE repo-defined job against its home repo', async () => {
-    discoverJobsImpl = async () => [{ repo: 'Zabaca/cedarpad', name: 'nightly', description: '', schedule: 'daily', prompt: 'Do the nightly thing.' }];
-    resolveDevAgentRepoImpl = async () => ({ installationId: '1', repoFullName: 'Zabaca/cedarpad', auth: { kind: 'installation', installationId: '1' } }) as never;
-    await tick({ DEV_AGENT_ENABLED: 'true' });
-    expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
-    expect(servedReqs).toEqual([{ path: '/api/dev-agent/run', method: 'POST' }]);
-  });
-
-  test('an enabled tick with NO repo-defined jobs kicks nothing (no jobless default run)', async () => {
-    await tick({ DEV_AGENT_ENABLED: 'true' });
-    expect(served).toEqual([]);
-  });
-
-  test('a disabled cron (flag unset) kicks nothing even with a due job', async () => {
-    discoverJobsImpl = async () => [{ repo: 'Zabaca/cedarpad', name: 'nightly', description: '', schedule: 'daily', prompt: 'Do the nightly thing.' }];
-    await tick();
-    expect(served).toEqual([]);
-  });
-
-  // #240: a `target: warehouse` job execs against the WAREHOUSE container's stub directly
-  // — never the bridge/canvas container proxy (`served` stays empty).
-  test('a due target: warehouse job execs the materialize command against the Warehouse container, not the bridge', async () => {
-    discoverJobsImpl = async () => [
-      { repo: 'Zabaca/cedarpad', name: 'materialize-mart', description: '', schedule: 'daily', target: 'warehouse', prompt: 'Materialize.' },
-    ];
-    await tick({ DEV_AGENT_ENABLED: 'true' });
-    expect(served).toEqual([]); // never the canvas container's bridge
-    expect(warehouseExecCalls).toEqual([
-      {
-        namespace: env.Warehouse,
-        sandboxId: resolve(DEFAULT_WORKSPACE).sandboxId,
-        command: 'bun run warehouse/materialize.ts',
-        env: {
-          R2_BUCKET: undefined,
-          R2_ACCESS_KEY_ID: undefined,
-          R2_SECRET_ACCESS_KEY: undefined,
-          R2_ENDPOINT: undefined,
-          CANVAS_WORKSPACE: resolve(DEFAULT_WORKSPACE).canvasWorkspace,
-        },
-      },
-    ]);
-  });
-});
-
 beforeEach(() => {
   session = { user: { id: 'u_1' } };
-  discoverJobsImpl = () => Promise.resolve([]);
-  resolveDevAgentRepoImpl = (...args) => realResolveDevAgentRepo(...args);
-  mintDevAgentGitTokenImpl = (...args) => realMintDevAgentGitToken(...args);
-  servedDevAgentHeaders = [];
   workspaceRecord = null;
   canvasRecord = null;
   served = [];
   servedReqs = [];
-  warehouseExecCalls = [];
   servedMcpTokenHeaders = [];
   assets = [];
   inboxCalls = [];
@@ -991,47 +742,14 @@ describe('the same-origin chat send attaches the workspace’s connected MCP tok
   });
 });
 
-// Selecting the chat kind on a NEW chat (CEDA-N67Y50). The Inbox's "+ New chat" draft has no
-// Conversation row yet, so `worker/inbox-bridge.ts`'s row-driven arming (isDevAgentConversation)
-// cannot apply — the draft's FIRST send lands on this same-origin fall-through instead. The
-// client declares the kind it wants on `x-chat-kind`; the edge answers by resolving the
-// workspace's repo and minting the same per-send git token the Inbox proxy mints, which is what
-// `server/bridge.ts turnFlavor` reads to file the born Conversation under kind 'dev-agent'.
-describe('a same-origin send declaring the dev-agent chat kind is armed at the edge', () => {
+// x-canvas-viewer decides whose screen select_page may move. The edge is its only writer:
+// stamped on a send (and the canvas stream), stripped everywhere else, and a client-sent value
+// always loses — a member must not be able to aim an agent at a colleague's view.
+describe('the edge owns x-canvas-viewer', () => {
   const SEND = (headers: Record<string, string>) =>
     worker.fetch(new Request('https://poc.cedarpad.com/api/chat/chat_1/send', { method: 'POST', headers }), env);
 
-  const armed = () => {
-    resolveDevAgentRepoImpl = () =>
-      Promise.resolve({ repoFullName: 'Zabaca/cedarpad', auth: { kind: 'public' } } as never);
-    mintDevAgentGitTokenImpl = () => Promise.resolve('ghs_minted_for_this_send');
-  };
-
-  test('the declared kind mints the token and stamps the repo', async () => {
-    armed();
-    await SEND({ 'x-chat-kind': 'dev-agent' });
-    expect(servedDevAgentHeaders).toEqual([
-      { token: 'ghs_minted_for_this_send', repo: 'Zabaca/cedarpad', kind: null },
-    ]);
-  });
-
-  test('no declared kind ⇒ an ordinary chat send, unarmed', async () => {
-    armed();
-    await SEND({});
-    expect(servedDevAgentHeaders).toEqual([{ token: null, repo: null, kind: null }]);
-  });
-
-  test('a CLIENT-SENT git token never reaches the container — the edge is the only minter', async () => {
-    resolveDevAgentRepoImpl = () => Promise.resolve(null);
-    await SEND({ 'x-chat-kind': 'dev-agent', 'x-dev-agent-git-token': 'ghs_forged', 'x-dev-agent-repo': 'evil/repo' });
-    expect(servedDevAgentHeaders).toEqual([{ token: null, repo: null, kind: null }]);
-  });
-
-  // x-canvas-viewer decides whose screen select_page may move. The edge is its only writer:
-  // stamped on a send (and the canvas stream), stripped everywhere else, and a client-sent
-  // value always loses — a member must not be able to aim an agent at a colleague's view.
   test('a CLIENT-SENT viewer never reaches the container; the edge stamps the gated user instead', async () => {
-    resolveDevAgentRepoImpl = () => Promise.resolve(null);
     servedViewerHeaders = [];
     await SEND({ 'x-canvas-viewer': 'u_victim' });
     expect(servedViewerHeaders).toEqual(['u_1']);
@@ -1044,22 +762,6 @@ describe('a same-origin send declaring the dev-agent chat kind is armed at the e
       env,
     );
     expect(servedViewerHeaders).toEqual([null]);
-  });
-
-  test('a workspace with no connected repo proxies the send unarmed rather than failing it', async () => {
-    resolveDevAgentRepoImpl = () => Promise.resolve(null);
-    const res = await SEND({ 'x-chat-kind': 'dev-agent' });
-    expect(res.status).toBe(200);
-    expect(servedDevAgentHeaders).toEqual([{ token: null, repo: null, kind: null }]);
-  });
-
-  test('a non-send request is never armed, whatever it declares', async () => {
-    armed();
-    await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/chat/chat_1/transcript', { headers: { 'x-chat-kind': 'dev-agent' } }),
-      env,
-    );
-    expect(servedDevAgentHeaders).toEqual([{ token: null, repo: null, kind: null }]);
   });
 });
 

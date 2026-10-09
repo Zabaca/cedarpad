@@ -78,24 +78,6 @@ jobs:
       # specs under the wrong runner and manufactures ~10 failures that are not
       # real. The package script scopes the directories. (CLAUDE.md says this;
       # it is repeated here because this file is where it would be got wrong.)
-      # Three tests build scratch git repos and commit into them (the dev-agent's
-      # worktree helpers). `git commit` refuses without an identity, and a runner
-      # has none — `fatal: unable to auto-detect email address (got
-      # 'foundry@ci-shared.(none)')`. Set here rather than left to the box,
-      # because a test that needs ambient machine configuration passes only where
-      # somebody happened to configure it, which is the same defect this whole
-      # workflow exists to stop hiding.
-      #
-      # NOTE the deeper version, deliberately not fixed here: the helpers under
-      # test shell out to `git commit` without `-c user.email`, so they inherit
-      # whatever the host has. That is fine on a developer's machine and is a
-      # latent failure anywhere else, production guests included. Worth closing
-      # in the helpers themselves rather than in every caller's CI.
-      - name: Give git an identity for the worktree tests
-        run: |
-          git config --global user.email "ci@cedarpad.com"
-          git config --global user.name "cedarpad CI"
-
       # The server tests run against a REAL local D1 (miniflare), not a stub —
       # `handleInboxApi` and friends create rows and read them back. On a dev box
       # `.wrangler/state` already exists because someone migrated it once, so this

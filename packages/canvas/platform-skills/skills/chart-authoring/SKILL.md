@@ -33,38 +33,28 @@ overplotted bar per category — no error. ChartCard now catches this and shows 
 channels instead of drawing, but that costs you a turn. **Look the chart type up in the table
 below before writing the encodings.**
 
-### 2. A mart is charted RAW unless you aggregate
+### 2. Rows are charted RAW unless you aggregate
 
-Flint does not aggregate by default. Point a chart at a mart with thousands of rows and you get
-thousands of marks. Put `aggregate` on the measure channel:
+Flint does not aggregate by default. Point a chart at thousands of rows and you get thousands
+of marks. Put `aggregate` on the measure channel:
 
 ```
 encodings: { x: {field:"region"}, y: {field:"revenue", aggregate:"sum"} }
 ```
 
 `sum`, `mean`, `median`, `min`, `max`, `count`. Aggregation happens client-side over every row
-the mart returns, so for a large mart prefer a mart that is *already* the summary.
+you pass, so for a large dataset prefer `values` that are *already* the summary.
 
 ### 3. `semantic_types` is what types the axis — not the JS value
 
-Mart values arrive coerced: TIMESTAMP/DATE columns are **ISO strings**, and a big INT64 may be a
-**decimal string** (both by `coerceMartRow`). Flint types the axis from `semantic_types`, not
-from the runtime type, so a date column still needs `"Date"` (→ temporal axis) and a numeric
+Dates usually arrive as **ISO strings**. Flint types the axis from `semantic_types`, not from
+the runtime type, so a date column still needs `"Date"` (→ temporal axis) and a numeric
 column still needs `"Quantity"`/`"Price"` (→ quantitative). Omit them and you get a categorical
 axis over date strings, sorted alphabetically.
 
 Common semantic types: `Quantity`, `Price`, `Percentage`, `Count`, `Rank`, `Category`, `Date`,
 `Year`, `Quarter`, `Month`, `Country`, `Duration`, `Temperature`. There are 70+; a plausible name
 usually resolves.
-
-## Static data vs a live mart
-
-- **`values`** — an inline array. Right for point-in-time, illustrative, or derived numbers.
-- **`data_source: {kind:"mart", name:"…"}`** — omit `values` entirely. The host fetches the mart,
-  injects the rows, and renders a freshness badge itself. Right for anything operational.
-
-Call `list_marts` first when the human asks for a live number. Never invent a mart name — an
-unknown one renders an empty chart that looks like "no data yet".
 
 ## Sizing
 

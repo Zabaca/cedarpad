@@ -4,7 +4,7 @@
 // writes, so it stays human/LLM-legible. Translation to/from real tldraw shapes
 // lives only in the browser (src/sync.ts).
 
-import type { DataSource } from '../shared/mart-contract.ts';
+import type { DataSource } from '../shared/data-source.ts';
 
 export const SHAPE_COLORS = [
   'black',

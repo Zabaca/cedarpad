@@ -6,19 +6,15 @@
 // `canvas-persistence.ts` went with the old sync plane — ADR-0019 / #297. The canvas key
 // and its READER stay: the retained blobs are the cutover's import source.)
 //
-// NOTHING HERE HOLDS WORKSPACE CONTENT any more (#366, ADR-0022). What is left is chat meta,
-// the retained canvas-state blobs, and the warehouse's mart artifacts — plus the raw backend,
-// which `transcript-store.ts` uses for its own per-session keys.
+// NOTHING HERE HOLDS WORKSPACE CONTENT any more (#366, ADR-0022). What is left is chat meta
+// and the retained canvas-state blobs — plus the raw backend, which `transcript-store.ts` uses
+// for its own per-session keys.
 
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { type MartSidecar, MartSidecarSchema } from '../shared/mart-contract.ts';
 import type { CanvasState } from '../src/shapes.ts';
 import type { ChatMeta } from './chat-meta.ts';
-
-/** Sidecar filename suffix — `martSidecarKey`'s tail, factored out so listing can strip it. */
-const SIDECAR_SUFFIX = '.schema.json';
 
 /** workspace-scoped per-canvas board state. */
 export const canvasStateKey = (ws: string, canvas: string): string =>
@@ -38,23 +34,15 @@ export const canvasStateKey = (ws: string, canvas: string): string =>
 // ~/.claude/projects tree on every turn: 49,111,040 bytes in production against ~650 KB of
 // appends, re-downloaded at every cold boot.
 
-/** workspace-scoped mart parquet artifact (ADR-0017): `workspaces/<ws>/warehouse/<name>.parquet`.
- * The declared-schema sidecar lives next to it at `<name>.schema.json` (mart-contract.ts). */
-export const martKey = (ws: string, name: string): string => `workspaces/${ws}/warehouse/${name}.parquet`;
-export const martSidecarKey = (ws: string, name: string): string => `workspaces/${ws}/warehouse/${name}.schema.json`;
-
 /** workspace-scoped per-chat durable state (ADR 0004): the `chatId → ChatMeta` map,
  * one JSON blob for the whole workspace. Replaces browser `localStorage` as the home for
  * `{ sessionId, model, effort, forkNext }`. */
 export const chatMetaKey = (ws: string): string => `workspaces/${ws}/chat-meta.json`;
 
-/** workspace-scoped warehouse prefix — every mart artifact for `ws` lives under it. */
-export const warehousePrefix = (ws: string): string => `workspaces/${ws}/warehouse/`;
-
 /** Minimal blob seam. `get` returns null for an absent key (legitimately empty),
  * and throws only on a real backend failure — the two are distinct. `list` returns full
  * keys under `prefix` (empty array when nothing matches — an absent prefix is not an
- * error), and is the only way to discover marts a caller can't already name. */
+ * error). */
 export interface BlobBackend {
   get(key: string): Promise<Uint8Array | null>;
   put(key: string, data: Uint8Array): Promise<void>;
@@ -148,43 +136,5 @@ export class BlobStore {
 
   async saveChatMeta(ws: string, map: Record<string, ChatMeta>): Promise<void> {
     await this.backend.put(chatMetaKey(ws), enc.encode(JSON.stringify(map)));
-  }
-
-  loadMart(ws: string, name: string): Promise<Uint8Array | null> {
-    return this.backend.get(martKey(ws, name));
-  }
-
-  async saveMart(ws: string, name: string, bytes: Uint8Array): Promise<void> {
-    await this.backend.put(martKey(ws, name), bytes);
-  }
-
-  async loadMartSidecar(ws: string, name: string): Promise<unknown | null> {
-    const bytes = await this.backend.get(martSidecarKey(ws, name));
-    return bytes === null ? null : JSON.parse(dec.decode(bytes));
-  }
-
-  async saveMartSidecar(ws: string, name: string, sidecar: unknown): Promise<void> {
-    await this.backend.put(martSidecarKey(ws, name), enc.encode(JSON.stringify(sidecar)));
-  }
-
-  /** Every materialized mart in the workspace, as its parsed sidecar — the discovery seam
-   * the chat agent needs to know a mart EXISTS and what columns it has (without this it can
-   * only guess a name, and a wrong guess renders an empty component that looks like "no data
-   * yet"). Keys off `.schema.json`, not the parquet: a mart is not a mart without its
-   * declared schema (mart-contract.ts), so a parquet with no sidecar is not listable.
-   * A malformed sidecar is SKIPPED rather than thrown, so one bad artifact can't blind the
-   * agent to every other mart. */
-  async listMarts(ws: string): Promise<MartSidecar[]> {
-    const prefix = warehousePrefix(ws);
-    const keys = (await this.backend.list(prefix)).filter((k) => k.endsWith(SIDECAR_SUFFIX));
-    const names = keys.map((k) => k.slice(prefix.length, -SIDECAR_SUFFIX.length));
-    const parsed = await Promise.all(
-      names.map(async (name) => {
-        const raw = await this.loadMartSidecar(ws, name);
-        const result = MartSidecarSchema.safeParse(raw);
-        return result.success ? result.data : null;
-      }),
-    );
-    return parsed.filter((m): m is MartSidecar => m !== null);
   }
 }

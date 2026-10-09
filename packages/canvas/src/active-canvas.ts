@@ -23,8 +23,7 @@ export function activeCanvasId(): string {
 }
 
 /** The workspace id out of a pad pathname (`/w/:ws/canvas/:id/pad`), or null when this
- * isn't a pad URL (e.g. a guest surface — the mart route ignores this segment for guests
- * and resolves the workspace from the share link instead, ADR-0017 / worker/mart-api.ts). */
+ * isn't a pad URL (e.g. a guest surface). */
 export function workspaceIdFromPath(pathname: string): string | null {
   return /^\/w\/([^/]+)\/canvas\/[^/]+\/pad\/?$/.exec(pathname)?.[1] ?? null;
 }

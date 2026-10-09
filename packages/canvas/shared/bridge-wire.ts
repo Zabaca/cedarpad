@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
-import { DataSourceSchema } from './mart-contract';
+import { DataSourceSchema } from './data-source';
 
 // The edge↔bridge wire: the ONE module that owns the typed contract spoken across the
 // Cloudflare-worker ↔ container-bridge seam (CLAUDE.md §7), the same convention as
 // shared/chat-wire.ts and shared/skills-wire.ts. Both sides import from here, so a
 // header rename, a name rule, or a route path changes in exactly one place:
 //   - EDGE (stamps headers, proxies bodies): worker/index.ts, worker/mcp-server.ts,
-//     worker/mcp-tools.ts, worker/inbox-bridge.ts, worker/dev-agent.ts, worker/huddle.ts,
+//     worker/mcp-tools.ts, worker/inbox-bridge.ts, worker/huddle.ts,
 //     and worker/guest-gate.ts (whose allowlist derives from BRIDGE_ROUTES below).
 //   - BRIDGE (reads headers, parses bodies): server/bridge.ts (+ server/components.ts,
 //     which enforces the same name rules on the filesystem).
@@ -42,24 +42,12 @@ export const GUEST_CAPS_HEADER = 'x-guest-caps';
  * Stamped by the edge from the resolved session and overwritten on every proxy, so a client
  * cannot claim to be someone else. ABSENT means "no identifiable viewer": a guest (whose
  * per-browser identity lives in localStorage and never reaches the edge, src/identity.ts),
- * or an unattributed run like the dev-agent. Absent is NOT a wildcard — a fan-out with no
+ * or an unattributed headless run. Absent is NOT a wildcard — a fan-out with no
  * viewer targets nobody, so the failure mode is "nothing moved", never "everyone moved".
  */
 export const CANVAS_VIEWER_HEADER = 'x-canvas-viewer';
 /** A send with no subscriber by design (MCP / inbox), bypassing the subscribe-before-send guard. */
 export const HEADLESS_SEND_HEADER = 'x-headless-send';
-/** Edge-minted GitHub installation token for a dev-agent turn — per-request custody, never persisted. */
-export const DEV_AGENT_GIT_TOKEN_HEADER = 'x-dev-agent-git-token';
-/** The run's target repo (`owner/name`), resolved and stamped by the edge next to the token. */
-export const DEV_AGENT_REPO_HEADER = 'x-dev-agent-repo';
-/** The kind a NEW chat asks to be born as (CEDA-N67Y50). A draft has no Conversation row yet,
- * so the row-driven arming in worker/inbox-bridge.ts has nothing to key on — the client declares
- * its intent here instead, on the same-origin send. It is an ASK, not an answer: the edge
- * consumes and STRIPS it, and the turn is dev-agent only if the edge's own mint succeeded
- * (the token remains the complete definition, ADR-0010/0011). */
-export const CHAT_KIND_HEADER = 'x-chat-kind';
-/** The one value `CHAT_KIND_HEADER` carries; anything else is an ordinary chat. */
-export const DEV_AGENT_CHAT_KIND = 'dev-agent';
 /** The Conversation the edge already resolved + ownership-checked, forwarded on the
  * open-conversation GET so the container never re-reads the row (ADR-0018 / #261). */
 export const INBOX_CONVERSATION_HEADER = 'x-inbox-conversation';
