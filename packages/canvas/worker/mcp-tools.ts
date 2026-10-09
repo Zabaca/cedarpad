@@ -25,9 +25,8 @@ import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { listVisibleCanvases, resolveCanvas } from './access.ts';
 import { componentCatalog } from './component-catalog.ts';
 import { d1RecordStore } from './record-store.ts';
-import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { DEFAULT_CANVAS_ID } from './shell-routing.ts';
 import { getWorkspace, listWorkspaces } from '../web-poc/lib/db/queries/workspaces.ts';
-import { buildNotebookTools } from '../web-poc/worker/notebook-tools.ts';
 
 // Inbound MCP tool logic (ADR-0013 train 3, #177) — pure, dependency-injected, no MCP SDK
 // here (worker/mcp-server.ts wraps these as MCP tools; tests drive them directly). Every
@@ -176,28 +175,6 @@ export function buildMcpTools(deps: McpToolDeps) {
   };
 
   return {
-    /**
-     * The Notebook's tools (ADR-0024), bound to this connection's workspace. They are built
-     * per call rather than once, because the binding — not an argument — is what makes them
-     * safe: no notebook tool takes a workspace, so there is nowhere for a caller to name one.
-     *
-     * WHICH workspace: the token user's **home** workspace, the oldest one they own or
-     * belong to (`listWorkspaces` is `createdAt`-ascending), falling back to the legacy
-     * `default` for a user who has none. An OAuth token identifies a person, not a
-     * workspace, so this is a rule rather than something the credential carries — and it is
-     * deliberately the same answer on every call, so an agent's observations do not scatter
-     * across workspaces between one tool call and the next.
-     */
-    async notebook() {
-      const rows = await listWorkspaces(deps.db, deps.userId);
-      return buildNotebookTools({
-        db: deps.db,
-        workspaceId: rows[0]?.id ?? DEFAULT_WORKSPACE_ID,
-        userId: deps.userId,
-        origin: 'agent',
-      });
-    },
-
     async listWorkspaces() {
       const rows = await listWorkspaces(deps.db, deps.userId);
       return {

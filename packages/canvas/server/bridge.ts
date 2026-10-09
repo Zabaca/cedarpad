@@ -89,10 +89,8 @@ const BOOT_AT = Date.now();
 // container gets them as real process.env; local dev reads them from web-poc/.dev.vars, the
 // same file `wrangler dev` loads for the edge Worker, so both ends of the hop agree.
 //
-// web-poc's own Hono app is NOT mounted here any more. The Notebook has been served at the
-// EDGE since ADR-0007 / #56; this mount was reachable only when something talked to the bridge
-// directly, i.e. local dev — and #263 put the edge Worker into the dev loop, which is where
-// `/v1/*` and `/api/auth/*` are served from now.
+// web-poc's own Hono app is NOT mounted here any more: #263 put the edge Worker into the dev
+// loop, which is where `/api/auth/*` is served from now.
 // (`loadWebPocEnv` and the RPC wiring live in `platform-rpc-env.ts` since the vite dev server
 // needs the same hop for on-demand Component materialization — ADR-0022.)
 const webPocEnv = loadWebPocEnv();
@@ -622,9 +620,9 @@ export async function handleRequest(req: Request): Promise<Response> {
       return json({ ok: true, joined });
     }
 
-    // (The in-process web-poc mount that served `/v1/*` and `/api/auth/*` here went with the
-    // container's database in ADR-0018 / #266. Both are EDGE routes — the Notebook API since
-    // ADR-0007 / #56, and local dev since #263 runs the edge Worker, where vite proxies them.)
+    // (The in-process web-poc mount that served `/api/auth/*` here went with the container's
+    // database in ADR-0018 / #266. It is an EDGE route; local dev since #263 runs the edge
+    // Worker, where vite proxies it.)
 
     // --- canvas ---
     // Every canvas route resolves its canvasId from the request (x-canvas-id header /

@@ -339,56 +339,21 @@ describe('canvas ops (the agent tool logic)', () => {
     });
   });
 
-  // A component names live data via dataSource (ADR-0024: a named query, never a URL).
-  // placeComponentOp/setComponentDataOp just carry it through to normalizeShape/the shape
-  // record — no fetch, no allowlist, the query registry IS the boundary.
-  describe('placeComponentOp / setComponentDataOp: dataSource', () => {
-    const openProblems = { kind: 'notebook' as const, query: 'open_problems' as const };
-
-    test('no dataSource is fully backward compatible: the shape has none', () => {
-      const s = createStore();
-      placeComponentOp(s, { module: 'KpiCard', x: 0, y: 0, w: 360, h: 260, rev: 1 });
-      const comp = s.getState().shapes[0]!;
-      expect(comp.type === 'component' && comp.dataSource).toBeUndefined();
-    });
-
-    test('placeComponentOp accepts a notebook dataSource and stores it on the shape', () => {
-      const s = createStore();
-      const r = placeComponentOp(s, { module: 'KpiCard', x: 0, y: 0, w: 360, h: 260, rev: 1, dataSource: openProblems });
-      expect(r.isError).toBeUndefined();
-      const comp = s.getState().shapes[0]!;
-      expect(comp.type === 'component' ? comp.dataSource : undefined).toEqual(openProblems);
-    });
-
-    test('setComponentDataOp can attach a dataSource to an already-placed instance', () => {
-      const s = createStore();
-      placeComponentOp(s, { id: 'shape:comp1', module: 'KpiCard', x: 0, y: 0, w: 360, h: 260, rev: 1 });
-      const r = setComponentDataOp(s, 'shape:comp1', {}, openProblems);
-      expect(r.isError).toBeUndefined();
-      const comp = s.getState().shapes.find((sh) => sh.id === 'shape:comp1')!;
-      expect(comp.type === 'component' ? comp.dataSource : undefined).toEqual(openProblems);
-    });
-
-    // A component placed before the warehouse was retired (ADR-0017) still holds a mart
-    // reference; editing it must not fail — the stale source is simply dropped.
-    test('updating a component that still holds a retired mart dataSource drops it, never errors', () => {
-      const legacy = { id: 'shape:old', type: 'component', x: 0, y: 0, w: 360, h: 260, module: 'KpiCard', data: {}, rev: 1, dataSource: { kind: 'mart', name: 'mart_runway' } };
-      const s = createStore([legacy as unknown as CanvasShape]);
-      const r = updateShapesOp(s, [{ id: 'shape:old', x: 50 }]);
-      expect(r.isError).toBeUndefined();
-      const comp = s.getState().shapes[0]!;
-      expect(comp.type === 'component' && comp.x).toBe(50);
-      expect(comp.type === 'component' && comp.dataSource).toBeUndefined();
-    });
-
-    test('setComponentDataOp with no dataSource arg leaves an existing dataSource untouched', () => {
-      const s = createStore();
-      placeComponentOp(s, { id: 'shape:comp1', module: 'KpiCard', x: 0, y: 0, w: 360, h: 260, rev: 1, dataSource: openProblems });
-      setComponentDataOp(s, 'shape:comp1', { foo: 'bar' });
-      const comp = s.getState().shapes.find((sh) => sh.id === 'shape:comp1')!;
-      expect(comp.type === 'component' ? comp.dataSource : undefined).toEqual(openProblems);
-      expect(comp.type === 'component' ? comp.data : undefined).toEqual({ foo: 'bar' });
-    });
+  // Components once named live data (a mart, ADR-0017, or a Notebook query, ADR-0024). Both
+  // sources are retired; a shape that still carries one must stay editable, with the stale
+  // reference dropped rather than failing the edit.
+  describe('a component holding a retired dataSource', () => {
+    for (const dataSource of [{ kind: 'mart', name: 'mart_runway' }, { kind: 'notebook', query: 'open_problems' }]) {
+      test(`stays editable and loses the ${dataSource.kind} reference`, () => {
+        const legacy = { id: 'shape:old', type: 'component', x: 0, y: 0, w: 360, h: 260, module: 'KpiCard', data: { a: 1 }, rev: 1, dataSource };
+        const s = createStore([legacy as unknown as CanvasShape]);
+        expect(updateShapesOp(s, [{ id: 'shape:old', x: 50 }]).isError).toBeUndefined();
+        expect(setComponentDataOp(s, 'shape:old', { a: 2 }).isError).toBeUndefined();
+        const comp = s.getState().shapes[0]!;
+        expect(comp).toMatchObject({ x: 50, data: { a: 2 } });
+        expect('dataSource' in comp).toBe(false);
+      });
+    }
   });
 
   describe('placeComponentOp routes attach through the seam (no inline duplication)', () => {

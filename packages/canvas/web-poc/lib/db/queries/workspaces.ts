@@ -90,49 +90,6 @@ export async function getWorkspaceRecord(db: Database, workspaceId: string): Pro
   return row ? toRecord(row) : null;
 }
 
-/** Add a GitHub App installation to the workspace (repository connection, ADR-0015).
- *  A workspace can hold one installation per GitHub account (org or user); reinstalling
- *  an account replaces its entry (GitHub mints a new installation id). The legacy
- *  single-id column is folded into the list here and nulled. */
-export async function addWorkspaceGithubInstallation(
-  db: Database,
-  input: { workspaceId: string; installationId: string; accountLogin: string | null },
-): Promise<void> {
-  const [row] = await db.select().from(workspaces).where(eq(workspaces.id, input.workspaceId)).limit(1);
-  if (!row) return;
-  const current =
-    row.githubInstallations ??
-    (row.githubInstallationId ? [{ installationId: row.githubInstallationId, accountLogin: null }] : []);
-  const next = [
-    ...current.filter(
-      (i) =>
-        i.installationId !== input.installationId &&
-        !(input.accountLogin !== null && i.accountLogin === input.accountLogin),
-    ),
-    { installationId: input.installationId, accountLogin: input.accountLogin },
-  ];
-  await db
-    .update(workspaces)
-    .set({ githubInstallations: next, githubInstallationId: null })
-    .where(eq(workspaces.id, input.workspaceId));
-}
-
-/** Replace the workspace's selected-repo set (validated against the grant by the caller). */
-export async function setWorkspaceSelectedRepos(
-  db: Database,
-  input: { workspaceId: string; repos: string[] },
-): Promise<void> {
-  await db.update(workspaces).set({ selectedRepos: input.repos }).where(eq(workspaces.id, input.workspaceId));
-}
-
-/** Disconnect: clear all installations and the selection. */
-export async function clearWorkspaceGithubConnection(db: Database, workspaceId: string): Promise<void> {
-  await db
-    .update(workspaces)
-    .set({ githubInstallationId: null, githubInstallations: null, selectedRepos: null })
-    .where(eq(workspaces.id, workspaceId));
-}
-
 /** One roster row: the owner (from the workspace row) or an accepted member. */
 export type WorkspaceMemberView = { userId: string; name: string; email: string; role: "owner" | "member" };
 

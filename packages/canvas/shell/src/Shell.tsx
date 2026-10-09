@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ChatView } from '../../shared/ChatView';
 import { setCanvasOverride } from '../../shared/chat-store';
@@ -21,11 +21,6 @@ import { ComponentsStage } from './components/Components';
 import { applyCanvasOrder, moved } from './canvas-order';
 import { type Stage, stageFromUrl } from './stage';
 import { createStageMemory } from './stage-memory';
-
-// Notebook mounts lazily (PRD #103, slice #107) — the same lazy chunk the container app
-// used to code-split (`src/App.tsx` pre-#106) — so opening the canvas stage never
-// pulls in web-poc's Mantine/React-Query bundle.
-const WebPocApp = lazy(() => import('../../web-poc/src/embed').then((m) => ({ default: m.WebPocApp })));
 
 // The Shell: the ONE chrome (ADR-0007, PRD #103). A vite SPA served from the edge Worker's
 // static-assets binding at `/`, so opening it never wakes (or bills) a container. The rail
@@ -64,19 +59,6 @@ function IconCanvases() {
       strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="3" y="4" width="18" height="16" rx="2" />
       <path d="M3 9h18M9 9v11" />
-    </svg>
-  );
-}
-
-// A small node-graph glyph for the Notebook (the Problem/Solution knowledge graph).
-function IconNotebook() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="6" cy="6" r="2.4" />
-      <circle cx="18" cy="6" r="2.4" />
-      <circle cx="12" cy="18" r="2.4" />
-      <path d="M8 6h8M7.4 8l3.4 7.8M16.6 8l-3.4 7.8" />
     </svg>
   );
 }
@@ -202,15 +184,6 @@ function MemberShell() {
     <div className="shell">
       <Rail stage={stage} onSelectStage={selectStage} activeWorkspace={registry.workspaceId} />
       {stage === 'canvas' && <CanvasStage registry={registry} />}
-      {stage === 'notebook' && (
-        <div className="shell-stage stage-notebook">
-          {/* Notebook scopes to the rail's active workspace rather than choosing its own
-              (PRD #103, slice #107) — the rail is the one place a workspace is picked. */}
-          <Suspense fallback={null}>
-            <WebPocApp workspaceId={registry.workspaceId || undefined} />
-          </Suspense>
-        </div>
-      )}
       {stage === 'components' && <ComponentsStage workspaceId={registry.workspaceId} />}
       {stage === 'settings' && <SettingsStage workspaceId={registry.workspaceId} />}
     </div>
@@ -286,7 +259,6 @@ function Rail({
       </button>
       {railBtn('canvas', 'Canvases', <IconCanvases />)}
       {railBtn('components', 'Components', <IconComponents />)}
-      {railBtn('notebook', 'Notebook', <IconNotebook />)}
       <div className="lp-rail-bottom">
         {railBtn('settings', 'Settings', <IconSettings />)}
         <button

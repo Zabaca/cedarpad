@@ -1,6 +1,6 @@
 # The Console is an operator surface, not a Conversation
 
-Status: **proposed** (design, grill session 2026-07-29). Nothing built. Decision 6's runtime
+Status: **dropped (2026-10-09)** — the `pty-server` was removed in #454, when chat turns lost every shell and filesystem tool. Kept as history. Was: **proposed** (design, grill session 2026-07-29). Nothing built. Decision 6's runtime
 was revised the same day after a measured spike — see Consequences. Vocabulary:
 [canvas CONTEXT.md](../../packages/canvas/CONTEXT.md) (**Console**).
 

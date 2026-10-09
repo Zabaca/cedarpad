@@ -3,7 +3,6 @@
 // Throws with an agent-legible message on bad input so the model can self-correct.
 
 import { type CanvasShape, type ShapeColor, SHAPE_SIZE_DEFAULTS, isColor } from './shapes';
-import { DataSourceSchema, isRetiredDataSource, type DataSource } from '../shared/data-source';
 
 /**
  * Mint a tldraw-compatible shape id: a readable prefix for provenance, then 64 random
@@ -56,14 +55,6 @@ function dataObject(v: unknown): Record<string, unknown> {
   if (v == null) return {};
   if (typeof v !== 'object' || Array.isArray(v)) throw new Error('"data" must be a JSON object of props');
   return v as Record<string, unknown>;
-}
-
-/** A component's live data reference (ADR-0024: names a query, never a URL). Absent stays
- * absent, and so does a retired mart reference; anything else must parse against the shared
- * contract. */
-function dataSourceOf(v: unknown): DataSource | undefined {
-  if (v == null || isRetiredDataSource(v)) return undefined;
-  return DataSourceSchema.parse(v);
 }
 
 /** A shape parented to a frame carries the frame's `shape:` id; anything else is dropped. */
@@ -149,7 +140,8 @@ function buildShape(raw: Record<string, unknown>, id: string, c: ShapeColor): Ca
       };
     }
     case 'component': {
-      const dataSource = dataSourceOf(raw.dataSource);
+      // A `dataSource` (a retired mart or Notebook reference) on old input is ignored: no
+      // live source exists any more, so the component renders its static `data`.
       return {
         id,
         type,
@@ -161,7 +153,6 @@ function buildShape(raw: Record<string, unknown>, id: string, c: ShapeColor): Ca
         module: moduleName(raw.module),
         data: dataObject(raw.data),
         rev: raw.rev == null ? 0 : num(raw.rev, 'rev'),
-        ...(dataSource ? { dataSource } : {}),
       };
     }
     case 'chat':

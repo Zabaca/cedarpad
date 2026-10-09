@@ -42,7 +42,7 @@ const customShapeUtils: TLAnyShapeUtilConstructor[] = [
 ];
 
 // This is the Render Pad (ADR-0007, PRD #103): the container serves ONLY the tldraw canvas
-// + chat now. The rail, canvas selector, and Notebook stage moved to the edge Shell SPA
+// + chat now. The rail and canvas selector moved to the edge Shell SPA
 // (packages/canvas/shell), which iframes this pad at /w/:ws/canvas/:id/pad. Chat stays here.
 
 // Hide tldraw's built-in page dropdown ("Avatar ⌄"): a canvas has no pages. The

@@ -46,7 +46,6 @@ export default cloudflareModule.instance({
       'R2_ENDPOINT',
       'R2_ACCESS_KEY_ID',
       'R2_SECRET_ACCESS_KEY',
-      'VOYAGE_API_KEY',
       'BETTER_AUTH_SECRET',
     ],
     // Single always-warm DO-bound container; roll immediately so a redeployed

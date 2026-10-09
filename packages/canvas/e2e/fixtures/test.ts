@@ -15,7 +15,7 @@
  *   (production's `default` workspace row was seeded the same way, by hand, once, #179).
  *
  * Both are addressed at the EDGE ORIGIN, not vite's. In production the edge is in front of
- * everything; in local dev it sits BESIDE vite (which proxies only `/api/auth/*` and `/v1/*`
+ * everything; in local dev it sits BESIDE vite (which proxies only edge routes such as `/api/auth/*`
  * to it — see vite.config.ts), so a spec that wants the real gate must talk to the Worker's
  * own port. `with-worktree-port.sh` derives it per worktree as `CANVAS_EDGE_PORT`.
  *

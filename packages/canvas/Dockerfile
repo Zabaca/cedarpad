@@ -17,9 +17,9 @@ FROM docker.io/cloudflare/sandbox:0.12.1
 # @cedarpad/infra (a root dependency). The dev stack is vite (not a static
 # build), so node_modules is installed here, not baked.
 WORKDIR /app/agent-canvas
-# Root tsconfig.json is required at runtime too: web-poc/tsconfig.json extends it
-# (../../../tsconfig.json), and vite/esbuild resolves that per-file when it transforms
-# web-poc/src/*.tsx. Without it the dev server errors "failed to resolve extends".
+# Root tsconfig.json is copied too: web-poc/tsconfig.json extends it (../../../tsconfig.json).
+# While vite still transformed the Notebook SPA under web-poc/, a missing root tsconfig made
+# the dev server error "failed to resolve extends".
 #
 # LAYER CACHING (deploy speed): copy ONLY the manifests bun install reads, install, THEN copy the
 # source. `bun install` reads package.json/bun.lock — never the .ts source — so the (slow) install

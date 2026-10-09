@@ -11,7 +11,6 @@
 import { z } from 'zod';
 
 import { serviceToken, verifyServiceToken } from './service-token.ts';
-import { DataSourceSchema } from './data-source.ts';
 
 // --- the boundary: where the endpoint is, and who the container is when it calls -------
 
@@ -79,7 +78,6 @@ export const CanvasShapeSchema = z.discriminatedUnion('type', [
     data: z.record(z.unknown()),
     rev: z.number(),
     status: ComponentStatusSchema.optional(),
-    dataSource: DataSourceSchema.optional(),
   }),
   z.object({ ...box, type: z.literal('chat'), title: z.string(), chatId: Id.optional() }),
   z.object({ ...box, type: z.literal('image'), src: z.string(), alt: z.string() }),

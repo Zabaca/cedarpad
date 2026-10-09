@@ -4,9 +4,9 @@
 //
 // The stage rides in the query string because the shell is served from ASSETS at `/` alone.
 
-export type Stage = 'canvas' | 'components' | 'notebook' | 'settings';
+export type Stage = 'canvas' | 'components' | 'settings';
 
-export const STAGES = ['canvas', 'components', 'notebook', 'settings'] as const satisfies readonly Stage[];
+export const STAGES = ['canvas', 'components', 'settings'] as const satisfies readonly Stage[];
 
 const isStage = (v: string | null): v is Stage => STAGES.includes(v as Stage);
 

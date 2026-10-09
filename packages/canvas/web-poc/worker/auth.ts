@@ -2,7 +2,6 @@ import type { Database } from "../lib/db/index.js";
 import { schema } from "../lib/db/index.js";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { apiKey } from "@better-auth/api-key";
 import { admin, magicLink, mcp, organization } from "better-auth/plugins";
 import { eq } from "drizzle-orm";
 import { hasPendingInvitationForEmail } from "../lib/db/queries/invitations.js";
@@ -18,10 +17,6 @@ import { createEmailSender } from "./email.js";
  *   speak "workspace". (Better Auth's client/endpoint surface still uses the
  *   `organization.*` names — wrapped behind a `workspace` facade in
  *   `apps/web/src/auth.ts`.)
- * - `apiKey` plugin with `enableSessionForAPIKeys` → agents authenticate by
- *   sending `x-api-key`, and the same `getSession` call resolves them.
- *   `enableMetadata` lets us persist the key's `defaultWorkspaceId` /
- *   `allowedWorkspaces` (read back by `authMiddleware` to scope the agent).
  */
 export function createAuth(db: Database, env: Bindings) {
   return betterAuth({
@@ -88,13 +83,6 @@ export function createAuth(db: Database, env: Bindings) {
           member: { fields: { organizationId: "workspaceId" } },
           invitation: { fields: { organizationId: "workspaceId" } },
         },
-      }),
-      apiKey({
-        enableSessionForAPIKeys: true,
-        enableMetadata: true,
-        // The plugin names a key's owner `referenceId`; map it onto our existing
-        // `user_id` column (and FK) so we keep `userId` everywhere in our own code.
-        schema: { apikey: { fields: { referenceId: "userId" } } },
       }),
       // Inbound MCP (ADR-0013 train 3, #177): cedarpad as an OAuth provider so outside
       // agents (Claude Code, claude.ai) connect with user-delegated, revocable tokens —

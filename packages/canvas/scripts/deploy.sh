@@ -120,12 +120,10 @@ printf '%s' "$VERSION" > server/version.txt
 python3 -c "import json; c=json.load(open('$HOME/.docker/config.json')); c.pop('credsStore',None); c.pop('credStore',None); json.dump(c,open('$DC/config.json','w'))"
 for f in cli-plugins contexts buildx; do [ -e "$HOME/.docker/$f" ] && ln -s "$HOME/.docker/$f" "$DC/$f"; done
 
-# Shell SPA + Notebook static build (PRD #103): wrangler's `assets` binding bundles
-# shell/dist (the shell at `/`, the Notebook SPA under `/notebook`), so it must exist
-# before zbc runs `wrangler deploy`. The zbc cloudflare module has no build hook, so
-# build it here. `bun run build` builds the shell (empties shell/dist) THEN the Notebook
-# into shell/dist/notebook — order matters.
-echo "→ building Shell SPA + Notebook (shell/dist)"
+# Shell SPA static build (PRD #103): wrangler's `assets` binding bundles shell/dist (the
+# shell at `/`), so it must exist before zbc runs `wrangler deploy`. The zbc cloudflare
+# module has no build hook, so build it here.
+echo "→ building Shell SPA (shell/dist)"
 bun run build || { echo "❌ shell build failed"; exit 1; }
 
 # Warehouse image (ADR-0017, #236) build check. It has no HTTP surface — no agent SDK,

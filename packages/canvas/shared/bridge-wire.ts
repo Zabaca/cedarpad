@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-import { DataSourceSchema } from './data-source';
-
 // The edge↔bridge wire: the ONE module that owns the typed contract spoken across the
 // Cloudflare-worker ↔ container-bridge seam (CLAUDE.md §7), the same convention as
 // shared/chat-wire.ts and shared/skills-wire.ts. Both sides import from here, so a
@@ -151,8 +149,6 @@ export const PlaceComponentBody = z.object({
    *  existing caller is unchanged. Without this the palette could only ever place onto page
    *  one, whatever page the human was looking at. */
   page: z.string().min(1).optional(),
-  /** #239 / ADR-0017: a component names a mart, never a URL — this IS the boundary. */
-  dataSource: DataSourceSchema.optional(),
 });
 /** Run one of a placed component's declared `commands` against its live data. `args` stays a
  *  loose record here: the command's own zod schema, exported by the component, validates it. */

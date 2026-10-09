@@ -11,15 +11,16 @@
 import type { SchemaPropsInfo } from '@tldraw/tlschema';
 import { T } from '@tldraw/validate';
 
-import type { DataSource } from '../shared/data-source';
-
 export const componentShapeProps = {
   w: T.number,
   h: T.number,
   module: T.string,
   data: T.jsonValue as T.Validator<Record<string, unknown>>,
   rev: T.number,
-  dataSource: T.jsonValue as T.Validator<DataSource | null>,
+  // Retired: components once named a live mart (ADR-0017) or Notebook query (ADR-0024).
+  // Nothing reads it any more, and new shapes write null, but stored records still carry
+  // it — dropping the prop would fail their validation without a tldraw schema migration.
+  dataSource: T.jsonValue as T.Validator<unknown>,
 };
 
 export const chatShapeProps = {

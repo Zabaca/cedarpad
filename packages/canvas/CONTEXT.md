@@ -16,7 +16,7 @@ library + the app code) and one bridge process. In the deploy it maps 1:1 to a
 **container**; locally it is the single dev checkout. _Avoid_: "sandbox", "instance".
 
 **Owner / member**: the two workspace roles (Better Auth `member.role`). A **member**
-gets full workspace *use* (chat, agent, canvases, notebook); the **owner** keeps
+gets full workspace *use* (chat, agent, canvases); the **owner** keeps
 workspace *administration* (invite/remove members, rename/delete). Deliberately no
 finer grain: the container is one shared trusted runtime — anyone who can chat can do
 anything the agent can, so the admission decision is binary. Access checks are
@@ -79,24 +79,10 @@ server-owned, not inside canvas state. (The tldraw **pages** layer was removed u
 [ADR 0007](../../docs/adr/0007-workspace-platform-topology.md) and CAME BACK with the real
 `TLSocketRoom` in #344 — tldraw owns page records again, so the canvas does have pages.)
 
-**Console** _([ADR-0021](../../docs/adr/0021-the-console-is-an-operator-surface.md),
-designed 2026-07-29, not yet built)_: the **owner-only** drop-down terminal (Quake-style,
-`Ctrl+\``) into a Workspace's container — **one per workspace**, a real PTY running a login shell with
-`claude` auto-launched on a fresh spawn only. Deliberately **not a Conversation**: no
-Inbox row, no `ChatMeta`, no assignee, no `waiting_on`. It is an **operator surface**,
-nearer `wrangler tail` than a chat, so [ADR-0012](../../docs/adr/0012-every-turn-ends-with-end-turn.md)'s
-end-turn law never applies to it — a tty has no turns to end. Owner-only is a
-deliberate hold on capability, **not** a containment claim: a *member* already has an
-unsandboxed root shell via chat (`server/agent.ts:693` disallows only
-`Write`/`Edit`/`NotebookEdit` — "Bash remains, so this steers the model rather than
-sandboxing it"), so the narrower gate buys the option to tighten later, not isolation
-today. Guests are denied by construction (`worker/guest-gate.ts` is a default-deny path
-allowlist). Never a wake-lock — a dismissed Console releases its socket after a grace
-period so the container's normal idle sleep proceeds; continuity across a sleep comes
-from a pinned `--session-id` plus the per-session Transcript the turn puts on settle.
-A second attach **takes over** and the previous one is told it was superseded.
-_Avoid_: "shell" (that is the edge SPA frame), "terminal session" (that is laptop Claude
-Code, which never reaches our store), "sandbox", and calling a Console a "session".
+**Console** — **DROPPED** _(removed in #454)_. ADR-0021 designed an owner-only terminal
+into a Workspace's container; its `pty-server` was started on every boot but never routed,
+and it went when chat turns lost every shell and filesystem tool. Reintroduce deliberately
+if wanted.
 
 ## Core vs extension — the modifiability boundary
 

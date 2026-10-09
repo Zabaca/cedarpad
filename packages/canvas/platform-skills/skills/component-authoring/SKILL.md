@@ -46,8 +46,8 @@ A component cannot register tools. Three channels exist:
   instead of being written.
 
 - **You → component, raw: data.** `set_component_data` to feed props, `write_data` for a file
-  the component imports (`import rows from "./sales.json"`), a `data_source` to bind a live
-  Notebook query, or `edit_component` to change the code itself. Use `set_component_data` for a
+  the component imports (`import rows from "./sales.json"`), or `edit_component` to change the
+  code itself. Use `set_component_data` for a
   component with no commands, or to replace its content wholesale.
 
 Decide which state is whose. State the **component** owns (a selection, a toggle, a draft)

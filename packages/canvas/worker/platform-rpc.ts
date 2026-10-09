@@ -9,13 +9,11 @@ import {
   type ComponentWriteOutput,
   type DataReadOutput,
   type DataWriteOutput,
-  type NotebookCallOutput,
   PlatformRpcRequest,
   type SkillListOutput,
   type SkillWriteOutput,
   verifyPlatformRpcToken,
 } from '../shared/platform-rpc.ts';
-import { buildNotebookTools, runNotebookCall } from '../web-poc/worker/notebook-tools.ts';
 import { componentCatalog } from './component-catalog.ts';
 import { componentStore } from './component-store.ts';
 import { dataStore } from './data-store.ts';
@@ -267,25 +265,6 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
     }
     const source = await dataStore(d1RecordStore(deps.db)).read({ workspaceId, canvasId, name });
     return Response.json({ source } satisfies DataReadOutput);
-  }
-
-  // The Notebook (ADR-0024). The workspace is bound HERE, from what the container said it is,
-  // and checked the same way a workspace-scoped Record write is — a consistency check, not a
-  // tenancy one (#374). The agent never named it: no notebook tool has a workspace input.
-  if (parsed.data.op === 'notebook.call') {
-    const { workspaceId, userId, call } = parsed.data.input;
-    if (!(await workspaceExists(deps.db, workspaceId))) return Response.json({ error: 'forbidden' }, { status: 403 });
-    try {
-      // `origin: 'agent'` — a container turn is an agent recording what it noticed, which is
-      // exactly the case ADR-0024 renamed the column to answer.
-      const tools = buildNotebookTools({ db: deps.db, workspaceId, userId, origin: 'agent' });
-      return Response.json({ result: await runNotebookCall(tools, call) } satisfies NotebookCallOutput);
-    } catch (err) {
-      // A refusal ("no such observation") is something the agent must be able to READ and act
-      // on, so the reason travels; it is still a non-2xx, so the tool call fails as loudly as
-      // a store outage would.
-      return Response.json({ error: (err as Error).message }, { status: 400 });
-    }
   }
 
   return Response.json({ error: 'invalid request' }, { status: 400 });

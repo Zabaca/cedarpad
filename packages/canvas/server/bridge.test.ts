@@ -511,47 +511,29 @@ describe('POST /api/canvas/shapes/{create,update} + /api/components/place — di
   // #223: `module` now goes through the shared COMPONENT_NAME_RE (shared/bridge-wire.ts),
   // the same rule the edge and server/components.ts already enforce — a module name that
   // could never resolve to a file is rejected here instead of landing an unloadable card.
-  // ADR-0024: a component names a query, never a URL — the bridge's own PlaceComponentBody
-  // accepts and stores it.
-  test('place_component: a notebook dataSource is accepted and stored on the shape', async () => {
-    const source = { kind: 'notebook', query: 'open_problems' };
-    const placed = await post('/api/components/place', { module: 'ZzTestMod2', x: 5, y: 6, dataSource: source });
-    expect(placed.status).toBe(200);
-    const comp = (await readShapes()).find((s) => s.type === 'component' && s.module === 'ZzTestMod2')!;
-    expect(comp.dataSource).toEqual(source);
+  // Live data sources are retired (ADR-0017 marts, ADR-0024 Notebook queries). An old caller
+  // that still sends one gets a plain placement: the field is dropped at the boundary, never
+  // stored and never a 500.
+  test('place_component: a dataSource on the request is ignored, never stored', async () => {
+    for (const [module, dataSource] of [
+      ['ZzTestMod2', { kind: 'notebook', query: 'open_problems' }],
+      ['ZzTestMod4', { kind: 'mart', name: 'mart_runway' }],
+    ] as const) {
+      const placed = await post('/api/components/place', { module, x: 5, y: 6, dataSource });
+      expect(placed.status).toBe(200);
+      const comp = (await readShapes()).find((s) => s.type === 'component' && s.module === module)!;
+      expect('dataSource' in comp).toBe(false);
+    }
   });
 
-  test('place_component: a malformed dataSource is a 400', async () => {
-    const placed = await post('/api/components/place', { module: 'ZzTestMod3', x: 5, y: 6, dataSource: { kind: 'url', url: 'https://evil.example' } });
-    expect(placed.status).toBe(400);
-  });
-
-  // #250: `data` is arbitrary component props, agent- and author-supplied — a component
-  // whose props legitimately include a field NAMED "dataSource" (a natural prop name for
-  // a chart) must still be placeable. Traced end-to-end (PlaceComponentBody's `data` is
-  // `z.record(z.unknown())`, buildShape's 'component' case only ever reads the sibling
-  // `raw.dataSource`, never `raw.data.dataSource`) and reproduced against this exact
-  // payload: no code path here reads `data.dataSource`, so it is already inert — passed
-  // through to the component as an ordinary prop, byte-for-byte, and never promoted to
-  // the shape-level data reference. This test locks that contract in (CLAUDE.md §7: the
-  // boundary's behavior on this key is a deliberate decision, not an accident) and is the
-  // never-a-500 guarantee #250 asks for: same value, key named "dataSource" instead of
-  // "nested", still 200.
-  test('place_component: a `dataSource` key INSIDE `data` is just a prop, never a 500, never promoted to the shape-level ref', async () => {
+  // #250: `data` is arbitrary component props — a component whose props include a field NAMED
+  // "dataSource" (a natural prop name for a chart) reaches the component as an ordinary prop.
+  test('place_component: a `dataSource` key INSIDE `data` is just a prop, never a 500', async () => {
     const value = { kind: 'mart', name: 'mart_session_events' };
     const placed = await post('/api/components/place', { module: 'ZzTestMod2b', x: 5, y: 6, data: { dataSource: value } });
     expect(placed.status).toBe(200);
     const comp = (await readShapes()).find((s) => s.type === 'component' && s.module === 'ZzTestMod2b')!;
     expect(comp.data).toEqual({ dataSource: value }); // reaches the component as an ordinary prop, untouched
-    expect(comp.dataSource).toBeUndefined(); // never promoted to the sibling reference
-  });
-
-  // The warehouse is retired (ADR-0017): a NEW placement naming a mart is refused at the
-  // boundary rather than landing a source nothing can resolve.
-  test('place_component: a mart dataSource is a 400, never stored', async () => {
-    const placed = await post('/api/components/place', { module: 'ZzTestMod4', x: 5, y: 6, dataSource: { kind: 'mart', name: 'mart_runway' } });
-    expect(placed.status).toBe(400);
-    expect((await readShapes()).some((s) => s.type === 'component' && s.module === 'ZzTestMod4')).toBe(false);
   });
 
   test('place_component: a module name that fails the component-name rule is a 400', async () => {

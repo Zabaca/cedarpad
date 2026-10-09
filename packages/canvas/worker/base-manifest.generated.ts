@@ -4,7 +4,7 @@
 // it off a filesystem. This is what the edge knows the base tier by, bundled with the
 // worker; `worker/base-manifest.test.ts` fails if it drifts from `src/canvas-components/`.
 export const BASE_COMPONENTS: ReadonlyArray<{ name: string; description: string }> = [
-  { name: "ChartCard", description: "Data chart. Props (the `data` you place it with) ARE a Flint chart spec: { values, semantic_types, chartType, encodings, title? } Flint (flint-chart) compiles that to Vega-Lite; vega renders it as SVG. Works off EITHER data path: inline `va" },
+  { name: "ChartCard", description: "Data chart. Props (the `data` you place it with) ARE a Flint chart spec: { values, semantic_types, chartType, encodings, title? } Flint (flint-chart) compiles that to Vega-Lite; vega renders it as SVG. The agent writes INTENT (a chart type " },
   { name: "CodeCard", description: "Code snippet card: monospace with line numbers, no highlighting deps. Props: { code: string, lang?, title? }. Very long snippets are clipped with a note." },
   { name: "DataTable", description: "Fast data-table card: renders tabular data (pasted spreadsheets, CSV/TSV, query results) with windowed rows, so tens of thousands of rows stay smooth. Props: { title?, columns: string[], rows: string[][], totalRows? (set when truncated) }." },
   { name: "DiscussionThread", description: "" },

@@ -36,7 +36,7 @@ describe('stage memory', () => {
 
     expect(memory.urlFor('canvas')).toBe('/?canvas=cv_1');
     expect(memory.urlFor('components')).toBe('/?stage=components&q=chart');
-    expect(memory.urlFor('notebook')).toBe('/?stage=notebook');
+    expect(memory.urlFor('settings')).toBe('/?stage=settings');
   });
 
   test('re-remembering a stage overwrites the earlier value', () => {

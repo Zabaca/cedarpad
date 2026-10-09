@@ -69,10 +69,9 @@ migrations. It holds the **platform's** rows (`workspaces`, `canvases`,
 `push_subscriptions` remain until the data cleanup) **and every Better Auth table** (the org plugin's `workspace`/`member`/
 `invitation`, plus `user`/`session`/`account`/`apikey`). Each **App** is a *consumer* of it; none
 owns it. It lives under `packages/canvas/web-poc/lib/db/` for historical reasons — that path is a
-legacy directory name, **not** a statement of ownership. The Notebook's own tables
-(`observations`, `problems`, `solutions`) are a small minority of the schema.
-_Avoid_: calling this "the web-poc database" or "the Notebook's DB" — the name misleads. Disabling
-an App does not remove the platform's dependency on this layer.
+legacy directory name, **not** a statement of ownership. The retired Notebook's tables
+(`observations`, `problems`, `solutions`, …) remain until the data cleanup.
+_Avoid_: calling this "the web-poc database" or "the Notebook's DB" — the name misleads.
 **Only the edge reaches it.** Since [ADR-0018](./docs/adr/0018-platform-data-layer-on-d1.md) the
 workspace **container holds no database client at all**: the reads and writes it needs go to the
 edge over the **platform RPC** (`packages/canvas/shared/platform-rpc.ts`) — named Record verbs,
@@ -82,12 +81,12 @@ convention.
 
 **Shell**: the **persistent edge app frame** — the only chrome, an edge-served SPA (the
 Worker's static ASSETS) that owns the rail, the workspace switcher, and stage selection;
-NOT inside the container. It mounts its stages (Canvas, Components, Notebook, Settings) **inline**
+NOT inside the container. It mounts its stages (Canvas, Components, Settings) **inline**
 (`?stage=…`), never separate page loads. Always instant; wakes the workspace runtime only
 when the canvas stage mounts the Render Pad iframe (`/w/:ws/canvas/:id/pad`) — browsing the
 rail never does. **Owns login and is the single gate**: the edge Shell
-Worker runs **Better Auth** (against D1) for the Shell, the container proxy, and
-Notebook's `/v1/*` — one auth system. Because the edge serves the login/Shell and only
+Worker runs **Better Auth** (against D1) for the Shell, the container proxy and inbound
+MCP — one auth system. Because the edge serves the login/Shell and only
 proxies to the container *after* auth, the old pre-auth source-disclosure hole closes
 structurally, so **`cs_gate` is removed** (Cloudflare Access becomes optional
 defense-in-depth, not a dependency). This word was formerly the name of the canvas
@@ -101,22 +100,15 @@ It was formerly the canvas "frontend frame". Platform containment is **Workspace
 Canvas → Render Pad** (the tldraw *pages* layer was removed; see
 [ADR-0007](./docs/adr/0007-workspace-platform-topology.md)).
 
-**App**: a launchable surface in the Shell's top nav. Two (the **Inbox** was retired
-2026-10-09):
-1. **Canvas** — index of all canvases (see below).
-2. **Notebook** — Observations + Problems (PM), knowledge graph. From PR #40.
+**App**: a launchable surface in the Shell's top nav. One: **Canvas** — index of all
+canvases (see below). The **Inbox** and the **Notebook** were retired 2026-10-09, when
+cedarpad was cut back to the canvas.
 
-Each app has its own document model, in its own `CONTEXT.md`.
-
-**Scoping across workspaces** (given James has many): **Canvas** and **Notebook** data are
-**per-workspace** — a workspace's canvases and its Observations/Problems belong to that
-workspace (D1 rows carry `workspace_id`). This `workspace_id` is the **platform**
-workspace (the `workspaces` registry / the `cs_workspace` cookie the Shell sets; agents pass
-`x-workspace-id`), **not** the Better Auth organization. Notebook records are **isolated per
-platform workspace** — workspace A's list/search never returns B's rows (#57); the original
-cross-project solution-reuse in the graph is intentionally dropped (a possible future
-opt-in). Absent a selection, requests fall back to the legacy `default` workspace, where
-pre-#57 rows are backfilled.
+**Scoping across workspaces** (given James has many): **Canvas** data is **per-workspace** — a
+workspace's canvases belong to that workspace (D1 rows carry `workspace_id`). This
+`workspace_id` is the **platform** workspace (the `workspaces` registry / the `cs_workspace`
+cookie the Shell sets; agents pass `x-workspace-id`), **not** the Better Auth organization.
+Absent a selection, requests fall back to the legacy `default` workspace.
 
 **Repos and GitHub auth** — _retired 2026-10-09_. A workspace no longer connects GitHub or
 checks repos out: the canvas never changes code, so nothing in it needs a repository. The
@@ -125,22 +117,9 @@ checks repos out: the canvas never changes code, so nothing in it needs a reposi
 ## Canvas as a shared surface (not owned by the Canvas app)
 
 **Canvas**: a workspace-owned drawing surface — its own component dir (isolated by path,
-served by the workspace's single vite), rendered by its **Render Pad**. It is NOT property of
-the Canvas app. It carries an optional **owner** edge:
-
-- `none` — standalone.
-- a **Notebook** item (Observation/Problem).
-
-Rules:
-- The **Canvas app** is the *index* over ALL canvases regardless of owner; each shows
-  an origin badge ("from Problem #12"). A canvas can never be lost.
-- Notebook creating a canvas only sets the owner pointer; the canvas still lives
-  in the one registry and the one runtime.
-- **Owner-delete orphans, never cascades.** Deleting the owning Problem drops
-  the pointer; the canvas survives as standalone.
-
-Mirrors the canvas glossary's own shape: a `chat` is a shape *on* a canvas; here a
-canvas is a surface *on* a notebook item — an attachment edge, not a copy.
+served by the workspace's single vite), rendered by its **Render Pad**. The **Canvas app** is
+the *index* over all of a workspace's canvases. (It once carried an optional owner edge to a
+Notebook item; the Notebook is retired, so every canvas is standalone.)
 
 **Components & the shared library** (runtime revised during #53 — see note):
 - Each canvas has its own component dir (`canvas-<id>/components/*.tsx`), isolated **by
@@ -168,15 +147,9 @@ canvas is a surface *on* a notebook item — an attachment edge, not a copy.
 
 ## Apps — stubs (filled as we design)
 
-**Notebook**: PM ("Problem/Solution intelligence") app. **Edge + D1, not a container
-tenant** — it needs no vite compiler and no agent runtime for its core loop, so its Hono
-API runs on the Worker against the platform D1 and its SPA is a static build served under
-the Shell. Carries over PR #40's crux: the zod-openapi **contract**, Drizzle **schema**,
-and **Voyage embeddings / cosine-similarity** pipeline. Drops PR #40's in-container mount
-+ in-app `Gate` (the edge Shell owns login). Domain rollout: **Observation** (capture →
-embed → similarity) is the beachhead; **Problem** then **Solution** + graph-synthesis
-follow. (Full domain model: [packages/canvas/docs/notebook/CONTEXT.md](./packages/canvas/docs/notebook/CONTEXT.md),
-to be re-homed.)
+**Notebook** — _retired 2026-10-09_ (ADR-0024 superseded). There is no Notebook stage, no
+`/v1` API, no `notebook_*` MCP tools and no live data source on components; a component
+that still names one renders its static data. Its tables remain until the data cleanup.
 
 **Inbox** — _retired 2026-10-09_ (ADRs 0009, 0012 and 0023 superseded). There are no
 Conversations, no `end_turn`, no assignment, no web push and no events hub: a chat is a
@@ -215,7 +188,7 @@ chat turn on its owning runner's bridge**.
 
 ## Data — the workspace warehouse — _retired 2026-10-09_
 
-ADR-0017 is superseded. There is no Warehouse, Mart, Connector or Materialize Job: a
-component's live data is a named Notebook query (`shared/data-source.ts`), and a component
-that still names a mart renders its static data. The `Warehouse` container class stays bound
+ADR-0017 is superseded. There is no Warehouse, Mart, Connector or Materialize Job, and no
+live data source of any kind: a component renders its static `data`, and one that still
+names a mart (or a Notebook query) renders that data. The `Warehouse` container class stays bound
 in `wrangler.jsonc` only until the Cloudflare container migration deletes it.
