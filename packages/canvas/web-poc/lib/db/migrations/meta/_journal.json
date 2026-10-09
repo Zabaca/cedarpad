@@ -260,6 +260,20 @@
       "when": 1785556905924,
       "tag": "0036_notebook_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1791583042505,
+      "tag": "0037_foamy_firelord",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1791583054717,
+      "tag": "0038_drop_notebook_fts",
+      "breakpoints": true
     }
   ]
 }
