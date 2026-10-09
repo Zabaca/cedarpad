@@ -35,7 +35,7 @@ export interface GuestRoomStore {
 interface ComponentRecord {
   id: string;
   type: string;
-  props: { module: string; data: Record<string, unknown>; rev: number; dataSource?: unknown };
+  props: { module: string; data: Record<string, unknown>; rev: number };
 }
 
 type EditorShape = { id: string; type: string; props: Record<string, unknown>; meta: Record<string, unknown> };
@@ -151,7 +151,6 @@ export function GuestComponent({ store, shapeId }: { store: GuestRoomStore; shap
           module={props.module}
           data={props.data}
           rev={props.rev}
-          dataSource={props.dataSource as never}
         />
       </div>
     </div>

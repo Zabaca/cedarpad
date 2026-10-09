@@ -87,34 +87,20 @@ describe('normalize preserves the parentId rule at every call site', () => {
   });
 });
 
-// A component names live data via dataSource (ADR-0024: a named query, never a URL).
-// normalizeShape must carry this through like every other component field.
-describe('normalizeShape: component dataSource', () => {
-  const component = (dataSource?: unknown) =>
-    normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: { x: 1 }, rev: 1, ...(dataSource ? { dataSource } : {}) });
+// Components once named live data (a mart, ADR-0017, or a Notebook query, ADR-0024). Both are
+// retired: a stored or incoming shape that still carries one must load with its static data,
+// whatever the reference looks like, and the reference is dropped.
+describe('normalizeShape: a retired component dataSource', () => {
+  const component = (dataSource: unknown) =>
+    normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: { x: 1 }, rev: 1, dataSource });
 
-  test('a component with no dataSource stays exactly as today (backward compatible)', () => {
-    const shape = component();
-    expect(shape.type === 'component' && shape.dataSource).toBeUndefined();
-  });
-
-  test('a valid notebook dataSource is preserved', () => {
-    const source = { kind: 'notebook', query: 'open_problems' };
-    expect(component(source)).toMatchObject({ dataSource: source });
-  });
-
-  test('a malformed dataSource is rejected', () => {
-    expect(() => component({ kind: 'url', name: 'x' })).toThrow();
-  });
-
-  // The warehouse is retired (ADR-0017). A component placed before that still carries
-  // `{kind:'mart'}` — it must keep loading (and keep being editable) with its static data,
-  // not fail the whole shape.
-  test('a retired mart dataSource reads as no source, not as an error', () => {
-    const shape = component({ kind: 'mart', name: 'mart_runway' });
-    expect(shape.type === 'component' && shape.dataSource).toBeUndefined();
-    expect(shape.type === 'component' && shape.data).toEqual({ x: 1 });
-  });
+  for (const dataSource of [{ kind: 'mart', name: 'mart_runway' }, { kind: 'notebook', query: 'open_problems' }, { kind: 'url', name: 'x' }]) {
+    test(`{kind:'${dataSource.kind}'} loads as a plain component`, () => {
+      const shape = component(dataSource);
+      expect(shape).toMatchObject({ type: 'component', module: 'KpiCard', data: { x: 1 } });
+      expect('dataSource' in shape).toBe(false);
+    });
+  }
 });
 
 // #327: minted ids must be unique WITHOUT coordination between writers.

@@ -1,6 +1,6 @@
 # The Notebook is an agent-first store, searched by FTS5, read by canvas
 
-Status: **accepted** (grill session 2026-07-30). Vocabulary: Notebook
+Status: **superseded (2026-10-09)** — the Notebook (stage, `/v1` API, `notebook_*` MCP tools, live data source) was removed when cedarpad was cut back to the canvas; its tables remain until the data cleanup. Kept as history. Was: **accepted** (grill session 2026-07-30). Vocabulary: Notebook
 [CONTEXT.md](../../packages/canvas/web-poc/CONTEXT.md) — **Observation**, **Problem**,
 **Source**, **Solution**; root [CONTEXT.md](../../CONTEXT.md) — **Workspace**, **App**,
 **Platform data layer**.

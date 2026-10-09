@@ -10,7 +10,6 @@ import { z } from 'zod';
 import { DATA_MAX_BYTES, type ScreenshotTarget } from '../shared/bridge-wire.ts';
 import { resolvePageRef } from '../shared/canvas-pages.ts';
 import { SHAPE_COLORS } from '../src/shapes.ts';
-import { DataSourceSchema } from '../shared/data-source.ts';
 import type { CanvasStore } from '../src/store.ts';
 import {
   type FetchAsset,
@@ -36,7 +35,6 @@ import { type McpRegistryEntry, MCP_REGISTRY, resolveMcpEntry } from './mcp-regi
 import type { TurnCanvasStore } from './turn-canvas-store.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 import type { ComponentVersion } from '../shared/platform-rpc.ts';
-import { createNotebookMcpServer } from './notebook-agent-tools.ts';
 import { chatSkillSources, writeSkill } from './skills.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
 
@@ -515,23 +513,19 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
           y: z.number().describe('Top-left y in page coordinates.'),
           w: z.number().optional().describe('Box width. Default 360.'),
           h: z.number().optional().describe('Box height. Default 260.'),
-          data: z.record(z.unknown()).optional().describe('Static props object passed to the component (the data channel). Omit when using data_source.'),
-          data_source: DataSourceSchema.optional().describe(
-            'Names the data this component should render LIVE — never a URL, never SQL: `{kind:"notebook", query, params}`, where query is one of open_problems / problem_observations (params.problemId) / recent_observations (params.sourceId optional), reading the workspace Notebook as of right now. Rows are resolved at render time in the browser, so the canvas stays current without you re-calling this tool.',
-          ),
+          data: z.record(z.unknown()).optional().describe('Static props object passed to the component (the data channel).'),
         },
-        async ({ id, module, x, y, w, h, data, data_source }) =>
-          result(placeComponentOp(store, { id, module, x, y, w, h, data, dataSource: data_source, rev: nextComponentRev(store) }, originChatId)),
+        async ({ id, module, x, y, w, h, data }) =>
+          result(placeComponentOp(store, { id, module, x, y, w, h, data, rev: nextComponentRev(store) }, originChatId)),
       ),
       tool(
         'set_component_data',
-        'Update just the props (data) of a placed component instance, without touching its module or box. REPLACES the whole data object, so a concurrent edit by someone else is lost: if the component exports `commands`, use call_component instead. Pass `data_source` to attach/retarget a live Notebook query instead of (or in addition to) static data; omit it to leave an existing reference untouched.',
+        'Update just the props (data) of a placed component instance, without touching its module or box. REPLACES the whole data object, so a concurrent edit by someone else is lost: if the component exports `commands`, use call_component instead.',
         {
           id: z.string().describe('The component shape id.'),
           data: z.record(z.unknown()).describe('New props object for the component.'),
-          data_source: DataSourceSchema.optional().describe('Names a Notebook query this component should render LIVE — never a URL.'),
         },
-        async ({ id, data, data_source }) => result(setComponentDataOp(store, id, data, data_source)),
+        async ({ id, data }) => result(setComponentDataOp(store, id, data)),
       ),
       tool(
         'call_component',
@@ -710,10 +704,6 @@ export async function* runChat(
   // acc tracks the (possibly newly-assigned) sessionId across the turn.
   let acc: TurnAccum = { sessionId, costUsd: 0 };
   const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, sendToChat, fetchAsset, selectPage);
-  // The Notebook (ADR-0024): the store agents write and canvas reads. Null when this process
-  // has no edge in front of it (local dev without the Worker, the unit suite) — the turn then
-  // simply has no notebook tools, rather than tools that quietly write nowhere.
-  const notebook = createNotebookMcpServer();
 
   const fullOptions = {
     systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: CANVAS_APPEND },
@@ -737,7 +727,7 @@ export async function* runChat(
       options: {
         model: resolveModelForSdk(model ?? MODEL),
         ...(effort ? { effort: effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}), // guide thinking depth; omitted = adaptive default
-        mcpServers: { canvas, ...(notebook ? { notebook } : {}), ...buildExternalMcpServers(mcpTokens) },
+        mcpServers: { canvas, ...buildExternalMcpServers(mcpTokens) },
         permissionMode: 'bypassPermissions',
         env: turnEnv(process.env),
         includePartialMessages: true, // stream text deltas + tool starts for live feedback

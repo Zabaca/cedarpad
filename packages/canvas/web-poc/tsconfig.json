@@ -12,6 +12,6 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src", "worker", "lib", "scripts", "drizzle.config.ts", "worker-configuration.d.ts"],
+  "include": ["worker", "lib", "drizzle.config.ts", "worker-configuration.d.ts"],
   "exclude": ["**/*.test.ts", "**/*.test.tsx"]
 }

@@ -73,10 +73,8 @@ export default cloudflareModule.instance({
       'R2_ENDPOINT',
       'R2_ACCESS_KEY_ID',
       'R2_SECRET_ACCESS_KEY',
-      // web-poc is mounted into the canvas bridge (one instance), so its secrets ride
-      // this container too. Must exist in production/secrets.yaml. (BETTER_AUTH_URL /
-      // WEB_ORIGIN are non-secret vars in the package's wrangler.jsonc.)
-      'VOYAGE_API_KEY',
+      // The platform data layer's Better Auth secret. Must exist in production/secrets.yaml.
+      // (BETTER_AUTH_URL / WEB_ORIGIN are non-secret vars in the package's wrangler.jsonc.)
       'BETTER_AUTH_SECRET',
       // Huddles (ADR-0017): LiveKit Cloud signing keys, edge-only — the container gets
       // short-lived minted room tokens, never these. Provisioned in production/secrets.yaml.

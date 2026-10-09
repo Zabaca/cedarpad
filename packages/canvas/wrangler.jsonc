@@ -21,8 +21,7 @@
   // absent key) is what makes `wrangler deploy` clear the trigger it registered before.
   "triggers": { "crons": [] },
   // Non-secret env for the mounted web-poc's Better Auth (same origin as the app in
-  // prod). Secrets (VOYAGE_API_KEY, BETTER_AUTH_SECRET) are pushed via
-  // workerSecrets, not here.
+  // prod). The secret (BETTER_AUTH_SECRET) is pushed via workerSecrets, not here.
   "vars": {
     // Workspaces served from our own hardware instead of a Cloudflare Container
     // (worker/self-hosted.ts). `default` moved to an incus guest on ryzen-9 on
@@ -49,8 +48,8 @@
     "CANVAS_USER": "2hfe21p0OsrHWQBPgfKhwSH9ZYUK9ajw"
   },
   // The Shell SPA build (PRD #103). `bun run build` emits shell/dist — the Shell at `/`
-  // and its `/assets/*`, plus the Notebook SPA under `/notebook` (shell/dist/notebook) —
-  // and the edge Worker serves it all through env.ASSETS after the edge session gate.
+  // and its `/assets/*` — and the edge Worker serves it through env.ASSETS after the edge
+  // session gate.
   // `run_worker_first: true` means the Worker runs on every request (assets are never
   // auto-served pre-auth) and pulls files through the ASSETS binding.
   "assets": {

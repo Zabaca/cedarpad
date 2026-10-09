@@ -53,22 +53,6 @@ test('an unknown chart type is reported', () => {
   expect(host.textContent).toContain('Unknown chart type');
 });
 
-// #239: the host injects `rows` ONLY for a mart-backed placement, and injects `rows: []`
-// while that mart is loading/empty/misnamed. Presence — not length — has to select the
-// source, or a slow mart would flash the inline snapshot as if it were live data.
-test('a mart-backed placement charts rows, not inline values', () => {
-  const host = render({
-    values: ROWS,
-    rows: [],
-    semantic_types: { region: 'Category', qtr: 'Quarter', revenue: 'Price' },
-    chartType: 'Grouped Bar Chart',
-    encodings: { x: { field: 'qtr' }, y: { field: 'revenue' }, group: { field: 'region' } },
-  });
-  // An empty mart renders an empty chart, never an error and never the stale snapshot.
-  expect(host.textContent).not.toContain('channel');
-  expect(host.textContent).not.toContain('Unknown');
-});
-
 // The card is measured with `clientWidth`, not `getBoundingClientRect()`, because it renders
 // inside tldraw's CSS-scaled container — the rect is post-transform, so below 100% zoom the
 // chart was laid out small and then scaled back up, under-filling the card. `applyFit` is

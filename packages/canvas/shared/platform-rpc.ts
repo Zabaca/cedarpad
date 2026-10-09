@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
 import { ComponentName, DataFileName, DataFileSource } from './bridge-wire.ts';
-import { NotebookCall } from '../web-poc/lib/contract/notebook-tools.ts';
 import { SkillFilePath, SkillName, UploadSkillInput } from './skills-wire.ts';
 import { serviceToken, verifyServiceToken } from './service-token.ts';
 
@@ -319,38 +318,6 @@ export type DataReadInput = z.infer<typeof DataReadInput>;
 export const DataReadOutput = z.object({ source: z.string().nullable() });
 export type DataReadOutput = z.infer<typeof DataReadOutput>;
 
-/**
- * Operation 16 — the **Notebook** (ADR-0024). The Notebook is a store agents write and canvas
- * reads, and the agent that matters most runs INSIDE the container: the in-canvas chat. This
- * is its way to it, for the same reason every verb above exists — the container holds no
- * database client.
- *
- * `call` is the tool the agent invoked, as a discriminated union of the ten named Notebook
- * tools (`web-poc/lib/contract/notebook-tools.ts`). It stays behavioural exactly as the verbs
- * above do: the alternatives are all enumerated, and there is no query, table or filter
- * anywhere in the shape. One entry rather than ten because the ten already ARE a closed
- * union in the contract both ends share — restating them here would be a second copy to drift.
- *
- * `workspaceId` is the CONTAINER's own workspace, never something the agent named: no notebook
- * tool takes a workspace, so a turn cannot address a workspace other than the one it runs in.
- *
- * NOT best-effort. An observation the agent believes it recorded and the edge dropped is worse
- * than a failed tool call, for the reason ADR-0022's Record verbs give.
- */
-export const NotebookCallInput = z.object({
-  workspaceId: z.string().min(1),
-  /** Attribution (`created_by`), not authorization — nullable like every other Record verb. */
-  userId: z.string().min(1).nullable(),
-  call: NotebookCall,
-});
-export type NotebookCallInput = z.infer<typeof NotebookCallInput>;
-
-/** Whatever the tool answered, wrapped so the reply is always an object. The shapes are the
- *  tools' own (`web-poc/worker/notebook-tools.ts`); the container reports them to the agent
- *  and never interprets them, so restating each one here would buy nothing. */
-export const NotebookCallOutput = z.object({ result: z.unknown() });
-export type NotebookCallOutput = z.infer<typeof NotebookCallOutput>;
-
 /** The whole request, discriminated by operation name — the complete surface. */
 export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('component.write'), input: ComponentWriteInput }),
@@ -364,6 +331,5 @@ export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('data.write'), input: DataWriteInput }),
   z.object({ op: z.literal('data.read'), input: DataReadInput }),
   z.object({ op: z.literal('component.restore'), input: ComponentRestoreInput }),
-  z.object({ op: z.literal('notebook.call'), input: NotebookCallInput }),
 ]);
 export type PlatformRpcRequest = z.infer<typeof PlatformRpcRequest>;

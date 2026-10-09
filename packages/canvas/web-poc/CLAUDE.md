@@ -1,26 +1,19 @@
-# CLAUDE.md — @cedarpad/web-poc
+# CLAUDE.md — web-poc (the platform data layer)
 
-Rules and orientation for AI sessions working in this package. Read `CONTEXT.md`
-(domain + dev workflow), `MIGRATION.md` (history of the apex→web-poc move), and
-`docs/README.md` (architecture refs + migration delta) for depth.
+Rules and orientation for AI sessions working in this directory. Read `CONTEXT.md` for the
+layout; `MIGRATION.md` is history.
 
 ## What this is
 
-The Notebook: a React SPA (`src/`) + Hono API (`worker/`), backed by the platform
-D1 (ADR-0018). Since ADR-0024 it is **a store agents write and canvas reads** — the
-API is the product, the UI a read surface. Shared libs in `lib/`
-(`ai`/`config`/`contract`/`db`/`realtime`).
+The **platform data layer** of `@cedarpad/canvas`: the D1 schema, its migrations, the query
+modules the edge Worker uses, and Better Auth (ADR-0018). `web-poc` is a legacy directory
+name — this used to also hold the Notebook app (SPA + `/v1` API), retired in favour of the
+canvas.
 
-**As of 2026-07-01 this is an in-tree module of `@cedarpad/canvas`, not a
-package.** It lives at `packages/canvas/web-poc/`, has **no `package.json`/
-`exports`** of its own (canvas owns the deps), and canvas imports it by **relative
-path** — mounted in-process as the canvas 3rd nav view, shipped inside the single
-`agent-canvas` Cloudflare instance. React is **19** (unified with canvas). The
-standalone worker + deploy were retired. When changing an entry point —
-`src/embed.tsx` (`WebPocApp`), `worker/index.ts` (`buildApp`), `lib/db/index.ts`
-(`makeDb`), or the contract — check the canvas consumers: `packages/canvas/src/App.tsx`
-and `packages/canvas/server/bridge.ts`. See `CONTEXT.md` → "Embedded in canvas"
-and `MIGRATION.md` → "Embedded into canvas".
+It is an in-tree module, not a package: no `package.json`/`exports` of its own (canvas owns
+the deps) and canvas imports it by **relative path**. Its consumers are the edge Worker
+(`packages/canvas/worker/*`) and a few scripts; the container/bridge holds no database
+client at all.
 
 ## Hard rules
 
@@ -33,64 +26,20 @@ and `MIGRATION.md` → "Embedded into canvas".
    touch `lib/db/migrations/meta/_journal.json`. Drizzle owns these exclusively.
 3. **No rollbacks / no editing past migrations.** To undo a schema change, write
    a new forward migration. Never delete a migration to "go back in time."
-   - *One historical exception, already done:* before any production deploy the
-     migrations were regenerated into a single clean baseline (1024-dim vectors).
-     That was a pre-prod reset. Do **not** repeat it once prod data exists — go
-     forward-only from here.
 
 ### Deploys — never without explicit approval
-web-poc ships as part of canvas now: deploying means
-`packages/canvas/scripts/deploy.sh` (`bun run apply production canvas`). Do not run it
-(or any `bun run apply`) unless the user explicitly asks in this session. Local
-dev/build/typecheck are always fine.
+This ships as part of canvas. Do not deploy unless the user explicitly asks in this session.
+Local dev/build/typecheck are always fine.
 
 ### Secrets
-Never commit real secrets. Local dev uses `web-poc/.dev.vars` (gitignored).
-Production secrets live SOPS-encrypted in `packages/infra/environments/production/
-secrets.yaml` and are pushed as Worker secrets by the zbc module — now as
-`workerSecrets` in **`canvas.ts`** (web-poc's secrets ride the canvas worker).
-
-## Architecture notes
-
-- **Worker entry**: `worker/index.ts` exports `buildApp` (a Hono `OpenAPIHono`
-  factory). Since ADR-0018 it is mounted **at the edge** (`packages/canvas/worker/
-  index.ts`), which builds the db per request via `createDbForWorker` and routes
-  `/v1/*` and `/api/auth/*` to it — not in the canvas bridge process, which holds
-  no database client at all. (There is no standalone `export default` worker /
-  `run_worker_first` / Cloudflare Assets path anymore — canvas's vite serves the
-  SPA and proxies.)
-- **No embeddings, no queue, no LLM pass (ADR-0024).** A write is one insert. The
-  `agent_jobs`/`agent_runs` tables, the similarity graph and the intake pipeline
-  were dropped by migrations 0032–0033; `createEmbedder` (`worker/agent.ts`)
-  survives for a future index. Search is D1's native FTS5: a `notebook_fts` virtual
-  table over Observations and Problems, kept in sync by triggers (migration 0036),
-  served by `GET /v1/search`.
-- **DB client**: `worker/runtime.ts`'s `createDbForWorker` builds a Drizzle db from
-  the edge Worker's `PLATFORM_DB` D1 binding (ADR-0018) — the container/bridge holds
-  no database client at all. In dev that binding is miniflare's local D1 (apply
-  migrations with `bun run webpoc:db:migrate:local`); in prod it's the same D1
-  binding, live since the cutover (#267). The Turso rollback path was retired in
-  #268.
+Never commit real secrets. Local dev uses `web-poc/.dev.vars` (gitignored). Production
+secrets live SOPS-encrypted in `packages/infra/environments/production/secrets.yaml` and are
+pushed as Worker secrets by the zbc module (`workerSecrets` in `canvas.ts`).
 
 ## Dev / test workflow
 
-- **No `turso` CLI / daemon needed.** Run the whole stack from canvas:
-  `cd packages/canvas && bun run dev` (vite :4510 + bridge :4511 + edge Worker
-  :4513, the last of which serves web-poc's `/v1/*` + `/api/auth/*` against local
-  D1). Migrations are explicit: `bun run webpoc:db:migrate:local`.
-- **Contract changes** (`lib/contract`): the web client types are NOT automatic.
-  From `packages/canvas`: `bun run webpoc:openapi:emit` (writes `openapi.json` from
-  the registered routes) then `bun run webpoc:gen:api` (regenerates
-  `src/api-types.ts`). A drift test (`worker/openapi.test.ts`) guards this. A route
-  must be registered with `.openapi(contract.xRoute, handler)` in `worker/index.ts`.
-- `bun run webpoc:typecheck` must stay clean (uses `web-poc/tsconfig.json`). Tests
-  are excluded from typecheck; some `*.test.ts` need a DB and aren't wired headless.
-
-## Where things live
-
-- Up-to-date docs: `README.md`, `CONTEXT.md`, `MIGRATION.md`, `docs/`.
-- Canvas consumers of this module: `packages/canvas/src/App.tsx` (embed),
-  `packages/canvas/server/bridge.ts` (worker + db), `packages/canvas/package.json`
-  (deps + `webpoc:*` scripts).
-- The original apex monorepo is intact at `../../../../apex` (read-only reference;
-  do not modify it).
+- Run the stack from canvas: `cd packages/canvas && bun run dev` (vite + bridge + the edge
+  Worker, which serves `/api/auth/*` against miniflare's local D1). Apply migrations with
+  `bun run webpoc:db:migrate:local`.
+- `bun run webpoc:typecheck` and `bun run webpoc:test` (vitest, against a real local D1 —
+  `lib/db/test-d1.ts`) must stay green. Tests are excluded from typecheck.

@@ -440,27 +440,15 @@ describe('GET / — the Shell SPA, served from ASSETS without waking the contain
     expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
   });
 
-  // Notebook is now a Shell stage (#107), not its own SPA surface — the bare URL bounces
-  // to the shell with the stage selected. Its assets still share the shell's ASSETS binding
-  // (shell/dist/notebook), so `/notebook/assets/*` must keep resolving as a static asset —
-  // that's the #106 regression this guards against.
-  test('/notebook and /notebook/ redirect to the shell’s notebook stage', async () => {
-    const res = await GET('/notebook');
-    const resTrailingSlash = await GET('/notebook/');
-
-    expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe('/?stage=notebook');
-    expect(resTrailingSlash.status).toBe(302);
-    expect(resTrailingSlash.headers.get('location')).toBe('/?stage=notebook');
+  // The Notebook is retired: an old bookmark (the bare surface or any old asset path under it)
+  // lands on the canvas, never a 404 and never a container wake.
+  test('/notebook and anything under it redirect to the canvas', async () => {
+    for (const path of ['/notebook', '/notebook/', '/notebook/assets/main.js']) {
+      const res = await GET(path);
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toBe('/');
+    }
     expect(assets).toEqual([]);
-    expect(served).toEqual([]);
-  });
-
-  test('/notebook/assets/* still resolves as a static asset, not a redirect', async () => {
-    const res = await GET('/notebook/assets/main.js');
-
-    expect(res.status).toBe(200);
-    expect(assets).toEqual(['/notebook/assets/main.js']);
     expect(served).toEqual([]);
   });
 });

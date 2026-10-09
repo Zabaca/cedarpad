@@ -70,7 +70,7 @@ describe('blobToRoomSnapshot', () => {
     expect(roundTrip(shapes)).toEqual(shapes);
   });
 
-  test('a component keeps its data payload, dataSource and status', () => {
+  test('a component keeps its data payload and status', () => {
     const shapes: CanvasShape[] = [
       {
         id: 'shape:c1',
@@ -84,7 +84,6 @@ describe('blobToRoomSnapshot', () => {
         rev: 4,
         color: 'black',
         status: { phase: 'ready' },
-        dataSource: { mart: 'orders' },
       },
       {
         id: 'shape:c2',

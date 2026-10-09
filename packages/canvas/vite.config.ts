@@ -39,8 +39,8 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       // The platform data layer's routes go to the EDGE WORKER (matched first — vite
-      // tries proxy keys in insertion order): Better Auth at /api/auth/* and the
-      // Notebook API at /v1/*, both against miniflare's local D1. That is the same
+      // tries proxy keys in insertion order): Better Auth at /api/auth/*, against
+      // miniflare's local D1. That is the same
       // split production runs (worker/index.ts handles them ahead of the container
       // proxy), so dev no longer simulates the datastore.
       '/api/auth': { target: EDGE, changeOrigin: true },
@@ -50,7 +50,6 @@ export default defineConfig({
       // proxy. `ws: true` is required — the sync route is a WebSocket upgrade.
       '/api/canvas-sync': { target: EDGE, changeOrigin: true, ws: true },
       '/api/canvas-assets': { target: EDGE, changeOrigin: true },
-      '/v1': { target: EDGE, changeOrigin: true },
       // The guest door (#220) and its probe are EDGE-answered too — the share cookie is
       // minted and read by the Worker, and nothing downstream knows about it. Without
       // these two, guest mode is unreachable in local dev (the bridge 404s the probe, so

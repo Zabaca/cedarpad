@@ -36,7 +36,7 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
   // The container holds no platform-data-layer client, so it is handed no connection string and
   // no credential; deleting those two lines IS this ADR. (`VOYAGE_API_KEY`, `BETTER_AUTH_URL`
   // and `WEB_ORIGIN` went with them — all three existed for the in-process web-poc mount that
-  // the same slice removed. The Notebook and Better Auth are edge routes.) What remains below is
+  // the same slice removed. Better Auth is an edge route.) What remains below is
   // the platform RPC's bearer root, which is a credential for talking to US, not to a database.
   BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET ?? '',
   // Who Records and skills written by the container are attributed to (server/components.ts

@@ -2,7 +2,7 @@
 // the canvas app's tests — it preserves Bun's native fetch/Response, which we stub below).
 import '../../src/happydom-harness.ts';
 
-import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
@@ -10,29 +10,6 @@ import { createRoot, type Root } from 'react-dom/client';
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 import { Shell } from './Shell';
-import { useAppStore } from '../../web-poc/src/store.js';
-
-// The Notebook stage (slice #107) mounts web-poc's real `openapi-fetch` client, which builds
-// relative request URLs (`config.apiUrl` is `""`). A real browser resolves those against
-// `document.baseURI`; Bun's native `Request` has no such implicit base and throws on a bare
-// `/v1/...` string. Patch it to resolve against an origin, the way the browser would — this
-// is a test-environment gap only, nothing in application code changes.
-const RealRequest = globalThis.Request;
-class OriginAwareRequest extends RealRequest {
-  constructor(input: RequestInfo | URL, init?: RequestInit) {
-    if (typeof input === 'string' && input.startsWith('/')) {
-      super(`https://poc.cedarpad.com${input}`, init);
-    } else {
-      super(input as never, init);
-    }
-  }
-}
-globalThis.Request = OriginAwareRequest as unknown as typeof Request;
-// bun:test runs all files in one process — restore the native Request after this file's
-// tests finish so the patch can't leak into unrelated test files that run after it.
-afterAll(() => {
-  globalThis.Request = RealRequest;
-});
 
 const WORKSPACES = { workspaces: [{ id: 'default', name: 'Default' }, { id: 'ws_abc', name: 'Zabaca' }] };
 const CANVASES = { workspaceId: 'ws_abc', canvases: [{ id: 'cv_1', name: 'Roadmap' }] };
@@ -67,9 +44,8 @@ function stubEdge() {
     }
     if (url === '/api/workspaces') return Response.json(WORKSPACES);
     if (url === '/api/canvases') return Response.json(CANVASES);
-    // Better Auth's session check, so the lazily-mounted Notebook (slice #107) renders its
-    // authenticated view instead of <AuthScreen/> — the Shell itself already sits behind
-    // the edge auth gate, so under the Shell this always resolves.
+    // Better Auth's session check. The Shell itself already sits behind the edge auth gate,
+    // so under the Shell this always resolves.
     if (url.endsWith('/api/auth/get-session')) {
       return Response.json({ session: { id: 'sess_1' }, user: { id: 'u_1', email: 'demo@example.com' } });
     }
@@ -124,16 +100,6 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   globalThis.fetch = realFetch;
-  // web-poc's zustand store is a module singleton, so a mutation in one test (e.g.
-  // switching Notebook's sub-nav to "Knowledge Graph") would otherwise leak into the next
-  // test's fresh Shell mount.
-  useAppStore.setState({
-    view: 'library',
-    selectedProblemId: null,
-    selectedObservationId: null,
-    selectedKind: null,
-    scopeWorkspaceId: null,
-  });
 });
 
 // The rail is the ONE chrome (PRD #103). Switching stages is inline — no navigation — and
@@ -144,11 +110,10 @@ describe('the rail switches stages and reflects the choice in the URL', () => {
     expect(window.location.search).toBe('');
   });
 
-  test('Notebook is an inline stage, not a navigation', async () => {
-    await click(byTitle('Notebook'));
-    expect(container.querySelector('.stage-notebook')).not.toBeNull();
+  test('Settings is an inline stage, not a navigation', async () => {
+    await click(byTitle('Settings'));
     expect(container.querySelector('.stage-canvas')).toBeNull();
-    expect(window.location.search).toBe('?stage=notebook');
+    expect(window.location.search).toBe('?stage=settings');
 
     await click(byTitle('Canvases'));
     expect(container.querySelector('.stage-canvas')).not.toBeNull();
@@ -311,42 +276,6 @@ describe('the avatar signs out through the edge Better Auth endpoint', () => {
     expect(alerts).toEqual(['Could not sign out — try again.']);
 
     window.alert = originalAlert;
-  });
-});
-
-// Notebook as a Shell stage (PRD #103, slice #107): it lazily mounts the real WebPocApp —
-// no more placeholder — and its own AppShell.Header is gone, so the rail is the only chrome.
-describe('the notebook stage mounts WebPocApp with no second chrome', () => {
-  test('renders the Library sub-nav with zero <header> elements in the tree', async () => {
-    await click(byTitle('Notebook'));
-    await waitFor(() => /Library/.test(container.querySelector('.stage-notebook')?.textContent ?? ''));
-
-    expect(container.querySelectorAll('header').length).toBe(0);
-    expect(container.querySelector('.stage-notebook')?.textContent).toContain('Library');
-    expect(container.querySelector('.stage-notebook')?.textContent).toContain('Knowledge Graph');
-  });
-
-  test('the Library/Knowledge Graph sub-nav switches views inside the stage, lazy-loading the graph', async () => {
-    await click(byTitle('Notebook'));
-    await waitFor(() => /Library/.test(container.querySelector('.stage-notebook')?.textContent ?? ''));
-
-    const graphNav = [...container.querySelectorAll('.stage-notebook button')].find(
-      (b) => b.textContent === 'Knowledge Graph',
-    );
-    await click(graphNav ?? null);
-    await waitFor(() => calls.some((c) => c.startsWith('GET') && c.includes('/v1/graph')));
-
-    expect(calls.some((c) => c.includes('/v1/graph'))).toBe(true);
-  });
-
-  test('scopes its queries to the rail’s active workspace, not an in-Notebook picker', async () => {
-    await click(byTitle('Notebook'));
-    // The very first /v1/items fetch can race the workspace-seeding effect and go out
-    // unscoped; wait for the scoped refetch that follows once scopeWorkspaceId updates.
-    await waitFor(() => calls.some((c) => c.includes('/v1/items') && c.includes('workspaceId=ws_abc')));
-
-    // /api/canvases (fetched by the Shell itself) reported ws_abc as the active workspace.
-    expect(calls.some((c) => c.includes('/v1/items') && c.includes('workspaceId=ws_abc'))).toBe(true);
   });
 });
 

@@ -17,11 +17,12 @@ describe('stage ↔ URL', () => {
 
   test('the canvas stage is the clean URL, not `?stage=canvas`', () => {
     expect(urlForStage('canvas')).toBe('/');
-    expect(urlForStage('notebook')).toBe('/?stage=notebook');
+    expect(urlForStage('settings')).toBe('/?stage=settings');
   });
 
-  test('a stage that no longer exists (the retired Inbox) lands on the canvas', () => {
+  test('a stage that no longer exists (the retired Inbox, Notebook) lands on the canvas', () => {
     expect(stageFromUrl('?stage=inbox')).toBe('canvas');
+    expect(stageFromUrl('?stage=notebook')).toBe('canvas');
   });
 
   test('settings is a stage (#192) and round-trips', () => {

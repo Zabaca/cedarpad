@@ -16,8 +16,6 @@ import {
   DataReadOutput,
   type DataWriteInput,
   DataWriteOutput,
-  type NotebookCallInput,
-  NotebookCallOutput,
   PLATFORM_RPC_PATH,
   PlatformRpcRequest,
   type SkillListInput,
@@ -68,11 +66,6 @@ export interface PlatformRpc {
   dataWrite(input: DataWriteInput): Promise<DataWriteOutput>;
   /** A data file's stored content, or null when the tier holds no Record. */
   dataRead(input: DataReadInput): Promise<string | null>;
-  /** Run one Notebook tool at the edge (ADR-0024) and return whatever it answered. THROWS on
-   *  a refusal or an outage, carrying the edge's reason — the agent must be able to read
-   *  "no such observation" and act on it, and must never be told a write landed when it did
-   *  not. */
-  notebook(input: NotebookCallInput): Promise<unknown>;
 }
 
 export interface PlatformRpcConfig {
@@ -144,6 +137,5 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
     skillList: async (input) => SkillListOutput.parse(await callStrict({ op: 'skill.list', input })).files,
     dataWrite: async (input) => DataWriteOutput.parse(await callStrict({ op: 'data.write', input })),
     dataRead: async (input) => DataReadOutput.parse(await callStrict({ op: 'data.read', input })).source,
-    notebook: async (input) => NotebookCallOutput.parse(await callStrict({ op: 'notebook.call', input })).result,
   };
 }

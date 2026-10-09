@@ -34,7 +34,7 @@ export const webOrigin = () => `http://localhost:${process.env.PORT ?? 4510}`;
  * `/w/:ws/canvas/:id/pad` locally while every API call worked. e2e never noticed: Playwright
  * loads the pad from vite directly and opens no Shell iframe.
  *
- * No loop: the edge answers `/api/auth`, `/api/canvas-sync`, `/v1` and `/api/guest-session`
+ * No loop: the edge answers `/api/auth`, `/api/canvas-sync` and `/api/guest-session`
  * itself, well before anything reaches the workspace proxy — so the routes vite would send
  * BACK to the edge never travel this way.
  */

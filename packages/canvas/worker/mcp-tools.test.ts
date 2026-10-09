@@ -7,7 +7,6 @@ import * as schema from '../web-poc/lib/db/schema.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { addWorkspaceMember, createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { buildMcpTools, EditComponentInput, WriteComponentInput } from './mcp-tools.ts';
-import { NOTEBOOK_TOOL_SPECS } from '../web-poc/lib/contract/notebook-tools.ts';
 import { d1RecordStore } from './record-store.ts';
 
 // In-memory DB built from the real migrations (mirrors shell.test.ts).
@@ -502,35 +501,5 @@ describe('create_canvas — the same registry create the shell route uses, acces
 
   test('never creates in a stranger’s workspace', async () => {
     await expect(tools.createCanvas({ workspace_id: OTHER_WS, name: 'Sneaky' })).rejects.toThrow(/workspace not found/);
-  });
-});
-
-// The Notebook over remote MCP (ADR-0024 / CEDA-X6OIAO). The tool BEHAVIOUR is covered at
-// its own seam (`web-poc/worker/notebook-tools.test.ts`, on real D1); what matters here is
-// the binding this surface supplies — a workspace the caller never names.
-describe('notebook tools bind the token user’s workspace, never an argument', () => {
-  test('records into the token user’s home workspace, and another user cannot read it', async () => {
-    const mine = await tools.notebook();
-    const { id } = await mine.recordObservation({ title: 'From MCP', body: 'recorded over the wire' });
-    // u_1's oldest workspace is WS — the home workspace rule, not a parameter.
-    expect((await mine.readObservation({ id })).observation.workspaceId).toBe(WS);
-
-    // A stranger: their own user, their own workspace, no membership of WS.
-    await db.insert(schema.user).values({ id: 'u_3', name: 'u_3', email: 'u_3@example.com' });
-    await createWorkspace(database, { name: 'stranger', ownerUserId: 'u_3' });
-    const theirs = await buildMcpTools({
-      db: database,
-      userId: 'u_3',
-      proxySkill: async () => new Response(null, { status: 200 }),
-      proxyBridge: async () => new Response(null, { status: 404 }),
-    }).notebook();
-    await expect(theirs.readObservation({ id })).rejects.toThrow(/not found/);
-  });
-
-  test('no notebook tool advertises a workspace input', () => {
-    for (const spec of NOTEBOOK_TOOL_SPECS) {
-      expect(Object.keys(spec.schema.shape)).not.toContain('workspace_id');
-      expect(Object.keys(spec.schema.shape)).not.toContain('workspaceId');
-    }
   });
 });

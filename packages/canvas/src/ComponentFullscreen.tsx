@@ -12,7 +12,6 @@ import { activeCanvasId } from './active-canvas';
 import { ComponentInstanceList, instanceLabels, readComponentInstances } from './ComponentInstanceList';
 import { ComponentHost } from './ComponentShape';
 import { useGuestScope } from '../shared/guest-scope';
-import type { DataSource } from '../shared/data-source';
 
 /** The minimal editor surface the overlay needs — narrowed for testability. The four
  *  page/camera operations are what the rail added; nothing wider is imported, so the
@@ -209,7 +208,7 @@ export function ComponentFullscreenOverlay({
   const shape = editor.getShape(viewedId as never);
   if (!shape || shape.type !== 'component') return null;
 
-  const props = shape.props as { module: string; data: Record<string, unknown>; rev: number; dataSource?: DataSource | null };
+  const props = shape.props as { module: string; data: Record<string, unknown>; rev: number };
   const label = instances[index]?.label ?? props.module;
   // One component is nothing to browse: no rail, no arrows, and fullscreen looks exactly
   // as it did before this existed. Both appear the moment a second one lands.
@@ -269,7 +268,6 @@ export function ComponentFullscreenOverlay({
             module={props.module}
             data={props.data}
             rev={props.rev}
-            dataSource={props.dataSource ?? undefined}
           />
         </div>
       </div>

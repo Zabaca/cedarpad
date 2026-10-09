@@ -13,9 +13,6 @@ import { setDisplayName, useCurrentUser } from './identity';
 import { type EventGuards, InteractiveBoxShapeUtil } from './InteractiveBoxShapeUtil';
 import { isInteractiveControl } from './predicates';
 import { componentShapeProps } from './shape-props';
-import { fetchNotebook } from './notebook-data';
-import type { DataSource } from '../shared/data-source';
-import type { NotebookParams, NotebookRow } from '../shared/notebook-source';
 import { readPage } from './tldraw-bridge';
 import { resolveReplyTarget } from './reply-target';
 import { getActiveChat, postMessageToChat } from './agent-link';
@@ -36,7 +33,7 @@ export interface ComponentShapeMeta {
 }
 
 export type ComponentShapeTl = Omit<
-  TLBaseShape<'component', { w: number; h: number; module: string; data: Record<string, unknown>; rev: number; dataSource: DataSource | null }>,
+  TLBaseShape<'component', { w: number; h: number; module: string; data: Record<string, unknown>; rev: number; dataSource: unknown }>,
   'meta'
 > & { meta: ComponentShapeMeta };
 
@@ -54,7 +51,7 @@ export function sameStatus(current: ComponentStatus | undefined, next: Component
 // TLResizeInfo all type-check against it without casts.
 declare module '@tldraw/tlschema' {
   interface TLGlobalShapePropsMap {
-    component: { w: number; h: number; module: string; data: Record<string, unknown>; rev: number; dataSource: DataSource | null };
+    component: { w: number; h: number; module: string; data: Record<string, unknown>; rev: number; dataSource: unknown };
   }
 }
 
@@ -149,19 +146,13 @@ class ComponentErrorBoundary extends React.Component<
 /** Loads `module@rev` and renders it with `data` as props; shows loading / errors.
  * Also injects `setData`, letting an interactive component persist its own state
  * by merging a patch into its shape's `data` (which then syncs + survives reload). */
-/** A placed component's live Notebook read (ADR-0024). Absent `dataSource` never enters this
- * at all — the idle/no-op path IS the backward-compat guarantee. */
-type NotebookState = { phase: 'idle' } | { phase: 'loading' } | { phase: 'ready'; rows: NotebookRow[] } | { phase: 'error'; message: string };
-
 export function ComponentHost({
   shapeId,
   editor,
   module,
   data,
   rev,
-  dataSource,
   load = (module, rev) => loadComponent(module, rev, activeCanvasId()),
-  loadNotebook = fetchNotebook,
   readShapes = () => readPage(editor),
   post = postMessageToChat,
   unguarded = false,
@@ -171,12 +162,8 @@ export function ComponentHost({
   module: string;
   data: Record<string, unknown>;
   rev: number;
-  /** The live query this instance renders (ADR-0024). Absent = static data, unchanged. */
-  dataSource?: DataSource;
   /** The module loader. Defaults to the real vite dynamic-import loader; injected in tests. */
   load?: (module: string, rev: number) => Promise<AgentComponent>;
-  /** The Notebook reader (ADR-0024). Defaults to the real edge-route fetch; injected in tests. */
-  loadNotebook?: (query: string, params?: NotebookParams) => Promise<NotebookRow[]>;
   /** Reads all page shapes to resolve this component's reply target; injected in tests. */
   readShapes?: () => CanvasShape[];
   /** Posts a component's reply into a chat session; injected in tests. */
@@ -197,7 +184,6 @@ export function ComponentHost({
 }) {
   const [Comp, setComp] = React.useState<AgentComponent | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [notebookState, setNotebookState] = React.useState<NotebookState>({ phase: 'idle' });
   const currentUser = useCurrentUser();
   // Attempts at loading THIS module@rev. Reset to the first attempt on every fresh
   // load below; retries (a later slice) bump it so a `loading` status carries which try.
@@ -268,35 +254,8 @@ export function ComponentHost({
     // writeStatus is stable (keyed on editor+shapeId); a fresh load is driven by module@rev.
   }, [module, rev]);
 
-  // The Notebook's live read (ADR-0024), resolved independently of the module load: a named
-  // query + its params, never a statement. Keyed on the SERIALIZED source so an
-  // equal-by-value dataSource (params included) doesn't re-fetch on every render.
-  const notebookKey = dataSource?.kind === 'notebook' ? JSON.stringify(dataSource) : undefined;
-  React.useEffect(() => {
-    if (!notebookKey) {
-      setNotebookState({ phase: 'idle' });
-      return;
-    }
-    const source = JSON.parse(notebookKey) as { query: string; params?: NotebookParams };
-    let alive = true;
-    setNotebookState({ phase: 'loading' });
-    loadNotebook(source.query, source.params)
-      .then((rows) => {
-        if (alive) setNotebookState({ phase: 'ready', rows });
-      })
-      .catch((e: Error) => {
-        if (alive) setNotebookState({ phase: 'error', message: e.message });
-      });
-    return () => {
-      alive = false;
-    };
-  }, [notebookKey]);
-
   if (error) return <ErrorCard module={module} message={error} where="" />;
   if (!Comp) return <div style={{ padding: 12, color: 'var(--muted)', font: '12px ui-sans-serif' }}>loading {module}…</div>;
-  // Notebook rows resolve into the component's `rows` prop ONLY when dataSource is set — no
-  // dataSource means `data` reaches Comp byte-for-byte as before (backward compat).
-  const resolvedData = notebookKey ? { ...data, rows: notebookState.phase === 'ready' ? notebookState.rows : [] } : data;
   return (
     <ComponentErrorBoundary
       key={`${module}@${rev}`}
@@ -306,7 +265,7 @@ export function ComponentHost({
       <div style={{ width: '100%', height: '100%', overflow: 'auto' }}>
         {/* #211: identity rides alongside data/setData. `currentUser` is null until
             resolved; `setDisplayName` is the ask-once guest naming (no-op for users). */}
-        <Comp {...resolvedData} setData={setData} sendToAgent={sendToAgent} currentUser={currentUser ?? undefined} setDisplayName={setDisplayName} unguarded={unguarded} />
+        <Comp {...data} setData={setData} sendToAgent={sendToAgent} currentUser={currentUser ?? undefined} setDisplayName={setDisplayName} unguarded={unguarded} />
       </div>
     </ComponentErrorBoundary>
   );
@@ -314,7 +273,7 @@ export function ComponentHost({
 
 export class ComponentShapeUtil extends InteractiveBoxShapeUtil<
   'component',
-  { module: string; data: Record<string, unknown>; rev: number; dataSource: DataSource | null }
+  { module: string; data: Record<string, unknown>; rev: number; dataSource: unknown }
 > {
   static override type = 'component' as const;
   // Defined in ./shape-props (React-free) so the sync room's schema and this
@@ -345,7 +304,6 @@ export class ComponentShapeUtil extends InteractiveBoxShapeUtil<
           module={shape.props.module}
           data={shape.props.data}
           rev={shape.props.rev}
-          dataSource={shape.props.dataSource ?? undefined}
         />
         {/* Hover-revealed expand: App owns the fullscreen overlay (it has the editor);
             the button only signals over the agent-link-style singleton bus. */}

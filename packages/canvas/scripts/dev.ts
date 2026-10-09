@@ -11,8 +11,8 @@ import { spawnWrangler } from './wrangler-local.ts';
 const BRIDGE_PORT = process.env.CANVAS_BRIDGE_PORT ?? '4511';
 const BRIDGE = process.env.CANVAS_BRIDGE ?? `http://localhost:${BRIDGE_PORT}`;
 
-// The edge Worker (ADR-0018, #263): it serves the platform data layer's routes — the
-// Notebook API `/v1/*` and Better Auth `/api/auth/*` — against miniflare's local D1,
+// The edge Worker (ADR-0018, #263): it serves the platform data layer's routes — Better
+// Auth `/api/auth/*` among them — against miniflare's local D1,
 // exactly as it does in production. Port from env, +2 off the bridge (the +1 slot the
 // removed extension server held stays vacant so every worktree's ports keep their offsets).
 const EDGE_PORT = process.env.CANVAS_EDGE_PORT ?? String(Number(BRIDGE_PORT) + 2);

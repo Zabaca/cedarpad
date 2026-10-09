@@ -6,8 +6,7 @@ import type { Env } from './index.ts';
 // The edge auth gate (ADR-0007, slice #45). Better Auth session verification runs
 // at the edge, AHEAD of the resolver/proxy, so an unauthenticated request never
 // reaches a container. It reuses web-poc's Better Auth config (`createAuth`) and the
-// SAME platform D1 (users/sessions) that Notebook's `/v1/*` verifies against — one
-// auth system across the platform. Session lookup (D1 + crypto) is integration-only;
+// platform D1 (users/sessions) — one auth system across the platform. Session lookup (D1 + crypto) is integration-only;
 // the PURE gate DECISION (`decideGate`) is split out so it's unit-testable off a DB.
 
 /** A resolved Better Auth user. The gate needs only `id`; the invite accept flow

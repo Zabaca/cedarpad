@@ -7,12 +7,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import {
   DEFAULT_CANVAS_ID,
   activeCanvasId,
-  activeWorkspaceId,
   canvasIdFromPath,
   withCanvasHeader,
   withCanvasParam,
   withPadCanvasHeader,
-  workspaceIdFromPath,
 } from './active-canvas';
 
 const setPath = (pathname: string) => {
@@ -56,28 +54,6 @@ describe('activeCanvasId — reads the pad URL, never a cookie', () => {
     expect(activeCanvasId()).toBe(DEFAULT_CANVAS_ID);
     setPath('/w/abc/canvas/xyz/pad');
     expect(activeCanvasId()).toBe('xyz');
-  });
-});
-
-// The Notebook route a live component fetches is `/api/workspaces/:ws/notebook/:query` —
-// the pad URL is the only place the browser learns the workspace id (same URL-not-cookie
-// convention as the canvas id above).
-describe('workspaceIdFromPath / activeWorkspaceId — the pad URL carries the workspace too', () => {
-  test('extracts the workspace id from a pad path', () => {
-    expect(workspaceIdFromPath('/w/abc/canvas/xyz/pad')).toBe('abc');
-    expect(workspaceIdFromPath('/w/ws_1/canvas/cv_1/pad')).toBe('ws_1');
-  });
-
-  test('any non-pad path ⇒ null', () => {
-    expect(workspaceIdFromPath('/')).toBeNull();
-    expect(workspaceIdFromPath('/w/abc/canvas/xyz')).toBeNull();
-  });
-
-  test('activeWorkspaceId reads the pad URL, defaults off it', () => {
-    setPath('/w/abc/canvas/xyz/pad');
-    expect(activeWorkspaceId()).toBe('abc');
-    setPath('/');
-    expect(activeWorkspaceId()).toBe(DEFAULT_CANVAS_ID);
   });
 });
 

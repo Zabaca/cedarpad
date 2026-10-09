@@ -4,7 +4,6 @@ import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
-import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, sendSignInLink } from './auth-gate.ts';
 import { resolveCanvas } from './access.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
@@ -29,7 +28,6 @@ import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.t
 import { handleCanvasSnapshot, parseCanvasSnapshotPath } from './canvas-snapshot-api.ts';
 import { evictGuestSockets, handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
 import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
-import { handleNotebookApi, NOTEBOOK_ROUTE } from './notebook-data-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
 import { IS_CHAT_SEND, effectiveMcpTokens, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
@@ -102,9 +100,8 @@ export interface Env {
   // carries no `DurableObjectBranded` marker. Nothing calls it by RPC — the only traffic
   // is `stub.fetch` with the WebSocket upgrade — so the plain stub type is exactly right.
   CANVAS_SYNC: DurableObjectNamespace;
-  // Workers static-assets binding for the Notebook SPA build (web-poc/dist, PRD #49
-  // slice #58). Served under /notebook AFTER the edge session gate — it's app content,
-  // so an unauthenticated hit gets the login, never the SPA.
+  // Workers static-assets binding for the Shell SPA build (shell/dist). Served AFTER the
+  // edge session gate — it's app content, so an unauthenticated hit gets the login.
   ASSETS: Fetcher;
   R2_BUCKET: string;
   R2_ACCESS_KEY_ID: string;
@@ -117,11 +114,10 @@ export interface Env {
   // the retired marts, which read it first.
   MART_BUCKET: import('./canvas-assets.ts').AssetBucket;
   CLAUDE_CODE_OAUTH_TOKEN: string;
-  // web-poc (mounted at the edge): the platform data layer on D1 (ADR-0018) + auth +
-  // embeddings. Secrets (VOYAGE_API_KEY, BETTER_AUTH_SECRET) come from workerSecrets;
-  // the two origins are plain vars in wrangler.jsonc.
+  // web-poc (mounted at the edge): the platform data layer on D1 (ADR-0018) + auth.
+  // BETTER_AUTH_SECRET comes from workerSecrets; the two origins are plain vars in
+  // wrangler.jsonc.
   PLATFORM_DB: D1Database;
-  VOYAGE_API_KEY?: string;
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_URL?: string;
   WEB_ORIGIN?: string;
@@ -160,13 +156,6 @@ export interface Env {
   LIVEKIT_API_KEY?: string;
   LIVEKIT_API_SECRET?: string;
 }
-
-// Notebook's Hono API (web-poc's `buildApp`), mounted AT THE EDGE (ADR-0007, #56). No
-// db is injected, so its `dbMiddleware` builds one per request via
-// `createDbForWorker(c.env)` — the PLATFORM_DB D1 binding (ADR-0018) — so Notebook's
-// `/v1/*` runs here without ever waking a container. Built once per isolate (route
-// setup is pure); the db is per-request.
-const notebookApi = buildApp();
 
 /** Domain cutover: a request on a non-canonical host (poc.cedarpad.com) 301s to the same
  * path+query on the canonical origin (WEB_ORIGIN). Same-host / unset / unparseable origin
@@ -207,27 +196,14 @@ export default {
 
     // Edge auth (ADR-0007, slice #45) — the SOLE gate now that cs_gate is gone. Better
     // Auth's endpoints are served AT THE EDGE so login/session happen here without ever
-    // proxying to a container; every other route must carry a valid session. This branch
-    // precedes the Notebook mount below, so `buildApp`'s own `/api/auth/*` mount is never
-    // reached — ONE auth path (this `handleAuth`) across the platform.
+    // proxying to a container; every other route must carry a valid session.
     if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')) {
       return handleAuth(request, env);
     }
 
-    // Notebook API at the edge (ADR-0007, #56). `/v1/*` is served HERE against the
-    // platform D1 (ADR-0018), so Notebook no longer depends on / wakes the container. It
-    // SELF-gates via web-poc's `authMiddleware` (Better Auth session cookie OR
-    // `x-api-key`) against the SAME `createAuth` the edge `/api/auth` path uses — one
-    // auth system — so we deliberately route it BEFORE the edge session gate below (which
-    // would `renderLogin` HTML and can't honour agent `x-api-key`). Notebook returns its
-    // own JSON 401.
-    if (url.pathname === '/v1' || url.pathname.startsWith('/v1/')) {
-      return notebookApi.fetch(request, env as never);
-    }
     // Verify the session and decide the gate BEFORE the resolver/proxy below — an
     // unauthenticated request never reaches serveWorkspace, so it never reaches the
-    // container. Notebook's /v1/* verifies the SAME Better Auth session (same D1, same
-    // secret, same cookie), so one auth system spans the platform.
+    // container.
     // #177 inbound MCP: OAuth discovery at the origin root (public — clients fetch these
     // before they hold any token) and the /mcp endpoint itself, which self-gates on its
     // bearer (401 + WWW-Authenticate, never the login page, never the session cookie).
@@ -336,10 +312,6 @@ export default {
         // capability is re-read off the LIVE link row (not the cookie) so revoking or
         // downgrading a link takes effect at the next join.
         const guestHuddleMatch = /^\/api\/canvases\/([^/]+)\/huddle\/join$/.exec(url.pathname);
-        // The Notebook is NOT guest-readable (ADR-0024, `NotebookRequester`): it is the
-        // workspace's raw Observations and Problems. Matched here only so the refusal is a deliberate
-        // 404 from the same handler a member hits, never an accident of the gate's allowlist.
-        const guestNotebookMatch = NOTEBOOK_ROUTE.exec(url.pathname);
         // #320: the LIVE row is read BEFORE the gate decides, because it is the source of
         // the capabilities as well as of liveness. The cookie carries a snapshot of the
         // grants at mint time; a link that has since been downgraded must not keep what it
@@ -349,16 +321,7 @@ export default {
         if (live && live.canvasId === guest.canvasId) {
           const caps = guestCapabilities({ ...live, shapeId: live.shapeId ?? guest.shapeId });
           const guestGate = decideGuestGate({ pathname: url.pathname, method: request.method, canvas }, guest, caps);
-          if (isGuestProbe || guestHuddleMatch || guestNotebookMatch || guestGate.decision === 'allow') {
-            if (guestNotebookMatch) {
-              return handleNotebookApi(
-                createDbForWorker(env as unknown as Bindings),
-                guest.workspaceId,
-                guestNotebookMatch[2] as string,
-                Object.fromEntries(url.searchParams),
-                { kind: 'guest' },
-              );
-            }
+          if (isGuestProbe || guestHuddleMatch || guestGate.decision === 'allow') {
             if (isGuestProbe) {
               return Response.json({
                 canvasId: guest.canvasId,
@@ -436,17 +399,9 @@ export default {
     if (url.pathname === '/') return asset('/');
     if (url.pathname.startsWith('/assets/')) return asset(url.pathname);
 
-    // Notebook is a Shell stage now (ADR-0007, PRD #103 slice #107), not its own SPA
-    // surface — the bare URL bounces to the shell with the stage selected, so a bookmark
-    // or link to `/notebook` still lands on Notebook, just inside the one chrome. Its
-    // assets still build into shell/dist/notebook (base `/notebook/`, PRD #49 slice #58)
-    // and share the shell's ASSETS binding, so `/notebook/assets/*` must keep resolving
-    // as a static asset — only the BARE surface redirects.
-    if (url.pathname === '/notebook' || url.pathname === '/notebook/') {
-      return new Response(null, { status: 302, headers: { location: '/?stage=notebook' } });
-    }
-    if (url.pathname.startsWith('/notebook/')) {
-      return asset(url.pathname);
+    // The Notebook is retired: an old bookmark lands on the canvas, not a 404.
+    if (url.pathname === '/notebook' || url.pathname.startsWith('/notebook/')) {
+      return new Response(null, { status: 302, headers: { location: '/' } });
     }
 
     // Edge Shell (ADR-0007, #46). The launcher + its registry API are served HERE — no
@@ -500,20 +455,6 @@ export default {
         // Capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
         recordPurgeMatch[1]!,
       );
-    }
-
-    // The Notebook as a data source (ADR-0024): a component names a QUERY, and it resolves
-    // HERE against the platform D1 — live rows, no materialize step, no container wake.
-    // Membership-checked like invitations/members above; the registry (notebook-data-api.ts) is the boundary,
-    // so nothing the caller writes reaches a statement.
-    const notebookMatch = NOTEBOOK_ROUTE.exec(url.pathname);
-    if (notebookMatch) {
-      const wsId = notebookMatch[1] as string;
-      const db = createDbForWorker(env as unknown as Bindings);
-      if (!(await getWorkspace(db, wsId, user.id))) {
-        return Response.json({ error: 'not found' }, { status: 404 });
-      }
-      return handleNotebookApi(db, wsId, notebookMatch[2] as string, Object.fromEntries(url.searchParams), { kind: 'member' });
     }
 
     // Admin surface (ADR-0014): waitlist view, role=admin only. Edge-served.

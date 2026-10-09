@@ -1,5 +1,8 @@
 # apex → web-poc migration
 
+> **History.** The Notebook app this records (SPA, `/v1` API, embeddings, realtime) has since
+> been removed; what remains of web-poc is the platform data layer — see `CONTEXT.md`.
+
 Record of moving the standalone `apex` monorepo into this package as a single
 Cloudflare Worker + Turso deployment. Source (`../../../apex`) was **copied, not
 moved** — it remains intact and untouched.

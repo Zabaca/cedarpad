@@ -7,7 +7,6 @@ import { SHAPE_SIZE_DEFAULTS } from './shapes';
 import type { CanvasStore } from './store';
 import { normalizeShape } from './normalize';
 import { shapesOnPage } from './current-page';
-import type { DataSource } from '../shared/data-source';
 import type { ZodTypeAny } from 'zod';
 
 export interface OpResult {
@@ -365,10 +364,6 @@ export interface PlaceComponentInput {
    * what every caller meant before pages were reachable, so omitting it is unchanged
    * behavior rather than a default being applied. */
   page?: string;
-  /** The mart this instance renders (#239 / ADR-0017: a component names a mart, never
-   * a URL). Optional and passed straight through to normalizeShape — no dataSource is
-   * the existing static-data behavior, unchanged. */
-  dataSource?: DataSource;
 }
 
 /** Place an instance of a component module on the canvas (or move/retarget by id). */
@@ -394,7 +389,6 @@ export function placeComponentOp(store: CanvasStore, input: PlaceComponentInput,
       module: input.module,
       data: input.data ?? {},
       rev: input.rev,
-      ...(input.dataSource !== undefined ? { dataSource: input.dataSource } : {}),
     });
     // A freshly placed instance (new id) from a chat attaches to that chat through the
     // single attachBatchToChat seam. It RESPECTS the agent's (x,y) unless they are the
@@ -418,14 +412,11 @@ export function placeComponentOp(store: CanvasStore, input: PlaceComponentInput,
   }
 }
 
-/** Update the props (data) of a placed component by id, leaving its module/box intact.
- * `dataSource` is optional (#239): omitted leaves an existing mart reference untouched,
- * passed retargets/attaches it — same "a component names a mart, never a URL" contract
- * as placeComponentOp. */
-export function setComponentDataOp(store: CanvasStore, id: string, data: Record<string, unknown>, dataSource?: DataSource): OpResult {
+/** Update the props (data) of a placed component by id, leaving its module/box intact. */
+export function setComponentDataOp(store: CanvasStore, id: string, data: Record<string, unknown>): OpResult {
   const existing = store.getState().shapes.find((s) => s.id === id);
   if (!existing || existing.type !== 'component') return { text: `Error: no component shape with id "${id}"`, isError: true };
-  store.upsert([{ ...existing, data, ...(dataSource !== undefined ? { dataSource } : {}) }]);
+  store.upsert([{ ...existing, data }]);
   return { text: `Updated data for ${id}.` };
 }
 

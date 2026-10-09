@@ -1,6 +1,6 @@
 # The warehouse is R2 parquet; a mart is one artifact with two readers
 
-**Status:** **superseded (2026-10-09)** — the warehouse, marts, connectors and the materialize job were removed; a component's live data is a named Notebook query. The `Warehouse` container class stays bound until the Cloudflare container migration. Kept as history. Was: accepted (grill session 2026-07-26)
+**Status:** **superseded (2026-10-09)** — the warehouse, marts, connectors and the materialize job were removed, and (with ADR-0024's Notebook) every live data source with them. The `Warehouse` container class stays bound until the Cloudflare container migration. Kept as history. Was: accepted (grill session 2026-07-26)
 
 A cedarpad workspace can own a data pipeline: the `ceo` Python toolchain (dlt + dbt +
 DuckDB) runs **in the workspace container**, invoked one-shot by a Job (ADR-0015) rather

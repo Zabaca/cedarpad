@@ -2,9 +2,6 @@
 //   { values, semantic_types, chartType, encodings, title? }
 // Flint (flint-chart) compiles that to Vega-Lite; vega renders it as SVG.
 //
-// Works off EITHER data path: inline `values`, or — when placed with a live `dataSource` —
-// the `rows` the host injects.
-//
 // The agent writes INTENT (a chart type + which field goes on which channel) and Flint
 // derives scales, axes, legend, colors and layout from the data + semantic types. So this
 // component takes no chart-drawing code. It is the ONLY chart component on the platform tier:
@@ -27,25 +24,17 @@ type Encoding = { field: string; [k: string]: unknown };
 
 export default function ChartCard({
   values = [],
-  rows,
   semantic_types = {},
   chartType = 'Bar Chart',
   encodings = {},
   title,
 }: {
   values?: Array<Record<string, unknown>>;
-  rows?: Array<Record<string, unknown>>;
   semantic_types?: Record<string, string>;
   chartType?: string;
   encodings?: Record<string, Encoding>;
   title?: string;
 }) {
-  // Two data paths, and the host picks which one arrives (ComponentShape): placed with a
-  // live `dataSource` it injects a `rows` prop and the chart is LIVE; placed with static
-  // `data` there is no `rows` key at all and inline `values` is the source. So presence —
-  // not length — selects: a source that is still loading or empty passes `rows: []`, and
-  // charting nothing is the honest render there, not silently falling back to a snapshot.
-  const source = rows ?? values;
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -94,8 +83,8 @@ export default function ChartCard({
           // tracking, and shape props arrive FROZEN from the tldraw store — handing them over
           // straight throws "Cannot add property Symbol(vega_id), object is not extensible" and
           // the card renders an error instead of a chart. Cloning here (not in the render body)
-          // keeps `source`'s identity stable so the effect doesn't re-fire on every render.
-          data: { values: source.map((row) => ({ ...row })) },
+          // keeps `values`' identity stable so the effect doesn't re-fire on every render.
+          data: { values: values.map((row) => ({ ...row })) },
           semantic_types,
           chart_spec: { chartType, encodings, baseSize: { width, height }, canvasSize: { width, height } },
         }) as Record<string, unknown>;
@@ -126,7 +115,7 @@ export default function ChartCard({
       ro.disconnect();
       view?.finalize();
     };
-  }, [source, semantic_types, chartType, encodings, unknown]);
+  }, [values, semantic_types, chartType, encodings, unknown]);
 
   const message =
     unknown === undefined

@@ -70,7 +70,7 @@ test('nothing in the schema import graph imports React or the tldraw editor', ()
   );
   expect(offenders).toEqual([]);
   // Guard the guard: if the walker silently found nothing, the assertion above is vacuous.
-  expect(graph.size).toBeGreaterThanOrEqual(3); // tl-schema, shape-props, shared/mart-contract
+  expect(graph.size).toBeGreaterThanOrEqual(2); // tl-schema, shape-props
 });
 
 // The AC's proof, and it has to be a CHILD process: `src/paste-detect.dom.test.ts`
@@ -97,6 +97,16 @@ test('the schema builds and validates in a runtime with no DOM at all', () => {
 test('a valid component record validates', () => {
   const schema = createCanvasTLSchema();
   expect(schema.types.shape.validate(componentRecord)).toEqual(componentRecord);
+});
+
+// `dataSource` is retired (shape-props.ts), but room records written before then still carry
+// one — a mart or a Notebook query. They must keep validating, or the room fails to load.
+test('a stored component record still holding a retired dataSource validates', () => {
+  const schema = createCanvasTLSchema();
+  for (const dataSource of [{ kind: 'mart', name: 'mart_runway' }, { kind: 'notebook', query: 'open_problems' }]) {
+    const record = { ...componentRecord, props: { ...componentRecord.props, dataSource } };
+    expect(() => schema.types.shape.validate(record)).not.toThrow();
+  }
 });
 
 test('a valid chat record validates', () => {

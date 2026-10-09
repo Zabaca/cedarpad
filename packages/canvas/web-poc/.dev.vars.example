@@ -3,19 +3,6 @@
 # prod these are Worker secrets on the canvas worker, pushed by the zbc module
 # (from SOPS), never here.
 
-# Embeddings: Voyage (active embedding provider, voyage-3.5-lite). Without it the
-# embedder falls back to the deterministic local hash (lexical, not semantic).
-VOYAGE_API_KEY=""
-
-# LLM agent providers — only used if you run the optional agent-jobs consumer
-# for classification/linking/synthesis. Not needed for the inline
-# embed→store→search loop.
-ANTHROPIC_API_KEY=""
-OPENAI_API_KEY=""
-
-# Realtime (optional). Leave blank to disable Ably.
-ABLY_API_KEY=""
-
 # Better Auth (required). Same-origin with the canvas app in dev (vite on :4510).
 BETTER_AUTH_SECRET="dev-secret-change-me-at-least-32-chars"
 BETTER_AUTH_URL="http://localhost:4510"
