@@ -22,7 +22,7 @@ Vite proxies `/api/*` to the bridge, so you only ever open `:4510`.
 The agent runs through the Claude Agent SDK, which uses your local Claude Code
 credential (subscription login or `ANTHROPIC_API_KEY`). If you're logged into
 Claude Code, it just works. Override the model with `CANVAS_MODEL` (default
-`sonnet`).
+`haiku`).
 
 ## Try
 

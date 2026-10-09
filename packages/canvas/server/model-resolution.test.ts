@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 
 import { resolveModelForSdk } from './agent.ts';
 
-// The chat's `sonnet`/`opus` selections must run on Sonnet 5 / Opus 5.5, not the SDK's bundled
-// aliases (claude-sonnet-4-6 / claude-opus-4-8). haiku behavior is unchanged.
+// The chat's `sonnet`/`opus`/`haiku` selections must run on Sonnet 5 / Opus 5.5 / Haiku 5.5, not
+// the SDK's bundled aliases (claude-sonnet-4-6 / claude-opus-4-8 / claude-haiku-4-5).
 describe('resolveModelForSdk', () => {
   test('pins the sonnet alias to the explicit Sonnet 5 id', () => {
     expect(resolveModelForSdk('sonnet')).toBe('claude-sonnet-5');
@@ -13,8 +13,8 @@ describe('resolveModelForSdk', () => {
     expect(resolveModelForSdk('opus')).toBe('claude-opus-5-5[1m]');
   });
 
-  test('haiku passes through as the plain alias (SDK resolves the latest)', () => {
-    expect(resolveModelForSdk('haiku')).toBe('haiku');
+  test('pins the haiku alias to the explicit Haiku 5.5 id', () => {
+    expect(resolveModelForSdk('haiku')).toBe('claude-haiku-5-5');
   });
 
   test('an explicit model id is not remapped', () => {
