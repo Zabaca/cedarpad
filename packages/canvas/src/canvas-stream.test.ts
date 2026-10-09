@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import { respondToScreenshot, respondToSelectPage } from './canvas-stream.ts';
+import { SCREENSHOT_MAX_EDGE, respondToScreenshot, respondToSelectPage, screenshotScale } from './canvas-stream.ts';
 
 describe('respondToScreenshot', () => {
   test('renders the canvas and replies with the data URL, tagged with the request id', async () => {
@@ -81,5 +81,19 @@ describe('respondToSelectPage', () => {
     respondToSelectPage('not json', (p) => moved.push(p), () => true);
     respondToSelectPage(JSON.stringify({ nope: true }), (p) => moved.push(p), () => true);
     expect(moved).toEqual([]);
+  });
+});
+
+// The size cap. Hudson Standup's Franklin page (24 pasted screenshots) exported at full size
+// came back as 8–13 MB, landed after the bridge's deadline, and was too big for a model.
+describe('screenshotScale', () => {
+  test('shrinks a big page so its longest edge fits the cap', () => {
+    expect(screenshotScale({ w: 10_000, h: 4_000 })).toBe(SCREENSHOT_MAX_EDGE / 10_000);
+    expect(screenshotScale({ w: 3_000, h: 8_000 })).toBe(SCREENSHOT_MAX_EDGE / 8_000);
+  });
+
+  test('never enlarges a small page, and an unknown bound renders as-is', () => {
+    expect(screenshotScale({ w: 800, h: 600 })).toBe(1);
+    expect(screenshotScale(null)).toBe(1);
   });
 });
