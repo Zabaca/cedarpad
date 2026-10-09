@@ -52,7 +52,7 @@ import Layout from '../layouts/Layout.astro'
           <h3>Answers in artifacts</h3>
           <p>
             Ask, and working things appear on the board: research written as documents, mermaid
-            diagrams, charts on your real data, custom apps, clickable prototypes. It sees the
+            diagrams, charts, custom apps, clickable prototypes. It sees the
             actual canvas — your sketches, arrows, screenshots — and answers in place.
           </p>
         </div>
@@ -202,10 +202,8 @@ import Layout from '../layouts/Layout.astro'
                   <div class="hd">
                     <span aria-hidden="true">🐙</span>
                     <span class="nm">acme/api</span>
-                    <span class="chip2">cloned</span>
                   </div>
-                  <div class="path">.repos/acme__api/</div>
-                  <div class="sub">Linked chats read this checkout like local files.</div>
+                  <div class="path">github.com/acme/api</div>
                 </div>
               </div>
             </div>
@@ -251,19 +249,12 @@ import Layout from '../layouts/Layout.astro'
       </div>
     </section>
 
-    <div class="exit">
-      When it's decided, it doesn't stop at the board. Connect your repos and the work leaves as
-      pull requests and scheduled jobs your builders — human or agent — pick up on their
-      own. <a href="/why">Where this is going →</a>
-    </div>
-
     <section id="access">
       <p class="label">Access</p>
       <h2>Seats open in batches.</h2>
       <p class="lede">
-        Invite-only while we build toward this. Every workspace is its own private machine with a
-        capable, hands-on agent inside — so we open seats deliberately, and we sit with every team
-        we let in. Leave an email; we'll tell you when a seat is yours.
+        Invite-only while we build toward this. We open seats deliberately, and we sit with every
+        team we let in. Leave an email; we'll tell you when a seat is yours.
       </p>
       <div class="cta-form">
         <WaitlistForm id="access" />
@@ -865,14 +856,6 @@ import Layout from '../layouts/Layout.astro'
     font-weight: 600;
     font-size: 0.68rem;
   }
-  .mc-repo .chip2 {
-    margin-left: auto;
-    background: #dcfce7;
-    color: #166534;
-    border-radius: 999px;
-    padding: 1px 7px;
-    font-size: 0.54rem;
-  }
   .mc-repo .path {
     font-family: var(--mono);
     font-size: 0.57rem;
@@ -881,20 +864,6 @@ import Layout from '../layouts/Layout.astro'
     border: 1px solid #e5e7eb;
     border-radius: 5px;
     padding: 4px 6px;
-  }
-  .mc-repo .sub {
-    font-size: 0.55rem;
-    color: #6b7280;
-  }
-  .exit {
-    border-top: 1px solid var(--line);
-    padding: 26px 0;
-    color: var(--muted);
-    font-size: 0.95rem;
-  }
-  .exit a {
-    color: var(--accent);
-    text-decoration: none;
   }
   .cta-form {
     margin-top: 24px;
