@@ -50,8 +50,7 @@ the durable home for a chat's resume pointer and config, and the only place the
 `chatId → sessionId` link lives (the JSONL carries no chat id). Replaces the old
 per-browser `localStorage`. _Avoid_: putting any of this on the `chat` shape.
 
-**Conversation / Inbox**: a Conversation is the edge-side index row of a session (chat or
-dev-agent run); the Inbox is the **workspace-shared** list of them — every member sees the
+**Conversation / Inbox**: a Conversation is the edge-side index row of a chat session; the Inbox is the **workspace-shared** list of them — every member sees the
 same index, it is not a per-user mailbox. On the row, **creator** (`user_id`, immutable
 attribution: who started it) is distinct from **assignee** (`assigned_to`, nullable =
 unassigned, mutable: who has taken ownership of it); filtering by "mine" means assignee,
@@ -60,8 +59,7 @@ sees every conversation and may reply. Assignment is **advisory** — a coordina
 signal/filter, never a lock; any member may assign anyone (or unassign), and replying to
 an *unassigned* conversation auto-assigns the replier. At birth: a conversation started
 by a human (UI chat, MCP `send_message` — the token's user) is auto-assigned to that
-initiator; unattended starts (cron dev-agent runs, scheduled jobs) begin unassigned —
-queue work awaiting a claim. UI: the Open/All/Closed view switch is unchanged
+initiator; an unattended start begins unassigned — queue work awaiting a claim. UI: the Open/All/Closed view switch is unchanged
 (`waiting_on: human` stays a pinned indicator inside Open, not a view); a new
 **"Assigned to" filter** beside it selects Everyone (default) / Unassigned / a specific
 member, composing with any view. Surface: `POST /api/inbox/:id/assign` `{ userId | null }`
@@ -80,7 +78,7 @@ stream is subscribed to it and re-reads D1 when it hears. It exists because Work
 stateless per isolate: a subscriber held on isolate A cannot be reached by a write landing
 on isolate B, so a badge could only ever be *polled*, and polling it cost 1.6M D1 rows a
 day. `CanvasSyncRoom` is the shape it copies but not a place to put it (that is keyed per
-*canvas*; an inbox spans them), and `Sandbox`/`Warehouse` are the right scope with the
+*canvas*; an inbox spans them), and `Sandbox` is the right scope with the
 wrong lifecycle — compute containers built to sleep.
 
 **The hub is a dumb notifier, not a cache.** It says *"something in your inbox changed"*
@@ -124,20 +122,8 @@ writes and leaves a badge that moves for agents and not for humans, which looks 
 is worse than polling. Presence, cross-chat delivery, and "a Component changed, reload it"
 are the natural next topics; none are built.
 
-**Open PR (a Conversation's PR state)** _(decided 2026-07-29)_: a dev-agent Conversation
-that has called `open_pr` **carries the PR it opened** — `pr_url` on the row, stamped by
-the container reporting the tool's result back through the platform RPC (the edge owns the
-row, ADR-0018). That, not a transcript mention, is what "this run has an open PR" means,
-and it is what the Inbox renders a **Merge** action from. Merging is an *edge* act — the
-GitHub App private key never leaves the edge (ADR-0008), so the container never merges —
-squash-only, membership-gated like every other per-id Inbox action, and it stamps
-`pr_merged_at` and **closes** the Conversation: landing the PR is what ends the run. A
-refusal from GitHub (conflict, red required check, branch protection) leaves the row in
-its open-PR state with GitHub's own reason shown, so a retry after CI goes green is one
-click; a PR GitHub reports as already merged is recorded as merged — the row was stale.
-For a **Job**, this is the arming step (see "Job" below): the job is live once merged.
-_Avoid_: reading PR state by scraping the transcript, or by querying GitHub per row while
-listing the Inbox — the list is a cheap edge D1 read that must never wake a runner.
+**Open PR** — _retired 2026-10-09_ with the dev agent: nothing opens or merges PRs. The
+`pr_url`/`pr_merged_at` columns remain until the data cleanup.
 
 **Visibility (canvas + chat)** _(ADR-0016, decided + implemented 2026-07-17)_:
 a canvas is **workspace-visible** (default; today's behavior) or **private** —
@@ -202,7 +188,7 @@ The codebase splits into two zones by who owns them (see [ADR 0002](./docs/decis
   because the old tar swept the whole directory. Under the Record model (below) an artifact
   with no tool cannot persist, and prod held zero of them, so the feature goes rather than
   earning a tool it was never given. Reintroduce deliberately, with a door, if wanted.
-- **Workspace skill** (`.claude/skills/<name>/` under the package root): a user- or agent-authored skill dir (SKILL.md + supporting files), persisted per workspace as **Records** (`skill_files`, keyed workspace → skill → path — #361) and discovered via the SDK's `project` setting source from a tree rendered before each turn. Chat turns enable **all discovered** skills — no allowlist. Distinct from a **platform skill** (baked into the image at the container's `~/.claude/skills/`, the `user` source: deploy-versioned, PR-reviewed, unshadowable by workspace content). On a name collision the workspace skill wins for chat turns; dev-agent turns keep a pinned skill list resolved in a cwd with no workspace skills (its worktree). _Decided, not yet built._
+- **Workspace skill** (`.claude/skills/<name>/` under the package root): a user- or agent-authored skill dir (SKILL.md + supporting files), persisted per workspace as **Records** (`skill_files`, keyed workspace → skill → path — #361) and discovered via the SDK's `project` setting source from a tree rendered before each turn. Chat turns enable **all discovered** skills — no allowlist. Distinct from a **platform skill** (baked into the image at the container's `~/.claude/skills/`, the `user` source: deploy-versioned, PR-reviewed, unshadowable by workspace content). On a name collision the workspace skill wins. _Decided, not yet built._
 
 A skill is **content-that-asks** — text the model reads. It is never a **capability** (a grant: tools, tokens, scopes, routing). Capabilities stay code-gated; no workspace data may confer one.
 
@@ -379,17 +365,13 @@ _Avoid_: "we tar the workspace" (there is no tar — the sinks, their keys and t
 were all removed in #366), or treating the filesystem as the durable copy — that inversion is
 what destroyed every own-tier component on 2026-07-29.
 
-**External MCP** (the agent consuming outside tool servers) follows the same line. The **MCP registry** (code, PR-gated, global) is the catalog of approved remote HTTP servers — the trust decision that cedarpad may talk to an endpoint at all. **Enablement** is per-workspace and is an act of owner consent (v1: paste a per-workspace bearer token at connect time; later: an OAuth dance — a registry entry declares its auth kind). **Token custody is edge-side**: per-workspace credentials live in the worker's DB, are attached as a header on the proxied `/send`, and are used for that turn only — the container and R2 never store them (the ADR-0008 dev-agent git-token pattern). A workspace that hasn't connected a server gets no tools, no token, and no connection attempt; an unreachable server degrades that turn's toolset, never fails the turn. Chat flavor only; dev-agent turns get no external MCP servers.
+**External MCP** (the agent consuming outside tool servers) follows the same line. The **MCP registry** (code, PR-gated, global) is the catalog of approved remote HTTP servers — the trust decision that cedarpad may talk to an endpoint at all. **Enablement** is per-workspace and is an act of owner consent (v1: paste a per-workspace bearer token at connect time; later: an OAuth dance — a registry entry declares its auth kind). **Token custody is edge-side**: per-workspace credentials live in the worker's DB, are attached as a header on the proxied `/send`, and are used for that turn only — the container and R2 never store them. A workspace that hasn't connected a server gets no tools, no token, and no connection attempt; an unreachable server degrades that turn's toolset, never fails the turn. Chat flavor only; dev-agent turns get no external MCP servers.
 
-**Repo**: a **workspace asset** — like a Canvas, Component, or Skill, something the owner *adds* to the workspace, whereupon its content is part of the medium. Reading is workspace-wide: the bridge (platform code, never a turn) maintains a read-only checkout of each added repo in the container, refreshed eventually (boot + cadence + explicit refresh), and every chat turn may read it as plain files — no repo credential ever enters a turn. Writing (worktrees, commits, PRs) remains exclusively the dev-agent turn surface. Adding a repo is a capability grant to the whole workspace (every member's chats can read it). Pasting a GitHub URL onto the canvas places a **GithubRepoCard** — a live *view* of the asset (never its owner): it looks up cloned-ness from the workspace repo set, offers the owner-gated Clone (which for a public repo adds it token-less), and turns a member's 403 into a visible clone request. Chat turns are told what is checked out via a per-turn REPOS system-prompt line built from `.repos/` on disk.
+**Repo**, **Repository connection**, **Job**, **Gated-layer rule** — _retired 2026-10-09_.
+The canvas never changes code, so a workspace has no repos, no GitHub connection, no jobs and
+no token-holding turn for a gated layer to protect.
 
-**Repository connection**: the credential plumbing *behind* the Repo asset — how a workspace authenticates to GitHub for a given repo. Three sources: the **GitHub App installation** (`installationId`, obtained when the workspace owner installs cedarpad's App on their org via a signed-`state` connect flow; one installation per workspace, covering its granted repos) a **per-repo PAT** (for repos outside the installation's identity — e.g. a client-issued GitHub account; stored encrypted at rest, decrypted only at the moment of use), or **public** (no credential at all — pasted-in public repos; reads clone the public remote, PRs are impossible). Which repos are in scope is the owner's **selection**; selection drives job discovery, platform-job targets, token minting, and the read-only checkout set. **One run = one repo**, chosen at trigger; the conversation binds to it like a `canvasId`. The App identity (app ID + private key) stays platform env; installation, PATs, and selection are workspace config — like other `workspace_id`-scoped data, they travel with the workspace when deployments split (ADR-0008, [ADR-0015](../../docs/adr/0015-repos-are-workspace-config-jobs-are-repo-content.md)).
-
-**Job**: an agent-executable task definition — `.claude/jobs/<name>.md` in a selected repo (frontmatter `name`/`description`/`schedule`, body = the prompt) — the sole registry; there is no platform built-in job (#100). Agents author jobs by opening PRs; **the merge is the arming step** — nothing runs until the job is on the default branch. Discovery is pull-based (the default branch *is* the registry; contents-API fetch, SHA-cached; reconcile, don't register); the platform cron tick is an evaluator (due-ness vs a `lastRunAt` stamp), gated by `DEV_AGENT_ENABLED`. Every run wraps the job body in the code-defined triage law + token custody — a job steers *what*, never *under which rules*. A job runs against its home repo; a run with no job is an error, never a default prompt. _Decided, not yet built_ ([ADR-0015](../../docs/adr/0015-repos-are-workspace-config-jobs-are-repo-content.md)).
-
-**Gated-layer rule**: content that steers a token-holding turn must come from a **gated layer** — platform (deploy-gated) or repo (PR-gated). The workspace layer (agent-writable, ungated) feeds chat turns only. Hence workspace skills exist but workspace jobs/agents deliberately don't.
-
-**Inbound MCP** (outside agents interacting with a workspace) is the only supported programmatic surface — there is deliberately no inbound REST/turn API (a service credential that can execute turns is an RCE credential; MCP's OAuth keeps the boundary at humans delegating to their own agents). The server runs at the edge; a token acts as its user, and every tool is ownership-checked per workspace. Tools split by the same line: **content + read** (`upload_skill`, `read_canvas`, `list_inbox`, `read_conversation`, …) vs **execution** (`send_message`). An MCP-originated chat is an ordinary Conversation — same session index, visible in the Inbox, resumable from the UI; `send_message` is async (returns `conversation_id` immediately; callers poll `read_conversation`) and runs plain chat flavor, never dev-agent — a dev-agent run is triggered only through the explicit `run_dev_agent` tool, which shares the Jobs "Run now" core (`triggerDevAgentRun`): repo must be in the selected set, a named job's prompt is re-read off the repo's default branch, runs single-flight with join. `create_canvas` uses the same registry create as the shell route. Mutations funnel through the bridge (single writer of the workspace tree — `upload_skill` proxies to a bridge endpoint and wakes the container); only pure reads are served edge-side.
+**Inbound MCP** (outside agents interacting with a workspace) is the only supported programmatic surface — there is deliberately no inbound REST/turn API (a service credential that can execute turns is an RCE credential; MCP's OAuth keeps the boundary at humans delegating to their own agents). The server runs at the edge; a token acts as its user, and every tool is ownership-checked per workspace. Tools split by the same line: **content + read** (`upload_skill`, `read_canvas`, `list_inbox`, `read_conversation`, …) vs **execution** (`send_message`). An MCP-originated chat is an ordinary Conversation — same session index, visible in the Inbox, resumable from the UI; `send_message` is async (returns `conversation_id` immediately; callers poll `read_conversation`) and runs a plain chat turn. `create_canvas` uses the same registry create as the shell route. Mutations funnel through the bridge (single writer of the workspace tree — `upload_skill` proxies to a bridge endpoint and wakes the container); only pure reads are served edge-side.
 
 _Avoid_: "self-modifying app" (ADR 0001's framing) — there is now a boundary; only the extension zones are mutable+durable, the core is image-only.
 
@@ -515,8 +497,8 @@ A `CanvasShape` is one of:
   one person's editor over the bridge's SSE plane, addressed by the edge-stamped
   `x-canvas-viewer` — **presentation only, never an authorization input**: writes still
   authorize as `CONTAINER_PRINCIPAL`, and the bridge stays identity-blind for every other
-  purpose. Absent viewer (a guest, whose per-browser id never reaches the edge; a cron
-  kick; any dev-agent run) means the capability is **withheld**, not widened — a fan-out
+  purpose. Absent viewer (a guest, whose per-browser id never reaches the edge; a headless
+  send) means the capability is **withheld**, not widened — a fan-out
   with no viewer moves nobody, never everybody. _Avoid_: reading that header to decide
   whether something is allowed, and any "move everyone" fallback.
   - **The edge is its only writer, on every path.** It is set on a send and on the canvas
@@ -686,13 +668,12 @@ agent**: it also has the built-in tools (Bash, Read, Web*, Task, ...) plus the
 `impeccable` skill (`settingSources: ['user','project']` + `skills` filter),
 auto-approved (`bypassPermissions`). Unsandboxed — see the security note below.
 
-**Chat turns drop the generic `Write`/`Edit`/`NotebookEdit` tools**
-(`disallowedTools`): a plain Write drops an unregistered file — unserved, never
-hot-reloaded, invisible to `list_components` (the QABoard incident) — so
-component and data files may only be authored through the registered tools
-(`write_component`/`edit_component`/`write_data`, which persist the Record and
-bump the rev). Dev-agent turns keep the full preset (worktree edits are their
-job). Bash remains, so this steers the model rather than sandboxing it.
+**A chat turn has no shell and no filesystem tools** (`CHAT_TOOLS` in
+`server/agent.ts`: Skill, WebSearch, WebFetch, TodoWrite). A plain Write would drop an
+unregistered file — unserved, never hot-reloaded, invisible to `list_components` (the
+QABoard incident) — so component and data files may only be authored through the
+registered tools (`write_component`/`edit_component`/`write_data`, which persist the
+Record and bump the rev). Every change a turn makes goes through an MCP tool.
 
 The agent's "thinking" and replies to the human are its normal chat text — not a
 tool. The human watches shapes appear in real time over the sync room while the
@@ -707,7 +688,7 @@ fire-and-forget: the reply streams into the target card, the sender polls
 `read_canvas`/`read_connected`. Guard rails: no self-send, the target must be a
 chat card on the sender's canvas, an in-flight target refuses (one turn per
 chat), and the delivered message is prefixed `[from <chatId>]` so the receiving
-thread knows who is speaking. Chat flavor only — dev-agent turns never see it.
+thread knows who is speaking.
 
 ## Custom components — a real, file-based component library
 

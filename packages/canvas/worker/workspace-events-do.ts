@@ -9,8 +9,8 @@ import { NOTIFY_PATH, SUBSCRIBE_PATH } from './workspace-events.ts';
 // Worker-only fix for "tell every open tab that this workspace's inbox changed". One
 // addressable point per workspace is the requirement, and a DO is the only thing that
 // provides it. The three classes we already had are all the wrong fit — `CanvasSyncRoom`
-// is keyed per CANVAS (the inbox spans canvases), and `Sandbox`/`Warehouse` are the right
-// scope but the wrong lifecycle: they are compute containers built to sleep, so hanging
+// is keyed per CANVAS (the inbox spans canvases), and `Sandbox` is the right
+// scope but the wrong lifecycle: it is a compute container built to sleep, so hanging
 // the hub off one would either keep a container warm to serve a badge or lose the hub
 // exactly when the workspace goes idle. `CanvasSyncRoom` is nonetheless the SHAPE this
 // follows — a per-something hub with hibernatable subscribers.

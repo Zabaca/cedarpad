@@ -81,8 +81,6 @@ async function writeEnvFile(sandbox: BootableSandbox, spec: CanvasBootSpec): Pro
  *  `exposePort` is the last step and lives here rather than at the call site so it happens
  *  once per boot, under the same lock, instead of once per request. */
 export async function bootCanvasStack(sandbox: BootableSandbox, spec: CanvasBootSpec): Promise<void> {
-  // No git token is minted at boot (ADR-0010): the dev-agent's token is per-turn, minted by the
-  // edge chat proxy onto each dev-agent send (worker/inbox-bridge.ts) — never container env.
   await sandbox.setEnvVars(spec.envVars).catch(() => {}); // kept as a secondary path
   const opts = { processId: spec.processId, envVars: spec.envVars } as const;
   let proc = await sandbox.getProcess(spec.processId).catch(() => null);

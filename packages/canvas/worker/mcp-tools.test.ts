@@ -7,7 +7,7 @@ import * as schema from '../web-poc/lib/db/schema.ts';
 import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { addWorkspaceMember, createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
-import { buildMcpTools, EditComponentInput, RunDevAgentInput, WriteComponentInput } from './mcp-tools.ts';
+import { buildMcpTools, EditComponentInput, WriteComponentInput } from './mcp-tools.ts';
 import { NOTEBOOK_TOOL_SPECS } from '../web-poc/lib/contract/notebook-tools.ts';
 import { d1RecordStore } from './record-store.ts';
 
@@ -57,7 +57,6 @@ const tools = buildMcpTools({
       ? new Response(JSON.stringify({ error: 'not found' }), { status: 404 })
       : new Response(JSON.stringify(canned), { status: 200 });
   },
-  kickDevAgent: async () => Response.json({ chatId: 'dev-agent-run-x', joined: false }, { status: 202 }),
 });
 
 let WS = '';
@@ -152,22 +151,12 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(sends).toHaveLength(1);
   });
 
-  test('send_message with an existing chat_id replies into that conversation (same workspace, chat kind only)', async () => {
+  test('send_message with an existing chat_id replies into that conversation (same workspace)', async () => {
     sends = [];
     const chatId = 'mcp_test_read'; // created above, kind chat, WS, u_1
     const res = await tools.sendMessage({ workspace_id: WS, message: 'follow-up', chat_id: chatId });
     expect(res.chat_id).toBe(chatId);
     expect(sends).toHaveLength(1);
-
-    // a dev-agent conversation is not reachable through this tool
-    await conversations.create(database, {
-      sessionId: 's_3',
-      userId: 'u_1',
-      workspaceId: WS,
-      ownerRef: 'mcp_devagent',
-      kind: 'dev-agent',
-    } as never);
-    await expect(tools.sendMessage({ workspace_id: WS, message: 'x', chat_id: 'mcp_devagent' })).rejects.toThrow(/chat/);
   });
 
   test("send_message continuing a canvas-paired conversation addresses that canvas (the agent's canvas tools bind to it)", async () => {
@@ -698,45 +687,6 @@ describe('create_canvas — the same registry create the shell route uses, acces
   });
 });
 
-describe('run_dev_agent — proxies the manual trigger; the bridge’s join answer comes back', () => {
-  test('kicks with the optional repo/job and returns the bridge JSON', async () => {
-    const kicks: Array<{ repo?: string; job?: string }> = [];
-    const t = buildMcpTools({
-      db: database,
-      userId: 'u_1',
-      proxySend: async () => new Response(null, { status: 202 }),
-      proxySkill: async () => new Response(null, { status: 200 }),
-      proxyBridge: async () => new Response(null, { status: 404 }),
-      kickDevAgent: async (body) => {
-        kicks.push(body);
-        return Response.json({ chatId: 'dev-agent-run-x', joined: true }, { status: 202 });
-      },
-    });
-    const res = await t.runDevAgent({ job: 'deps-audit' });
-    expect(kicks).toEqual([{ job: 'deps-audit' }]);
-    expect(res).toEqual({ chatId: 'dev-agent-run-x', joined: true });
-  });
-
-  test('a failed kick surfaces as an error (e.g. an unknown job’s 404)', async () => {
-    const t = buildMcpTools({
-      db: database,
-      userId: 'u_1',
-      proxySend: async () => new Response(null, { status: 202 }),
-      proxySkill: async () => new Response(null, { status: 200 }),
-      proxyBridge: async () => new Response(null, { status: 404 }),
-      kickDevAgent: async () => Response.json({ error: 'job not found' }, { status: 404 }),
-    });
-    await expect(t.runDevAgent({ job: 'nope' })).rejects.toThrow(/404/);
-  });
-
-  // #100: one mechanism — the tool's schema itself requires a job (no built-in default task).
-  test('the input schema requires `job`', () => {
-    expect(RunDevAgentInput.safeParse({}).success).toBe(false);
-    expect(RunDevAgentInput.safeParse({ repo: 'Zabaca/cedarpad' }).success).toBe(false);
-    expect(RunDevAgentInput.safeParse({ job: 'deps-audit' }).success).toBe(true);
-  });
-});
-
 // The Notebook over remote MCP (ADR-0024 / CEDA-X6OIAO). The tool BEHAVIOUR is covered at
 // its own seam (`web-poc/worker/notebook-tools.test.ts`, on real D1); what matters here is
 // the binding this surface supplies — a workspace the caller never names.
@@ -757,7 +707,6 @@ describe('notebook tools bind the token user’s workspace, never an argument', 
       proxySend: async () => new Response(null, { status: 202 }),
       proxySkill: async () => new Response(null, { status: 200 }),
       proxyBridge: async () => new Response(null, { status: 404 }),
-      kickDevAgent: async () => new Response(null, { status: 202 }),
     }).notebook();
     await expect(theirs.readObservation({ id })).rejects.toThrow(/not found/);
   });

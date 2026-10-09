@@ -8,8 +8,6 @@ interface __BaseEnv_Env {
 	BETTER_AUTH_URL: "https://agent-canvas-preview.james-99a.workers.dev" | "https://app.cedarpad.com";
 	WEB_ORIGIN: "https://agent-canvas-preview.james-99a.workers.dev" | "https://app.cedarpad.com";
 	AUTH_DISABLE_SIGNUP: "true";
-	DEV_AGENT_ENABLED: "false";
-	GITHUB_APP_SLUG: "cedarpad";
 	CANVAS_USER: "2hfe21p0OsrHWQBPgfKhwSH9ZYUK9ajw";
 	Sandbox: DurableObjectNamespace<import("./worker/index").Sandbox>;
 	Warehouse: DurableObjectNamespace<import("./worker/index").Warehouse>;
@@ -26,8 +24,6 @@ declare namespace Cloudflare {
 		BETTER_AUTH_URL: "https://agent-canvas-preview.james-99a.workers.dev";
 		WEB_ORIGIN: "https://agent-canvas-preview.james-99a.workers.dev";
 		AUTH_DISABLE_SIGNUP: "true";
-		DEV_AGENT_ENABLED: "false";
-		GITHUB_APP_SLUG: "cedarpad";
 		CANVAS_USER: "2hfe21p0OsrHWQBPgfKhwSH9ZYUK9ajw";
 		Sandbox: DurableObjectNamespace<import("./worker/index").Sandbox>;
 		Warehouse: DurableObjectNamespace<import("./worker/index").Warehouse>;
@@ -39,7 +35,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "BETTER_AUTH_URL" | "WEB_ORIGIN" | "AUTH_DISABLE_SIGNUP" | "DEV_AGENT_ENABLED" | "GITHUB_APP_SLUG" | "CANVAS_USER">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "BETTER_AUTH_URL" | "WEB_ORIGIN" | "AUTH_DISABLE_SIGNUP" | "CANVAS_USER">> {}
 }
 
 // Begin runtime types

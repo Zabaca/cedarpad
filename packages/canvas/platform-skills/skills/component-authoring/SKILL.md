@@ -17,7 +17,7 @@ A component is a React file (`write_component`) rendered inside a card on the ca
 | `sendToAgent(message)` | Post `message` into a chat as a turn — see below. Async; **throws** when there is no chat to reply to. |
 | `currentUser` | `{ id, name?, email?, color, kind: 'user' \| 'guest' }` of the person looking at it — `undefined` until resolved. |
 | `setDisplayName(name)` | Ask-once naming for a guest; a no-op for signed-in users. |
-| `rows`, `mart` | Only when placed with a `data_source`: the live rows (and mart metadata). `[]`/`null` while loading. |
+| `rows` | Only when placed with a `data_source`: the live rows. `[]` while loading. |
 
 ## Actions, commands, methods — what is possible
 
@@ -47,7 +47,7 @@ A component cannot register tools. Three channels exist:
 
 - **You → component, raw: data.** `set_component_data` to feed props, `write_data` for a file
   the component imports (`import rows from "./sales.json"`), a `data_source` to bind a live
-  mart, or `edit_component` to change the code itself. Use `set_component_data` for a
+  Notebook query, or `edit_component` to change the code itself. Use `set_component_data` for a
   component with no commands, or to replace its content wholesale.
 
 Decide which state is whose. State the **component** owns (a selection, a toggle, a draft)

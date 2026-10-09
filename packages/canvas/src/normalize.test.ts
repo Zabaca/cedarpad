@@ -87,41 +87,33 @@ describe('normalize preserves the parentId rule at every call site', () => {
   });
 });
 
-// #239: a component names a mart via dataSource ({kind:'mart', name}), never a URL
-// (ADR-0017). normalizeShape must carry this through like every other component field.
+// A component names live data via dataSource (ADR-0024: a named query, never a URL).
+// normalizeShape must carry this through like every other component field.
 describe('normalizeShape: component dataSource', () => {
+  const component = (dataSource?: unknown) =>
+    normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: { x: 1 }, rev: 1, ...(dataSource ? { dataSource } : {}) });
+
   test('a component with no dataSource stays exactly as today (backward compatible)', () => {
-    const shape = normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: { x: 1 }, rev: 1 });
+    const shape = component();
     expect(shape.type === 'component' && shape.dataSource).toBeUndefined();
   });
 
-  test('a valid mart dataSource is preserved', () => {
-    const shape = normalizeShape({
-      id: 'shape:c',
-      type: 'component',
-      x: 0,
-      y: 0,
-      module: 'KpiCard',
-      data: {},
-      rev: 1,
-      dataSource: { kind: 'mart', name: 'mart_runway' },
-    });
-    expect(shape.type === 'component' ? shape.dataSource : undefined).toEqual({ kind: 'mart', name: 'mart_runway' });
+  test('a valid notebook dataSource is preserved', () => {
+    const source = { kind: 'notebook', query: 'open_problems' };
+    expect(component(source)).toMatchObject({ dataSource: source });
   });
 
   test('a malformed dataSource is rejected', () => {
-    expect(() =>
-      normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: {}, rev: 1, dataSource: { kind: 'url', name: 'x' } }),
-    ).toThrow();
+    expect(() => component({ kind: 'url', name: 'x' })).toThrow();
   });
 
-  // MartName (mart-contract.ts) is the same rule the mart route enforces — a name that
-  // could never resolve to a real mart is rejected HERE, at placement, not silently
-  // stored and left to fail later at render (CLAUDE.md §7: parse at the boundary).
-  test('a mart dataSource with a name that fails MartName is rejected', () => {
-    expect(() =>
-      normalizeShape({ id: 'shape:c', type: 'component', x: 0, y: 0, module: 'KpiCard', data: {}, rev: 1, dataSource: { kind: 'mart', name: 'Not-Valid!' } }),
-    ).toThrow();
+  // The warehouse is retired (ADR-0017). A component placed before that still carries
+  // `{kind:'mart'}` — it must keep loading (and keep being editable) with its static data,
+  // not fail the whole shape.
+  test('a retired mart dataSource reads as no source, not as an error', () => {
+    const shape = component({ kind: 'mart', name: 'mart_runway' });
+    expect(shape.type === 'component' && shape.dataSource).toBeUndefined();
+    expect(shape.type === 'component' && shape.data).toEqual({ x: 1 });
   });
 });
 

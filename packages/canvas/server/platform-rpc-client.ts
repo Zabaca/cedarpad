@@ -12,7 +12,6 @@ import {
   type ComponentVersion,
   type ComponentWriteInput,
   ComponentWriteOutput,
-  type ConversationPrOpenedInput,
   type ConversationSettleInput,
   type ConversationStartInput,
   type DataReadInput,
@@ -42,9 +41,6 @@ import {
 export interface PlatformRpc {
   conversationStart(input: ConversationStartInput): Promise<void>;
   conversationSettle(input: ConversationSettleInput): Promise<void>;
-  /** "this run opened a PR" — the url the `open_pr` tool returned, so the Conversation
-   *  carries its PR state and the Inbox can offer to merge it (CONTEXT.md "Open PR"). */
-  conversationPrOpened(input: ConversationPrOpenedInput): Promise<void>;
   /** The one operation whose reply is read: the id is the handle `notify` then names. */
   turnEnd(input: TurnEndInput): Promise<TurnEndOutput | null>;
   notify(input: NotifyInput): Promise<void>;
@@ -162,7 +158,6 @@ export function platformRpc(config: PlatformRpcConfig): PlatformRpc | null {
   return {
     conversationStart: async (input) => void (await call({ op: 'conversation.start', input })),
     conversationSettle: async (input) => void (await call({ op: 'conversation.settle', input })),
-    conversationPrOpened: async (input) => void (await call({ op: 'conversation.prOpened', input })),
     turnEnd: async (input) => {
       const res = await call({ op: 'turn.end', input });
       if (!res) return null;

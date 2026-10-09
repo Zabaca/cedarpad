@@ -30,8 +30,6 @@ import {
   CANVAS_ID_HEADER,
   CANVAS_VIEWER_HEADER,
   CreateShapesBody,
-  DEV_AGENT_GIT_TOKEN_HEADER,
-  DEV_AGENT_REPO_HEADER,
   DeleteShapesBody,
   EditComponentBody,
   GUEST_CANVAS_HEADER,
@@ -58,11 +56,8 @@ import {
   wireError,
 } from '../shared/bridge-wire.ts';
 import { callComponent } from './component-commands.ts';
-import { branchName, createRepoWorktreeManager } from './repo-worktree.ts';
-import { refreshCheckout, removeCheckout } from './repo-checkout.ts';
-import { DEV_AGENT_KIND, openDevAgentPr } from './dev-agent-workflow.ts';
-import { adoptSession, TranscriptStore } from './transcript-store.ts';
-import { type CanvasImage, type ChatEvent, type OpenPr, createCanvasTools, parseCanvasImages, runChat } from './agent.ts';
+import { TranscriptStore } from './transcript-store.ts';
+import { type CanvasImage, type ChatEvent, createCanvasTools, parseCanvasImages, runChat } from './agent.ts';
 import { MCP_TOKENS_HEADER, McpSelectionSchema, applyMcpSelection, decodeMcpTokens, mcpDisallowedTools } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { editComponent, isShared, listComponentDetails, readComponent, writeComponent, writeDataFile } from './components.ts';
@@ -139,7 +134,7 @@ const notify: Notify = async (conversationId, question) => {
 // longer holds canvas state — ADR-0019 / #297 deleted that writer, and the retained
 // `canvas-state.json` blobs are read only by the cutover script (#295). Nor workspace
 // content: the tarballs went with their sinks in #366 and Components, data files and skills
-// are Records in D1. What is left here is chat meta, per-session transcripts, and marts.
+// are Records in D1. What is left here is chat meta and per-session transcripts.
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
 const DEFAULT_CANVAS_ID = process.env.CANVAS_ID ?? 'default';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
@@ -373,22 +368,6 @@ function chatStream(guestCanvas?: string): Response {
 }
 
 
-/** ADR-0011 / ADR-0010 6a: the edge-minted token header is the COMPLETE definition of a
- * dev-agent turn. Beyond the worktree + open_pr (prepareDevAgentTurn), it decides:
- *   - the Conversation KIND the turn files under — 'dev-agent', so the row-at-start upsert
- *     and any end_turn land as dev-agent Conversations (which is exactly what the edge's
- *     per-send token mint keys on; a 'chat'-kinded row would never re-arm). The rows live
- *     in the bridge's own workspace — dev-agent is a session type, not a workspace;
- *   - the skill policy (ADR-0013) — a chat turn gets every platform + workspace skill
- *     (server/skills.ts chatSkillSources — two plugin areas, nothing else), while a token-bearing dev-agent turn
- *     keeps a pinned list so a planted workspace skill can never ride an allowlisted name
- *     into a turn that holds a git token. */
-export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId: string; kind: 'chat' | 'dev-agent'; skills?: string[] } {
-  return devAgentGitToken
-    ? { workspaceId: WORKSPACE, kind: DEV_AGENT_KIND, skills: ['impeccable', 'tdd', 'improve-codebase-architecture'] }
-    : { workspaceId: WORKSPACE, kind: 'chat' };
-}
-
 /** ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
  * (the turn's `init` event), landing in waiting_on:none — visible live in "All", never
  * cluttering "Needs me". Also seeds ChatMeta right away so `chatIdForSession` resolves this
@@ -400,82 +379,21 @@ export function turnFlavor(devAgentGitToken: string | undefined): { workspaceId:
  * RPC's `conversation.start` operation. Since #266 there is no local client behind it. The
  * best-effort contract is unchanged — the hop can fail exactly as the write could, and the
  * turn continues. */
-export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string, assignTo?: string, deps: { rpc: PlatformRpc | null } = { rpc: platformRpcClient }): Promise<void> {
+export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, assignTo?: string, deps: { rpc: PlatformRpc | null } = { rpc: platformRpcClient }): Promise<void> {
   if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
   if (canvasId) chatHub.bindCanvas(chatId, canvasId); // #220: the guest stream filter's binding
   const input = {
     sessionId,
     userId: INBOX_USER,
     workspaceId,
-    kind,
     ownerRef: chatId,
     canvasId,
-    repo,
     summary: message.slice(0, 200),
     assignTo,
   };
   await (deps.rpc?.conversationStart(input) ?? Promise.resolve()).catch((err) =>
     console.error('[inbox] session-start row upsert failed:', err),
   );
-}
-
-/** The dev-agent turn context (ADR-0010): armed iff the edge minted a git token for this
- * send — which it does only for a dev-agent Conversation. The token rides the request
- * (never env, never persisted), so "dev-agent-ness" is a property of the Conversation, not
- * of the container this bridge runs in. No token ⇒ undefined — every product turn stays
- * exactly as it was.
- *
- * The turn runs against a PREPARED worktree, never the live tree (slice 6): the baked image
- * is not even a git repo, and CANVAS_CWD is the vite-watched app tree a commit must never
- * touch. `ensureWorktree` clones the hub under `${CANVAS_CWD}/.dev-agent` and adds (or, on a
- * later turn of the same chat, reuses — edits intact) a worktree off origin/main on a branch
- * keyed by the dev-agent tag + chatId. The SDK turn gets `cwd = worktree.path`, so the
- * agent's edits land in the checkout `open_pr` commits; and since the SDK's resume is
- * cwd-scoped (#133), the session's JSONL is adopted (moved) into the worktree's project dir
- * first. The manager gets the token via config so nothing reads process.env. */
-export interface DevAgentTurn {
-  openPr: OpenPr;
-  cwd: string;
-}
-export async function prepareDevAgentTurn(
-  token: string | undefined,
-  repo: string | undefined,
-  chatId: string,
-  sessionId: string | null,
-  // Default-parameter test seam: production always uses the real git manager + adopt + RPC.
-  deps: { manager: typeof createRepoWorktreeManager; adopt: typeof adoptSession; rpc?: PlatformRpc | null } = {
-    manager: createRepoWorktreeManager,
-    adopt: adoptSession,
-    rpc: platformRpcClient,
-  },
-): Promise<DevAgentTurn | undefined> {
-  // Both the token AND the repo come from the edge (ADR-0015): a token without a target
-  // repo cannot arm open_pr. Per-repo hub dirs keep multi-repo workspaces' clones apart.
-  if (!token || !repo) return undefined;
-  const git = deps.manager({ repo, workspaceRoot: `${CANVAS_CWD}/.dev-agent/${repo.replace('/', '__')}`, token });
-  const worktree = await git.ensureWorktree(branchName(DEV_AGENT_KIND, chatId));
-  if (sessionId) await deps.adopt(SESSIONS_DIR, sessionId, worktree.path);
-  const openPr: OpenPr = async (input) => {
-    const url = await openDevAgentPr({ git, worktree }, input);
-    if (!url) return 'Nothing to commit — the worktree is clean. Make your edits first, then call open_pr again.';
-    // CONTEXT.md "Open PR": the url is the run's durable artifact, so it becomes Conversation
-    // state rather than only a line in the transcript — that is what lets the Inbox offer to
-    // merge it. Names the CHAT, never the row (ADR-0018), and best-effort like every other
-    // RPC call site: a failed report must never fail a turn whose PR is already open.
-    await deps.rpc
-      ?.conversationPrOpened({
-        sessionId: chatMeta.get(chatId).sessionId ?? sessionId ?? chatId,
-        userId: INBOX_USER,
-        workspaceId: WORKSPACE,
-        kind: DEV_AGENT_KIND,
-        ownerRef: chatId,
-        repo,
-        prUrl: url,
-      })
-      .catch((err) => console.error('[dev-agent] open_pr: reporting the PR edge-ward failed:', err));
-    return `Opened PR: ${url}`;
-  };
-  return { openPr, cwd: worktree.path };
 }
 
 /** Settle-time Conversation upsert (the finally-block backstop): every settled turn marks
@@ -488,16 +406,14 @@ export async function prepareDevAgentTurn(
  * ADR-0018 / #266: the find-or-create-and-mark-active pair is ONE named operation at the edge
  * (`conversation.settle`) — the container has no client to make it with, and splitting it into
  * two hops would let a turn land a row it then failed to mark. */
-async function settleConversation(input: { chatId: string; sessionId: string; message: string; workspaceId: string; canvasId?: string; kind?: 'chat' | 'dev-agent'; repo?: string }): Promise<void> {
+async function settleConversation(input: { chatId: string; sessionId: string; message: string; workspaceId: string; canvasId?: string }): Promise<void> {
   await (
     platformRpcClient?.conversationSettle({
       sessionId: input.sessionId,
       userId: INBOX_USER,
       workspaceId: input.workspaceId,
-      kind: input.kind,
       ownerRef: input.chatId,
       canvasId: input.canvasId,
-      repo: input.repo,
       summary: input.message.slice(0, 200),
     }) ?? Promise.resolve()
   ).catch((err) => console.error('[inbox] session-row upsert failed:', err));
@@ -544,7 +460,7 @@ async function* e2eRunChat(...args: Parameters<typeof runChat>): AsyncGenerator<
  * into a `TurnInput` and hands it here; `server/turn.ts` owns the phase order. */
 const turnDeps: TurnDeps = {
   aborters: chatHub.aborters,
-  flavor: turnFlavor,
+  workspaceId: WORKSPACE,
   // The agent's view_canvas round-trip, over the canvas's screenshot SSE channel (#297).
   requestScreenshot: (canvasId) => screenshotChannels.get(canvasId).requestScreenshot,
   selectPage: (canvasId) => screenshotChannels.get(canvasId).selectPage,
@@ -555,11 +471,8 @@ const turnDeps: TurnDeps = {
   fetchAsset: (canvasId) => canvasAssetFetcherFor(canvasId),
   defaultCanvasId: DEFAULT_CANVAS_ID,
   // ADR-0022 / #361: render the workspace's skill Records to `.claude/skills/` before the SDK
-  // scans it. Every turn flavor, deliberately: the tree the boot restore used to produce was
-  // flavor-independent too, and a dev-agent turn's protection is its PINNED skill list
-  // (turnFlavor), not the absence of the files.
+  // scans it.
   materializeSkills: () => materializeSkills(),
-  prepareDevAgent: (token, repo, chatId, sessionId) => prepareDevAgentTurn(token, repo, chatId, sessionId),
   runChat: E2E_MODE ? e2eRunChat : runChat,
   broadcast: broadcastChat,
   inbox: { rpc: platformRpcClient, userId: INBOX_USER, notify },
@@ -576,7 +489,6 @@ const turnDeps: TurnDeps = {
   // rather than let the agent resume with no history and answer as if there were none.
   materializeTranscript: (sessionId) => transcripts.materialize(sessionId, CANVAS_CWD),
   sendToChat: (targetChatId, message, canvasId) => sendToChat(targetChatId, message, canvasId),
-  listMarts: () => blobStore.listMarts(WORKSPACE),
 };
 
 /** Cross-chat messaging (the agent's send_message tool): post into another chat card's
@@ -679,49 +591,10 @@ export function setTurnRunChat(fn: TurnDeps['runChat']): () => void {
  * so the agent reads/draws on the canvas the human is on; absent ⇒ the default store,
  * unchanged — BUT absence also means the turn claims no chat→canvas edge for the
  * Conversation (an inbox reply must never link a chat to the Default canvas by default).
- * `devAgentGitToken` (edge-minted, per dev-agent send) arms the `open_pr` tool for THIS turn
- * only — see prepareDevAgentTurn. The lifecycle itself lives in `server/turn.ts`. */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, devAgentGitToken?: string, mcpTokens?: Record<string, string>, devAgentRepo?: string, assignTo?: string, mcpDisallowed?: string[], viewer?: string): void {
-  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo, mcpDisallowedTools: mcpDisallowed, viewer }, turnDeps);
+ * The lifecycle itself lives in `server/turn.ts`. */
+function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, mcpTokens?: Record<string, string>, assignTo?: string, mcpDisallowed?: string[], viewer?: string): void {
+  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, mcpTokens, assignTo, mcpDisallowedTools: mcpDisallowed, viewer }, turnDeps);
 }
-
-// The dev-agent run's prompt — this IS the workflow now (ADR-0011: the harness dissolved
-// into the agent's own turn). First sentence deliberately doubles as the Conversation row's
-// title (row-at-start titles from the message). The declined-marker dedup is prompt-law; if
-// discipline degrades, the designed fallback is a tool-side filter inside end_turn — never a
-// resurrected harness. The ending itself is MECHANICALLY gated (ADR-0012: every turn must
-// declare its ending via end_turn — needs_human or done).
-// The run's policy IS this prompt (issue #184: prompt-law, no harness). The bridge.test.ts
-// prompt-pin test names the load-bearing sentences — edit them consciously.
-// There is no built-in task any more (#100): every run's TASK is a repo-defined job's body
-// (`.claude/jobs/<name>.md`, armed by merge — ADR-0015). The architecture explore now lives
-// in this repo's own `.claude/jobs/improve-codebase-architecture.md`. The wrapper below is
-// still bridge code and wraps every run.
-const DEV_AGENT_RUN_WRAPPER = [
-  'Then read docs/adr/declined/ and DROP every candidate that matches a declined marker (human declines are final until the marker is removed).',
-  [
-    'Triage every surviving candidate with exactly ONE verdict:',
-    '- EXECUTE, only when ALL hold: mechanical/consolidation work with no open design tension; reversible in one revert; touched behavior test-covered (or the change adds coverage); no schema, auth, deploy, or public-contract changes (absolute — never rationalize an exception); and you can write a PR decision record that lets the human verify the change without reading every line (what was found, why it is mechanical, how tests pin it) — if you cannot write that record, the candidate is a GRILL. Action: implement in this worktree, tests green, then open_pr — one PR per candidate, each PR body carrying its own decision record. Every PR must trace to a candidate found in THIS run’s explore; a PR created to have something to show is a policy violation. Executing zero is a fully successful run.',
-    '- GRILL when a real design tension exists, or the EXECUTE bar fails but the finding is substantial enough to be worth the human’s attention.',
-    '- DROP when it is not: record it in the decision record only (no marker — markers are reserved for HUMAN declines).',
-  ].join('\n'),
-  'Decline markers: when, in a later turn of this conversation, the human declines a candidate, write docs/adr/declined/<candidate-slug>.md (title, date, one-line reason, match hints) in the worktree and ship it — piggybacked on an open run PR if one exists, else as a marker-only micro-PR.',
-  'Close the run with end_turn ONCE. Outcome "needs_human" only if GRILL verdicts exist (the question lists each grilled candidate: title, rationale, severity); otherwise outcome "done" — a run with nothing to grill must not ping the human, even if it executed PRs. Either way the summary carries the decision record: every candidate with verdict, one-line why, and risk class.',
-].join('\n\n');
-
-/** The run prompt: the TASK (always a repo-defined job's body) inside the platform wrapper
- * (triage law, decline markers, decision record, end_turn — ADR-0015: a job steers WHAT,
- * never under which rules). The task leads so its first sentence titles the row. */
-const composeRunPrompt = (task: string): string => `${task}\n\n${DEV_AGENT_RUN_WRAPPER}`;
-
-// #184 §4: the run turn judges (triage + implementation), so it runs on Opus; the cheap
-// parallel reading is what fans out to Sonnet `explorer` subagents.
-const DEV_AGENT_RUN_MODEL = 'opus';
-
-// The in-flight dev-agent run's chatId (ADR-0011): one run at a time, with JOIN semantics —
-// a kick while one runs returns the RUNNING run instead of piling up a second explore.
-// Liveness is derived from the hub's aborters (the turn registry), so settling clears it naturally.
-let devAgentRunChatId: string | null = null;
 
 // Test seam: the turn dispatcher is indirected so a test can substitute a spy and
 // assert that a turn was (or, on the 425 reject path, was NOT) dispatched without
@@ -1102,64 +975,6 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (path === '/api/chat/stream' && req.method === 'GET') {
       return chatStream(req.headers.get(GUEST_CANVAS_HEADER) ?? undefined);
     }
-    // POST /api/dev-agent/run — kick one dev-agent run as a HEADLESS chat turn (ADR-0011).
-    // The edge Jobs/cron handler proxies here with the freshly-minted token header; the token
-    // makes it a full dev-agent turn (worktree cwd + open_pr + 'dev-agent' tag + explore
-    // skill — see turnFlavor/prepareDevAgentTurn). Deliberately NOT behind the 425
-    // subscribe-before-send guard: no subscriber exists by design — the session indexes at
-    // init (row-at-start) and the Inbox attaches to the live stream when opened. One run at
-    // a time with JOIN semantics: a kick during a run answers with the running run's chatId.
-    if (path === '/api/dev-agent/run' && req.method === 'POST') {
-      // A repo-defined job (#195) is the ONLY source of a run's task (#100 / ADR-0015): the
-      // edge read its body off the repo's DEFAULT branch (the merge armed it) and forwards it
-      // here — wrapped, never replacing the law. A jobless kick is an error, not a default run.
-      const kickBody = (await req.json().catch(() => null)) as { job?: { name?: string; prompt?: string } } | null;
-      const jobPrompt = typeof kickBody?.job?.prompt === 'string' && kickBody.job.prompt.trim() ? kickBody.job.prompt.trim() : undefined;
-      if (!jobPrompt) {
-        return json({ error: 'a dev-agent run requires a job: pick one defined in .claude/jobs/ on a selected repo’s default branch' }, 400);
-      }
-      if (devAgentRunChatId && chatHub.busy(devAgentRunChatId)) {
-        return json({ chatId: devAgentRunChatId, joined: true }, 202);
-      }
-      const chatId = `dev-agent-run-${crypto.randomUUID()}`;
-      devAgentRunChatId = chatId;
-      // #184 §4: the whole run CONVERSATION judges on Opus — later grill replies resume
-      // through the normal /send path, which reads the model from ChatMeta.
-      chatMeta.set(chatId, { model: DEV_AGENT_RUN_MODEL });
-      const token = req.headers.get(DEV_AGENT_GIT_TOKEN_HEADER) ?? undefined;
-      // The run's target repo (ADR-0015: one run = one repo), resolved and stamped by the
-      // edge next to the token. It binds the Conversation (row repo edge) and the worktree.
-      const repo = req.headers.get(DEV_AGENT_REPO_HEADER) ?? undefined;
-      // A MANUAL trigger's human initiator (shared inbox): the edge stamps who clicked
-      // "Run now" / called run_dev_agent; a cron kick carries none ⇒ unassigned queue work.
-      const runAssignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
-      // A fresh session every run (sessionId null); the run's later grill turns resume it
-      // through the normal conversation path.
-      dispatchChatTurn(chatId, composeRunPrompt(jobPrompt), null, [], DEV_AGENT_RUN_MODEL, undefined, undefined, undefined, token, undefined, repo, runAssignTo);
-      return json({ chatId, joined: false }, 202);
-    }
-    // Read-only repo checkouts (ADR-0016): the edge pushes a refresh with a transient read
-    // token in a header — the same custody shape as the dev-agent git token (never env,
-    // never persisted; scrubbed from the on-disk origin after the op). Chat turns then read
-    // the checkout under .repos/ as plain files, holding no credential.
-    if (path === '/api/repos/refresh' && req.method === 'POST') {
-      const body = (await req.json().catch(() => null)) as { repo?: string } | null;
-      if (!body?.repo || !/^[\w.-]+\/[\w.-]+$/.test(body.repo)) return json({ error: 'invalid repo' }, 400);
-      const token = req.headers.get('x-repo-git-token') ?? undefined;
-      try {
-        const result = await refreshCheckout({ repo: body.repo, root: CANVAS_CWD, token });
-        return json({ repo: body.repo, branch: result.branch, head: result.head }, 200);
-      } catch (e: unknown) {
-        console.error(`[repos] checkout refresh failed for ${body.repo}: ${String(e)}`);
-        return json({ error: `refresh failed for ${body.repo}` }, 502);
-      }
-    }
-    if (path === '/api/repos/checkout' && req.method === 'DELETE') {
-      const body = (await req.json().catch(() => null)) as { repo?: string } | null;
-      if (!body?.repo || !/^[\w.-]+\/[\w.-]+$/.test(body.repo)) return json({ error: 'invalid repo' }, 400);
-      await removeCheckout(CANVAS_CWD, body.repo);
-      return new Response(null, { status: 204 });
-    }
     // #177: the single writer of the workspace skills tree — the edge MCP `upload_skill`
     // proxies here. Content only (ADR-0013): plain files under .claude/skills/<name>/.
     // #361: the files are RECORDS now — `writeSkill` persists them before it touches disk, so
@@ -1186,7 +1001,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       // replay), so reject early with 425 Too Early and dispatch nothing. Only a
       // race-losing / misbehaving client reaches here; the client gates on `subscribed`.
       // EXCEPT a headless send (#177: the edge MCP proxy stamps x-headless-send): like
-      // /api/dev-agent/run above, no subscriber exists BY DESIGN — the caller polls
+      // no subscriber exists BY DESIGN — the caller polls
       // read_conversation instead of watching the stream, the turn persists to the
       // session JSONL regardless, and the Inbox attaches live if opened mid-turn.
       const headless = req.headers.get(HEADLESS_SEND_HEADER) === '1';
@@ -1208,9 +1023,6 @@ export async function handleRequest(req: Request): Promise<Response> {
       const effort = meta.effort && meta.effort !== 'default' ? meta.effort : undefined; // 'default' = let the model decide
       // Route the turn to the request's active canvas (#79): the agent draws on the canvas the
       // human is on (x-canvas-id / ?canvas), exactly how the canvas reads/SSE already resolve.
-      // The edge-minted dev-agent git token (ADR-0010) rides a request header — set by the edge
-      // chat proxy on a dev-agent Conversation's send only — and arms open_pr for this turn.
-      const devAgentGitToken = req.headers.get(DEV_AGENT_GIT_TOKEN_HEADER) ?? undefined;
       // EXPLICIT canvas only (no default): the pad stamps x-canvas-id; an unaddressed send
       // (inbox thread) routes to the default store without claiming a canvas edge.
       const requestCanvasId = req.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas') ?? undefined;
@@ -1227,14 +1039,11 @@ export async function handleRequest(req: Request): Promise<Response> {
       }
       if (requestCanvasId) chatHub.bindCanvas(chatId, requestCanvasId);
       // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, set by the edge
-      // proxy (worker/inbox-bridge.ts, worker/index.ts) on this send only. `server/turn.ts` drops
-      // this for a dev-agent turn regardless — chat flavor only. The chat's own MCP selection
+      // proxy (worker/inbox-bridge.ts, worker/index.ts) on this send only. The chat's own MCP selection
       // (ChatMeta, default all-on) then opts out: a disabled server's token is dropped here, so
       // it is never even connected; disabled tools ride as SDK disallowedTools.
       const mcpSelection = chatMeta.get(chatId).mcp;
       const mcpTokens = applyMcpSelection(decodeMcpTokens(req.headers.get(MCP_TOKENS_HEADER)), mcpSelection);
-      // The dev-agent turn's target repo, stamped by the edge proxy beside the token (ADR-0015).
-      const devAgentRepo = req.headers.get(DEV_AGENT_REPO_HEADER) ?? undefined;
       // The send's HUMAN INITIATOR (shared inbox, CONTEXT.md), stamped by the edge proxies:
       // assigns the Conversation at birth / claims-if-unassigned on a reply.
       const assignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
@@ -1243,7 +1052,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       // answer different questions, and only this one is allowed near a person's viewport.
       const viewer = req.headers.get(CANVAS_VIEWER_HEADER) ?? undefined;
       // Belt on top of the edge gate: a guest turn is a PLAIN chat turn on the link's canvas —
-      // never a dev-agent turn, never armed with the workspace's external-MCP tokens.
+      // never armed with the workspace's external-MCP tokens.
       dispatchChatTurn(
         chatId,
         message,
@@ -1253,9 +1062,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         forkSession,
         effort,
         requestCanvasId,
-        guestCanvas ? undefined : devAgentGitToken,
         guestCanvas ? undefined : mcpTokens,
-        guestCanvas ? undefined : devAgentRepo,
         assignTo,
         guestCanvas ? undefined : mcpDisallowedTools(mcpSelection),
         // A guest is never a select_page target: their per-browser identity lives in

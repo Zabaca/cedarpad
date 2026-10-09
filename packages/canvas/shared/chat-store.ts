@@ -11,7 +11,7 @@
 import { type ChatEvent, type ChatFrame, type TaskStatus, type TodoStatus, isChatFrame } from './chat-wire.ts';
 import { registerStream, setBeatTargets, setBusyCheck } from '../src/idle.ts';
 import { withCanvasParam, withPadCanvasHeader } from '../src/active-canvas.ts';
-import { CANVAS_ID_HEADER, CHAT_KIND_HEADER } from './bridge-wire.ts';
+import { CANVAS_ID_HEADER } from './bridge-wire.ts';
 
 // `parentId` (set on subagent items) is the spawning Task chip's tool_use id, so the
 // view can indent them under it. Tool items carry their own `toolUseId` so a `task`
@@ -130,20 +130,6 @@ export function takeFirstPrompt(chatId: string): string {
   const text = firstPrompts.get(chatId) ?? '';
   firstPrompts.delete(chatId);
   return text;
-}
-
-// Chat kind (CEDA-N67Y50): which KIND a not-yet-born chat asks to be created as. A draft has
-// no Conversation row, so the edge cannot look its kind up — the client declares it, and only
-// on the SEND that births the row (the edge consumes and strips the ask, then answers by
-// minting the dev-agent git token; see worker/index.ts). Never set for an existing chat: its
-// row already carries the kind, and the Inbox proxy re-arms from that.
-const chatKinds = new Map<string, string>();
-
-/** Declare the kind the chat `chatId` should be born as on its first send; `null` withdraws
- *  the declaration, so the send carries no ask at all (the ordinary-chat default). */
-export function setChatKind(chatId: string, kind: string | null): void {
-  if (kind) chatKinds.set(chatId, kind);
-  else chatKinds.delete(chatId);
 }
 
 /** Per-chat bridge headers: the pad-URL stamp, superseded by an explicit canvas override. */
@@ -395,7 +381,6 @@ export function closeSession(chatId: string): void {
   sessions.delete(chatId);
   listeners.delete(chatId);
   canvasOverrides.delete(chatId);
-  chatKinds.delete(chatId);
   clearBubbles(chatId);
 }
 
@@ -476,7 +461,7 @@ export function routeChatFrame(raw: string): void {
   if (!isChatFrame(parsed)) return; // parsed is now narrowed to ChatFrame
   const { chatId, ...ev } = parsed;
   // List-signal listeners (the Inbox doorbell) see EVERY frame — including chats this
-  // client doesn't hold a session for (a headless dev-agent run, another tab's chat).
+  // client doesn't hold a session for (a headless send, another tab's chat).
   for (const l of frameListeners) l(chatId, ev);
   if (!sessions.has(chatId)) return; // a frame for a chat this client doesn't hold
   applyEvent(chatId, ev);
@@ -501,8 +486,8 @@ function applyEvent(chatId: string, ev: ChatEvent) {
   if (ev.kind === 'init') {
     // A turn started (ADR-0011). Capture the session id early, and — if this tab didn't
     // start the turn (busy would already be true from its own dispatchSend) — mark busy so
-    // send() queues instead of firing into the in-flight turn (a headless dev-agent run, or
-    // another tab's send). The wire's 409 turn_in_flight remains the race backstop.
+    // send() queues instead of firing into the in-flight turn (a headless send, or another
+    // tab's send). The wire's 409 turn_in_flight remains the race backstop.
     update(chatId, (s) => ({ ...s, sdk: ev.sessionId, busy: true, status: s.busy ? s.status : 'working' }));
     return;
   }
@@ -630,10 +615,9 @@ async function dispatchSend(chatId: string, message: string, images: PendingImag
   try {
     // ADR 0004: sessionId / model / effort / fork are server-owned (ChatMeta); the body
     // carries only the turn's content.
-    const kind = chatKinds.get(chatId);
     const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/send`), {
       method: 'POST',
-      headers: chatHeaders(chatId, kind ? { 'content-type': 'application/json', [CHAT_KIND_HEADER]: kind } : { 'content-type': 'application/json' }),
+      headers: chatHeaders(chatId, { 'content-type': 'application/json' }),
       body: JSON.stringify({ message, images: images.map(({ media_type, data }) => ({ media_type, data })) }),
     });
     // fetch only rejects on a network failure, so an HTTP error status (425 Too Early =

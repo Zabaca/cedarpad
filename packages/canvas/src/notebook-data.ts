@@ -1,8 +1,7 @@
 // Client-side reader for the edge Notebook route (ADR-0024): a placed component that names
 // a notebook query (`dataSource: {kind:'notebook', query, params}`) fetches its rows through
-// THIS ONE route. The sibling of `mart-data.ts` — same discipline, different namespace: the
-// query registry (worker/notebook-data-api.ts) IS the boundary, so no statement and no URL
-// ever leaves the client.
+// THIS ONE route. The query registry (worker/notebook-data-api.ts) IS the boundary, so no
+// statement and no URL ever leaves the client.
 
 import { activeWorkspaceId } from './active-canvas';
 import type { NotebookParams, NotebookRow } from '../shared/notebook-source';

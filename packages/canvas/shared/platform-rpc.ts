@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import { ComponentName, DataFileName, DataFileSource } from './bridge-wire.ts';
 import { NotebookCall } from '../web-poc/lib/contract/notebook-tools.ts';
-import { parsePrUrl } from './pr-url.ts';
 import { SkillFilePath, SkillName, UploadSkillInput } from './skills-wire.ts';
 import { serviceToken, verifyServiceToken } from './service-token.ts';
 
@@ -69,11 +68,9 @@ export const ConversationStartInput = z.object({
   sessionId: z.string().min(1),
   userId: z.string().min(1),
   workspaceId: z.string().min(1),
-  kind: z.enum(['chat', 'dev-agent']).optional(),
   /** The bridge chatId that owns the Conversation (its identity key). */
   ownerRef: z.string().min(1).optional(),
   canvasId: z.string().min(1).optional(),
-  repo: z.string().min(1).optional(),
   summary: z.string().optional(),
   /** The turn's human initiator (edge-stamped `x-inbox-assign`), claim-if-unassigned. */
   assignTo: z.string().min(1).optional(),
@@ -112,7 +109,7 @@ export type ConversationSettleInput = z.infer<typeof ConversationSettleInput>;
  * Conversation's id, which is exactly what it needs to ask for the `notify` ping — it still
  * never holds the row.
  */
-export const TurnEndInput = ConversationStartInput.omit({ assignTo: true, canvasId: true, repo: true }).extend({
+export const TurnEndInput = ConversationStartInput.omit({ assignTo: true, canvasId: true }).extend({
   summary: z.string(),
   outcome: z.enum(['done', 'needs_human']),
   /** Present iff `outcome: 'needs_human'` — the question the human is being asked. */
@@ -123,19 +120,6 @@ export type TurnEndInput = z.infer<typeof TurnEndInput>;
 /** Just the id, as with `conversation.start`: a handle, never the row. */
 export const TurnEndOutput = z.object({ conversationId: z.string().min(1) });
 export type TurnEndOutput = z.infer<typeof TurnEndOutput>;
-
-/**
- * Operation 5 — "this run opened a PR" (CONTEXT.md "Open PR"). The `open_pr` tool's result
- * is the one durable artifact a dev-agent run produces, and until now it was only ever
- * spoken into the transcript. Reporting it here is what gives the Conversation its PR state
- * — and therefore what makes the Inbox's Merge action appear. Same identity fields as a
- * settle (the container names the chat, never the row); the url is validated HERE so no
- * unreadable link can reach the row and, from there, an authenticated GitHub call.
- */
-export const ConversationPrOpenedInput = ConversationSettleInput.extend({
-  prUrl: z.string().refine((u) => parsePrUrl(u) !== null, 'not a GitHub pull-request url'),
-});
-export type ConversationPrOpenedInput = z.infer<typeof ConversationPrOpenedInput>;
 
 /**
  * Operations 6 to 15 — the **Record** verbs (ADR-0022). Component source stops being a
@@ -409,9 +393,9 @@ export type DataReadOutput = z.infer<typeof DataReadOutput>;
 
 /**
  * Operation 16 — the **Notebook** (ADR-0024). The Notebook is a store agents write and canvas
- * reads, and the agents that matter most run INSIDE the container: the in-canvas chat and the
- * dev-agent. This is their way to it, for the same reason every verb above exists — the
- * container holds no database client.
+ * reads, and the agent that matters most runs INSIDE the container: the in-canvas chat. This
+ * is its way to it, for the same reason every verb above exists — the container holds no
+ * database client.
  *
  * `call` is the tool the agent invoked, as a discriminated union of the ten named Notebook
  * tools (`web-poc/lib/contract/notebook-tools.ts`). It stays behavioural exactly as the verbs
@@ -443,7 +427,6 @@ export type NotebookCallOutput = z.infer<typeof NotebookCallOutput>;
 export const PlatformRpcRequest = z.discriminatedUnion('op', [
   z.object({ op: z.literal('conversation.start'), input: ConversationStartInput }),
   z.object({ op: z.literal('conversation.settle'), input: ConversationSettleInput }),
-  z.object({ op: z.literal('conversation.prOpened'), input: ConversationPrOpenedInput }),
   z.object({ op: z.literal('turn.end'), input: TurnEndInput }),
   z.object({ op: z.literal('notify'), input: NotifyInput }),
   z.object({ op: z.literal('component.write'), input: ComponentWriteInput }),

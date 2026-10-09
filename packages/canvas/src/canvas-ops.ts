@@ -7,7 +7,7 @@ import { SHAPE_SIZE_DEFAULTS } from './shapes';
 import type { CanvasStore } from './store';
 import { normalizeShape } from './normalize';
 import { shapesOnPage } from './current-page';
-import type { DataSource } from '../shared/mart-contract';
+import type { DataSource } from '../shared/data-source';
 import type { ZodTypeAny } from 'zod';
 
 export interface OpResult {

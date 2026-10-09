@@ -1,6 +1,6 @@
 import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
 import { BootLock, bootCanvasStack, type CanvasBootSpec } from './canvas-boot.ts';
-import { getWorkspace, getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
+import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
@@ -8,19 +8,13 @@ import { buildApp } from '../web-poc/worker/index.ts';
 import { authenticate, decideGate, handleAuth, sendSignInLink } from './auth-gate.ts';
 import { resolveCanvas } from './access.ts';
 import { handleInvitationsApi, handleInviteAccept } from './invitations.ts';
-import { handleConnectorSecretsApi } from './connector-secrets.ts';
-import { handleGithubApi, handleGithubSetup, resolveDevAgentRepo, workspaceRepoSet } from './github-connection.ts';
 import { handleAdminApi } from './admin.ts';
 import { handleComponentsApi } from './components-api.ts';
 import { handleComponentInventory, INVENTORY_PATH } from './component-inventory-api.ts';
 import { handleMembersApi } from './members.ts';
-import { discoverJobs, evaluateScheduledJobs } from './repo-jobs.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
-import { kickDevAgentRun, triggerDevAgentRun } from './dev-agent.ts';
-import { kickWarehouseMaterialize } from './warehouse-dispatch.ts';
-import { mintDevAgentGitToken, mintRepoReadToken } from './github-app.ts';
 import { DEFAULT_WORKSPACE, resolve, type SandboxCoords } from './sandbox-resolver.ts';
-import { sandboxFor, serveWorkspace, warehouseExec } from './sandbox-runtime.ts';
+import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleRecordPurgeApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 import { coordsForWorkspace, handleInboxBridge } from './inbox-bridge.ts';
 import { handleInboxApi } from './inbox.ts';
@@ -39,7 +33,6 @@ import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.t
 import { handleCanvasSnapshot, parseCanvasSnapshotPath } from './canvas-snapshot-api.ts';
 import { evictGuestSockets, handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
 import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
-import { handleMartApi, martsForGuestCanvas, MART_ROUTE } from './mart-api.ts';
 import { handleNotebookApi, NOTEBOOK_ROUTE } from './notebook-data-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
@@ -60,10 +53,6 @@ import {
   BRIDGE_ROUTES,
   CANVAS_ID_HEADER,
   CANVAS_VIEWER_HEADER,
-  CHAT_KIND_HEADER,
-  DEV_AGENT_CHAT_KIND,
-  DEV_AGENT_GIT_TOKEN_HEADER,
-  DEV_AGENT_REPO_HEADER,
   GUEST_CANVAS_HEADER,
   GUEST_CAPS_HEADER,
 } from '../shared/bridge-wire.ts';
@@ -98,11 +87,8 @@ export class Sandbox extends BaseSandbox {
   }
 }
 
-// The warehouse container class (ADR-0017, #236): python + uv + dbt-duckdb + dlt +
-// duckdb, built from a SEPARATE Dockerfile with no agent SDK — so extraction secrets
-// (Slack/Stripe/Mercury, a future addition) are never reachable from a chat turn even
-// by mistake. Dispatching a materialize run into it is a separate issue (out of scope
-// here); this class + binding is the structural placement only.
+// The retired warehouse's container class. Still exported only because wrangler.jsonc binds
+// it; deleting a container class waits for the Cloudflare container migration.
 export class Warehouse extends BaseSandbox {}
 
 // The canvas sync room class (ADR-0019, #288). Re-exported here because wrangler resolves
@@ -116,7 +102,6 @@ export { WorkspaceEvents } from './workspace-events-do.ts';
 
 export interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
-  Warehouse: DurableObjectNamespace<Warehouse>;
   // One Durable Object per canvas, hosting that canvas's tldraw sync room (ADR-0019).
   // Addressed ONLY via `idFromName(syncRoomName(canvasId))` — see worker/sync-api.ts.
   // Unparameterised on purpose: `CanvasSyncRoom` is a plain class rather than a
@@ -140,14 +125,12 @@ export interface Env {
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
   R2_ENDPOINT: string;
-  // Native R2 binding (ADR-0017, #238) — separate from the R2_* S3-compat creds above,
-  // which only ever get forwarded into the container's Bun runtime. The edge Worker
-  // itself (workerd) reads mart parquet straight off this binding, so browsing a mart
-  // never wakes the container. Same bucket as R2_BUCKET; a native binding, not the S3
-  // client, because Bun.S3Client isn't available in workerd.
-  // Also the canvas asset bucket (ADR-0019): tldraw image/video bytes live here under
-  // `canvas-assets/`, which needs the WRITE half `MartBucket` deliberately omits.
-  MART_BUCKET: import('./mart-api.ts').MartBucket & import('./canvas-assets.ts').AssetBucket;
+  // Native R2 binding — separate from the R2_* S3-compat creds above, which only ever get
+  // forwarded into the container's Bun runtime. Same bucket as R2_BUCKET; a native binding,
+  // not the S3 client, because Bun.S3Client isn't available in workerd. The canvas asset
+  // bucket (ADR-0019): tldraw image/video bytes live here under `canvas-assets/`. Named for
+  // the retired marts, which read it first.
+  MART_BUCKET: import('./canvas-assets.ts').AssetBucket;
   CLAUDE_CODE_OAUTH_TOKEN: string;
   // web-poc (mounted at the edge): the platform data layer on D1 (ADR-0018) + auth +
   // embeddings. Secrets (VOYAGE_API_KEY, BETTER_AUTH_SECRET) come from workerSecrets;
@@ -172,24 +155,6 @@ export interface Env {
   WS_SUPERVISOR_TOKEN?: string;
   CF_ACCESS_CLIENT_ID?: string;
   CF_ACCESS_CLIENT_SECRET?: string;
-  // Kill-switch for the scheduled dev-agent run (#63/#66). Default off ("false"); the cron
-  // fires but no-ops until repo-connection (#96) lands. Flip to "true" to enable.
-  DEV_AGENT_ENABLED?: string;
-  // GitHub App auth for the dev-agent (#96). The edge mints short-lived, repo-scoped
-  // installation tokens from these (worker/github-app.ts) for clone/push/PR; the private key
-  // stays at the edge and is NEVER forwarded into the container (the RCE boundary, ADR-0008).
-  // From workerSecrets (provisioned in secrets.yaml). Unset ⇒ the dev-agent boots without a
-  // git token and the push/PR path surfaces its own clear error.
-  GITHUB_APP_ID?: string;
-  GITHUB_APP_INSTALLATION_ID?: string;
-  GITHUB_APP_PRIVATE_KEY?: string;
-  // The App's public slug (github.com/apps/<slug>) for the workspace connect flow (#193,
-  // ADR-0015). Plain var, not a secret. Unset ⇒ the Settings UI hides "Connect GitHub".
-  GITHUB_APP_SLUG?: string;
-  // Platform key sealing stored per-repo PATs at rest (ADR-0016, worker/secret-box.ts).
-  // From workerSecrets. Unset ⇒ PAT repos can't be added and stored PATs can't be opened
-  // (their repos degrade to unreachable); installation repos are unaffected.
-  REPO_TOKEN_KEY?: string;
   // Bearer token for the `fredrin` MCP registry entry (ADR-0013 train 2): default-workspace
   // env fallback attached per chat send (worker/mcp-tokens-proxy.ts). Unset ⇒ fredrin is
   // simply not connected; a stored per-workspace token row overrides it.
@@ -229,32 +194,6 @@ export interface Env {
 // setup is pure); the db is per-request.
 const notebookApi = buildApp();
 
-// The kick's repo resolution (ADR-0015): runs target the default workspace's container, so
-// its repository connection (row, else the transitional env fallback) names the repo set.
-// Best-effort like the mint itself: a DB failure kicks token-less rather than failing the run.
-const defaultWorkspaceRepo = async (env: Env, requested?: string) => {
-  try {
-    return await resolveDevAgentRepo(env, createDbForWorker(env as unknown as Bindings), DEFAULT_WORKSPACE_ID, requested);
-  } catch (e: unknown) {
-    console.error(`[dev-agent] repo resolution failed — kicking token-less: ${String(e)}`);
-    return null;
-  }
-};
-
-/** Push one repo's read-only checkout refresh into a workspace's container (ADR-0016):
- *  the read token rides a header, transient — the bridge fetches then scrubs it. Public
- *  repos push no token at all; the bridge clones the public HTTPS remote. */
-const pushCheckoutRefresh = (env: Env, workspaceId: string, repo: string, token?: string): Promise<Response> =>
-  serveWorkspace(
-    new Request('https://bridge.internal/api/repos/refresh', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...(token ? { 'x-repo-git-token': token } : {}) },
-      body: JSON.stringify({ repo }),
-    }),
-    env,
-    coordsForWorkspace(workspaceId),
-  );
-
 /** Domain cutover: a request on a non-canonical host (poc.cedarpad.com) 301s to the same
  * path+query on the canonical origin (WEB_ORIGIN). Same-host / unset / unparseable origin
  * ⇒ null (dev + preview + tests serve wherever they are). Exported for tests. */
@@ -271,52 +210,7 @@ export function canonicalRedirect(url: URL, webOrigin: string | undefined): Resp
 }
 
 export default {
-  // Cron trigger (ADR-0007 PRD #51, re-shaped by ADR-0011, narrowed by #100). The tick is an
-  // EVALUATOR only: it dispatches repo-defined jobs that are due (see below). There is no
-  // built-in jobless run any more — one mechanism, `.claude/jobs/`. `waitUntil` keeps the
-  // isolate alive for the kicks (which may pay a cold boot) past the handler return.
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    // Read-only checkout cadence (ADR-0016): the daily tick re-syncs the default
-    // workspace's Repo checkouts. Best-effort, ungated (reads only), skipped while the
-    // container is asleep — refresh-on-add and the Settings button cover the gaps.
-    ctx.waitUntil(
-      (async () => {
-        const database = createDbForWorker(env as unknown as Bindings);
-        const ws = await getWorkspaceRecord(database, DEFAULT_WORKSPACE_ID);
-        if (!ws) return;
-        const views = await workspaceRepoSet(env, database, ws);
-        for (const v of views) {
-          const token = await mintRepoReadToken(env, { nowSec: Math.floor(Date.now() / 1000), ...v }).catch(() => null);
-          if (token || v.auth.kind === 'public') {
-            await pushCheckoutRefresh(env, DEFAULT_WORKSPACE_ID, v.repoFullName, token ?? undefined).catch(() => {});
-          }
-        }
-      })().catch((e: unknown) => console.error(`[repos] scheduled checkout refresh failed: ${String(e)}`)),
-    );
-    // Repo-defined scheduled jobs (#196, ADR-0015): the same tick evaluates the selected
-    // repos' `daily` jobs against their lastRunAt stamps — the ONLY scheduled dispatch (#100).
-    // DEV_AGENT_ENABLED stays the master breaker for scheduled work; best-effort — an
-    // evaluator failure never breaks the tick.
-    if (env.DEV_AGENT_ENABLED === 'true') {
-      const database = createDbForWorker(env as unknown as Bindings);
-      ctx.waitUntil(
-        evaluateScheduledJobs(database, DEFAULT_WORKSPACE_ID, {
-          nowMs: Date.now(),
-          discover: () => discoverJobs(env, database, DEFAULT_WORKSPACE_ID, { nowSec: Math.floor(Date.now() / 1000) }),
-          // The dispatch branch (#240): a `target: warehouse` job wakes the Warehouse
-          // container instead of the bridge — batch, not an agent turn (ADR-0017). Every
-          // other job (the default, `target: agent`) is unchanged from before this field
-          // existed: a headless chat turn kicked at the warm canvas container.
-          kick: (repo, job) =>
-            job.target === 'warehouse'
-              ? kickWarehouseMaterialize(env, { exec: warehouseExec })
-              : kickDevAgentRun(env, { mint: mintDevAgentGitToken, serve: serveWorkspace, resolveRepo: defaultWorkspaceRepo }, repo, job),
-        }).catch((e: unknown) => console.error(`[jobs] scheduled evaluation failed: ${String(e)}`)),
-      );
-    }
-  },
-
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
 
@@ -468,14 +362,8 @@ export default {
         // capability is re-read off the LIVE link row (not the cookie) so revoking or
         // downgrading a link takes effect at the next join.
         const guestHuddleMatch = /^\/api\/canvases\/([^/]+)\/huddle\/join$/.exec(url.pathname);
-        // Marts (ADR-0017, #238): edge-answered like the probe/huddle above, never
-        // proxied — reading R2 directly must never wake the container. The route's own
-        // :ws segment is ignored for guests; only the LINK's workspace is ever read, so a
-        // guest can't slide a foreign workspace id into the path.
-        const guestMartMatch = MART_ROUTE.exec(url.pathname);
-        // The Notebook is NOT guest-readable (ADR-0024, `NotebookRequester`): a mart is a
-        // published artifact a shared canvas may confine, the Notebook is the workspace's
-        // raw Observations and Problems. Matched here only so the refusal is a deliberate
+        // The Notebook is NOT guest-readable (ADR-0024, `NotebookRequester`): it is the
+        // workspace's raw Observations and Problems. Matched here only so the refusal is a deliberate
         // 404 from the same handler a member hits, never an accident of the gate's allowlist.
         const guestNotebookMatch = NOTEBOOK_ROUTE.exec(url.pathname);
         // #320: the LIVE row is read BEFORE the gate decides, because it is the source of
@@ -487,7 +375,7 @@ export default {
         if (live && live.canvasId === guest.canvasId) {
           const caps = guestCapabilities({ ...live, shapeId: live.shapeId ?? guest.shapeId });
           const guestGate = decideGuestGate({ pathname: url.pathname, method: request.method, canvas }, guest, caps);
-          if (isGuestProbe || guestHuddleMatch || guestMartMatch || guestNotebookMatch || guestGate.decision === 'allow') {
+          if (isGuestProbe || guestHuddleMatch || guestNotebookMatch || guestGate.decision === 'allow') {
             if (guestNotebookMatch) {
               return handleNotebookApi(
                 createDbForWorker(env as unknown as Bindings),
@@ -507,17 +395,6 @@ export default {
                 // Component-scoped link (PRD #221): the Shell/pad narrow to this shape.
                 ...(guest.shapeId ? { shapeId: guest.shapeId } : {}),
               });
-            }
-            if (guestMartMatch) {
-              // ADR-0017 guest scoping: resolve THIS canvas's own referenced marts fresh
-              // every request — never cached, never trusted from the client. The source is
-              // the canvas's sync ROOM (ADR-0019, #289), not `canvas-state.json`: the blob
-              // is stale once the DO owns the document, so a mart removed from the canvas
-              // would still be served. The reader identity is the link, stamped only after
-              // the live share-link re-check above.
-              const name = guestMartMatch[2] as string;
-              const marts = await martsForGuestCanvas(env.CANVAS_SYNC, guest.canvasId, `guest:${guest.linkId}`);
-              return handleMartApi(env.MART_BUCKET, guest.workspaceId, name, { kind: 'guest', marts });
             }
             if (guestHuddleMatch) {
               if (!env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET) {
@@ -657,22 +534,9 @@ export default {
       );
     }
 
-    // Marts (ADR-0017, #238): a member may read any mart in a workspace they belong to —
-    // membership checked against the DB exactly like invitations/members above. Edge-read
-    // parquet straight off R2 (never proxied), so browsing never wakes the container.
-    const martMatch = MART_ROUTE.exec(url.pathname);
-    if (martMatch) {
-      const wsId = martMatch[1] as string;
-      const name = martMatch[2] as string;
-      if (!(await getWorkspace(createDbForWorker(env as unknown as Bindings), wsId, user.id))) {
-        return Response.json({ error: 'not found' }, { status: 404 });
-      }
-      return handleMartApi(env.MART_BUCKET, wsId, name, { kind: 'member' });
-    }
-
     // The Notebook as a data source (ADR-0024): a component names a QUERY, and it resolves
     // HERE against the platform D1 — live rows, no materialize step, no container wake.
-    // Same membership check as marts; the registry (notebook-data-api.ts) is the boundary,
+    // Membership-checked like invitations/members above; the registry (notebook-data-api.ts) is the boundary,
     // so nothing the caller writes reaches a statement.
     const notebookMatch = NOTEBOOK_ROUTE.exec(url.pathname);
     if (notebookMatch) {
@@ -687,38 +551,6 @@ export default {
     // Admin surface (ADR-0014): waitlist view, role=admin only. Edge-served.
     if (url.pathname === '/api/admin/waitlist') {
       return handleAdminApi(request, createDbForWorker(env as unknown as Bindings), user, env.WAITLIST);
-    }
-
-    // Repository connection (#193, ADR-0015): status / connect redirect / repo selection /
-    // disconnect, plus GitHub's post-install setup callback. Edge-only.
-    const githubMatch = /^\/api\/workspaces\/([^/]+)\/github(?:\/(connect|repos|external|refresh|public))?$/.exec(url.pathname);
-    if (githubMatch) {
-      const wsId = githubMatch[1] as string;
-      return handleGithubApi(
-        request,
-        env,
-        createDbForWorker(env as unknown as Bindings),
-        user,
-        wsId,
-        githubMatch[2] as 'connect' | 'repos' | 'external' | 'refresh' | 'public' | undefined,
-        {
-          nowMs: Date.now(),
-          pushRefresh: (repo, token) => pushCheckoutRefresh(env, wsId, repo, token),
-          waitUntil: (p) => ctx.waitUntil(p),
-        },
-      );
-    }
-    if (url.pathname === '/api/github/setup') {
-      return handleGithubSetup(request, env, createDbForWorker(env as unknown as Bindings), user, { nowMs: Date.now() });
-    }
-
-    // Connector secrets (#241): per-workspace encrypted third-party credentials (dlt
-    // sources for the warehouse pipeline, ADR-0017). Owner-gated mutation, member-visible
-    // list (name + presence only — never plaintext or ciphertext). Edge-only.
-    const connectorsMatch = /^\/api\/workspaces\/([^/]+)\/connectors$/.exec(url.pathname);
-    if (connectorsMatch) {
-      const wsId = connectorsMatch[1] as string;
-      return handleConnectorSecretsApi(request, env, createDbForWorker(env as unknown as Bindings), user, wsId);
     }
 
     // Canvas registry API (Canvas app index), scoped to the active workspace via the
@@ -775,7 +607,7 @@ export default {
     // platform D1 + R2: list/detail/close/reopen never wake a container (history reads
     // from the R2 transcript while the runner sleeps); only reply forwards into the
     // container (#61).
-    const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen|assign|visibility|merge))?)?$/.exec(url.pathname);
+    const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen|assign|visibility))?)?$/.exec(url.pathname);
     if (inboxApiMatch) {
       return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
     }
@@ -806,53 +638,6 @@ export default {
         { registry: MCP_REGISTRY, tokens: effectiveMcpTokens, probeTools: probeMcpTools },
         mcpReadApiMatch[2],
       );
-    }
-
-    // Jobs trigger: run the dev-agent NOW on demand (Jobs stage "Run now" / API). Auth-gated (we're
-    // below the session gate, so `user` is signed in) but NOT DEV_AGENT_ENABLED-gated — that flag
-    // only kills the daily CRON; a manual trigger is an explicit user action. ADR-0011: the kick
-    // mints the per-turn git token and proxies POST /api/dev-agent/run to the warm bridge, which
-    // dispatches it as a headless chat turn — the bridge's { chatId, joined } answer is returned
-    // through, so the UI can point at the (possibly already-running) run's conversation. The
-    // bridge single-flights runs with JOIN semantics; repeated clicks answer with the same run.
-    // A `target: warehouse` job instead routes to kickWarehouseMaterialize (#248) — "Run now"
-    // parity with the scheduler's own dispatch, still gated by this same route/session (no
-    // second authorization model), still batch: no bridge, no Conversation, no git token.
-    if (url.pathname === '/api/jobs/dev-agent/run') {
-      if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
-      // Body { job, repo? }: `job` is REQUIRED (#100 — a jobless kick is a 400, never a
-      // default run) and names a repo-defined job (#195); its body is (re-)read off the repo's
-      // DEFAULT branch here — the merge armed it; a caller can never inject a prompt. `repo`
-      // optionally disambiguates a job name across selected repos (must be in the set).
-      const body = (await request.json().catch(() => null)) as { repo?: string; job?: string } | null;
-      return triggerDevAgentRun(
-        env,
-        {
-          mint: mintDevAgentGitToken,
-          serve: serveWorkspace,
-          resolveRepo: defaultWorkspaceRepo,
-          discover: (e) =>
-            discoverJobs(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
-              nowSec: Math.floor(Date.now() / 1000),
-            }),
-          kickWarehouse: () => kickWarehouseMaterialize(env, { exec: warehouseExec }),
-        },
-        body,
-        // Shared inbox: the manual trigger's Conversation is assigned to who clicked.
-        user.id,
-      );
-    }
-
-    // Repo-defined jobs (#195, ADR-0015): what `.claude/jobs/` on the selected repos' default
-    // branches define, discovered live (SHA-cached). Edge-only; access-checked; prompt omitted
-    // (the run path re-reads it — the list is a rendering surface, not a prompt channel).
-    const jobsMatch = /^\/api\/workspaces\/([^/]+)\/jobs$/.exec(url.pathname);
-    if (jobsMatch && request.method === 'GET') {
-      const database = createDbForWorker(env as unknown as Bindings);
-      const ws = await getWorkspace(database, jobsMatch[1] as string, user.id);
-      if (!ws) return Response.json({ error: 'workspace not found' }, { status: 404 });
-      const jobs = await discoverJobs(env, database, ws.id, { nowSec: Math.floor(Date.now() / 1000) });
-      return Response.json({ jobs: jobs.map(({ prompt, ...j }) => j) });
     }
 
     // Edge chat proxy (ADR-0009, PRD #119 slice #122): a Shell-mounted <ChatView> targets
@@ -1022,8 +807,7 @@ export default {
     // The edge-owned headers below are answers the edge alone writes, so a client-sent copy of
     // any of them must never survive into the container — on ANY request, not only a send.
     // Cloning is skipped entirely when the client sent none (the overwhelmingly common case).
-    const forged = [CHAT_KIND_HEADER, DEV_AGENT_GIT_TOKEN_HEADER, DEV_AGENT_REPO_HEADER, CANVAS_VIEWER_HEADER];
-    const asksDevAgent = isChatSend && request.headers.get(CHAT_KIND_HEADER) === DEV_AGENT_CHAT_KIND;
+    const forged = [CANVAS_VIEWER_HEADER];
     let proxied = request;
     if (isChatSend || isCanvasStream || forged.some((h) => request.headers.has(h))) {
       proxied = new Request(request);
@@ -1039,28 +823,6 @@ export default {
       // bridge assigns the born Conversation to them (overwrites any client-sent value).
       proxied.headers.set(INBOX_ASSIGN_HEADER, user.id);
       proxied = await withMcpTokensHeader(proxied, env, workspaceId);
-      // Chat-kind selection (CEDA-N67Y50): the Inbox's "+ New chat" draft has no Conversation
-      // row, so worker/inbox-bridge.ts's row-driven arming has nothing to key on — the draft
-      // declares the kind it wants to be born as on `x-chat-kind` instead, and the edge answers
-      // with the same per-send mint the Inbox proxy does. The ask was already stripped above,
-      // so the token stays the complete definition of a dev-agent turn (ADR-0010/0011). Once
-      // born the row IS dev-agent and every later send re-arms through the Inbox proxy — this
-      // is the birth case only.
-      if (asksDevAgent) {
-        // Best-effort, exactly as the Inbox proxy's mint is: a workspace with no connected repo
-        // proxies the send unarmed, and the chat simply files as an ordinary one.
-        const resolved = await resolveDevAgentRepo(env, createDbForWorker(env as unknown as Bindings), workspaceId).catch(
-          (e: unknown) => {
-            console.error(`[dev-agent] repo resolution failed — new chat starts token-less: ${String(e)}`);
-            return null;
-          },
-        );
-        if (resolved) {
-          proxied.headers.set(DEV_AGENT_REPO_HEADER, resolved.repoFullName);
-          const token = await mintDevAgentGitToken(env, { nowSec: Math.floor(Date.now() / 1000), ...resolved });
-          if (token) proxied.headers.set(DEV_AGENT_GIT_TOKEN_HEADER, token);
-        }
-      }
     }
 
     return serveWorkspace(proxied, env, coords);

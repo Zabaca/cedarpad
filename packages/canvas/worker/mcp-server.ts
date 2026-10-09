@@ -7,12 +7,6 @@ import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { edgeAuth } from './auth-gate.ts';
 import { coordsForWorkspace } from './inbox-bridge.ts';
 import { withMcpTokensHeader } from './mcp-tokens-proxy.ts';
-import { triggerDevAgentRun } from './dev-agent.ts';
-import { kickWarehouseMaterialize } from './warehouse-dispatch.ts';
-import { mintDevAgentGitToken } from './github-app.ts';
-import { resolveDevAgentRepo } from './github-connection.ts';
-import { discoverJobs } from './repo-jobs.ts';
-import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 import { notifyInboxChanged } from './workspace-events.ts';
 import {
   AssignConversationInput,
@@ -31,7 +25,6 @@ import {
   ReadConversationInput,
   ReadImageInput,
   ReadTranscriptInput,
-  RunDevAgentInput,
   SendMessageInput,
   UpdateShapesInput,
   UploadSkillInput,
@@ -42,7 +35,7 @@ import {
 } from './mcp-tools.ts';
 import { NOTEBOOK_TOOL_SPECS, type NotebookCall } from '../web-poc/lib/contract/notebook-tools.ts';
 import { runNotebookCall } from '../web-poc/worker/notebook-tools.ts';
-import { serveWorkspace, warehouseExec } from './sandbox-runtime.ts';
+import { serveWorkspace } from './sandbox-runtime.ts';
 import type { Env } from './index.ts';
 import { CANVAS_ID_HEADER, DATA_MAX_BYTES, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
 
@@ -76,8 +69,7 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       // #383: an MCP write reaches the badge the same way an Inbox click does.
       notify: (workspaceId) => notifyInboxChanged(env.WORKSPACE_EVENTS, workspaceId),
       // The same proxied-send path every chat send takes: x-mcp-tokens attached (train 2),
-      // the workspace's coords resolved, the container woken if asleep. Plain chat flavor —
-      // no dev-agent token is ever minted here.
+      // the workspace's coords resolved, the container woken if asleep.
       proxySend: async (workspaceId, chatId, message, canvasId) => {
         const target = new Request(`${new URL(req.url).origin}/api/chat/${encodeURIComponent(chatId)}/send`, {
           method: 'POST',
@@ -118,41 +110,6 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         });
         return serveWorkspace(target, env, coordsForWorkspace(workspaceId));
       },
-      // Manual dev-agent trigger (mirrors the /api/jobs/dev-agent/run wiring in
-      // worker/index.ts — not imported from there, that would be an import cycle):
-      // resolve the default workspace's repo connection, mint the per-turn git token,
-      // proxy the kick to the warm bridge. Repo resolution is best-effort like the route's.
-      // A `target: warehouse` job routes to kickWarehouseMaterialize instead (#248) — the
-      // MCP surface gets the same "Run now" parity as the HTTP route: it's the SAME shared
-      // triggerDevAgentRun core with the SAME OAuth-token-acts-as-a-human authorization, so
-      // excluding it here would be a second, undocumented gate rather than a deliberate one.
-      // A materialize run is exactly the on-demand debugging need #248 exists for, and MCP
-      // is cedarpad's one programmatic surface — an agent using it to prove the pipeline
-      // works is the intended use, not an escalation.
-      kickDevAgent: (body) =>
-        triggerDevAgentRun(
-          env,
-          {
-            mint: mintDevAgentGitToken,
-            serve: serveWorkspace,
-            resolveRepo: async (e, requested) => {
-              try {
-                return await resolveDevAgentRepo(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, requested);
-              } catch (err: unknown) {
-                console.error(`[dev-agent] repo resolution failed — kicking token-less: ${String(err)}`);
-                return null;
-              }
-            },
-            discover: (e) =>
-              discoverJobs(e, createDbForWorker(e as unknown as Bindings), DEFAULT_WORKSPACE_ID, {
-                nowSec: Math.floor(Date.now() / 1000),
-              }),
-            kickWarehouse: () => kickWarehouseMaterialize(env, { exec: warehouseExec }),
-          },
-          body,
-          // A run_dev_agent call is the token user's explicit act — assign the run to them.
-          session.userId,
-        ),
     });
 
     const server = new McpServer({ name: 'cedarpad', version: '1.0.0' });
@@ -363,16 +320,6 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         inputSchema: UploadSkillInput.shape,
       },
       async (input) => text(await tools.uploadSkill(input)),
-    );
-
-    server.registerTool(
-      'run_dev_agent',
-      {
-        description:
-          'Trigger a dev-agent run now (same as the Jobs "Run now" button). Requires `job`: the name of a job defined in .claude/jobs/ on a selected repo\'s default branch (its prompt is read off that branch — you cannot supply a prompt). Optional `repo` disambiguates the job name across selected repos. Runs single-flight: a trigger while one is running joins it. Returns the run\'s chatId; follow it via read_conversation/read_transcript.',
-        inputSchema: RunDevAgentInput.shape,
-      },
-      async (input) => text(await tools.runDevAgent(input)),
     );
 
     // The Notebook (ADR-0024): the store agents write and canvas reads. Registered from the

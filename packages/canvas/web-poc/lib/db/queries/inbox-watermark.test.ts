@@ -80,14 +80,6 @@ describe("inboxWatermark — the cheap 'has anything changed' probe", () => {
     expect(await inboxWatermark(db, wsId)).not.toBe(before);
   });
 
-  it("moves when a dev-agent run's repo edge is stamped", async () => {
-    const conv = await conversations.create(db, { sessionId: "s6", userId: "owner", workspaceId: wsId });
-    await tick();
-    const before = await inboxWatermark(db, wsId);
-    await conversations.attachRepo(db, conv.id, "Zabaca/cedarpad");
-    expect(await inboxWatermark(db, wsId)).not.toBe(before);
-  });
-
   it("moves when the workspace's shared read mark is stamped", async () => {
     const before = await inboxWatermark(db, wsId);
     await setInboxReadAt(db, wsId, new Date(Date.now() + 60_000));

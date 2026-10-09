@@ -59,9 +59,9 @@ describe('activeCanvasId — reads the pad URL, never a cookie', () => {
   });
 });
 
-// #239: the mart route the browser fetches for a live-mart component is
-// `/api/workspaces/:ws/marts/:name` — the pad URL is the only place the browser learns
-// the workspace id (same URL-not-cookie convention as the canvas id above).
+// The Notebook route a live component fetches is `/api/workspaces/:ws/notebook/:query` —
+// the pad URL is the only place the browser learns the workspace id (same URL-not-cookie
+// convention as the canvas id above).
 describe('workspaceIdFromPath / activeWorkspaceId — the pad URL carries the workspace too', () => {
   test('extracts the workspace id from a pad path', () => {
     expect(workspaceIdFromPath('/w/abc/canvas/xyz/pad')).toBe('abc');

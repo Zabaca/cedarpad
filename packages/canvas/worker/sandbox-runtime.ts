@@ -1,9 +1,6 @@
 import { getSandbox } from '@cloudflare/sandbox';
-import type { Bindings } from '../web-poc/worker/context.ts';
-import { createDbForWorker } from '../web-poc/worker/runtime.ts';
-import { resolveConnectorEnv } from './connector-secrets.ts';
 import type { Env } from './index.ts';
-import { CANVAS_CONTAINER_CWD, containerEnv, warehouseContainerEnv } from './container-env.ts';
+import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
 import type { CanvasBootSpec } from './canvas-boot.ts';
 import { singleFlight } from './single-flight.ts';
 import { selfHostedTarget, serveSelfHosted, staysOnContainer } from './self-hosted.ts';
@@ -34,40 +31,6 @@ const SLEEP_AFTER = '5m';
 export const sandboxFor = (env: Env, sandboxId: string) =>
   getSandbox(env.Sandbox, sandboxId, { normalizeId: true, keepAlive: false, sleepAfter: SLEEP_AFTER });
 
-// The Warehouse container's runtime wiring (#240, ADR-0017; moved here from index.ts for
-// #248 so both the cron dispatch AND the "Run now" manual trigger — HTTP route + MCP tool —
-// can reach it without an import cycle through index.ts). Unlike the canvas container, the
-// Warehouse container runs no bridge/vite server to proxy into (it carries no agent SDK,
-// #236) — dispatch is a single `exec` of the pipeline's CLI entrypoint
-// (warehouse/materialize.ts, baked into the image at the same WORKDIR as the canvas
-// package — Dockerfile.warehouse). `materializeWorkspace`'s CLI entry (`import.meta.main`)
-// reads the target workspace off `CANVAS_WORKSPACE`, same env var the canvas container's
-// bridge uses to scope R2 state.
-const MATERIALIZE_COMMAND = 'bun run warehouse/materialize.ts';
-
-/** One-shot exec against the workspace's Warehouse container — `getSandbox` wakes it on
- *  demand (cold boot pulls the image if needed), same as the canvas container's proxy
- *  path, no separate "ensure started" step needed for a one-shot command. NOTE: this
- *  module is wholesale `mock.module`-replaced in worker/index.test.ts and
- *  worker/inbox-bridge.test.ts (`mock.module('@cloudflare/sandbox', () => ({ ... }))`) —
- *  any new named import from `@cloudflare/sandbox` anywhere in this file's module graph
- *  must be added to BOTH factories, or unrelated test files that transitively load this
- *  module will fail with "export not found" against the mock, not the real package. */
-export const warehouseExec = async (env: Env, coords: SandboxCoords) => {
-  const sandbox = getSandbox(env.Warehouse, coords.sandboxId, { normalizeId: true });
-  // Connector secrets (#241): decrypted per-workspace so the pipeline's dlt sources can
-  // read from them. `coords.canvasWorkspace` is the same id the R2 prefix and the DB
-  // workspace row share (v1: one container = one workspace).
-  const connectorEnv = await resolveConnectorEnv(env, createDbForWorker(env as unknown as Bindings), coords.canvasWorkspace);
-  const result = await sandbox.exec(MATERIALIZE_COMMAND, {
-    cwd: CANVAS_CONTAINER_CWD,
-    // CANVAS_WORKSPACE scopes the pipeline's R2 read/write, same key the canvas
-    // container's bridge uses — materialize.ts's CLI entry reads it directly.
-    env: { ...warehouseContainerEnv(env, connectorEnv), CANVAS_WORKSPACE: coords.canvasWorkspace },
-  });
-  return { success: result.success, stdout: result.stdout, stderr: result.stderr };
-};
-
 type SandboxStub = ReturnType<typeof getSandbox>;
 
 /** Everything the container's boot needs, resolved here (the Worker holds the secrets)
@@ -84,8 +47,8 @@ const bootSpec = (env: Env, coords: SandboxCoords): CanvasBootSpec => ({
 });
 
 // Concurrent cold requests for the same container share ONE boot (#138). Module-scoped so it
-// collapses the per-page-load stampede (~40 requests) within an isolate; keyed by sandbox id so a
-// product boot never blocks the dev-agent's. Cleared when the boot settles (see singleFlight).
+// collapses the per-page-load stampede (~40 requests) within an isolate; keyed by sandbox id so
+// one workspace's boot never blocks another's. Cleared when the boot settles (see singleFlight).
 const inflightBoot = new Map<string, Promise<void>>();
 
 // Forward a request into the container's vite dev server (which proxies /api -> the

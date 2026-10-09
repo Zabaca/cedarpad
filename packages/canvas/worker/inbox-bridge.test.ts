@@ -3,7 +3,6 @@ import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { GateUser } from './auth-gate.ts';
 import { workspaceEventsName } from '../shared/workspace-events.ts';
-import { DEV_AGENT_KIND } from '../server/dev-agent-workflow.ts';
 import { LEGACY_SANDBOX_ID, type SandboxCoords } from './sandbox-resolver.ts';
 
 // The edge chat proxy (`handleInboxBridge`) proxies a Conversation's chat traffic to its owning
@@ -21,33 +20,26 @@ let workspaceMembers: string[] = [];
 let served: SandboxCoords[] = [];
 let servedAssigns: Array<string | null> = [];
 let servedViewers: Array<string | null> = [];
-let servedTokens: Array<string | null> = [];
 let servedCanvasIds: Array<string | null> = [];
-let servedRepos: Array<string | null> = [];
 let servedMcpTokenHeaders: Array<string | null> = [];
 let servedConversations: Array<string | null> = [];
 let replyCalls: string[] = [];
 let markReadCalls: string[] = [];
 let attachCanvasCalls: Array<[string, string]> = [];
 let servedPairings: Array<string | null> = [];
-let mintCalls = 0;
-let mintResult: string | null = 'ghs_minted';
 let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
 
-// #240: index.ts's `warehouseExec` statically imports `getSandbox` too — this factory
-// replaces the WHOLE module, so any named import missing here fails "export not found"
-// for every test file that transitively loads index.ts, this one included.
+// This factory replaces the WHOLE module, so any named import missing here fails "export not
+// found" for every test file that transitively loads index.ts, this one included.
 mock.module('@cloudflare/sandbox', () => ({
   Sandbox: class {},
-  getSandbox: () => ({ exec: async () => ({ success: true, stdout: '', stderr: '' }) }),
+  getSandbox: () => ({}),
 }));
 mock.module('../web-poc/worker/runtime.ts', () => ({ createDbForWorker: () => ({}) }));
 mock.module('./sandbox-runtime.ts', () => ({
   serveWorkspace: (req: Request, _env: unknown, coords: SandboxCoords) => {
     served.push(coords);
-    servedTokens.push(req.headers.get('x-dev-agent-git-token'));
     servedCanvasIds.push(req.headers.get('x-canvas-id'));
-    servedRepos.push(req.headers.get('x-dev-agent-repo'));
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     servedAssigns.push(req.headers.get('x-inbox-assign'));
     servedViewers.push(req.headers.get('x-canvas-viewer'));
@@ -56,9 +48,6 @@ mock.module('./sandbox-runtime.ts', () => ({
     return new Response('proxied');
   },
   sandboxFor: () => ({}),
-  // #248: index.ts now imports warehouseExec from here (moved from an inline definition)
-  // — this file's full-module mock must supply it too, unused by these tests.
-  warehouseExec: async () => ({ success: true, stdout: '', stderr: '' }),
 }));
 // Membership gate seam: the bridge proxy admits any workspace MEMBER (never creator-gated).
 // Delegate + RESTORE (the index.test.ts pattern): bun's mock.module rebinds the module for
@@ -168,12 +157,7 @@ const row = (o: Partial<ConversationRow> = {}): ConversationRow =>
   }) as ConversationRow;
 
 // Drive the proxy exactly as worker/index.ts does: the routing prefix already stripped to
-// `subPath`. The token mint is a default-parameter seam (production binds the real
-// `mintDevAgentGitToken`); the fake records calls so a test can assert mint-vs-no-mint.
-const mint = () => {
-  mintCalls += 1;
-  return Promise.resolve(mintResult);
-};
+// `subPath`.
 const proxy = (method: string, subPath: string, convId = 'conv_1', env: object = {}) =>
   handleInboxBridge(
     new Request(`https://poc.cedarpad.com/inbox/${convId}/bridge${subPath}`, { method }),
@@ -181,10 +165,6 @@ const proxy = (method: string, subPath: string, convId = 'conv_1', env: object =
     user,
     convId,
     subPath,
-    mint,
-    // The repo resolver seam (ADR-0015): a fixed connection so the mint/no-mint assertions
-    // stay about the SEND rules; conv.repo-vs-fallback precedence is pinned separately below.
-    async (_env, _db, _ws, requested) => ({ installationId: 'inst_1', repoFullName: requested ?? 'Zabaca/cedarpad' }),
   );
 
 /** As `proxy`, but with client-supplied headers — for the forged-header tests below. */
@@ -195,8 +175,6 @@ const proxyWithHeaders = (method: string, subPath: string, headers: Record<strin
     user,
     convId,
     subPath,
-    mint,
-    async (_env, _db, _ws, requested) => ({ installationId: 'inst_1', repoFullName: requested ?? 'Zabaca/cedarpad' }),
   );
 
 // Let the fire-and-forget flip (a microtask) settle before asserting.
@@ -209,9 +187,7 @@ beforeEach(() => {
   served = [];
   servedAssigns = [];
   servedViewers = [];
-  servedTokens = [];
   servedCanvasIds = [];
-  servedRepos = [];
   servedMcpTokenHeaders = [];
   servedConversations = [];
   replyCalls = [];
@@ -220,8 +196,6 @@ beforeEach(() => {
   servedPairings = [];
   canvasesById = {};
   createdCanvases = [];
-  mintCalls = 0;
-  mintResult = 'ghs_minted';
   mcpTokensByWorkspace = {};
 });
 
@@ -251,8 +225,6 @@ describe('handleInboxBridge: the proxy’s row writes ring the workspace events 
       user,
       convId,
       subPath,
-      mint,
-      async (_env, _db, _ws, requested) => ({ installationId: 'inst_1', repoFullName: requested ?? 'Zabaca/cedarpad' }),
     );
 
   beforeEach(() => {
@@ -376,8 +348,6 @@ describe('handleInboxBridge: the open-conversation GET forwards the resolved Con
         user,
         'conv_1',
         subPath,
-        mint,
-        async () => null,
       );
 
     await req('/api/inbox/conv_1/chat', 'GET');
@@ -412,8 +382,6 @@ describe('handleInboxBridge: attach-canvas — the edge owns the rows (#264)', (
       user,
       convId,
       subPath,
-      mint,
-      async () => null,
     );
   };
 
@@ -477,8 +445,6 @@ describe('handleInboxBridge: attach-canvas — the edge owns the rows (#264)', (
       user,
       'conv_1',
       subPath,
-      mint,
-      async () => null,
     );
     await proxy('GET', '/api/chat/chat_1/transcript');
 
@@ -490,63 +456,6 @@ describe('handleInboxBridge: attach-canvas — the edge owns the rows (#264)', (
   });
 });
 
-// ADR-0010: the edge mints a short-lived, repo-scoped git token PER dev-agent send and rides
-// it on the proxied request as `x-dev-agent-git-token` — the bridge arms `open_pr` for exactly
-// that turn. Product sends never mint; reads (GET/alive/interrupt) never mint; a failed mint
-// degrades to a token-less send (the turn just has no open_pr), never a blocked reply.
-describe('handleInboxBridge: the dev-agent git token is minted onto a proxied send (ADR-0010)', () => {
-  test('a dev-agent send carries x-dev-agent-git-token to the owning bridge', async () => {
-    conv = row({ kind: DEV_AGENT_KIND });
-    await proxy('POST', '/api/chat/chat_home/send');
-
-    expect(mintCalls).toBe(1);
-    expect(servedTokens).toEqual(['ghs_minted']);
-  });
-
-  test('the send re-mints for the conversation’s OWN repo (conv.repo → x-dev-agent-repo, ADR-0015)', async () => {
-    conv = row({ kind: DEV_AGENT_KIND, repo: 'Zabaca/ledgerbot' } as never);
-    await proxy('POST', '/api/chat/chat_home/send');
-
-    // The resolver seam echoes the requested repo — conv.repo is what must be requested.
-    expect(servedRepos).toEqual(['Zabaca/ledgerbot']);
-    expect(servedTokens).toEqual(['ghs_minted']);
-  });
-
-  test('a legacy dev-agent row with no repo edge falls back to the workspace’s selection', async () => {
-    conv = row({ kind: DEV_AGENT_KIND });
-    await proxy('POST', '/api/chat/chat_home/send');
-
-    expect(servedRepos).toEqual(['Zabaca/cedarpad']);
-  });
-
-  test('a PRODUCT send never mints — no token header reaches the bridge', async () => {
-    conv = row({ workspaceId: 'default' });
-    await proxy('POST', '/api/chat/chat_home/send');
-
-    expect(mintCalls).toBe(0);
-    expect(servedTokens).toEqual([null]);
-  });
-
-  test('a dev-agent transcript GET / alive beat never mints (only a send arms open_pr)', async () => {
-    conv = row({ kind: DEV_AGENT_KIND });
-    await proxy('GET', '/api/chat/chat_home/transcript');
-    await proxy('POST', '/api/alive');
-
-    expect(mintCalls).toBe(0);
-    expect(servedTokens).toEqual([null, null]);
-  });
-
-  test('a failed mint (null) still proxies the send — token-less, never blocked', async () => {
-    conv = row({ kind: DEV_AGENT_KIND });
-    mintResult = null;
-    const res = await proxy('POST', '/api/chat/chat_home/send');
-
-    expect(res.status).toBe(200);
-    expect(mintCalls).toBe(1);
-    expect(servedTokens).toEqual([null]);
-  });
-});
-
 describe('handleInboxBridge: which runner bridge a Conversation is proxied to (coordsForWorkspace)', () => {
   test('a product Conversation (workspaceId `default`) proxies to the legacy/prod container', async () => {
     conv = row({ workspaceId: 'default' });
@@ -554,21 +463,7 @@ describe('handleInboxBridge: which runner bridge a Conversation is proxied to (c
     await settle();
 
     expect(served).toHaveLength(1);
-    expect(served[0]?.sandboxId).not.toBe(DEV_AGENT_KIND);
-  });
-
-  test('a dev-agent Conversation resumes on the WARM default container (ADR-0010: a role, not a container)', async () => {
-    conv = row({ kind: DEV_AGENT_KIND }); // workspaceId stays 'default' — kind is the type, not a workspace
-    await proxy('GET', '/api/chat/chat_home/transcript');
-    await settle();
-
-    // The dev-agent is a logical Conversation tag now — its chats resume on the SAME warm
-    // container product chats use (no perpetually-cold separate sandbox, no cold boot, no 425).
-    // NOT a derived `workspace-dev-agent` container either.
-    expect(served).toHaveLength(1);
     expect(served[0]?.sandboxId).toBe(LEGACY_SANDBOX_ID);
-    expect(served[0]?.canvasWorkspace).toBe('default');
-    expect(served[0]?.r2Prefix).toBe('workspaces/default/');
   });
 });
 
@@ -620,8 +515,8 @@ describe('handleInboxBridge: visibility gate (ADR-0016)', () => {
 });
 
 // ADR-0013 train 2 (#176): a workspace's connected external-MCP tokens ride the send as a
-// single JSON header (server/mcp-registry.ts's MCP_TOKENS_HEADER), mirroring x-dev-agent-git-
-// token — edge custody, per-send, never persisted container-side. No connected tokens ⇒ no
+// single JSON header (server/mcp-registry.ts's MCP_TOKENS_HEADER) — edge custody, per-send,
+// never persisted container-side. No connected tokens ⇒ no
 // header at all (not connected = no attempt).
 describe('handleInboxBridge: the workspace’s external-MCP tokens ride the send (ADR-0013 train 2)', () => {
   test('a connected token attaches x-mcp-tokens to the proxied send', async () => {

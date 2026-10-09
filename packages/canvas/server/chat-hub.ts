@@ -73,7 +73,7 @@ export function createChatHub(): ChatHub {
   // Live turns, keyed by chatId, so POST /interrupt can abort the in-flight query
   // (Esc / Stop in the UI). One turn per chat at a time — ENFORCED at /send (409
   // turn_in_flight, ADR-0011): the client-side queue only protects the tab that started
-  // the turn; a headless dev-agent run or a second tab needs the wire to say no.
+  // the turn; a headless send or a second tab needs the wire to say no.
   const aborters = new Map<string, AbortController>();
 
   return {

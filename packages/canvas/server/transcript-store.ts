@@ -4,7 +4,7 @@
 // `resume`; this module mirrors that JSONL to R2 so a session's history survives runner sleep.
 //
 // `TranscriptStore` (bottom of the file) is the container's interface — put one session,
-// materialize one session, list them all. The free functions above it are the pieces it is
+// materialize one session. The free functions above it are the pieces it is
 // built from, plus the EDGE's read path: the worker (#62) cannot construct a store (no runner
 // FS), so it calls `transcriptKey` / `read` with just a sessionId against its own R2 access.
 //
@@ -12,9 +12,6 @@
 // the format and reads it back on `--resume`, so the bytes are opaque here — never parsed,
 // normalised or re-encoded. Round-trip fidelity IS the contract; a subtly wrong one breaks
 // conversation continuity silently.
-
-import { mkdir, rename, rm } from 'node:fs/promises';
-import { dirname } from 'node:path';
 
 import type { ChatEvent } from '../shared/chat-wire.ts';
 import { findSessionJsonl, resumeJsonlPath } from './session-jsonl.ts';
@@ -60,29 +57,6 @@ export async function backup(putter: BlobPutter, projectsDir: string, sessionId:
   return true;
 }
 
-/** ADR-0010 slice 6: MOVE a session's JSONL into the project dir for `cwd`, so
- * `query({ resume, cwd })` finds it once the dev-agent turn's cwd moves to its prepared
- * worktree (the SDK resume is cwd-scoped, #133 — the batch explore session was written under
- * CANVAS_CWD, and a cold-boot restore re-lands it there). A move, never a copy: the
- * transcript loader concatenates every glob match, so a duplicate would double history.
- * Idempotent, dest-wins: once turns run under the worktree the SDK appends at dest, so any
- * copy elsewhere is a stale restore artifact (⊆ dest at its last backup) and is culled.
- * Returns the dest path, or null when the session has no JSONL anywhere (a fresh session). */
-export async function adoptSession(projectsDir: string, sessionId: string, cwd: string): Promise<string | null> {
-  const dest = resumeJsonlPath(projectsDir, cwd, sessionId);
-  const found = await findSessionJsonl(projectsDir, sessionId);
-  if (found.length === 0) return null;
-
-  const others = found.filter((p) => p !== dest);
-  if (others.length === found.length) {
-    // Not home yet: move the (single, in practice) copy to dest.
-    await mkdir(dirname(dest), { recursive: true });
-    await rename(others.shift()!, dest);
-  }
-  for (const stale of others) await rm(stale, { force: true });
-  return dest;
-}
-
 /** Container-side: pull a session's JSONL from R2 back onto the runner FS at the exact path
  * the SDK resume expects — `<projectsDir>/<projectDirForCwd(cwd)>/<sessionId>.jsonl`. Returns
  * the written path, or null if R2 has no transcript for the session. */
@@ -112,15 +86,10 @@ export async function read(getter: BlobGetter, sessionId: string): Promise<ChatE
   return text === null ? [] : projectJsonl(text);
 }
 
-/** The blob seam `TranscriptStore` needs: get + put (one session) and list (every session, for
- * the warehouse). `BlobBackend` satisfies it structurally, so the container passes its Bun-S3
- * backend as-is and tests pass `memBackend()` — the same precedent blob-store.ts set. */
-export interface TranscriptBlobs extends BlobGetter, BlobPutter {
-  list(prefix: string): Promise<string[]>;
-}
-
-/** Prefix every session's transcript object lives under — the warehouse's discovery seam. */
-export const TRANSCRIPT_PREFIX = 'sessions/';
+/** The blob seam `TranscriptStore` needs: get + put (one session). `BlobBackend` satisfies it
+ * structurally, so the container passes its Bun-S3 backend as-is and tests pass `memBackend()`
+ * — the same precedent blob-store.ts set. */
+export type TranscriptBlobs = BlobGetter & BlobPutter;
 
 /**
  * The container's custodian of session Transcripts (#356, ADR-0022 decision 7). A Transcript is
@@ -130,7 +99,7 @@ export const TRANSCRIPT_PREFIX = 'sessions/';
  * The interface is three verbs, because granularity is the whole point:
  *   put(sessionId)              — after a turn, write ONLY the session that turn touched.
  *   materialize(sessionId, cwd) — before a resume, fetch ONLY that session.
- *   get / listSessions          — read seams (the Inbox already reads via the free fns above).
+ *   get                         — read seam (the Inbox already reads via the free fns above).
  *
  * What it replaces: a `sessions.tar` of the whole `~/.claude/projects` tree, re-uploaded every
  * turn (49,111,040 bytes in production against ~650 KB of appends) and re-downloaded at every
@@ -168,12 +137,5 @@ export class TranscriptStore {
     const local = await findSessionJsonl(this.projectsDir, sessionId).catch(() => []);
     if (local.length > 0) return local[0]!;
     return restore(this.blobs, this.projectsDir, cwd, sessionId);
-  }
-
-  /** Every session with a stored transcript. The warehouse's source since the mart stopped
-   * reading `sessions.tar` — derived from the key layout, so there is no second index to drift. */
-  async listSessions(): Promise<string[]> {
-    const keys = await this.blobs.list(TRANSCRIPT_PREFIX);
-    return keys.filter((k) => k.endsWith('/transcript.jsonl')).map((k) => k.slice(TRANSCRIPT_PREFIX.length, -'/transcript.jsonl'.length));
   }
 }

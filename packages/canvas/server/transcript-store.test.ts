@@ -5,7 +5,6 @@ import { join } from 'node:path';
 
 import { memBackend } from './blob-store.ts';
 import {
-  adoptSession,
   backup,
   projectDirForCwd,
   read,
@@ -98,48 +97,6 @@ describe('restore', () => {
   test('T6 restore with no R2 transcript is a no-op (null)', async () => {
     await withProjectsDir(async (projectsDir) => {
       expect(await restore(memBackend(), projectsDir, '/workspace/app', 'missing')).toBeNull();
-    });
-  });
-});
-
-// ADR-0010 slice 6: a dev-agent turn runs under its prepared worktree's cwd, but the batch
-// explore session's JSONL was written under CANVAS_CWD (and a cold-boot restore re-lands it
-// there) — the SDK's resume is cwd-scoped (#133), so the JSONL must MOVE (not copy: the
-// transcript loader concatenates every glob match, so a duplicate doubles history) into the
-// worktree's project dir before the turn.
-describe('adoptSession — move a session JSONL to the project dir of a new cwd', () => {
-  test('moves the JSONL from another project dir to exactly where resume(cwd) reads', async () => {
-    await withProjectsDir(async (projectsDir, nested) => {
-      const sessionId = 'sess-adopt';
-      await Bun.write(join(nested, `${sessionId}.jsonl`), convo);
-
-      const cwd = '/workspace/wt';
-      const dest = await adoptSession(projectsDir, sessionId, cwd);
-
-      expect(dest).toBe(join(projectsDir, '-workspace-wt', `${sessionId}.jsonl`));
-      expect(await Bun.file(dest!).text()).toBe(convo);
-      expect(existsSync(join(nested, `${sessionId}.jsonl`))).toBe(false); // moved, not copied
-    });
-  });
-
-  test('idempotent: already home ⇒ untouched; a stale duplicate elsewhere is removed (dest wins)', async () => {
-    await withProjectsDir(async (projectsDir, nested) => {
-      const sessionId = 'sess-home';
-      const cwd = '/workspace/wt';
-      const dest = join(projectsDir, projectDirForCwd(cwd), `${sessionId}.jsonl`);
-      const grown = convo + jsonl({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'more' }] } });
-      await Bun.write(dest, grown); // the SDK has been appending here (authoritative)
-      await Bun.write(join(nested, `${sessionId}.jsonl`), convo); // a stale restore artifact
-
-      expect(await adoptSession(projectsDir, sessionId, cwd)).toBe(dest);
-      expect(await Bun.file(dest).text()).toBe(grown); // dest NOT clobbered by the stale copy
-      expect(existsSync(join(nested, `${sessionId}.jsonl`))).toBe(false); // duplicate culled
-    });
-  });
-
-  test('absent session ⇒ null (a fresh session has no JSONL to adopt)', async () => {
-    await withProjectsDir(async (projectsDir) => {
-      expect(await adoptSession(projectsDir, 'nope', '/workspace/wt')).toBeNull();
     });
   });
 });
@@ -244,21 +201,6 @@ describe('TranscriptStore', () => {
 
       expect(store.materialize('sess-mine', '/workspace/app')).rejects.toThrow('R2 unreachable');
     });
-  });
-
-  // The warehouse (ADR-0017 mart_session_events) used to read the whole sessions.tar; with one
-  // object per session its source is this listing.
-  test('listSessions names every stored session, and nothing else in the bucket', async () => {
-    const blobs = memBackend();
-    await blobs.put(transcriptKey('sess-a'), new TextEncoder().encode(convo));
-    await blobs.put(transcriptKey('sess-b'), new TextEncoder().encode(convo));
-    await blobs.put('workspaces/ws-1/warehouse/mart_session_events.parquet', new Uint8Array([1]));
-
-    expect((await new TranscriptStore(blobs, '/nowhere').listSessions()).sort()).toEqual(['sess-a', 'sess-b']);
-  });
-
-  test('an empty bucket lists no sessions rather than failing', async () => {
-    expect(await new TranscriptStore(memBackend(), '/nowhere').listSessions()).toEqual([]);
   });
 });
 

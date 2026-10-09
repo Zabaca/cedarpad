@@ -17,11 +17,9 @@
   // or the dashboard (replaces the ad-hoc /__diag route). Container stdout is
   // separate (sandbox getProcessLogs / CF container logs).
   "observability": { "enabled": true },
-  // Dev-agent scheduler (ADR-0007, PRD #51 slice #63). Off-hours daily cron that wakes
-  // the separate `dev-agent` sandbox (its own sleep schedule) and kicks one workflow run
-  // via the Worker's `scheduled` handler, then lets it sleep. 09:00 UTC ≈ 02:00 PT — off
-  // James's active hours. Interval is config here; the real workflow is #66.
-  "triggers": { "crons": ["0 9 * * *"] },
+  // No scheduled work: the daily jobs/repo-refresh cron went with them. An empty list (not an
+  // absent key) is what makes `wrangler deploy` clear the trigger it registered before.
+  "triggers": { "crons": [] },
   // Non-secret env for the mounted web-poc's Better Auth (same origin as the app in
   // prod). Secrets (VOYAGE_API_KEY, BETTER_AUTH_SECRET) are pushed via
   // workerSecrets, not here.
@@ -45,21 +43,6 @@
     // Prod is James-only: Better Auth signup is disabled at the edge (dev leaves it
     // open — the var is unset in .dev.vars). See web-poc/worker/auth.ts. (PRD #49 #15)
     "AUTH_DISABLE_SIGNUP": "true",
-    // Master breaker for ALL scheduled work (#94.5): with this "false" the cron fires and
-    // no-ops. Enabled 2026-07-26 now that repo-connection (#96) and repo-defined Jobs
-    // (ADR-0015) are live. It gates BOTH kinds of scheduled dispatch, so enabling the daily
-    // materialize also enables the daily dev-agent run — deliberate, not a side effect.
-    // What this arms today, at 09:00 UTC, on the only selected repo that defines jobs
-    // (Zabaca/cedarpad — the other three have no .claude/jobs/):
-    //   - materialize-mart-session-events (target: warehouse) — batch, no agent, no Conversation
-    //   - improve-codebase-architecture   (target: agent)     — ends `end_turn needs_human`,
-    //     so it surfaces candidates for review and never ships code unattended.
-    // PREVIEW STAYS "false" on purpose: that worker shares production's platform D1 and R2,
-    // so arming both would double-dispatch the same jobs against the same state.
-    "DEV_AGENT_ENABLED": "true",
-    // The GitHub App's public slug (github.com/apps/<slug>) for the workspace connect
-    // flow (#193, ADR-0015). Not a secret; unset hides "Connect GitHub" in Settings.
-    "GITHUB_APP_SLUG": "cedarpad",
     // The single-tenant owner every `ask_human`/Inbox Conversation gets filed under —
     // must be this deployment's Better Auth user.id (the platform D1 `user` table), not an
     // email. Single-tenant-only: revisit when #98 (multi-user) lands.
@@ -88,16 +71,9 @@
       "max_instances": 3
     },
     {
-      // Warehouse (ADR-0017, #236): the second container class, its own Dockerfile,
-      // NO agent SDK — see ADR-0017 "Why two containers". standard-4 (4 vCPU, 12 GiB,
-      // 20 GB disk) is deliberately oversized for chat/canvas but cheap here: container
-      // billing is per-second-while-running, and this class only runs a few minutes a
-      // day for the materialize Job (ADR-0015), never on the chat cold-boot path.
-      // max_instances matches Sandbox's 3, NOT capped lower: a workspace is a deployment
-      // (ADR-0008) and each one gets its own materialize pipeline, so a cap of 1 would
-      // let only one workspace across the whole account materialize at a time — a second
-      // workspace's job would queue or fail, and that failure would look like a
-      // mysterious hang long after anyone remembered this line.
+      // The retired warehouse (ADR-0017, superseded). Nothing dispatches into it any more;
+      // the class, its image and its binding stay only until the Cloudflare container
+      // migration deletes the class, because deleting one is its own deploy-time migration.
       "class_name": "Warehouse",
       "image": "./Dockerfile.warehouse",
       "image_build_context": "../..",
@@ -120,8 +96,8 @@
       { "class_name": "WorkspaceEvents", "name": "WORKSPACE_EVENTS" }
     ]
   },
-  // Native R2 binding (ADR-0017, #238): the edge Worker (workerd) reads mart parquet and
-  // canvas-state.json straight off this — no container wake for browsing. Separate from
+  // Native R2 binding: the edge Worker (workerd) reads canvas assets and canvas-state.json
+  // straight off this — no container wake. Named for the retired marts (ADR-0017). Separate from
   // the R2_* S3-compat vars above, which only ever get forwarded into the container's Bun
   // runtime (Bun.S3Client isn't available in workerd). Same bucket as R2_BUCKET; the name
   // here is a judgment call matching the container-env test fixture — confirm against the
@@ -191,8 +167,6 @@
         "BETTER_AUTH_URL": "https://agent-canvas-preview.james-99a.workers.dev",
         "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev",
         "AUTH_DISABLE_SIGNUP": "true",
-        "DEV_AGENT_ENABLED": "false",
-        "GITHUB_APP_SLUG": "cedarpad",
         // Preview shares production's platform D1 (secrets.yaml is a copy) — same one user
         // row. D1 admits one writer, with an external write mid-request corrupting
         // concurrent readers (#276) — this sharing is pre-existing debt (it also shared

@@ -11,8 +11,8 @@ export const IS_CHAT_SEND = /^\/api\/chat\/[^/]+\/send$/;
 
 /**
  * Attach the workspace's connected MCP tokens (ADR-0013 train 2, #176) as a single JSON
- * header on a proxied chat SEND — mirrors the ADR-0010 dev-agent-git-token pattern: edge
- * custody, a per-send header, never persisted container-side. No connected tokens ⇒ the
+ * header on a proxied chat SEND: edge custody, a per-send header, never persisted
+ * container-side. No connected tokens ⇒ the
  * request passes through untouched (no header, no connection attempt).
  */
 /** The workspace's effective connected tokens: stored rows, plus the env fallback for the

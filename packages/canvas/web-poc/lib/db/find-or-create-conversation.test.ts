@@ -91,7 +91,7 @@ describe('findOrCreateConversation: chat identity (ownerRef)', () => {
     expect(kept.canvasId).toBe('cv_1');
   });
 
-  it('a turn with no canvas (inbox reply, dev-agent run) leaves the edge untouched', async () => {
+  it('a turn with no canvas (inbox reply) leaves the edge untouched', async () => {
     const db = await freshDb();
     await findOrCreateConversation(db, { sessionId: 's-1', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c3', canvasId: 'cv_9' });
     const later = await findOrCreateConversation(db, { sessionId: 's-2', userId: 'u', workspaceId: 'w', ownerRef: 'shape:c3' });
@@ -99,17 +99,8 @@ describe('findOrCreateConversation: chat identity (ownerRef)', () => {
   });
 });
 
-// Dev-agent is a session KIND, not a workspace: rows file under the workspace they run in,
-// and `kind` carries the type (the edge's token mint keys on it).
 describe('findOrCreateConversation: session kind', () => {
-  it('a dev-agent turn creates a dev-agent-kinded row in its real workspace', async () => {
-    const db = await freshDb();
-    const conv = await findOrCreateConversation(db, { sessionId: 's-da', userId: 'u', workspaceId: 'default', kind: 'dev-agent', ownerRef: 'chat_da' });
-    expect(conv.kind).toBe('dev-agent');
-    expect(conv.workspaceId).toBe('default');
-  });
-
-  it('kind defaults to chat', async () => {
+  it('a new row is a chat', async () => {
     const db = await freshDb();
     const conv = await findOrCreateConversation(db, { sessionId: 's-c', userId: 'u', workspaceId: 'w', ownerRef: 'chat_c' });
     expect(conv.kind).toBe('chat');

@@ -87,7 +87,6 @@ describe('platform RPC: conversation writes ring the workspace events hub', () =
   const ops: [string, unknown][] = [
     ['conversation.start', { op: 'conversation.start', input: identity }],
     ['conversation.settle', { op: 'conversation.settle', input: identity }],
-    ['conversation.prOpened', { op: 'conversation.prOpened', input: { ...identity, prUrl: 'https://github.com/o/r/pull/1' } }],
     ['turn.end (done)', { op: 'turn.end', input: { ...identity, outcome: 'done', summary: 'finished' } }],
     ['turn.end (needs_human)', { op: 'turn.end', input: { ...identity, outcome: 'needs_human', summary: 's', question: 'q?' } }],
   ];
@@ -187,50 +186,6 @@ describe('platform RPC: conversation.settle', () => {
     await rpc({ op: 'conversation.settle', input }, { db });
 
     expect((await conversations.list(db)).map((r) => r.id)).toEqual([started.conversationId]);
-  });
-});
-
-// CONTEXT.md "Open PR": a dev-agent run that calls `open_pr` reports the PR it opened back
-// here, and THAT is what makes the Inbox's Merge action appear. The container never writes
-// the row (ADR-0018) — it names the chat, exactly as every other operation does.
-describe('platform RPC: conversation.prOpened', () => {
-  test('stamps the PR the run opened onto the chat‘s row', async () => {
-    const db = await freshDb();
-    const input = { sessionId: 's-pr', userId: 'u', workspaceId: 'w', ownerRef: 'chat_PR', kind: 'dev-agent' as const };
-    await rpc({ op: 'conversation.start', input }, { db });
-
-    const res = await rpc(
-      { op: 'conversation.prOpened', input: { ...input, prUrl: 'https://github.com/Zabaca/cedarpad/pull/283' } },
-      { db },
-    );
-
-    expect(res.status).toBe(200);
-    const row = await conversations.getByOwnerRef(db, 'chat_PR');
-    expect(row?.prUrl).toBe('https://github.com/Zabaca/cedarpad/pull/283');
-    expect(row?.prMergedAt).toBeNull();
-  });
-
-  test('a second PR on the same chat replaces the first — the row names the LATEST open PR', async () => {
-    const db = await freshDb();
-    const input = { sessionId: 's-pr2', userId: 'u', workspaceId: 'w', ownerRef: 'chat_PR2', kind: 'dev-agent' as const };
-
-    await rpc({ op: 'conversation.prOpened', input: { ...input, prUrl: 'https://github.com/o/r/pull/1' } }, { db });
-    await rpc({ op: 'conversation.prOpened', input: { ...input, prUrl: 'https://github.com/o/r/pull/2' } }, { db });
-
-    expect((await conversations.list(db)).length).toBe(1);
-    expect((await conversations.getByOwnerRef(db, 'chat_PR2'))?.prUrl).toBe('https://github.com/o/r/pull/2');
-  });
-
-  test('a url that is not a GitHub pull request is refused at the boundary', async () => {
-    const db = await freshDb();
-    const res = await rpc(
-      {
-        op: 'conversation.prOpened',
-        input: { sessionId: 's-x', userId: 'u', workspaceId: 'w', ownerRef: 'chat_X', prUrl: 'not-a-url' },
-      },
-      { db },
-    );
-    expect(res.status).toBe(400);
   });
 });
 

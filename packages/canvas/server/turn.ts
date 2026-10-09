@@ -1,9 +1,9 @@
 // The turn: one chat turn's lifecycle, made a module (extracted from bridge.ts's inline
 // runChatTurn). A turn is the one thing in this system that sequences the others — it opens a
-// store on the active canvas's room, prepares the dev-agent worktree, drives the agent
-// (runChat), streams its events, and on settle stamps the resume pointer, persists, indexes the
-// Inbox Conversation, and backs up the transcript. Every collaborator it touches is already a
-// module (the room store, inbox transition, dev-agent prep, persist batch); this makes the
+// store on the active canvas's room, drives the agent (runChat), streams its events, and on
+// settle stamps the resume pointer, persists, indexes the Inbox Conversation, and backs up the
+// transcript. Every collaborator it touches is already a module (the room store, inbox
+// transition, persist batch); this makes the
 // SEQUENCE that calls them a module too, so the settle path is testable under fakes instead of
 // only through a live SDK turn.
 //
@@ -11,7 +11,7 @@
 // never the "what" (each collaborator). Imports are type-only but for one: opening the turn's
 // room-backed canvas store (#310) is part of the phase order, not a collaborator that varies.
 
-import type { CanvasImage, CaptureView, ChatEvent, ListMarts, OpenPr, SendToChat, runChat } from './agent.ts';
+import type { CanvasImage, CaptureView, ChatEvent, SendToChat, runChat } from './agent.ts';
 import type { FetchAsset } from '../src/canvas-ops.ts';
 import type { EndTurnDeps } from './inbox.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
@@ -30,14 +30,8 @@ export interface TurnInput {
    * linked send). Absent ⇒ the turn routes to `deps.defaultCanvasId` but claims NO chat→canvas
    * edge for the Conversation — an inbox reply must never link a chat to the default canvas. */
   canvasId?: string;
-  /** Edge-minted, per dev-agent send: arms open_pr + the worktree cwd for THIS turn only. */
-  devAgentGitToken?: string;
-  /** The repo this dev-agent turn operates on (ADR-0015: one run = one repo), from the
-   * edge's x-dev-agent-repo header. Without it a token cannot arm open_pr (no target). */
-  devAgentRepo?: string;
   /** ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, decoded from the
-   * proxied `x-mcp-tokens` header. Dropped below unless `flavor.kind === 'chat'` — dev-agent
-   * turns get no external MCP servers no matter what rode the request. */
+   * proxied `x-mcp-tokens` header. */
   mcpTokens?: Record<string, string>;
   /** The turn's HUMAN INITIATOR (shared inbox, CONTEXT.md), from the edge-stamped
    * x-inbox-assign header: assigns the Conversation at birth / claims-if-unassigned on a
@@ -52,8 +46,8 @@ export interface TurnInput {
    * and must never gate a capability (see CANVAS_VIEWER_HEADER). Deliberately separate from
    * `assignTo`, which happens to hold the same id today but answers a different question
    * (who OWNS the conversation) and is free to diverge — a change to assignment semantics
-   * must not silently redirect somebody's screen. Absent on a guest send, a cron kick, and
-   * every dev-agent run ⇒ `select_page` is not offered at all. */
+   * must not silently redirect somebody's screen. Absent on a guest send or a headless send
+   * ⇒ `select_page` is not offered at all. */
   viewer?: string;
 }
 
@@ -63,9 +57,8 @@ export interface TurnDeps {
   /** Live-turn registry, keyed by chatId — set at start, cleared at settle (drives /interrupt +
    *  the one-turn-per-chat 409 guard at the wire). */
   aborters: Map<string, AbortController>;
-  /** The edge-minted token is the COMPLETE definition of a dev-agent turn: it decides the
-   *  Inbox workspace tag + the skill policy (bridge.turnFlavor; skills absent = a chat turn's platform + workspace areas). */
-  flavor: (token: string | undefined) => { workspaceId: string; kind: 'chat' | 'dev-agent'; skills?: string[] };
+  /** The workspace the turn's Inbox Conversation is filed under (the bridge's own). */
+  workspaceId: string;
   /** The active canvas's screenshot round-trip (`view_canvas`) — the one rider left on the
    *  bridge's SSE stream after #297 (server/screenshot-channel.ts). */
   requestScreenshot: (canvasId: string) => CaptureView;
@@ -85,13 +78,6 @@ export interface TurnDeps {
    *  at which a missing skill file can be fetched. Best-effort: a store failure costs this
    *  turn its workspace skills, never the turn. */
   materializeSkills: () => Promise<void>;
-  /** Prepare the dev-agent worktree + open_pr for this turn (undefined for a product turn). */
-  prepareDevAgent: (
-    token: string | undefined,
-    repo: string | undefined,
-    chatId: string,
-    sessionId: string | null,
-  ) => Promise<{ openPr: OpenPr; cwd: string } | undefined>;
   /** The agent SDK turn (an async generator of ChatEvents). Injected so tests fake it. */
   runChat: typeof runChat;
   /** Tag each ChatEvent with its chatId and push it to every SSE subscriber. */
@@ -102,7 +88,7 @@ export interface TurnDeps {
    *  returned promise is AWAITED before the settle upsert, so the create-at-init and the
    *  settle-time find-or-create can never race into two rows for one chat (ownerRef has no
    *  unique index). Best-effort — never throws into the turn. */
-  indexSession: (chatId: string, sessionId: string, message: string, workspaceId: string, canvasId?: string, kind?: 'chat' | 'dev-agent', repo?: string, assignTo?: string) => Promise<void>;
+  indexSession: (chatId: string, sessionId: string, message: string, workspaceId: string, canvasId?: string, assignTo?: string) => Promise<void>;
   /** Persist the (possibly new/forked) resume pointer for this chat (ADR 0004). */
   stampSession: (chatId: string, sessionId: string) => void;
   /** ADR 0003 turn-completion persistence batch. */
@@ -115,8 +101,6 @@ export interface TurnDeps {
     message: string;
     workspaceId: string;
     canvasId?: string;
-    kind?: 'chat' | 'dev-agent';
-    repo?: string;
   }) => Promise<void>;
   /** Mirror this session's transcript to R2 (resume-restore substrate). Best-effort. */
   backupTranscript: (sessionId: string) => Promise<unknown>;
@@ -129,9 +113,6 @@ export interface TurnDeps {
    *  `send_message` tool posts into another chat card and kicks its turn. Optional — absent
    *  in contexts without a dispatcher (tests) ⇒ the tool is omitted. */
   sendToChat?: SendToChat;
-  /** Mart discovery seam (the bridge holds the workspace's BlobStore): the agent's
-   *  `list_marts` tool. Optional — absent in tests ⇒ the tool is omitted. */
-  listMarts?: ListMarts;
   /** Asset-fetch seam (the bridge holds the edge origin + service secret): how `read_image`
    *  gets at pixels that live behind the edge's asset route since #290. Bound per canvas —
    *  the container's credential opens ANY canvas's assets, so the turn's canvas is what
@@ -147,10 +128,10 @@ export interface TurnDeps {
  * first await) so a concurrent /send sees the in-flight turn.
  */
 export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<void> {
-  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, devAgentGitToken, devAgentRepo, mcpTokens, assignTo, mcpDisallowedTools, viewer } = input;
+  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, mcpTokens, assignTo, mcpDisallowedTools, viewer } = input;
   const ac = new AbortController();
   deps.aborters.set(chatId, ac);
-  const flavor = deps.flavor(devAgentGitToken);
+  const { workspaceId } = deps;
   let finalSessionId = sessionId;
   // Held so the settle upsert can await it — the create-at-init and the settle-time upsert both
   // go through find-or-create-by-chat, so awaiting here is what stops them racing into two rows.
@@ -169,15 +150,10 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
     // store), and reporting success over an unchanged canvas is the bug this closes.
     const store = await openTurnCanvasStore(() => deps.openCanvasRoom(activeCanvasId));
     // #356: the session this turn resumes is fetched HERE, one object, and only when there is a
-    // session to resume. Before prepareDevAgent, which ADOPTS (moves) the JSONL into the
-    // worktree's project dir and can only move a file that is already on disk. A throw lands in
-    // the catch below — resuming with no history would look like an ordinary reply.
+    // session to resume. A throw lands in the catch below — resuming with no history would look
+    // like an ordinary reply.
     if (sessionId) await deps.materializeTranscript?.(sessionId);
-    const inbox = { ...deps.inbox, workspaceId: flavor.workspaceId, kind: flavor.kind, ownerRef: chatId };
-    // A dev-agent send runs in its prepared worktree with open_pr armed; a prepare failure
-    // (clone/auth) surfaces through the catch below as the turn's error — better a visible
-    // failure than an agent silently editing the live app tree.
-    const devAgent = await deps.prepareDevAgent(devAgentGitToken, devAgentRepo, chatId, sessionId);
+    const inbox = { ...deps.inbox, workspaceId, ownerRef: chatId };
     for await (const ev of deps.runChat(
       store,
       message,
@@ -195,34 +171,16 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // shared module bumps the agent's OWN canvas (agent.ts's `reloadAfterAuthor` fallback).
       undefined,
       inbox,
-      devAgent?.openPr,
-      devAgent?.cwd,
-      flavor.skills,
-      // Chat flavor only (ADR-0013 train 2): a dev-agent turn is `flavor.kind === 'dev-agent'`
-      // (the edge-minted git token decides that), so it never sees mcpTokens even if a stray
-      // header somehow rode the request.
-      flavor.kind === 'chat' ? mcpTokens : undefined,
-      // Chat turns get no shell or filesystem tools (every change goes through an MCP tool);
-      // dev-agent turns keep the full preset for worktree edits.
-      flavor.kind,
-      // Cross-chat messaging is a CANVAS capability — chat turns only (a dev-agent turn has no
-      // chat cards to address).
-      flavor.kind === 'chat' ? deps.sendToChat : undefined,
-      // Per-chat MCP tool opt-outs — meaningful for chat turns only (dev-agent has no MCP).
-      flavor.kind === 'chat' ? mcpDisallowedTools : undefined,
-      // Mart discovery is a CANVAS capability — chat turns only (a dev-agent turn places no
-      // components, so it has nothing to point at a mart).
-      flavor.kind === 'chat' ? deps.listMarts : undefined,
-      // Reading a pasted screenshot is a CANVAS capability — chat turns only, and scoped to
-      // the SAME canvas the store was opened on just above.
-      flavor.kind === 'chat' ? deps.fetchAsset?.(activeCanvasId) : undefined,
-      // Moving a view is a CANVAS capability, and additionally needs to know WHOSE view. The
-      // viewer is bound HERE and nowhere lower, so the tool below cannot be pointed at anyone
-      // but this turn's initiator. No viewer (guest send, cron kick, dev-agent run) ⇒ no tool:
-      // the capability disappears rather than degrading into "move everybody".
-      flavor.kind === 'chat' && viewer
-        ? (pageId: string) => deps.selectPage(activeCanvasId)(pageId, viewer)
-        : undefined,
+      mcpTokens,
+      deps.sendToChat,
+      mcpDisallowedTools,
+      // Reading a pasted screenshot is scoped to the SAME canvas the store was opened on just above.
+      deps.fetchAsset?.(activeCanvasId),
+      // Moving a view needs to know WHOSE view. The viewer is bound HERE and nowhere lower, so
+      // the tool below cannot be pointed at anyone but this turn's initiator. No viewer (guest
+      // send, headless send) ⇒ no tool: the capability disappears rather than degrading into
+      // "move everybody".
+      viewer ? (pageId: string) => deps.selectPage(activeCanvasId)(pageId, viewer) : undefined,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
       // Row-at-start: index the session the moment its id lands (the init event). Tracked (not
@@ -230,7 +188,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       if (ev.kind === 'init') {
         finalSessionId = ev.sessionId;
         // The EXPLICIT canvas (never the routing default) is the chat→canvas edge claim.
-        indexed = deps.indexSession(chatId, ev.sessionId, message, flavor.workspaceId, canvasId, flavor.kind, devAgentRepo, assignTo);
+        indexed = deps.indexSession(chatId, ev.sessionId, message, workspaceId, canvasId, assignTo);
       }
       deps.broadcast(chatId, ev satisfies ChatEvent);
     }
@@ -246,7 +204,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // The race fix: let the row-at-start create settle before the settle-time upsert reads
       // it, so find-or-create-by-chat finds the one row instead of inserting a second.
       await indexed.catch(() => {});
-      await deps.settleConversation({ chatId, sessionId: finalSessionId, message, workspaceId: flavor.workspaceId, canvasId, kind: flavor.kind, repo: devAgentRepo });
+      await deps.settleConversation({ chatId, sessionId: finalSessionId, message, workspaceId, canvasId });
       await deps.backupTranscript(finalSessionId);
     }
   }

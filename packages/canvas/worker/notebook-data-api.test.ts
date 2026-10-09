@@ -6,7 +6,7 @@ import { migrate } from 'drizzle-orm/libsql/migrator';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
 import { makeDb, schema } from '../web-poc/lib/db/index.ts';
-import { DataSourceSchema } from '../shared/mart-contract.ts';
+import { DataSourceSchema } from '../shared/data-source.ts';
 import { handleNotebookApi } from './notebook-data-api.ts';
 
 // A canvas reads the Notebook live (ADR-0024 + ADR-0017's "a component names a source,
@@ -35,8 +35,8 @@ describe('the notebook data source contract', () => {
     expect(parsed).toEqual({ kind: 'notebook', query: 'problem_observations', params: { problemId: 'p1' } });
   });
 
-  test('the mart source still parses unchanged', () => {
-    expect(DataSourceSchema.parse({ kind: 'mart', name: 'mart_runway' })).toEqual({ kind: 'mart', name: 'mart_runway' });
+  test('a mart source is refused — the warehouse is retired', () => {
+    expect(DataSourceSchema.safeParse({ kind: 'mart', name: 'mart_runway' }).success).toBe(false);
   });
 
   test('an unknown query name is refused at the contract', () => {

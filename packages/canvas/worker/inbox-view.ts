@@ -10,21 +10,12 @@ export interface InboxItem {
   id: string;
   status: 'open' | 'closed';
   waitingOn: 'human' | 'agent' | 'none';
-  /** Session type: 'dev-agent' rows get a badge; they live in their real workspace now. */
-  kind: 'chat' | 'dev-agent';
   unread: boolean;
   summary: string | null;
   lastMessagePreview: string | null;
   workspaceId: string;
   /** The chat→canvas edge (canvas pairing): the canvas this chat's card lives on, or null. */
   canvasId: string | null;
-  /** The run→repo edge (ADR-0015) — which repo a merge would land on. */
-  repo: string | null;
-  /** The PR this dev-agent run opened (CONTEXT.md "Open PR"), or null. Its presence is what
-   *  the Inbox renders the Merge action from. */
-  prUrl: string | null;
-  /** When that PR was merged (epoch ms), or null while it is still open. */
-  prMergedAt: number | null;
   /** The ASSIGNEE (advisory claim — shared inbox); null = unassigned. */
   assignedTo: string | null;
   /** The owning bridge chatId (the row's identity key) — how the Shell matches a
@@ -42,15 +33,11 @@ const toItem = (r: ConversationRow): InboxItem => ({
   id: r.id,
   status: r.status,
   waitingOn: r.waitingOn,
-  kind: r.kind,
   unread: r.unread,
   summary: r.summary,
   lastMessagePreview: r.lastMessagePreview,
   workspaceId: r.workspaceId,
   canvasId: r.canvasId,
-  repo: r.repo,
-  prUrl: r.prUrl,
-  prMergedAt: r.prMergedAt instanceof Date ? r.prMergedAt.getTime() : (r.prMergedAt ?? null),
   assignedTo: r.assignedTo,
   ownerRef: r.ownerRef,
   visibility: r.visibility,

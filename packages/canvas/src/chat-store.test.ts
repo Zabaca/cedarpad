@@ -14,7 +14,7 @@ import { aliveUrl } from './idle.ts';
 const frame = (chatId: string, ev: ChatEvent): string => JSON.stringify({ chatId, ...ev });
 
 // ADR-0011: the `init` frame marks a turn's start. A tab that DIDN'T start the turn (a
-// headless dev-agent run, another tab's send) learns the chat is busy from it — so its own
+// headless send, another tab's send) learns the chat is busy from it — so its own
 // send() queues instead of firing a concurrent turn — and captures the session id early.
 describe('init frame (a turn started, possibly not by this tab)', () => {
   test('foreign init on a held chat → busy:true + sdk captured, so a send queues instead of firing', () => {

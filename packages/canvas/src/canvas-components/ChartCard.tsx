@@ -2,8 +2,8 @@
 //   { values, semantic_types, chartType, encodings, title? }
 // Flint (flint-chart) compiles that to Vega-Lite; vega renders it as SVG.
 //
-// Works off EITHER data path: inline `values`, or — when placed with
-// `dataSource: {kind:'mart', name}` — the live `rows` the host injects (#239/ADR-0017).
+// Works off EITHER data path: inline `values`, or — when placed with a live `dataSource` —
+// the `rows` the host injects.
 //
 // The agent writes INTENT (a chart type + which field goes on which channel) and Flint
 // derives scales, axes, legend, colors and layout from the data + semantic types. So this
@@ -40,12 +40,11 @@ export default function ChartCard({
   encodings?: Record<string, Encoding>;
   title?: string;
 }) {
-  // Two data paths, and the host picks which one arrives (ComponentShape, #239/ADR-0017):
-  // placed with `dataSource: {kind:'mart', name}` it injects a `rows` prop (plus the
-  // freshness badge) and the chart is LIVE; placed with static `data` there is no `rows`
-  // key at all and inline `values` is the source. So presence — not length — selects:
-  // a mart that is still loading, empty, or misnamed passes `rows: []`, and charting
-  // nothing is the honest render there, not silently falling back to a stale snapshot.
+  // Two data paths, and the host picks which one arrives (ComponentShape): placed with a
+  // live `dataSource` it injects a `rows` prop and the chart is LIVE; placed with static
+  // `data` there is no `rows` key at all and inline `values` is the source. So presence —
+  // not length — selects: a source that is still loading or empty passes `rows: []`, and
+  // charting nothing is the honest render there, not silently falling back to a snapshot.
   const source = rows ?? values;
   const hostRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);

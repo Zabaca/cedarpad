@@ -8,7 +8,6 @@ import { DOCK_MEMORY_KEY, DOCK_WIDTH_KEY, type DockMemory, type DockedChat, pars
 import { clampWidth, MAX_PANE_WIDTH, MIN_PANE_WIDTH } from './inbox/inbox-panes';
 import { canvasFromUrl, urlWithCanvas } from './canvas-url';
 import { InboxStage } from './inbox/Inbox';
-import { JobsStage } from './jobs/Jobs';
 import { SettingsStage } from './settings/Settings';
 import { ComponentsStage } from './components/Components';
 import { applyCanvasOrder, moved } from './canvas-order';
@@ -95,7 +94,6 @@ function IconSettings() {
   );
 }
 
-// A play-in-a-square glyph for Jobs (trigger a background-agent run).
 function IconComponents() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -104,16 +102,6 @@ function IconComponents() {
       <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5" />
       <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5" />
       <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5" />
-    </svg>
-  );
-}
-
-function IconJobs() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="3" width="18" height="18" rx="3" />
-      <path d="M10 8.5v7l5-3.5z" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -258,7 +246,6 @@ function MemberShell() {
       )}
       {stage === 'components' && <ComponentsStage workspaceId={registry.workspaceId} />}
       {stage === 'inbox' && <InboxStage workspaceId={registry.workspaceId} />}
-      {stage === 'jobs' && <JobsStage />}
       {stage === 'settings' && <SettingsStage workspaceId={registry.workspaceId} />}
     </div>
   );
@@ -370,7 +357,6 @@ function Rail({
       {railBtn('canvas', 'Canvases', <IconCanvases />)}
       {railBtn('components', 'Components', <IconComponents />)}
       {railBtn('notebook', 'Notebook', <IconNotebook />)}
-      {railBtn('jobs', 'Jobs', <IconJobs />)}
       <div className="lp-rail-bottom">
         {railBtn('settings', 'Settings', <IconSettings />)}
         <button

@@ -19,7 +19,7 @@ import type { ConversationRow } from './schema.js';
  */
 export async function findOrCreateConversation(
   db: Database,
-  input: { sessionId: string; userId: string; workspaceId: string; kind?: 'chat' | 'dev-agent'; summary?: string | null; ownerRef?: string; canvasId?: string; repo?: string; assignTo?: string },
+  input: { sessionId: string; userId: string; workspaceId: string; summary?: string | null; ownerRef?: string; canvasId?: string; assignTo?: string },
 ): Promise<ConversationRow> {
   // Assignment (CONTEXT.md, shared inbox): `assignTo` is the HUMAN INITIATOR of this turn
   // (edge-stamped x-inbox-assign; absent on unattended cron starts). Claim-if-unassigned:
@@ -35,7 +35,6 @@ export async function findOrCreateConversation(
     const byChat = await conversations.getByOwnerRef(db, input.ownerRef);
     if (byChat) {
       if (input.canvasId && !byChat.canvasId) await conversations.attachCanvas(db, byChat.id, input.canvasId);
-      if (input.repo && !byChat.repo) await conversations.attachRepo(db, byChat.id, input.repo);
       await claim(byChat);
       if (byChat.sessionId !== input.sessionId) {
         return (await conversations.rebindSession(db, byChat.id, input.sessionId)) ?? byChat;
@@ -47,7 +46,6 @@ export async function findOrCreateConversation(
   if (existing) {
     if (input.ownerRef && !existing.ownerRef) await conversations.setOwnerRef(db, existing.id, input.ownerRef);
     if (input.canvasId && !existing.canvasId) await conversations.attachCanvas(db, existing.id, input.canvasId);
-    if (input.repo && !existing.repo) await conversations.attachRepo(db, existing.id, input.repo);
     await claim(existing);
     return (await conversations.touch(db, existing.id)) ?? existing;
   }
@@ -55,10 +53,8 @@ export async function findOrCreateConversation(
     sessionId: input.sessionId,
     userId: input.userId,
     workspaceId: input.workspaceId,
-    kind: input.kind,
     ownerRef: input.ownerRef ?? null,
     canvasId: input.canvasId ?? null,
-    repo: input.repo ?? null,
     summary: input.summary ?? null,
     lastMessagePreview: input.summary ?? null,
     assignedTo: input.assignTo ?? null,

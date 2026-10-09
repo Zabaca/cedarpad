@@ -14,14 +14,6 @@ import {
 
 const sampleState = (): CanvasState => ({ version: 3, shapes: [] });
 
-const sampleSidecar = (name: string) => ({
-  name,
-  description: `The ${name} mart.`,
-  columns: [{ name: 'id', type: 'VARCHAR' as const, description: 'The id.' }],
-  generatedAt: '2026-07-27T09:01:05.107Z',
-  rowCount: 3,
-});
-
 describe('blob keys', () => {
   test('B1 canvasStateKey', () => {
     expect(canvasStateKey('ws1', 'c1')).toEqual('workspaces/ws1/canvases/c1/canvas-state.json');
@@ -79,41 +71,14 @@ describe('BlobStore', () => {
     expect(store.loadCanvasState('ws1', 'c1')).rejects.toThrow(/backend down/);
   });
 
-  test('B8 listMarts returns every mart sidecar in the workspace, parsed', async () => {
-    const store = new BlobStore(memBackend());
-    await store.saveMartSidecar('ws1', 'mart_a', sampleSidecar('mart_a'));
-    await store.saveMartSidecar('ws1', 'mart_b', sampleSidecar('mart_b'));
-    // A different workspace's mart must not leak into ws1's listing.
-    await store.saveMartSidecar('ws2', 'mart_other', sampleSidecar('mart_other'));
-    // The parquet sits next to the sidecar under the same prefix; listing keys off the
-    // sidecar, so this must not produce a phantom second entry.
-    await store.saveMart('ws1', 'mart_a', new Uint8Array([1, 2, 3]));
-
-    const marts = await store.listMarts('ws1');
-    expect(marts.map((m) => m.name).sort()).toEqual(['mart_a', 'mart_b']);
-    expect(marts[0]!.columns[0]!.description).toEqual('The id.');
-  });
-
-  test('B8b listMarts skips a malformed sidecar instead of failing the whole listing', async () => {
-    const store = new BlobStore(memBackend());
-    await store.saveMartSidecar('ws1', 'mart_good', sampleSidecar('mart_good'));
-    await store.saveMartSidecar('ws1', 'mart_bad', { name: 'mart_bad', nope: true });
-
-    expect((await store.listMarts('ws1')).map((m) => m.name)).toEqual(['mart_good']);
-  });
-
-  test('B8c listMarts is empty for a workspace with no warehouse', async () => {
-    expect(await new BlobStore(memBackend()).listMarts('ws-empty')).toEqual([]);
-  });
-
-  test('B8d fsBackend lists marts off real disk', async () => {
-    const root = join(tmpdir(), `Tmp_BlobStoreMarts_${process.pid}`);
+  test('B8 fsBackend lists the keys in a prefix dir off real disk, and nothing for an absent one', async () => {
+    const root = join(tmpdir(), `Tmp_BlobStoreList_${process.pid}`);
     try {
-      const store = new BlobStore(fsBackend(root));
-      await store.saveMartSidecar('ws1', 'mart_disk', sampleSidecar('mart_disk'));
-      await store.saveMart('ws1', 'mart_disk', new Uint8Array([1]));
-      expect((await store.listMarts('ws1')).map((m) => m.name)).toEqual(['mart_disk']);
-      expect(await store.listMarts('ws-absent')).toEqual([]);
+      const backend = fsBackend(root);
+      await backend.put('workspaces/ws1/a.json', new Uint8Array([1]));
+      await backend.put('workspaces/ws2/b.json', new Uint8Array([1]));
+      expect(await backend.list('workspaces/ws1/')).toEqual(['workspaces/ws1/a.json']);
+      expect(await backend.list('workspaces/ws-absent/')).toEqual([]);
     } finally {
       if (existsSync(root)) rmSync(root, { recursive: true, force: true });
     }

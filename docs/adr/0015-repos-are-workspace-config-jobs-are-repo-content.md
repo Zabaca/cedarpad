@@ -1,6 +1,6 @@
 # Repositories are workspace config; Jobs are repo content, armed by merge
 
-Status: accepted (design). Extends [ADR-0008](./0008-workspace-is-a-deployment.md) (tenancy),
+Status: **superseded (2026-10-09)** — repos, the GitHub App connection and Jobs were removed with the dev agent. Kept as history. Was: accepted (design). Extends [ADR-0008](./0008-workspace-is-a-deployment.md) (tenancy),
 [ADR-0010](./0010-dev-agent-is-a-role-not-a-container.md) (dev-agent token custody) and
 [ADR-0013](./0013-mcp-and-workspace-content-are-the-integration-seam.md) (the content/capability
 line). Vocabulary: canvas [CONTEXT.md](../../packages/canvas/CONTEXT.md) ("Repository connection",
