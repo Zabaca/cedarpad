@@ -394,7 +394,7 @@ describe('mcpTokens: dropped for a dev-agent turn regardless of what rode the re
     expect(seen).toBeUndefined();
   });
 
-  test('the flavor kind reaches runChat (chat drops Write/Edit there; dev-agent keeps them)', async () => {
+  test('the flavor kind reaches runChat (chat gets no shell or file tools there; dev-agent keeps them)', async () => {
     const seen: unknown[] = [];
     const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
       seen.push(args[17]);

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { MartSidecar } from '../shared/mart-contract.ts';
-import { buildExternalMcpServers, formatMartListing } from './agent.ts';
+import { buildExternalMcpServers, CHAT_TOOLS, formatMartListing, turnEnv } from './agent.ts';
 
 // ADR-0013 train 2 (#176): `buildExternalMcpServers` is the container-side half of the registry
 // contract — it turns "which registry servers did this request name a token for" into the
@@ -396,5 +396,18 @@ describe('viewTargetOp: what view_canvas asks the browser to render', () => {
     expect(viewTargetOp(withShapes([]), 'roadmap')).toEqual({ target: { pageId: 'page:two' } });
     expect(viewTargetOp(withShapes([]))).toEqual({ target: {} });
     expect((viewTargetOp(withShapes([]), 'Sprint 12') as { isError?: boolean }).isError).toBe(true);
+  });
+});
+
+describe('a chat turn changes things only through MCP tools', () => {
+  test('its built-in tools include nothing that reaches the shell or the filesystem', () => {
+    for (const t of ['Bash', 'Read', 'Write', 'Edit', 'NotebookEdit', 'Glob', 'Grep', 'Task']) {
+      expect(CHAT_TOOLS as readonly string[]).not.toContain(t);
+    }
+  });
+
+  test('the agent process is not handed the bridge’s storage or platform secrets', () => {
+    const env = turnEnv({ PATH: '/bin', R2_ACCESS_KEY_ID: 'a', R2_SECRET_ACCESS_KEY: 'b', BETTER_AUTH_SECRET: 'c', CLAUDE_CODE_OAUTH_TOKEN: 't' });
+    expect(env).toEqual({ PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 't' });
   });
 });

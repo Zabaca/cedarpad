@@ -28,7 +28,6 @@ PATTERNS=(
   'dev:web'             # vite, as dev.ts spawns it
   'wrangler dev'        # the edge Worker
   'workerd'             # wrangler's runtime, which can outlive its parent
-  'pty-server/server.mjs'
 )
 
 reaped=0
