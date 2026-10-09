@@ -32,14 +32,13 @@ const newWorkspaceId = () => `ws_${crypto.randomUUID()}`;
 /** Create a workspace owned by the given user. Returns the new record. */
 export async function createWorkspace(
   db: Database,
-  input: { name: string; ownerUserId: string; repo?: string },
+  input: { name: string; ownerUserId: string },
 ): Promise<WorkspaceRecord> {
   const [row] = await db
     .insert(workspaces)
     .values({
       id: newWorkspaceId(),
       name: input.name,
-      repo: input.repo ?? null,
       ownerUserId: input.ownerUserId,
     })
     .returning();

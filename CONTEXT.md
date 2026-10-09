@@ -65,12 +65,10 @@ as a *sub*-thing inside a bigger tenant — the Workspace **is** the tenant/depl
 
 **Platform data layer**: the Workspace's relational store — its schema, query modules, and
 migrations. It holds the **platform's** rows (`workspaces`, `canvases`,
-`workspace_members`, `share_links`; the retired Inbox's `conversations` and
-`push_subscriptions` remain until the data cleanup) **and every Better Auth table** (the org plugin's `workspace`/`member`/
-`invitation`, plus `user`/`session`/`account`/`apikey`). Each **App** is a *consumer* of it; none
+`workspace_members`, `share_links`) **and every Better Auth table** (the org plugin's `workspace`/`member`/
+`invitation`, plus `user`/`session`/`account`). Each **App** is a *consumer* of it; none
 owns it. It lives under `packages/canvas/web-poc/lib/db/` for historical reasons — that path is a
-legacy directory name, **not** a statement of ownership. The retired Notebook's tables
-(`observations`, `problems`, `solutions`, …) remain until the data cleanup.
+legacy directory name, **not** a statement of ownership.
 _Avoid_: calling this "the web-poc database" or "the Notebook's DB" — the name misleads.
 **Only the edge reaches it.** Since [ADR-0018](./docs/adr/0018-platform-data-layer-on-d1.md) the
 workspace **container holds no database client at all**: the reads and writes it needs go to the
@@ -111,8 +109,9 @@ cookie the Shell sets; agents pass `x-workspace-id`), **not** the Better Auth or
 Absent a selection, requests fall back to the legacy `default` workspace.
 
 **Repos and GitHub auth** — _retired 2026-10-09_. A workspace no longer connects GitHub or
-checks repos out: the canvas never changes code, so nothing in it needs a repository. The
-`workspace_repos` table and the GitHub App secrets remain until the data cleanup.
+checks repos out: the canvas never changes code, so nothing in it needs a repository. Its
+tables and columns were dropped in migration 0037; the GitHub App secrets stay in
+`secrets.yaml`, unused.
 
 ## Canvas as a shared surface (not owned by the Canvas app)
 
@@ -149,13 +148,13 @@ Notebook item; the Notebook is retired, so every canvas is standalone.)
 
 **Notebook** — _retired 2026-10-09_ (ADR-0024 superseded). There is no Notebook stage, no
 `/v1` API, no `notebook_*` MCP tools and no live data source on components; a component
-that still names one renders its static data. Its tables remain until the data cleanup.
+that still names one renders its static data. Its tables were dropped in migrations 0037–0038.
 
 **Inbox** — _retired 2026-10-09_ (ADRs 0009, 0012 and 0023 superseded). There are no
 Conversations, no `end_turn`, no assignment, no web push and no events hub: a chat is a
 `chat` card on its canvas, and a **Session** is that card's Claude Agent SDK conversation
-(`sessionId` + transcript). The `conversations` and `push_subscriptions` tables remain until
-the data cleanup.
+(`sessionId` + transcript). The `conversations` and `push_subscriptions` tables were dropped in
+migration 0037.
 
 - **Docked chat** (canvas stage): a chat card can be **docked** into a chat pane beside
   the pad — a *mirror*, never a move: the card stays on the canvas and both are live

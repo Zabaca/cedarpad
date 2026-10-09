@@ -52,12 +52,11 @@ per-browser `localStorage`. _Avoid_: putting any of this on the `chat` shape.
 
 **Conversation / Inbox / Workspace events hub** — _retired 2026-10-09_: there is no
 edge-side index of chat sessions, no assignment, no inbox badge and no events hub. A chat is
-its card on a canvas. The `conversations` table (and `workspaces.inbox_read_at`) remain until
-the data cleanup, and the `WorkspaceEvents` Durable Object class stays bound in
+its card on a canvas. The `conversations` table and `workspaces.inbox_read_at` were dropped
+in migration 0037; the `WorkspaceEvents` Durable Object class stays bound in
 `wrangler.jsonc` until the Cloudflare container migration deletes it.
 
-**Open PR** — _retired 2026-10-09_ with the dev agent: nothing opens or merges PRs. The
-`pr_url`/`pr_merged_at` columns remain until the data cleanup.
+**Open PR** — _retired 2026-10-09_ with the dev agent: nothing opens or merges PRs.
 
 **Visibility (canvas)** _(ADR-0016, decided + implemented 2026-07-17; its standalone-chat
 half went with the Inbox)_:

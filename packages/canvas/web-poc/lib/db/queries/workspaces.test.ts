@@ -42,9 +42,8 @@ beforeAll(async () => {
 
 describe("workspace registry — create → list → get round-trip", () => {
   it("creates a workspace and reads it back via list and get", async () => {
-    const created = await createWorkspace(db, { name: "cedarpad", ownerUserId: "user_a", repo: "Zabaca/cedarpad" });
+    const created = await createWorkspace(db, { name: "cedarpad", ownerUserId: "user_a" });
     expect(created.name).toBe("cedarpad");
-    expect(created.repo).toBe("Zabaca/cedarpad");
     expect(created.ownerUserId).toBe("user_a");
     expect(created.id).toBeTruthy();
 
@@ -54,11 +53,6 @@ describe("workspace registry — create → list → get round-trip", () => {
     const fetched = await getWorkspace(db, created.id, "user_a");
     expect(fetched?.id).toBe(created.id);
     expect(fetched?.name).toBe("cedarpad");
-  });
-
-  it("allows a null repo", async () => {
-    const created = await createWorkspace(db, { name: "sideproject", ownerUserId: "user_a" });
-    expect(created.repo).toBeNull();
   });
 });
 
