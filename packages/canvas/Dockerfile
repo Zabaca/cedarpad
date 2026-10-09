@@ -53,8 +53,7 @@ RUN git config --system user.name "cedarpad-dev-agent" \
 # needs. web-poc now lives in-tree at packages/canvas/web-poc (imported by relative
 # path, mounted into the canvas app + served in the same bridge process), so it is
 # copied with packages/canvas — no separate copy. `bun install` also links
-# @cedarpad/infra (a root dependency). packages/app (the separate desktop app) is
-# excluded via the repo-root .dockerignore. The dev stack is vite (not a static
+# @cedarpad/infra (a root dependency). The dev stack is vite (not a static
 # build), so node_modules is installed here, not baked.
 WORKDIR /app/agent-canvas
 # Root tsconfig.json is required at runtime too: web-poc/tsconfig.json extends it
@@ -64,8 +63,7 @@ WORKDIR /app/agent-canvas
 # LAYER CACHING (deploy speed): copy ONLY the manifests bun install reads, install, THEN copy the
 # source. `bun install` reads package.json/bun.lock — never the .ts source — so the (slow) install
 # layer is cached across code-only deploys and only re-runs when a manifest or the lockfile changes.
-# Copy just the canvas + infra member manifests (NOT packages/app — kept out to keep the image lean,
-# which is why frozen falls back to a plain install). web-poc isn't a workspace member; its deps
+# Copy just the canvas + infra member manifests. web-poc isn't a workspace member; its deps
 # live in packages/canvas/package.json, so that one manifest is enough for the install graph.
 COPY package.json bun.lock tsconfig.json ./
 COPY packages/canvas/package.json packages/canvas/

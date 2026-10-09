@@ -1,15 +1,12 @@
 # Build context for the canvas container is the repo root (packages/canvas
 # wrangler.jsonc `image_build_context: "../.."`). Keep the image lean and never bake
-# node_modules (installed in-image), secrets, or the separate desktop app.
+# node_modules (installed in-image) or secrets.
 **/node_modules
 .git
 **/dist
 **/.wrangler
 **/.persist
 graphify-out
-
-# The desktop app is not part of the deployed instance (and is heavy).
-packages/app
 
 # Never bake env/secrets or the local dev DB into the image; the Worker injects env
 # at process spawn.

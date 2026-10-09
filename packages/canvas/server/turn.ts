@@ -202,8 +202,8 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // (the edge-minted git token decides that), so it never sees mcpTokens even if a stray
       // header somehow rode the request.
       flavor.kind === 'chat' ? mcpTokens : undefined,
-      // Chat turns drop the generic Write/Edit tools (component/data authoring goes through
-      // the registered canvas tools); dev-agent turns keep the full preset for worktree edits.
+      // Chat turns get no shell or filesystem tools (every change goes through an MCP tool);
+      // dev-agent turns keep the full preset for worktree edits.
       flavor.kind,
       // Cross-chat messaging is a CANVAS capability — chat turns only (a dev-agent turn has no
       // chat cards to address).

@@ -12,8 +12,7 @@
 #   CANVAS_EDGE_PORT   — edge Worker (wrangler dev) listen port (= PORT + 3; ADR-0018
 #                        #263 — scripts/dev.ts derives the vite /v1 + /api/auth proxy
 #                        target from it).
-#   CANVAS_PTY_PORT    — Console pty-server listen port (= PORT + 4; ADR-0021.
-#                        pty-server/server.mjs reads it; scripts/dev.ts passes it).
+#   (PORT + 4 is unused too — it was the removed Console pty-server's slot.)
 #
 # STRIDE: the block below allocates on a stride of 8 because a worktree spans FIVE
 # consecutive slots (PORT..PORT+4). It was previously a stride of 2 while already

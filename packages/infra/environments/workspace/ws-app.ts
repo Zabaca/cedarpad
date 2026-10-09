@@ -102,19 +102,8 @@ python3 -c "import json; print(json.load(open('\$ROOT/package.json'))['version']
 echo "[app] stamped \$(cat "\$STAMP_DIR/build-rev.txt") / v\$(cat "\$STAMP_DIR/version.txt")"
 
 # --- dependencies ----------------------------------------------------------
-# --frozen-lockfile with a plain fallback, matching packages/canvas/Dockerfile:
-# the image excludes packages/app from the workspace, so a frozen install can
-# legitimately fail on a lockfile that mentions it.
+# --frozen-lockfile with a plain fallback, matching packages/canvas/Dockerfile.
 runuser -l "\$PROVISION_USER" -c "cd \$ROOT && bun install --frozen-lockfile || bun install"
-
-# --- pty-server ------------------------------------------------------------
-# npm, NOT bun, and not optional-by-accident: bun install cannot build node-pty,
-# so pty-server is its own npm-installed island (see its README). scripts/dev.ts
-# degrades to no Console when this is missing rather than crash-looping, so a
-# failure here is a warning, not a failed apply.
-if ! runuser -l "\$PROVISION_USER" -c "cd \$ROOT/packages/canvas/pty-server && npm install --no-audit --no-fund"; then
-  echo "[app] WARNING: pty-server npm install failed — the Console will be absent"
-fi
 `,
   },
   imports: [cedarpadWs],
