@@ -12,7 +12,7 @@ import * as schema from '../web-poc/lib/db/schema.ts';
 // header matching WEB_ORIGIN (Better Auth's CSRF check requires it — the Shell's own fetch
 // is same-origin so the browser sends this automatically), then confirm `authenticate()`
 // (the edge gate's session lookup) returns null afterward. In-memory DB built from the
-// real migrations (mirrors inbox.test.ts / shell.test.ts).
+// real migrations (mirrors shell.test.ts).
 const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
 function migrationStatements(): string[] {
   return readdirSync(MIGRATIONS_DIR)

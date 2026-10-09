@@ -79,14 +79,6 @@ body,
   font-size: 13px;
 }
 
-/* Inbox stage base layout — overridden below by #108's real Inbox rule. */
-.stage-inbox {
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  font-size: 13px;
-}
-
 /* Notebook stage (#107): WebPocApp mounts here full-size, scrollable. */
 .stage-notebook {
   overflow: auto;
@@ -384,310 +376,9 @@ body,
 .page-visibility.locked {
   opacity: 1;
 }
-.inbox-private {
-  font-size: 11px;
-  line-height: 1;
-}
-
-/* ---- Inbox stage (#108) ------------------------------------------------- */
-/* Two panes under the rail's one chrome — a Conversation list and the open thread. Ported
-   from the retired edge INBOX_HTML, restyled onto the shell's warm-graphite tokens. This
-   `.stage-inbox` follows the shared placeholder rule above, so it overrides its grid. */
-.stage-inbox {
-  display: flex;
-  place-items: stretch;
-  color: var(--text);
-  font-size: 14px;
-}
-.inbox-list {
-  width: 340px;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--line);
-}
-.inbox-filters {
-  display: flex;
-  gap: 8px;
-  padding: 12px;
-  border-bottom: 1px solid var(--line);
-  flex: none;
-}
-.inbox-filters select {
-  flex: 1;
-  min-width: 0;
-  background: var(--void);
-  border: 1px solid var(--line);
-  color: var(--text);
-  padding: 6px 8px;
-  border-radius: 7px;
-  font: inherit;
-  font-size: 13px;
-}
-/* The new-chat entry point: a full-width PRIMARY action above the filter row, not a chip wedged
-   inside it. Starting a chat is the one thing the Inbox should never make you hunt for. */
-.inbox-newrow {
-  flex: none;
-  padding: 12px 12px 0;
-}
-.inbox-new-chat {
-  width: 100%;
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  color: var(--on-accent);
-  padding: 7px 10px;
-  border-radius: 7px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.inbox-new-chat:hover {
-  background: var(--accent-hi);
-  border-color: var(--accent-hi);
-}
-/* Row zero: the draft. Dashed edge + muted title so it reads as not-yet-saved next to real rows. */
-.inbox-item.draft {
-  border-bottom-style: dashed;
-}
-.inbox-item.draft b {
-  color: var(--muted);
-  font-style: italic;
-}
-.inbox-items {
-  overflow-y: auto;
-  flex: 1;
-  min-height: 0;
-}
-.inbox-item {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
-  cursor: pointer;
-}
-.inbox-item:hover {
-  background: var(--raised);
-}
-.inbox-item.sel {
-  background: var(--overlay);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-.inbox-item-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.inbox-item-top b {
-  font-size: 14px;
-  font-weight: 600;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.inbox-item small {
-  color: var(--muted);
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-top: 2px;
-}
-.inbox-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex: none;
-}
-.inbox-assignee {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  font-size: 10px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: oklch(0.3 0.05 250);
-  color: var(--fg, #ddd);
-  border: 1px solid var(--line);
-  flex: none;
-  margin-left: auto;
-}
-.inbox-badge {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 2px 6px;
-  border-radius: 5px;
-  background: oklch(0.3 0.05 60);
-  color: var(--accent);
-  flex: none;
-}
-.inbox-badge.closed {
-  background: var(--overlay);
-  color: var(--muted);
-}
-.inbox-thread {
-  flex: 1.3;
-  min-width: 380px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-/* Drag-to-resize handles between the three panes: a thin bar that widens the LEFT neighbor. */
-.inbox-divider {
-  flex: none;
-  width: 5px;
-  cursor: col-resize;
-  background: var(--line);
-}
-.inbox-divider:hover {
-  background: var(--accent);
-}
-/* The canvas-pane show/hide toggle, in the thread head next to Close/Reopen. */
-.inbox-canvas-toggle {
-  background: transparent;
-  border: 1px solid var(--line);
-  color: var(--text);
-  padding: 5px 10px;
-  border-radius: 7px;
-  cursor: pointer;
-  font: inherit;
-}
-.inbox-canvas-toggle:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-/* Third pane: the conversation's linked canvas, live (#161). Shares the thread's remaining
-   space with a larger weight — whatever is in here is the thing being worked on. */
-.inbox-canvas {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border-left: 1px solid var(--line);
-}
-.inbox-canvas-frame {
-  flex: 1;
-  width: 100%;
-  border: 0;
-}
-.inbox-canvas-empty {
-  margin: auto;
-  text-align: center;
-  padding: 40px;
-}
-.inbox-canvas-empty b {
-  display: block;
-  font-size: 14px;
-}
-.inbox-canvas-empty small {
-  display: block;
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 12px;
-}
-/* The attach panel (the empty state's contents): pick-or-create, matching the filter controls. */
-.inbox-attach-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 14px;
-}
-.inbox-attach-row select {
-  flex: 1;
-  min-width: 0;
-  background: var(--void);
-  border: 1px solid var(--line);
-  color: var(--text);
-  padding: 6px 8px;
-  border-radius: 7px;
-  font: inherit;
-  font-size: 13px;
-}
-.inbox-attach-row button,
-.inbox-attach-create {
-  background: var(--void);
-  border: 1px solid var(--line);
-  color: var(--text);
-  padding: 6px 12px;
-  border-radius: 7px;
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-.inbox-attach-row button:disabled,
-.inbox-attach-create:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.inbox-attach-create {
-  display: block;
-  margin: 10px auto 0;
-}
-.inbox-attach-error {
-  display: block;
-  margin-top: 8px;
-  color: #e5484d;
-  font-size: 12px;
-}
-.inbox-threadhead {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 22px;
-  border-bottom: 1px solid var(--line);
-  flex: none;
-}
-.inbox-threadhead b {
-  flex: 1;
-  min-width: 0;
-  font-size: 15px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.inbox-threadhead button {
-  background: transparent;
-  border: 1px solid var(--line);
-  color: var(--text);
-  padding: 5px 12px;
-  border-radius: 7px;
-  cursor: pointer;
-  font: inherit;
-}
-.inbox-threadhead button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-/* The live <ChatView> fills the thread below the head. The card's own chrome (border ring,
-   radius) is redundant against the flush pane, so drop it and let the card fill edge-to-edge. */
-.inbox-chatview {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-.inbox-chatview .chat-card {
-  border-radius: 0;
-  box-shadow: none;
-}
-.inbox-chatview .chat-card-head {
-  cursor: default; /* no drag handle outside the canvas */
-}
-.inbox-empty {
-  color: var(--muted);
-  margin: auto;
-  text-align: center;
-  padding: 40px;
-  font-size: 13px;
-}
 
 /* The docked chat panel (canvas stage): [picker | chat | pad]. Exists only while a chat
-   is docked; the same shared <ChatView> chrome as the Inbox thread, de-carded the same way. */
+   is docked; the shared <ChatView> chrome, de-carded. */
 .canvas-dock {
   display: flex;
   flex-direction: column;
@@ -935,8 +626,8 @@ body,
   padding: 3px 8px;
 }
 
-/* Panel collapse (« / »): the canvas picker and inbox list fold to a slim strip so the
-   canvas / thread gets the full width. State is sticky per device (localStorage). */
+/* Panel collapse (« / »): the canvas picker folds to a slim strip so the canvas gets the
+   full width. State is sticky per device (localStorage). */
 .panel-collapse {
   background: transparent;
   color: var(--muted);
@@ -952,8 +643,7 @@ body,
   border-color: var(--accent);
   color: var(--accent);
 }
-.canvas-picker.collapsed,
-.inbox-list.collapsed {
+.canvas-picker.collapsed {
   width: 28px;
   flex: none;
   display: flex;
@@ -963,30 +653,12 @@ body,
   background: var(--surface);
   border-right: 1px solid var(--line);
 }
-.canvas-picker.collapsed .panel-collapse,
-.inbox-list.collapsed .panel-collapse {
+.canvas-picker.collapsed .panel-collapse {
   border: none;
   padding: 4px;
 }
 .left-panel-head .panel-collapse {
   margin-left: 4px;
-}
-
-/* Inbox nav badge: unseen count pushed over /api/inbox/events (shared read mark). */
-.lp-rail-badge {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 7px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 14px;
-  text-align: center;
 }
 
 /* Components stage: the workspace-wide Component inventory and its cleanup. */

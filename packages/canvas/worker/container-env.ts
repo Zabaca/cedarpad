@@ -39,10 +39,8 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
   // the same slice removed. The Notebook and Better Auth are edge routes.) What remains below is
   // the platform RPC's bearer root, which is a credential for talking to US, not to a database.
   BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET ?? '',
-  // The bridge's INBOX_USER (server/bridge.ts: `process.env.CANVAS_USER ?? 'default'`) —
-  // without this, `ask_human` files every Conversation under the literal string
-  // 'default', which never matches the Inbox UI's query by the real Better Auth user.id,
-  // so promoted items silently never appear. See the Env.CANVAS_USER doc comment.
+  // Who Records and skills written by the container are attributed to (server/components.ts
+  // `recordAuthor`). Without it every write is unattributed. See the Env.CANVAS_USER doc comment.
   CANVAS_USER: env.CANVAS_USER ?? '',
   // Single source of truth for the runtime cwd (#133): the bridge runs + resumes product
   // sessions with `cwd: CANVAS_CWD`, matching START's cd — one derivation, no drift that

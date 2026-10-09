@@ -1,8 +1,6 @@
-// The card's two cross-surface affordances, both gated on a prop the hosting surface passes:
-//   dock  — `onDock`: the embedded pad passes it; the Inbox thread and the Shell panel don't.
-//   focus — `onFocus`: the Inbox thread passes it (linked canvas + pane showing); the pad's
-//           own card never does, since focusing the card you are reading is a no-op.
-// The postMessage crossings themselves are one line each (ChatShape / Inbox).
+// The card's cross-surface affordance, gated on a prop the hosting surface passes:
+//   dock — `onDock`: the embedded pad passes it; the Shell panel doesn't.
+// The postMessage crossing itself is one line (ChatShape).
 import './happydom-harness.ts';
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -61,29 +59,9 @@ describe('the chat card dock button', () => {
     expect(docked).toBe(1);
   });
 
-  test('absent when no onDock is passed (Inbox thread, the Shell panel itself)', async () => {
+  test('absent when no onDock is passed (the Shell panel itself)', async () => {
     await mount(<ChatView chatId="shape:nodock" title="Fix login" />);
 
     expect(container.querySelector('.chat-dock')).toBeNull();
-  });
-});
-
-describe('the chat card focus button', () => {
-  test('renders a labelled button when onFocus is passed, and clicking it fires the gesture', async () => {
-    let focused = 0;
-    await mount(<ChatView chatId="chat_focusbtn" title="Refactor the auth flow" onFocus={() => (focused += 1)} />);
-
-    const btn = container.querySelector<HTMLButtonElement>('.chat-focus');
-    expect(btn).not.toBeNull();
-    // Concept 2: the affordance names itself rather than relying on a bare glyph's tooltip.
-    expect(btn!.textContent).toContain('On canvas');
-    await act(async () => btn!.click());
-    expect(focused).toBe(1);
-  });
-
-  test('absent when no onFocus is passed (the pad card, a conversation with no linked canvas)', async () => {
-    await mount(<ChatView chatId="chat_nofocus" title="Refactor the auth flow" />);
-
-    expect(container.querySelector('.chat-focus')).toBeNull();
   });
 });

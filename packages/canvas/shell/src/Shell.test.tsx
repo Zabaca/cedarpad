@@ -67,7 +67,6 @@ function stubEdge() {
     }
     if (url === '/api/workspaces') return Response.json(WORKSPACES);
     if (url === '/api/canvases') return Response.json(CANVASES);
-    if (url.startsWith('/api/inbox?')) return Response.json({ items: [] });
     // Better Auth's session check, so the lazily-mounted Notebook (slice #107) renders its
     // authenticated view instead of <AuthScreen/> — the Shell itself already sits behind
     // the edge auth gate, so under the Shell this always resolves.
@@ -145,15 +144,11 @@ describe('the rail switches stages and reflects the choice in the URL', () => {
     expect(window.location.search).toBe('');
   });
 
-  test('Notebook and Inbox are inline stages, not navigations', async () => {
+  test('Notebook is an inline stage, not a navigation', async () => {
     await click(byTitle('Notebook'));
     expect(container.querySelector('.stage-notebook')).not.toBeNull();
     expect(container.querySelector('.stage-canvas')).toBeNull();
     expect(window.location.search).toBe('?stage=notebook');
-
-    await click(byTitle('Inbox'));
-    expect(container.querySelector('.stage-inbox')).not.toBeNull();
-    expect(window.location.search).toBe('?stage=inbox');
 
     await click(byTitle('Canvases'));
     expect(container.querySelector('.stage-canvas')).not.toBeNull();
@@ -190,7 +185,7 @@ describe('the canvas stage', () => {
   });
 });
 
-// The selected canvas is URL-persisted (mirrors stage.ts / inbox-url.ts): a reload lands
+// The selected canvas is URL-persisted (mirrors stage.ts): a reload lands
 // back on the same open canvas, though the camera/zoom inside the pad already did.
 describe('the selected canvas persists in the URL', () => {
   test('picking a canvas sets ?canvas=<id> (replaceState, no history entry)', async () => {
@@ -356,40 +351,20 @@ describe('the notebook stage mounts WebPocApp with no second chrome', () => {
 });
 
 // The rail used to build a fresh urlForStage(next) on every click, dropping whatever
-// query params the outgoing stage had accumulated (canvas's ?canvas=<id>, inbox's filters).
+// query params the outgoing stage had accumulated (canvas's ?canvas=<id>).
 // A reload restored them fine (they're read from the URL on mount); rail navigation didn't.
 // Stage memory (stage-memory.ts) closes that gap.
 describe('the rail remembers each stage’s URL state across navigation', () => {
-  test('picking a canvas, leaving to Inbox, and returning to Canvases restores ?canvas=', async () => {
+  test('picking a canvas, leaving to Settings, and returning to Canvases restores ?canvas=', async () => {
     await click([...container.querySelectorAll('.page-row')][1] ?? null);
     expect(window.location.search).toBe('?canvas=cv_1');
 
-    await click(byTitle('Inbox'));
-    expect(window.location.search).toBe('?stage=inbox');
+    await click(byTitle('Settings'));
+    expect(window.location.search).toBe('?stage=settings');
 
     await click(byTitle('Canvases'));
     expect(window.location.search).toBe('?canvas=cv_1');
     expect(container.querySelector('iframe')?.getAttribute('src')).toBe('/w/ws_abc/canvas/cv_1/pad');
-  });
-
-  test('changing the inbox view filter, leaving, and returning restores it', async () => {
-    await click(byTitle('Inbox'));
-    await waitFor(() => calls.includes('GET /api/inbox?view=open')); // 'open' is the default view
-
-    const viewSelect = container.querySelector<HTMLSelectElement>('[aria-label="View filter"]');
-    expect(viewSelect).not.toBeNull();
-    await act(async () => {
-      viewSelect!.value = 'closed'; // a NON-default view, so it lands in the URL
-      viewSelect!.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    expect(window.location.search).toBe('?stage=inbox&view=closed');
-
-    await click(byTitle('Notebook'));
-    expect(window.location.search).toBe('?stage=notebook');
-
-    await click(byTitle('Inbox'));
-    expect(window.location.search).toBe('?stage=inbox&view=closed');
-    expect(container.querySelector<HTMLSelectElement>('[aria-label="View filter"]')?.value).toBe('closed');
   });
 
   test('a stage’s first visit still gets the bare urlForStage default', async () => {
@@ -404,7 +379,7 @@ describe('the rail remembers each stage’s URL state across navigation', () => 
 // the iframe boundary; everything else converges at the bridge.
 describe('the docked chat panel on the canvas stage', () => {
   // <ChatView> opens the shared SSE stream on mount; happy-dom has no EventSource, so stub
-  // a no-op that reports "open" (same shape as Inbox.test.tsx's stub).
+  // a no-op that reports "open".
   class StubEventSource {
     onopen: (() => void) | null = null;
     onmessage: ((e: { data: string }) => void) | null = null;

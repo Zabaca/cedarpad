@@ -23,9 +23,9 @@ export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'deleted';
  */
 export type ChatEvent =
   // A turn started and the SDK assigned/confirmed its session id (the system/init message).
-  // Emitted once per LIVE turn (suppressed in replay): the bridge indexes the session in the
-  // Inbox the moment it starts (ADR-0011 row-at-start), and other tabs learn a turn began
-  // for a chat they didn't send on (the foreign-busy signal).
+  // Emitted once per LIVE turn (suppressed in replay): the bridge seeds the chat's resume
+  // pointer the moment it starts, and other tabs learn a turn began for a chat they didn't
+  // send on (the foreign-busy signal).
   | { kind: 'init'; sessionId: string }
   // incremental assistant text (token-by-token). `role:'user'` is set ONLY by the JSONL
   // replay projection (ADR 0004) to render the human's own messages on rehydration; the
@@ -68,9 +68,3 @@ export function isChatFrame(x: unknown): x is ChatFrame {
   const o = x as Record<string, unknown>;
   return typeof o.chatId === 'string' && typeof o.kind === 'string';
 }
-
-/** The request header carrying a chat send's HUMAN INITIATOR from the edge to the bridge
- *  (shared inbox, CONTEXT.md): stamped by the edge proxies on human-originated sends (never
- *  on cron kicks), read by the bridge to assign the Conversation at birth / claim-if-
- *  unassigned on a reply. Per-request custody, never persisted container-side. */
-export const INBOX_ASSIGN_HEADER = 'x-inbox-assign';

@@ -27,8 +27,7 @@ export function projectTranscript(msgs: SDKMessage[]): ChatEvent[] {
 }
 
 /** Parse + project a raw session JSONL blob (the on-disk / R2 record) into replay events.
- *  Torn/malformed lines are skipped, subagent (isSidechain) lines dropped. Shared by the
- *  on-disk loader and the R2 read path (transcript-store.ts) so both project identically. */
+ *  Torn/malformed lines are skipped, subagent (isSidechain) lines dropped. */
 export function projectJsonl(text: string): ChatEvent[] {
   const msgs: SDKMessage[] = [];
   for (const line of text.split('\n')) {

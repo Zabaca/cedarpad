@@ -24,7 +24,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [
-    // #276: one signed-in user owns the workspace the bridge files Conversations into, and
+    // #276: one signed-in user owns the workspace the bridge serves, and
     // seeding that membership writes the live D1 — which the edge Worker holds open. So it
     // happens exactly once, before anything else runs, rather than per test.
     { name: 'setup', testMatch: /.*\.setup\.ts/ },

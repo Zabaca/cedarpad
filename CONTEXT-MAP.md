@@ -5,7 +5,7 @@
 > roadmap decisions start there.
 
 > **Workspace platform frame (target model, being designed):** [CONTEXT.md](./CONTEXT.md)
-> — the Workspace runtime, edge Shell, and App layer (Canvas / Notebook / Inbox) that
+> — the Workspace runtime, edge Shell, and App layer (Canvas / Notebook) that
 > sit *above* the per-package contexts below.
 
 ## Contexts

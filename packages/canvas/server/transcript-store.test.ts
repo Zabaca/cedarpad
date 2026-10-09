@@ -7,8 +7,6 @@ import { memBackend } from './blob-store.ts';
 import {
   backup,
   projectDirForCwd,
-  read,
-  readRaw,
   restore,
   TranscriptStore,
   transcriptKey,
@@ -16,6 +14,12 @@ import {
 
 // A minimal on-disk-shaped JSONL: {type, message, ...} lines, one per record.
 const jsonl = (...lines: unknown[]): string => lines.map((l) => JSON.stringify(l)).join('\n') + '\n';
+/** What R2 holds for a session, decoded — null when absent. */
+const stored = async (blob: ReturnType<typeof memBackend>, sessionId: string): Promise<string | null> => {
+  const bytes = await blob.get(transcriptKey(sessionId));
+  return bytes === null ? null : new TextDecoder().decode(bytes);
+};
+
 const convo = jsonl(
   { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
   { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] } },
@@ -54,19 +58,15 @@ describe('projectDirForCwd', () => {
   });
 });
 
-describe('backup → read round-trip', () => {
-  test('T3 backup mirrors JSONL to R2; read projects it back', async () => {
+describe('backup → R2', () => {
+  test('T3 backup mirrors the JSONL to R2 byte for byte', async () => {
     await withProjectsDir(async (projectsDir, nested) => {
       const sessionId = 'sess-round';
       await Bun.write(join(nested, `${sessionId}.jsonl`), convo);
       const blob = memBackend();
 
       expect(await backup(blob, projectsDir, sessionId)).toBe(true);
-      expect(await readRaw(blob, sessionId)).toBe(convo); // exact bytes preserved
-      expect(await read(blob, sessionId)).toEqual([
-        { kind: 'delta', text: 'hi', role: 'user' },
-        { kind: 'delta', text: 'hello' },
-      ]);
+      expect(await stored(blob, sessionId)).toBe(convo); // exact bytes preserved
     });
   });
 
@@ -74,8 +74,7 @@ describe('backup → read round-trip', () => {
     await withProjectsDir(async (projectsDir) => {
       const blob = memBackend();
       expect(await backup(blob, projectsDir, 'nope')).toBe(false);
-      expect(await readRaw(blob, 'nope')).toBeNull();
-      expect(await read(blob, 'nope')).toEqual([]);
+      expect(await stored(blob, 'nope')).toBeNull();
     });
   });
 });
@@ -205,7 +204,7 @@ describe('TranscriptStore', () => {
 });
 
 describe('growing/partial transcript', () => {
-  test('T7 re-backup overwrites; read returns the latest', async () => {
+  test('T7 re-backup overwrites with the latest', async () => {
     await withProjectsDir(async (projectsDir, nested) => {
       const sessionId = 'sess-grow';
       const file = join(nested, `${sessionId}.jsonl`);
@@ -214,16 +213,13 @@ describe('growing/partial transcript', () => {
       // First backup: a single user line.
       await Bun.write(file, jsonl({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } }));
       await backup(blob, projectsDir, sessionId);
-      expect(await read(blob, sessionId)).toEqual([{ kind: 'delta', text: 'hi', role: 'user' }]);
+      const first = await stored(blob, sessionId);
 
       // Transcript grows on disk; re-backup overwrites with the fuller version.
       await Bun.write(file, convo);
       await backup(blob, projectsDir, sessionId);
-      expect(await readRaw(blob, sessionId)).toBe(convo);
-      expect(await read(blob, sessionId)).toEqual([
-        { kind: 'delta', text: 'hi', role: 'user' },
-        { kind: 'delta', text: 'hello' },
-      ]);
+      expect(await stored(blob, sessionId)).toBe(convo);
+      expect(first).not.toBe(convo);
     });
   });
 });

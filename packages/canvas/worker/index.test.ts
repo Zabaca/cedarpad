@@ -5,7 +5,6 @@ import * as realCanvases from '../web-poc/lib/db/queries/canvases.ts';
 import * as realWorkspaces from '../web-poc/lib/db/queries/workspaces.ts';
 import * as realShareLinks from '../web-poc/lib/db/queries/share-links.ts';
 import { mintGuestCookie } from './guest-session.ts';
-import type { ConversationRow } from '../web-poc/lib/db/schema.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
 // The Worker's DISPATCH ORDER is security-load-bearing: `/health` and `/api/buildrev` are
@@ -25,8 +24,6 @@ let servedMcpTokenHeaders: Array<string | null> = [];
 let servedGuestCanvasHeaders: Array<string | null> = [];
 let servedViewerHeaders: Array<string | null> = [];
 let assets: string[] = [];
-let inboxCalls: Array<{ id?: string; action?: string }> = [];
-let conv: ConversationRow | null = null;
 let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
 
 mock.module('@cloudflare/sandbox', () => ({
@@ -99,33 +96,8 @@ mock.module('../web-poc/lib/db/queries/share-links.ts', () => ({
 afterAll(() => {
   getActiveShareLinkImpl = realGetActiveShareLink;
 });
-// The edge Inbox LIST/detail API is out of scope for this slice — stub it so we can assert the
-// Worker still ROUTES `/api/inbox*` to it (unchanged) without exercising D1/R2.
-mock.module('./inbox.ts', () => ({
-  handleInboxApi: (_req: Request, _env: unknown, _user: unknown, id?: string, action?: string) => {
-    inboxCalls.push({ id, action });
-    return new Response('inbox-api');
-  },
-}));
-// The #122 chat proxy (`./inbox-bridge.ts`) is kept REAL — it's what this slice adds — so its
-// ownership check + `conv.workspaceId → coords` resolution run for real against a stubbed
-// Conversation lookup and the stubbed serveWorkspace above.
-// Delegate + restore (see worker/push.test.ts): bun's mock.module rebinds the module for every
-// LATER test file in this process, so the canned `get` hands back to the real one after.
-const realConversations = await import('../web-poc/lib/db/queries/conversations.ts');
-// Captured as a VALUE before the mock: bun rebinds the namespace, so reading `.get` back off
-// it in afterAll would restore this wrapper onto itself (infinite delegation).
-const realGetConv = realConversations.get;
-let getConvImpl: typeof realGetConv = (() => Promise.resolve(conv)) as never;
-mock.module('../web-poc/lib/db/queries/conversations.ts', () => ({
-  ...realConversations,
-  get: (...args: Parameters<typeof realGetConv>) => getConvImpl(...args),
-}));
-afterAll(() => {
-  getConvImpl = realGetConv;
-});
-// ADR-0013 train 2 (#176): both proxy points (this fallthrough and the inbox bridge above)
-// read a workspace's connected external-MCP tokens before attaching them to a chat send —
+// ADR-0013 train 2 (#176): the chat-send fallthrough reads a workspace's connected
+// external-MCP tokens before attaching them to a chat send —
 // stubbed by workspaceId so a test can assert connect/no-connect/isolation. See
 // mcp-tokens-api.test.ts for the owner-consent API's ownership check.
 mock.module('../web-poc/lib/db/queries/mcp-tokens.ts', () => ({
@@ -321,11 +293,11 @@ describe('guest session gate (#220)', () => {
     expect(wrong.headers.get('content-type') ?? '').toContain('text/html'); // login page
   });
 
-  test('denied surfaces (another pad, canvas list, inbox) get the login page, never a container', async () => {
+  test('denied surfaces (another pad, the canvas list) get the login page, never a container', async () => {
     session = null;
     shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
     served = [];
-    for (const p of ['/w/ws_g/canvas/cv_other/pad', '/api/canvases', '/api/inbox']) {
+    for (const p of ['/w/ws_g/canvas/cv_other/pad', '/api/canvases']) {
       const res = await guestFetch(p);
       expect(res.headers.get('content-type') ?? '').toContain('text/html');
     }
@@ -385,27 +357,8 @@ beforeEach(() => {
   servedReqs = [];
   servedMcpTokenHeaders = [];
   assets = [];
-  inboxCalls = [];
-  conv = null;
   mcpTokensByWorkspace = {};
 });
-
-const convRow = (o: Partial<ConversationRow>): ConversationRow =>
-  ({
-    id: o.id ?? 'conv_1',
-    sessionId: 'sess_1',
-    status: 'open',
-    waitingOn: 'human',
-    unread: false,
-    lastActivity: new Date(0),
-    ownerRef: null,
-    workspaceId: o.workspaceId ?? 'default',
-    userId: o.userId ?? 'u_1',
-    summary: null,
-    lastMessagePreview: null,
-    createdAt: new Date(0),
-    updatedAt: new Date(0),
-  }) as ConversationRow;
 
 // THE invariant of PRD #103: browsing the Shell must never wake (or bill) a container.
 // The whole point of the pad iframe is that mounting it is the ONLY thing that does.
@@ -579,110 +532,20 @@ describe('GET /w/:ws/canvas/:id/pad — serve the Render Pad in place, no redire
   });
 });
 
-// The Inbox is a Shell stage now (#108): the standalone `renderInbox` page is gone. The
-// legacy `/inbox` route redirects into the shell; the `/api/inbox*` data API is UNCHANGED.
-describe('GET /inbox — redirect to the Shell inbox stage, no standalone page', () => {
-  test('/inbox 302s to /?stage=inbox and never wakes a container or renders its own page', async () => {
+// The Inbox is retired: an old `/inbox` bookmark lands on the canvas, behind the gate.
+describe('GET /inbox — the retired Inbox redirects to the canvas', () => {
+  test('/inbox 302s to / and never wakes a container', async () => {
     const res = await GET('/inbox');
 
     expect(res.status).toBe(302);
-    expect(res.headers.get('location')).toBe('/?stage=inbox');
-    expect(served).toEqual([]);
-    expect(assets).toEqual([]);
-    expect(inboxCalls).toEqual([]);
-  });
-
-  test('the inbox data API still routes to handleInboxApi (list), no container woken', async () => {
-    const res = await GET('/api/inbox?status=open');
-
-    expect(await res.text()).toBe('inbox-api');
-    expect(inboxCalls).toEqual([{ id: undefined, action: undefined }]);
+    expect(res.headers.get('location')).toBe('/');
     expect(served).toEqual([]);
   });
 
-  test('per-conversation actions still route to handleInboxApi with id + action', async () => {
-    await worker.fetch(new Request('https://poc.cedarpad.com/api/inbox/c_1/close', { method: 'POST' }), env);
-    await GET('/api/inbox/c_1');
-
-    expect(inboxCalls).toEqual([
-      { id: 'c_1', action: 'close' },
-      { id: 'c_1', action: undefined },
-    ]);
-  });
-
-  // REGRESSION: browsing the Inbox list must never wake a runner. The list stays edge-only
-  // and never calls serveWorkspace — only opening a Conversation's chat bridge does.
-  test('the inbox LIST never calls serveWorkspace (no runner woken by browsing)', async () => {
-    await GET('/api/inbox?status=open');
-
-    expect(served).toEqual([]);
-  });
-});
-
-// The edge chat proxy (ADR-0009, #122). `/inbox/:convId/bridge/*` is a live view of the
-// Conversation's OWNING bridge, so it sits BELOW the auth gate: an anon request gets the
-// login and never reaches a bridge (never cold-boots a container). The real handler runs
-// here (spread above) with only serveWorkspace + conversations.get stubbed.
-describe('GET /inbox/:convId/bridge/* — the edge chat proxy, conv → owning bridge, gated', () => {
-  // Shared inbox: the proxy is MEMBERSHIP-gated (getWorkspace), so these tests admit u_1
-  // to the conversation's workspace via the stubbed record.
-  beforeEach(() => {
-    workspaceRecord = { id: 'ws_abc' };
-  });
-
-  test('an owned product-workspace conversation proxies to its container, sub-path unrewritten', async () => {
-    conv = convRow({ workspaceId: 'ws_abc', userId: 'u_1' });
-
-    const res = await GET('/inbox/conv_1/bridge/api/chat/stream?canvas=c');
-
-    expect(res.status).toBe(200);
-    expect(served).toEqual([resolve({ id: 'ws_abc' })]);
-    // The `/inbox/:id/bridge` prefix is stripped; only the bridge sub-path (query preserved)
-    // reaches the container — the same unbuffered proxy the pad uses, so SSE streams through.
-    expect(servedReqs).toEqual([{ path: '/api/chat/stream?canvas=c', method: 'GET' }]);
-  });
-
-  test('a dev-agent conversation resumes on the WARM default container (ADR-0010)', async () => {
-    // Dev-agent is a Conversation KIND now; the row lives in the workspace it runs in.
-    conv = convRow({ workspaceId: 'default', kind: 'dev-agent', userId: 'u_1' });
-
-    await GET('/inbox/conv_1/bridge/api/chat/stream');
-
-    // No routing special-case: a dev-agent row routes like any default-workspace chat.
-    expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
-  });
-
-  test('a POST (send) is forwarded with its method + stripped sub-path to the owning container', async () => {
-    conv = convRow({ workspaceId: 'ws_abc', userId: 'u_1' });
-
-    await worker.fetch(
-      new Request('https://poc.cedarpad.com/inbox/conv_1/bridge/api/chat/conv_1/send', { method: 'POST', body: '{}' }),
-      env,
-    );
-
-    expect(served).toEqual([resolve({ id: 'ws_abc' })]);
-    expect(servedReqs).toEqual([{ path: '/api/chat/conv_1/send', method: 'POST' }]);
-  });
-
-  test('a conversation in a workspace the caller is NOT a member of ⇒ 404, never proxied', async () => {
-    workspaceRecord = null; // getWorkspace denies: u_1 has no access to the row's workspace
-    conv = convRow({ workspaceId: 'ws_abc', userId: 'someone_else' });
-
-    const res = await GET('/inbox/conv_1/bridge/api/chat/stream');
-
-    expect(res.status).toBe(404);
-    expect(served).toEqual([]);
-  });
-
-  test('UNAUTHENTICATED ⇒ the login page, never the bridge (no container reached)', async () => {
+  test('UNAUTHENTICATED ⇒ the login page first', async () => {
     session = null;
-    conv = convRow({ workspaceId: 'ws_abc', userId: 'u_1' });
-
-    const res = await GET('/inbox/conv_1/bridge/api/chat/stream');
-
+    const res = await GET('/inbox');
     expect(res.status).toBe(401);
-    expect(res.headers.get('content-type')).toContain('text/html');
-    expect(served).toEqual([]);
   });
 });
 
@@ -718,9 +581,8 @@ describe('dispatch order regressions', () => {
   });
 });
 
-// ADR-0013 train 2 (#176): the same-origin chat send (the pad's <ChatView>, not inbox-adopted)
-// falls through to this bottom proxy — it must attach the workspace's connected external-MCP
-// tokens exactly like the Inbox proxy does, since it's the primary path most chat sends take.
+// ADR-0013 train 2 (#176): the same-origin chat send (the pad's <ChatView>) falls through to
+// this bottom proxy — it must attach the workspace's connected external-MCP tokens.
 const POST = (path: string) => worker.fetch(new Request(`https://poc.cedarpad.com${path}`, { method: 'POST' }), env);
 
 describe('the same-origin chat send attaches the workspace’s connected MCP tokens (ADR-0013 train 2)', () => {

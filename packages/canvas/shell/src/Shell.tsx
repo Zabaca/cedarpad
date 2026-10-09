@@ -3,11 +3,19 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { ChatView } from '../../shared/ChatView';
 import { setCanvasOverride } from '../../shared/chat-store';
 import { DOCK_CHAT, parseDockMessage } from '../../shared/dock-messages';
-import { readInboxBadgeFrame } from '../../shared/workspace-events';
-import { DOCK_MEMORY_KEY, DOCK_WIDTH_KEY, type DockMemory, type DockedChat, parseDockMemory, parseDockWidth, serializeDockMemory } from './canvas-dock';
-import { clampWidth, MAX_PANE_WIDTH, MIN_PANE_WIDTH } from './inbox/inbox-panes';
+import {
+  DOCK_MEMORY_KEY,
+  DOCK_WIDTH_KEY,
+  type DockMemory,
+  type DockedChat,
+  MAX_PANE_WIDTH,
+  MIN_PANE_WIDTH,
+  clampWidth,
+  parseDockMemory,
+  parseDockWidth,
+  serializeDockMemory,
+} from './canvas-dock';
 import { canvasFromUrl, urlWithCanvas } from './canvas-url';
-import { InboxStage } from './inbox/Inbox';
 import { SettingsStage } from './settings/Settings';
 import { ComponentsStage } from './components/Components';
 import { applyCanvasOrder, moved } from './canvas-order';
@@ -15,7 +23,7 @@ import { type Stage, stageFromUrl } from './stage';
 import { createStageMemory } from './stage-memory';
 
 // Notebook mounts lazily (PRD #103, slice #107) — the same lazy chunk the container app
-// used to code-split (`src/App.tsx` pre-#106) — so opening the canvas or inbox stage never
+// used to code-split (`src/App.tsx` pre-#106) — so opening the canvas stage never
 // pulls in web-poc's Mantine/React-Query bundle.
 const WebPocApp = lazy(() => import('../../web-poc/src/embed').then((m) => ({ default: m.WebPocApp })));
 
@@ -69,16 +77,6 @@ function IconNotebook() {
       <circle cx="18" cy="6" r="2.4" />
       <circle cx="12" cy="18" r="2.4" />
       <path d="M8 6h8M7.4 8l3.4 7.8M16.6 8l-3.4 7.8" />
-    </svg>
-  );
-}
-
-function IconInbox() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 13h4l2 3h6l2-3h4" />
-      <path d="M5 5h14l2 8v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4z" />
     </svg>
   );
 }
@@ -171,7 +169,7 @@ function GuestShell({ guest }: { guest: GuestScope }) {
 
 function MemberShell() {
   const [stage, setStage] = useState<Stage>(() => stageFromUrl(window.location.search));
-  // Per-tab memory of each stage's last URL (canvas's `?canvas=<id>`, inbox's filters — see
+  // Per-tab memory of each stage's last URL (canvas's `?canvas=<id>` — see
   // stage-memory.ts), so the rail restores them instead of always landing on the bare default.
   const stageMemory = useRef(createStageMemory()).current;
 
@@ -200,40 +198,9 @@ function MemberShell() {
   // rail's workspace popover needs to mark the current row.
   const registry = useCanvasRegistry();
 
-  // Inbox nav badge, pushed over SSE (/api/inbox/events → {count}). The read mark is
-  // WORKSPACE-SHARED (read-for-all): opening the Inbox stamps it server-side, so every
-  // member's badge clears — and the same stream delivers that clear to other open Shells.
-  // Since #383 the stream is driven by the workspace's events hub rather than a 10s timer,
-  // so a change reaches this badge in about the time one D1 read takes.
-  const [inboxUnseen, setInboxUnseen] = useState(0);
-  // The previous pushed count: null until the first frame lands, so a page load with
-  // existing unread never dings — only a count RISING while the tab is open does.
-  const unseenPrev = useRef<number | null>(null);
-  const stageRef = useRef(stage);
-  stageRef.current = stage;
-  useEffect(() => {
-    const es = new EventSource('/api/inbox/events');
-    es.onmessage = (e) => {
-      // Parsed through the shared contract (CLAUDE.md §7) — the same module the edge
-      // encodes with. A malformed frame reads as null and leaves the badge as it was.
-      const badge = readInboxBadgeFrame(e.data);
-      if (!badge) return;
-      const prev = unseenPrev.current;
-      unseenPrev.current = badge.count;
-      setInboxUnseen(badge.count);
-      if (prev !== null && badge.count > prev && stageRef.current !== 'inbox') chime();
-    };
-    return () => es.close();
-  }, []);
-  useEffect(() => {
-    if (stage !== 'inbox') return;
-    setInboxUnseen(0); // clear locally now; the POST clears it for everyone
-    void fetch('/api/inbox/read', { method: 'POST' }).catch(() => {});
-  }, [stage, inboxUnseen]); // re-stamp while sitting in the Inbox as new items stream in
-
   return (
     <div className="shell">
-      <Rail stage={stage} onSelectStage={selectStage} activeWorkspace={registry.workspaceId} inboxUnseen={inboxUnseen} />
+      <Rail stage={stage} onSelectStage={selectStage} activeWorkspace={registry.workspaceId} />
       {stage === 'canvas' && <CanvasStage registry={registry} />}
       {stage === 'notebook' && (
         <div className="shell-stage stage-notebook">
@@ -245,38 +212,9 @@ function MemberShell() {
         </div>
       )}
       {stage === 'components' && <ComponentsStage workspaceId={registry.workspaceId} />}
-      {stage === 'inbox' && <InboxStage workspaceId={registry.workspaceId} />}
       {stage === 'settings' && <SettingsStage workspaceId={registry.workspaceId} />}
     </div>
   );
-}
-
-// A soft two-note chime for a new Inbox item — synthesized (no asset), and inaudible
-// until the user has interacted with the page (browsers gate AudioContext on a gesture;
-// we just let those early plays fail silently).
-function chime(): void {
-  try {
-    const Ctx = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const note = (freq: number, at: number) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime + at);
-      gain.gain.exponentialRampToValueAtTime(0.06, ctx.currentTime + at + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + at + 0.35);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(ctx.currentTime + at);
-      osc.stop(ctx.currentTime + at + 0.4);
-    };
-    note(740, 0); // F#5
-    note(988, 0.12); // B5
-    setTimeout(() => void ctx.close(), 800);
-  } catch {
-    /* no audio available */
-  }
 }
 
 // ---- Rail -----------------------------------------------------------------
@@ -286,12 +224,10 @@ function Rail({
   stage,
   onSelectStage,
   activeWorkspace,
-  inboxUnseen,
 }: {
   stage: Stage;
   onSelectStage: (s: Stage) => void;
   activeWorkspace: string;
-  inboxUnseen: number;
 }) {
   const [wsOpen, setWsOpen] = useState(false);
   const [meOpen, setMeOpen] = useState(false);
@@ -321,7 +257,7 @@ function Rail({
     window.location.href = '/';
   };
 
-  const railBtn = (s: Stage, title: string, icon: React.ReactNode, badge?: number) => (
+  const railBtn = (s: Stage, title: string, icon: React.ReactNode) => (
     <button
       type="button"
       className={`lp-rail-btn${stage === s ? ' active' : ''}`}
@@ -330,11 +266,6 @@ function Rail({
       onClick={() => onSelectStage(s)}
     >
       {icon}
-      {badge != null && badge > 0 && (
-        <span className="lp-rail-badge" aria-label={`${badge} unread`}>
-          {badge > 9 ? '9+' : badge}
-        </span>
-      )}
     </button>
   );
 
@@ -353,7 +284,6 @@ function Rail({
       >
         Z
       </button>
-      {railBtn('inbox', 'Inbox', <IconInbox />, stage === 'inbox' ? 0 : inboxUnseen)}
       {railBtn('canvas', 'Canvases', <IconCanvases />)}
       {railBtn('components', 'Components', <IconComponents />)}
       {railBtn('notebook', 'Notebook', <IconNotebook />)}
@@ -548,7 +478,7 @@ function CanvasStage({ registry }: { registry: Registry }) {
       return next;
     });
   }, []);
-  // Drag-to-resize, same shape as the Inbox's pane divider; persists on release.
+  // Drag-to-resize; persists on release.
   const [dockWidth, setDockWidth] = useState(() => parseDockWidth(localStorage.getItem(DOCK_WIDTH_KEY)));
   const startDockResize = (e: React.PointerEvent) => {
     e.preventDefault();

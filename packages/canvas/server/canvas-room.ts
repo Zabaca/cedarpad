@@ -22,8 +22,7 @@ export interface CanvasRoomConfig {
 /**
  * `(canvasId) => a store on that canvas's room`.
  *
- * Unlike the platform RPC — which is best-effort, because a missed Inbox row must not fail a
- * turn — an unconfigured or unreachable edge here REJECTS. A canvas write that cannot reach
+ * An unconfigured or unreachable edge here REJECTS. A canvas write that cannot reach
  * the room has not happened, and the one outcome worth ruling out is the agent reporting
  * success while the canvas stays empty (exactly the bug this slice closes).
  */

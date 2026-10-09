@@ -1,6 +1,6 @@
 # Push planes split by volume and ownership, and multiplex within each split
 
-Status: **accepted** (grill session 2026-07-30, after the per-workspace events hub landed —
+Status: **partly superseded (2026-10-09)** — the workspace events hub and web push planes were removed with the Inbox; the canvas sync and chat streams remain. Kept as history. Was: **accepted** (grill session 2026-07-30, after the per-workspace events hub landed —
 #383, PRs #385/#387). Vocabulary: root [CONTEXT.md](../../CONTEXT.md) — **Session**,
 **Conversation**; canvas [CONTEXT.md](../../packages/canvas/CONTEXT.md).
 

@@ -95,7 +95,7 @@ describe('withCanvasHeader / withCanvasParam — stamp the selection (default wh
 });
 
 // Chat calls claim a canvas only when the surface IS a pad: the chat-store is shared with
-// non-pad surfaces (the Inbox thread), where a defaulted x-canvas-id would falsely link the
+// non-pad surfaces (the Shell's docked panel), where a defaulted x-canvas-id would falsely link the
 // conversation to the Default canvas (the chat→canvas edge is a claim, not a fallback).
 describe('withPadCanvasHeader — stamp only on a pad URL', () => {
   test('on a pad: stamps that canvas id', () => {
@@ -105,7 +105,7 @@ describe('withPadCanvasHeader — stamp only on a pad URL', () => {
     expect(h['content-type']).toBe('application/json');
   });
 
-  test('off a pad (inbox, shell): NO x-canvas-id — not even default', () => {
+  test('off a pad (the shell): NO x-canvas-id — not even default', () => {
     setPath('/');
     const h = withPadCanvasHeader({ 'content-type': 'application/json' });
     expect(h['x-canvas-id']).toBeUndefined();

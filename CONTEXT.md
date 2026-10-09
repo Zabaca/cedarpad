@@ -64,9 +64,9 @@ _Avoid_: reintroducing a "Team" concept separate from Workspace, or treating the
 as a *sub*-thing inside a bigger tenant — the Workspace **is** the tenant/deployment.
 
 **Platform data layer**: the Workspace's relational store — its schema, query modules, and
-migrations. It holds the **platform's** rows (`workspaces`, `canvases`, `conversations`,
-`workspace_members`, `share_links`,
-`push_subscriptions`) **and every Better Auth table** (the org plugin's `workspace`/`member`/
+migrations. It holds the **platform's** rows (`workspaces`, `canvases`,
+`workspace_members`, `share_links`; the retired Inbox's `conversations` and
+`push_subscriptions` remain until the data cleanup) **and every Better Auth table** (the org plugin's `workspace`/`member`/
 `invitation`, plus `user`/`session`/`account`/`apikey`). Each **App** is a *consumer* of it; none
 owns it. It lives under `packages/canvas/web-poc/lib/db/` for historical reasons — that path is a
 legacy directory name, **not** a statement of ownership. The Notebook's own tables
@@ -74,16 +74,15 @@ legacy directory name, **not** a statement of ownership. The Notebook's own tabl
 _Avoid_: calling this "the web-poc database" or "the Notebook's DB" — the name misleads. Disabling
 an App does not remove the platform's dependency on this layer.
 **Only the edge reaches it.** Since [ADR-0018](./docs/adr/0018-platform-data-layer-on-d1.md) the
-workspace **container holds no database client at all**: the reads it needs are pushed down through
-the edge proxy as forwarded rows, and the writes that originate inside it go back to the edge over
-the **platform RPC** (`packages/canvas/shared/platform-rpc.ts`) — four named chat-lifecycle verbs,
+workspace **container holds no database client at all**: the reads and writes it needs go to the
+edge over the **platform RPC** (`packages/canvas/shared/platform-rpc.ts`) — named Record verbs,
 deliberately a behavioural surface and not a SQL tunnel. The container is handed no connection
 string and no credential, so "which side may touch the store" is a structural fact, not a
 convention.
 
 **Shell**: the **persistent edge app frame** — the only chrome, an edge-served SPA (the
 Worker's static ASSETS) that owns the rail, the workspace switcher, and stage selection;
-NOT inside the container. It mounts Canvas, Notebook, and Inbox as **inline stages**
+NOT inside the container. It mounts its stages (Canvas, Components, Notebook, Settings) **inline**
 (`?stage=…`), never separate page loads. Always instant; wakes the workspace runtime only
 when the canvas stage mounts the Render Pad iframe (`/w/:ws/canvas/:id/pad`) — browsing the
 rail never does. **Owns login and is the single gate**: the edge Shell
@@ -102,10 +101,10 @@ It was formerly the canvas "frontend frame". Platform containment is **Workspace
 Canvas → Render Pad** (the tldraw *pages* layer was removed; see
 [ADR-0007](./docs/adr/0007-workspace-platform-topology.md)).
 
-**App**: a launchable surface in the Shell's top nav. Three:
+**App**: a launchable surface in the Shell's top nav. Two (the **Inbox** was retired
+2026-10-09):
 1. **Canvas** — index of all canvases (see below).
 2. **Notebook** — Observations + Problems (PM), knowledge graph. From PR #40.
-3. **Inbox** — Human-in-the-loop: Claude sessions that need my attention.
 
 Each app has its own document model, in its own `CONTEXT.md`.
 
@@ -117,9 +116,7 @@ workspace (the `workspaces` registry / the `cs_workspace` cookie the Shell sets;
 platform workspace** — workspace A's list/search never returns B's rows (#57); the original
 cross-project solution-reuse in the graph is intentionally dropped (a possible future
 opt-in). Absent a selection, requests fall back to the legacy `default` workspace, where
-pre-#57 rows are backfilled. The **Inbox is user-scoped** — one attention
-inbox for James, aggregating Conversations across all his workspaces, each Conversation
-tagged with its `workspace_id` (filterable by workspace).
+pre-#57 rows are backfilled.
 
 **Repos and GitHub auth** — _retired 2026-10-09_. A workspace no longer connects GitHub or
 checks repos out: the canvas never changes code, so nothing in it needs a repository. The
@@ -133,18 +130,17 @@ the Canvas app. It carries an optional **owner** edge:
 
 - `none` — standalone.
 - a **Notebook** item (Observation/Problem).
-- an **Inbox** session.
 
 Rules:
 - The **Canvas app** is the *index* over ALL canvases regardless of owner; each shows
-  an origin badge ("from Problem #12", "from session ‹x›"). A canvas can never be lost.
-- Notebook/Inbox creating a canvas only sets the owner pointer; the canvas still lives
+  an origin badge ("from Problem #12"). A canvas can never be lost.
+- Notebook creating a canvas only sets the owner pointer; the canvas still lives
   in the one registry and the one runtime.
-- **Owner-delete orphans, never cascades.** Deleting the owning Problem/session drops
-  the pointer; the canvas survives as standalone. Closed session ≠ deleted canvas.
+- **Owner-delete orphans, never cascades.** Deleting the owning Problem drops
+  the pointer; the canvas survives as standalone.
 
 Mirrors the canvas glossary's own shape: a `chat` is a shape *on* a canvas; here a
-canvas is a surface *on* a notebook item or session — an attachment edge, not a copy.
+canvas is a surface *on* a notebook item — an attachment edge, not a copy.
 
 **Components & the shared library** (runtime revised during #53 — see note):
 - Each canvas has its own component dir (`canvas-<id>/components/*.tsx`), isolated **by
@@ -182,116 +178,38 @@ embed → similarity) is the beachhead; **Problem** then **Solution** + graph-sy
 follow. (Full domain model: [packages/canvas/docs/notebook/CONTEXT.md](./packages/canvas/docs/notebook/CONTEXT.md),
 to be re-homed.)
 
-**Inbox** (Human-in-the-loop): Intercom-style inbox of Claude sessions.
+**Inbox** — _retired 2026-10-09_ (ADRs 0009, 0012 and 0023 superseded). There are no
+Conversations, no `end_turn`, no assignment, no web push and no events hub: a chat is a
+`chat` card on its canvas, and a **Session** is that card's Claude Agent SDK conversation
+(`sessionId` + transcript). The `conversations` and `push_subscriptions` tables remain until
+the data cleanup.
 
-- **Session**: the atom — one Claude Agent SDK conversation (`sessionId` + transcript).
-- A Session has a **home**: a **Canvas chat** (a `chat` shape, canvas app) OR an **Inbox
-  Conversation** (inbox app). "Conversation" is deliberately Intercom's word, to avoid the
-  canvas glossary's `session = chat` collision.
-- **Conversation** = Session + inbox state (open/closed, read/unread, needs-attention,
-  last-activity). May own a Canvas (the owner edge above). Carries a **kind** — every new
-  row is `chat`; `dev-agent` survives only on rows from before the dev agent was retired.
-- **Canvas edge** (`canvas_id`, nullable): a Conversation links to **at most one canvas** —
-  the canvas its chat card lives on. Direction matters: this is chat → canvas (one canvas
-  hosts many chat cards, each pointing back at it), the *reverse* of the canvas's own
-  owner pointer (canvas → owning session, provenance). Canvas-born chats get the edge at
-  birth; a canvas-less Conversation can **attach** — attach writes the edge AND places a
-  live `chat` card shape on the canvas, so the pairing is visible from both sides.
-  Create-and-attach makes a new canvas (named from the chat summary) in the
-  Conversation's own workspace; attach is **same-workspace only**. No detach (v1).
-  In the Inbox thread, the linked canvas renders as a **third pane** — the live Render
-  Pad iframe, the same live-synced surface as the canvas stage, never a snapshot; with
-  no edge, the pane offers create/attach.
 - **Docked chat** (canvas stage): a chat card can be **docked** into a chat pane beside
   the pad — a *mirror*, never a move: the card stays on the canvas and both are live
   views of the same Session. One slot per canvas (docking another replaces it); undock
   just empties the slot; deleting the docked chat's card closes the session and undocks
   (the card is the chat's presence on the canvas — the pane is only a projection of it).
-  Which chat is docked is per-device UI memory, not domain state — no schema edge.
-- **Focus a chat card** (Inbox thread): the inverse direction of the same in-page channel —
-  the open chat's header offers **⌖ On canvas**, which asks the linked pad to center its
-  camera on the card fronting *this* chat (select + zoom-to-bounds, the move the canvas side
-  panel's instance list already makes). Camera and selection only — nothing on the canvas is
-  mutated, so it is pure view state, never domain state. Offered only when the Conversation
-  has a linked canvas AND the third pane is showing; a canvas holding no card for the chat
-  (the card was deleted) simply does not move. Dock and focus are the ONLY two gestures that
-  cross the pad↔Shell postMessage boundary (`shared/dock-messages.ts`) — everything else the
-  two surfaces share converges at the bridge.
-- The Inbox is a **unified session index**: EVERY Session gets a Conversation row (created on
-  its first turn, idempotent by `sessionId`), so the one surface lists all sessions — canvas
-  chats and background-agent runs alike. `end_turn` never *creates* the row; it just sets its
-  ending state (needs_human **promotes**, done records completion). Noise is handled by the
-  default filter, not by withholding rows.
-- **State model** (two axes):
-  - `status`: `open | closed` — closed = archived.
-  - `waiting-on`: `human | agent | none` — `human` = needs my attention; a fresh session lands
-    in `none` (exists, nothing pending).
-  - `unread`: new agent activity since I last looked.
-  - **Views** (the list filter), each sorted by last-activity with `waiting-on:human` pinned:
-    - **Open** (default) = `status:open` — every open session, attention pinned to the top.
-    - **All sessions** = the whole index, open and closed.
-    - **Closed** = the archive.
-  - Agent can promote (open + waiting-on=human + notify), post activity (unread), and self-close.
-    I can read, reply (waiting-on→agent), close, reopen.
-- Populated by sessions I start there and by **background agents that promote their
-  session when they need my attention** (first such agent: an always-running
-  `/improve-codebase-architecture`).
+  Which chat is docked is per-device UI memory, not domain state — no schema edge. Dock is
+  the ONLY gesture that crosses the pad→Shell postMessage boundary
+  (`shared/dock-messages.ts`) — everything else the two surfaces share converges at the
+  bridge.
 
 **A chat interface is a live bridge view** (normative): every interactive chat surface —
-a canvas `chat` shape, an opened Inbox Conversation, any future one — connects to **the
-bridge that owns the session**, because the bridge hosts the full Claude Agent SDK session
-*with its environment* (the runner's filesystem, authored components, cwd, tools). A chat
-rendered from anywhere else (e.g. an R2 transcript at the edge) is a **photograph of a
-different environment**, not the session. Consequences: (1) opening a Conversation
-**connects to its runner's bridge — waking it** (cold-boot latency is the honest cost of
-"I'm opening this session," same as opening a canvas); history and live stream come from
-that one source, never half-from-R2. (2) The inbox **list** is *not* a chat interface — it
-is triage metadata (D1), so it never wakes a runner. (3) One shared chat component backs
-every surface; they differ only in *which bridge* they address, never in data source.
+a canvas `chat` shape, its docked mirror, any future one — connects to **the bridge that
+owns the session**, because the bridge hosts the full Claude Agent SDK session *with its
+environment*. A chat rendered from anywhere else (e.g. an R2 transcript) is a **photograph
+of a different environment**, not the session.
 
-**Storage**: **D1** holds Conversation metadata (status, waiting-on, unread,
-last-activity, owner edge, `sessionId`, summary, user) + a denormalized last-message
-preview so the inbox **list** is fast. The **transcript is the SDK session JSONL**
-(`~/.claude/projects/<sessionId>/`, the authoritative copy) **backed up live to R2 blobs
-and restored on wake** — same R2-as-runtime-delta pattern as ADR-0001's code overlay /
-canvas-state. R2's **only** consumer is **resume-restore** (R2 → runner FS →
-`query({ resume: sessionId })` on wake); it is the durability substrate, **not** a read
-path for display. The inbox **list** renders from D1 metadata while runners sleep; a
-**chat interface never renders from R2** (see "A chat interface is a live bridge view").
-An open Inbox tab keeps the list live via a **doorbell**: it subscribes to the container's
-chat stream and refetches the D1 list when a frame implies a row changed (turn start,
-settle, `end_turn`) — the stream carries no list data, it is purely the signal. A
-Conversation's **identity is its chat** (`owner_ref` = bridge chatId); `session_id` is just
-the current resume pointer, re-pointed each turn (resume mints a new session id per turn).
+**Storage**: the **transcript is the SDK session JSONL** (`~/.claude/projects/<sessionId>/`,
+the authoritative copy) **backed up to R2, one object per session, and restored on resume**.
+R2's **only** consumer is **resume-restore** (R2 → runner FS → `query({ resume: sessionId })`);
+it is the durability substrate, **not** a read path for display.
 
-**Promote protocol** (checkpoint-and-resume, async): **every turn ends by declaring its
-ending** through the mandatory `end_turn` tool (ADR-0012; a Stop hook refuses an undeclared
-stop). Outcome `needs_human` (with a question) sets the Conversation `waiting-on: human` +
-unread + preview = the question + notifies, then the agent stops (its runner may sleep);
-outcome `done` (with a summary) records completion (`waiting-on: none`, unread, preview =
-the summary). A question must never live only in prose — routing it through `needs_human`
-is what makes "Needs me" truthful. My reply in the Inbox **resumes the Session** (SDK
-resume via `sessionId` + my message) on its runner → `waiting-on: agent` (waking the
-sandbox if needed) — mirrors the canvas chat's existing resume-by-`sessionId` pattern.
-**A session enters the Inbox when it starts** (the moment the SDK assigns its id), landing
-in `waiting-on: none` — so a running session is visible live in the "All" view without
-cluttering "Needs me". Closing (archiving) is a **human verb** in the Inbox UI; the agent
-has no close.
-
-**Notify** (the "notifies" above, #87) is **web push**: the human opts a *device* in from
-Settings → Notifications, which registers `/sw.js` and stores that device's push endpoint
-(`push_subscriptions`, edge-only). On `needs_human` the bridge signs a VAPID push to every
-one of the owner's devices, deep-linking to the Inbox item. It is a **doorbell, not the
-signal** — the Inbox row is the durable record, so every delivery failure is swallowed, and
-an endpoint the push service reports as gone is pruned. Unconfigured VAPID ⇒ push is simply
-off. One channel only; email is deliberately not wired.
-
-**Runners** (where sessions execute — the Inbox is agnostic, it only coordinates). **Every
-runner runs the interactive bridge** (the SDK chat multiplexer), so every Session is a
-*chat* regardless of runner — a reply always **resumes the Session as a chat turn on its
-owning runner's bridge**, streaming back like a canvas chat.
-- **Product runtime**: the workspace container (canvas/notebook chats + inbox chats I
-  start about my content). Sleeps aggressively (5m) to bound cost.
+**Runners** (where sessions execute). **Every runner runs the interactive bridge** (the SDK
+chat multiplexer), so every Session is a *chat* — a reply always **resumes the Session as a
+chat turn on its owning runner's bridge**.
+- **Product runtime**: the workspace container (canvas chats). Sleeps aggressively (5m) to
+  bound cost.
 - **Dev-agent** — _retired 2026-10-09_ (ADR-0010/0011 superseded). The canvas never changes
   code: there is no git-token turn, no worktree, no `open_pr`, no Jobs and no cron.
 

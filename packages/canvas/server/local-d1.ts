@@ -5,8 +5,8 @@
 // DEV TOOLING ONLY, and structurally so since #266: this module locates a directory and a file.
 // It opens nothing. The bridge used to build a libSQL client from it — that was the temporary
 // "one datastore in dev" bridge #263 put in and #266 took out — so the callers left are
-// `scripts/wrangler-local.ts` (which points wrangler at the state dir) and the e2e spec that
-// reads the database the edge Worker wrote, to assert a turn filed its Conversation.
+// `scripts/wrangler-local.ts` (which points wrangler at the state dir) and the e2e fixtures,
+// which seed and read the database the edge Worker serves.
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';

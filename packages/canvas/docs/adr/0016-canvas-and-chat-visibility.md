@@ -1,6 +1,6 @@
 # 0016 — Canvas and chat visibility: creator-private, derived at read time
 
-Status: accepted (design, 2026-07-17). Extends the workspace trust model of ADR-0008
+Status: **partly superseded (2026-10-09)** — the standalone-chat half went with the Inbox; private canvases still hold. Was: accepted (design, 2026-07-17). Extends the workspace trust model of ADR-0008
 (one shared trusted runtime) with the first intra-workspace visibility boundary.
 
 The workspace is being used as a single shared demo space that outside people are

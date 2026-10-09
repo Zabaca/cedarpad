@@ -1,9 +1,17 @@
 // Docked chat panel (canvas stage): pure localStorage-serialization helpers for the
 // per-canvas dock memory. Which chat is docked is per-device UI memory, not domain state
-// (CONTEXT.md "Docked chat") — same split as inbox-panes.ts: Shell.tsx owns the DOM and
-// the localStorage calls; this stays DOM-free so it unit-tests without jsdom.
+// (CONTEXT.md "Docked chat"): Shell.tsx owns the DOM and the localStorage calls; this stays
+// DOM-free so it unit-tests without jsdom.
 
-import { clampWidth, MAX_PANE_WIDTH, MIN_PANE_WIDTH } from './inbox/inbox-panes';
+/** Minimum/maximum width (px) a resized pane may reach, so it never collapses to zero or
+ *  swallows the whole stage. */
+export const MIN_PANE_WIDTH = 220;
+export const MAX_PANE_WIDTH = 900;
+
+/** Clamp a dragged width to `[min, max]`. */
+export function clampWidth(width: number, min: number, max: number): number {
+  return Math.min(Math.max(width, min), max);
+}
 
 /** localStorage key the canvas stage persists its dock memory under. */
 export const DOCK_MEMORY_KEY = 'canvas.dock.memory';

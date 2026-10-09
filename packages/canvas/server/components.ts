@@ -100,10 +100,8 @@ export interface ComponentRecords {
  * and that its unset fallback, the literal `'default'`, never matches a real authenticated
  * user.
  *
- * So: unset ⇒ **null**, not `'default'`. The bridge's Inbox call sites can afford a
- * placeholder because a row that matches nobody merely fails to appear; a version row is the
- * permanent answer to "who changed this", and a placeholder there is a history that LOOKS
- * attributed and is not. `updated_by`/`created_by` are nullable for exactly this state.
+ * So: unset ⇒ **null**, not `'default'`. A version row is the permanent answer to "who
+ * changed this", and a placeholder there is a history that LOOKS attributed and is not. `updated_by`/`created_by` are nullable for exactly this state.
  */
 export const recordAuthor = (env: Record<string, string | undefined>): string | null => env.CANVAS_USER || null;
 

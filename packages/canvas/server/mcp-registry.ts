@@ -4,7 +4,7 @@
 //
 // Enablement is separate from the registry: a workspace owner pastes a per-workspace bearer
 // token (worker/index.ts's mcp-token API + `web-poc/lib/db/queries/mcp-tokens.ts`), which the
-// edge attaches as a header on the proxied `/send` (worker/inbox-bridge.ts, worker/index.ts) —
+// edge attaches as a header on the proxied `/send` (worker/index.ts) —
 // never persisted container-side. `server/agent.ts` builds this turn's `mcpServers` option from
 // whichever registry entries the request's token header actually names. This module is the
 // SHARED CONTRACT for that header (single-contract guideline): the worker encodes it, the

@@ -1,8 +1,6 @@
 // The turn lifecycle (server/turn.ts), tested under fakes — the settle path that was previously
 // reachable ONLY through a live SDK turn. runTurnAsync is the awaitable form; a fake runChat
-// stands in for the agent so we assert the phase ORDER (setup → run → settle) and, crucially,
-// the race fix: the settle-time Conversation upsert must await the row-at-start index, so the
-// two find-or-create-by-chat calls can never insert two rows for one chat.
+// stands in for the agent so we assert the phase ORDER (setup → run → settle).
 
 import { describe, expect, test } from 'bun:test';
 
@@ -24,7 +22,6 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
   const calls: string[] = [];
   const deps: TurnDeps = {
     aborters: new Map(),
-    workspaceId: 'default',
     materializeSkills: async () => {
       calls.push('materializeSkills');
     },
@@ -42,16 +39,10 @@ function recordingDeps(overrides: Partial<TurnDeps> = {}): { deps: TurnDeps; cal
       yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
     }) as unknown as TurnDeps['runChat'],
     broadcast: (_chatId, ev) => calls.push(`broadcast:${ev.kind}`),
-    inbox: { rpc: null, userId: 'u', notify: () => {} },
-    indexSession: async () => {
-      calls.push('indexSession');
-    },
+    onSessionStart: () => calls.push('onSessionStart'),
     stampSession: () => calls.push('stampSession'),
     onTurnComplete: async () => {
       calls.push('onTurnComplete');
-    },
-    settleConversation: async () => {
-      calls.push('settleConversation');
     },
     backupTranscript: async () => {
       calls.push('backupTranscript');
@@ -88,13 +79,12 @@ describe('runTurnAsync: the turn phase order', () => {
       'materializeSkills',
       'openCanvasRoom',
       'runChat',
-      'indexSession', // row-at-start, on the init event
+      'onSessionStart', // on the init event
       'broadcast:init',
       'broadcast:done',
       // settle, after the run drains:
       'stampSession', // null → 'sess_1' is a change, so the resume pointer is stamped
       'onTurnComplete',
-      'settleConversation',
       'backupTranscript',
     ]);
   });
@@ -120,7 +110,7 @@ describe('runTurnAsync: the turn phase order', () => {
     await runTurnAsync(input({ sessionId: 'sess_keep' }), deps);
 
     expect(calls).not.toContain('stampSession');
-    expect(calls).toContain('settleConversation');
+    expect(calls).toContain('backupTranscript');
   });
 });
 
@@ -170,54 +160,6 @@ describe('runTurnAsync: resume materializes its own session', () => {
 
     expect(calls).not.toContain('runChat');
     expect(errors).toEqual(['R2 unreachable']);
-  });
-});
-
-describe('runTurnAsync: the race fix (settle awaits the row-at-start index)', () => {
-  test('settleConversation runs only AFTER indexSession resolves', async () => {
-    const order: string[] = [];
-    let releaseIndex!: () => void;
-    const indexGate = new Promise<void>((r) => {
-      releaseIndex = r;
-    });
-
-    const { deps } = recordingDeps({
-      indexSession: async () => {
-        order.push('index:start');
-        await indexGate; // simulate a slow row-at-start insert
-        order.push('index:done');
-      },
-      settleConversation: async () => {
-        order.push('settle');
-      },
-    });
-
-    const turn = runTurnAsync(input(), deps);
-
-    // Let the run drain to the finally block, where it must be parked awaiting the index.
-    await new Promise((r) => setTimeout(r, 10));
-    expect(order).toEqual(['index:start']); // settle has NOT run — it is waiting on the index
-
-    releaseIndex();
-    await turn;
-
-    // The index resolved before settle — so the settle-time find-or-create sees the one row the
-    // index created, instead of racing it into a second row (ownerRef has no unique constraint).
-    expect(order).toEqual(['index:start', 'index:done', 'settle']);
-  });
-
-  test('a failed index never blocks settle (best-effort — the turn still records activity)', async () => {
-    const { deps, calls } = recordingDeps({
-      indexSession: async () => {
-        throw new Error('index hiccup');
-      },
-    });
-
-    await runTurnAsync(input(), deps);
-
-    // The rejected index is swallowed; settle + backup still run so the turn is not lost.
-    expect(calls).toContain('settleConversation');
-    expect(calls).toContain('backupTranscript');
   });
 });
 
@@ -290,14 +232,14 @@ describe('runTurnAsync: the error path', () => {
 
     const errFrame = broadcasts.find((e) => e.kind === 'done' && e.error);
     expect(errFrame).toMatchObject({ kind: 'done', error: 'agent blew up' });
-    // The finally still settles (the init assigned a session id, so the row is upserted + backed up).
+    // The finally still settles (the init assigned a session id, so the transcript is backed up).
     expect(calls).toContain('onTurnComplete');
-    expect(calls).toContain('settleConversation');
+    expect(calls).toContain('backupTranscript');
     // And the aborter is cleaned up even on the error path.
     expect(deps.aborters.has('chat_1')).toBe(false);
   });
 
-  test('an error before any session id is known skips the inbox settle (nothing to index)', async () => {
+  test('an error before any session id is known skips the transcript backup', async () => {
     const runChat = (async function* (): AsyncGenerator<ChatEvent> {
       throw new Error('died before init');
     }) as unknown as TurnDeps['runChat'];
@@ -306,15 +248,14 @@ describe('runTurnAsync: the error path', () => {
     await runTurnAsync(input(), deps);
 
     expect(calls).toContain('onTurnComplete'); // persistence still flushes
-    expect(calls).not.toContain('settleConversation'); // no sessionId ⇒ no Conversation row
     expect(calls).not.toContain('backupTranscript');
   });
 });
 
-// Canvas pairing: the EXPLICIT request canvas is both the routing target and the chat→canvas
-// edge claim; an unaddressed turn routes to the default store but claims NO edge.
-describe('the request canvas: routing vs edge claim', () => {
-  test('an addressed turn routes to that canvas and claims it at index + settle', async () => {
+// The EXPLICIT request canvas is both the routing target and the chat→canvas binding; an
+// unaddressed turn routes to the default store but binds nothing.
+describe('the request canvas: routing vs binding', () => {
+  test('an addressed turn routes to that canvas and binds the chat to it', async () => {
     const routed: string[] = [];
     const claimed: Array<string | undefined> = [];
     const { deps } = recordingDeps({
@@ -322,15 +263,14 @@ describe('the request canvas: routing vs edge claim', () => {
         routed.push(id);
         return fakeRoomStore();
       },
-      indexSession: async (_c, _s, _m, _w, canvasId) => void claimed.push(canvasId),
-      settleConversation: async (i) => void claimed.push(i.canvasId),
+      onSessionStart: (_c, _s, canvasId) => void claimed.push(canvasId),
     });
     await runTurnAsync(input({ canvasId: 'cv_7' }), deps);
     expect(routed).toEqual(['cv_7']);
-    expect(claimed).toEqual(['cv_7', 'cv_7']);
+    expect(claimed).toEqual(['cv_7']);
   });
 
-  test('an unaddressed turn routes to the default but claims nothing', async () => {
+  test('an unaddressed turn routes to the default but binds nothing', async () => {
     const routed: string[] = [];
     const claimed: Array<string | undefined> = [];
     const { deps } = recordingDeps({
@@ -338,12 +278,11 @@ describe('the request canvas: routing vs edge claim', () => {
         routed.push(id);
         return fakeRoomStore();
       },
-      indexSession: async (_c, _s, _m, _w, canvasId) => void claimed.push(canvasId),
-      settleConversation: async (i) => void claimed.push(i.canvasId),
+      onSessionStart: (_c, _s, canvasId) => void claimed.push(canvasId),
     });
     await runTurnAsync(input({ canvasId: undefined }), deps);
     expect(routed).toEqual(['default']);
-    expect(claimed).toEqual([undefined, undefined]);
+    expect(claimed).toEqual([undefined]);
   });
 });
 
@@ -353,7 +292,7 @@ describe('mcpTokens reach runChat', () => {
   const recordTokens = () => {
     const seen: unknown[] = [];
     const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
-      seen.push(args[13]);
+      seen.push(args[12]);
       yield { kind: 'init', sessionId: 'sess_1' } satisfies ChatEvent;
       yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
     }) as unknown as TurnDeps['runChat'];

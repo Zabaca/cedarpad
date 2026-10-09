@@ -4,18 +4,14 @@
 // `resume`; this module mirrors that JSONL to R2 so a session's history survives runner sleep.
 //
 // `TranscriptStore` (bottom of the file) is the container's interface — put one session,
-// materialize one session. The free functions above it are the pieces it is
-// built from, plus the EDGE's read path: the worker (#62) cannot construct a store (no runner
-// FS), so it calls `transcriptKey` / `read` with just a sessionId against its own R2 access.
+// materialize one session. The free functions above it are the pieces it is built from.
 //
 // A Transcript is a FILE, not a Record (CONTEXT.md → Record vs File): the Claude Agent SDK owns
 // the format and reads it back on `--resume`, so the bytes are opaque here — never parsed,
 // normalised or re-encoded. Round-trip fidelity IS the contract; a subtly wrong one breaks
 // conversation continuity silently.
 
-import type { ChatEvent } from '../shared/chat-wire.ts';
 import { findSessionJsonl, resumeJsonlPath } from './session-jsonl.ts';
-import { projectJsonl } from './session-transcript.ts';
 
 // projectDirForCwd's canonical home is now session-jsonl.ts (the one home for a session's
 // JSONL-path knowledge); re-exported here for existing importers.
@@ -34,9 +30,7 @@ export interface BlobPutter {
 }
 
 /** Pure, stable R2 key for a session's transcript. Global (keyed by the SDK's
- * already-unique sessionId), NOT workspace-scoped: the Inbox is user-scoped and aggregates
- * Conversations across workspaces, so the edge read path resolves history from sessionId
- * alone (CONTEXT.md → Inbox → Storage). */
+ * already-unique sessionId), NOT workspace-scoped. */
 export const transcriptKey = (sessionId: string): string => `sessions/${sessionId}/transcript.jsonl`;
 
 /** Locate + read the raw session JSONL bytes on disk (nesting-robust via findSessionJsonl); an
@@ -73,19 +67,6 @@ export async function restore(
   return path;
 }
 
-/** Edge/container: fetch a session's raw JSONL from R2. null when absent. */
-export async function readRaw(getter: BlobGetter, sessionId: string): Promise<string | null> {
-  const bytes = await getter.get(transcriptKey(sessionId));
-  return bytes === null ? null : new TextDecoder().decode(bytes);
-}
-
-/** Edge/container: fetch + project a session's transcript from R2 into replay events for the
- * Inbox UI. An absent transcript yields `[]` (not an error), matching loadSessionTranscript. */
-export async function read(getter: BlobGetter, sessionId: string): Promise<ChatEvent[]> {
-  const text = await readRaw(getter, sessionId);
-  return text === null ? [] : projectJsonl(text);
-}
-
 /** The blob seam `TranscriptStore` needs: get + put (one session). `BlobBackend` satisfies it
  * structurally, so the container passes its Bun-S3 backend as-is and tests pass `memBackend()`
  * — the same precedent blob-store.ts set. */
@@ -99,7 +80,7 @@ export type TranscriptBlobs = BlobGetter & BlobPutter;
  * The interface is three verbs, because granularity is the whole point:
  *   put(sessionId)              — after a turn, write ONLY the session that turn touched.
  *   materialize(sessionId, cwd) — before a resume, fetch ONLY that session.
- *   get                         — read seam (the Inbox already reads via the free fns above).
+ *   get                         — read seam: a session's raw stored bytes.
  *
  * What it replaces: a `sessions.tar` of the whole `~/.claude/projects` tree, re-uploaded every
  * turn (49,111,040 bytes in production against ~650 KB of appends) and re-downloaded at every

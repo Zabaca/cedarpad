@@ -16,7 +16,7 @@ library + the app code) and one bridge process. In the deploy it maps 1:1 to a
 **container**; locally it is the single dev checkout. _Avoid_: "sandbox", "instance".
 
 **Owner / member**: the two workspace roles (Better Auth `member.role`). A **member**
-gets full workspace *use* (chat, agent, canvases, Inbox, notebook); the **owner** keeps
+gets full workspace *use* (chat, agent, canvases, notebook); the **owner** keeps
 workspace *administration* (invite/remove members, rename/delete). Deliberately no
 finer grain: the container is one shared trusted runtime — anyone who can chat can do
 anything the agent can, so the admission decision is binary. Access checks are
@@ -50,98 +50,27 @@ the durable home for a chat's resume pointer and config, and the only place the
 `chatId → sessionId` link lives (the JSONL carries no chat id). Replaces the old
 per-browser `localStorage`. _Avoid_: putting any of this on the `chat` shape.
 
-**Conversation / Inbox**: a Conversation is the edge-side index row of a chat session; the Inbox is the **workspace-shared** list of them — every member sees the
-same index, it is not a per-user mailbox. On the row, **creator** (`user_id`, immutable
-attribution: who started it) is distinct from **assignee** (`assigned_to`, nullable =
-unassigned, mutable: who has taken ownership of it); filtering by "mine" means assignee,
-never creator. Visibility and action are membership-gated, not creator-gated: any member
-sees every conversation and may reply. Assignment is **advisory** — a coordination
-signal/filter, never a lock; any member may assign anyone (or unassign), and replying to
-an *unassigned* conversation auto-assigns the replier. At birth: a conversation started
-by a human (UI chat, MCP `send_message` — the token's user) is auto-assigned to that
-initiator; an unattended start begins unassigned — queue work awaiting a claim. UI: the Open/All/Closed view switch is unchanged
-(`waiting_on: human` stays a pinned indicator inside Open, not a view); a new
-**"Assigned to" filter** beside it selects Everyone (default) / Unassigned / a specific
-member, composing with any view. Surface: `POST /api/inbox/:id/assign` `{ userId | null }`
-(membership-gated; target must be a member), `?assigned=` on the list, `assignedTo` on
-`InboxItem`; MCP gets full parity (`assign_conversation`, the `assigned` filter on
-`list_inbox`) — and since a token acts as its user, `send_message` into an unassigned
-conversation claims it for that user, deliberately. _Avoid_: scoping Inbox reads by
-`user_id`, repurposing `user_id` as the assignee, or making assignment exclusive
-(assignee-only reply). _(Decided 2026-07-15.)_
-
-**Workspace events hub** _(#383, decided 2026-07-29)_: one Durable Object per workspace,
-addressed `idFromName(workspaceEventsName(workspaceId))`, whose only job is **fan-out**.
-Every writer of a Conversation — the Inbox routes, the chat proxy, inbound MCP, and the
-container's platform RPC — rings it after its write commits; every open `/api/inbox/events`
-stream is subscribed to it and re-reads D1 when it hears. It exists because Workers are
-stateless per isolate: a subscriber held on isolate A cannot be reached by a write landing
-on isolate B, so a badge could only ever be *polled*, and polling it cost 1.6M D1 rows a
-day. `CanvasSyncRoom` is the shape it copies but not a place to put it (that is keyed per
-*canvas*; an inbox spans them), and `Sandbox` is the right scope with the
-wrong lifecycle — compute containers built to sleep.
-
-**The hub is a dumb notifier, not a cache.** It says *"something in your inbox changed"*
-and holds **no count and no rows**; the subscriber re-reads. That is ADR-0022 applied to a
-notifier — a second copy of the truth diverges, needs invalidation, and goes stale
-invisibly, whereas a hub holding nothing can only be *late*. The contract
-(`shared/workspace-events.ts`) makes that structural: the wire message is a topic and
-nothing else, so a count cannot ride it. Transport to the browser stays **SSE** (one-way,
-already spoken by the client); the SSE body is held by the *Worker*, and the hub holds only
-hibernatable WebSockets from those Workers — DO hibernation is WebSocket-only, so a hub
-holding the SSE bodies itself would stay resident for as long as any tab anywhere had the
-app open. Two timers survive and neither is a recompute: a 30s keep-alive that reads
-nothing (departed-client detection, which the old tick did as a side effect) and a
-5-minute watermark re-check, because ringing the hub is best-effort by construction.
-
-**Notices are coalesced, leading edge first** _(#383 follow-up)_. Pushing removed a bound
-polling had for free: a 10s tick cost the same 8,640 recomputes a day per tab however busy
-the workspace got, whereas a recompute per notice makes cost proportional to the **write
-rate**, which nothing caps — concurrent turns settling, or an agent sending across chats in
-a loop, multiply straight into D1, and the watermark cannot damp it because the notified
-path skips the watermark by design. So the first notice recomputes *immediately* (the
-sub-second latency is the point and is not traded away) and further notices inside a 500 ms
-window collapse into **one trailing** recompute — dropping that trailing one would turn a
-cost fix into a badge that is silently wrong until the safety net, so it is pinned by its
-own test. Steady-state ceiling: one recompute per window per tab (≈2/s), measured at 28
-rows for a 20-notice burst against 280 un-coalesced. Recomputes are also chained so two
-never overlap: a slow earlier read resolving after a fast later one would write the older
-count last. The damping lives in the **Worker**, not the hub — that is where the expensive
-recompute is, it needs no protocol change, and it keeps the hub holding nothing. This is
-the *second* time this lesson has been learned here: live presence used to ride "the
-throttled `event: presence` SSE frames", and #293 moved presence onto tldraw sync (which
-throttles internally), deleting the bespoke transport and taking the throttle with it.
-_Avoid_: a trailing-only debounce (it adds the window to every badge's latency), or putting
-the damping in the DO as the primary fix. Next limit if tab counts grow: `fanOut` is
-`O(sockets)` with a `JSON.stringify` per notice.
-The **watermark** (`queries/inbox-watermark.ts`) is that cheap probe: one statement,
-`max(updated_at)` over the workspace's conversations plus its shared read mark, both
-indexed point lookups — a change detector, never a stored answer. _Avoid_: giving the hub
-a count "to save a query", or wiring only `handlePlatformRpc` — that covers the container's
-writes and leaves a badge that moves for agents and not for humans, which looks fixed and
-is worse than polling. Presence, cross-chat delivery, and "a Component changed, reload it"
-are the natural next topics; none are built.
+**Conversation / Inbox / Workspace events hub** — _retired 2026-10-09_: there is no
+edge-side index of chat sessions, no assignment, no inbox badge and no events hub. A chat is
+its card on a canvas. The `conversations` table (and `workspaces.inbox_read_at`) remain until
+the data cleanup, and the `WorkspaceEvents` Durable Object class stays bound in
+`wrangler.jsonc` until the Cloudflare container migration deletes it.
 
 **Open PR** — _retired 2026-10-09_ with the dev agent: nothing opens or merges PRs. The
 `pr_url`/`pr_merged_at` columns remain until the data cleanup.
 
-**Visibility (canvas + chat)** _(ADR-0016, decided + implemented 2026-07-17)_:
+**Visibility (canvas)** _(ADR-0016, decided + implemented 2026-07-17; its standalone-chat
+half went with the Inbox)_:
 a canvas is **workspace-visible** (default; today's behavior) or **private** —
 private means only its **creator** (`created_by`, a new registry column) can see or
 open it; everyone else, list and routes alike, gets the same 404 as a nonexistent
-canvas. Standalone chats get the same opt-in flag: shared by default, the chat's
-creator may flip it. Effective rule: a conversation is hidden from user U iff
-(its canvas is private AND U ≠ the canvas creator) OR (the chat is flagged private
-AND U ≠ the chat creator) — **canvas privacy dominates**: re-privatizing a canvas
-hides ALL its attached chats, even from their own creators, until re-published.
-Flips are creator-only, both directions; the workspace owner additionally gets
+canvas. Flips are creator-only, both directions; the workspace owner additionally gets
 **manage-not-read**: sees that a private canvas exists (name, creator) and may
 force-publish or delete it, but cannot open it while private. Legacy canvases with
 no recorded creator — and the registry-row-less `default` canvas — are permanently
 workspace-visible. Share links still work on a private canvas (an explicit act by
 its creator); MCP enforces the same rules via the token's user. _Avoid_: an
-"admin" role (there is only owner/member), copying visibility onto conversation
-rows (derive it at read time via the canvas edge), or treating private as an ACL
+"admin" role (there is only owner/member), or treating private as an ACL
 (it is a binary creator-only flag, not per-member sharing).
 
 Containment: **workspace → canvas → page → shapes**, with **chat** shapes living on the
@@ -339,11 +268,10 @@ _Attribution today is the container's identity, not the turn's human._ A Record 
 stamped with `CANVAS_USER` — this deployment's single Better Auth `user.id` — so it answers
 "which workspace container" and cannot yet distinguish two members of a workspace (the
 `Env.CANVAS_USER` doc comment says the same thing: "a single static id can't represent
-whichever of N users is calling"). Unset ⇒ **null**, never the `'default'` placeholder the
-Inbox call sites fall back to: a version row is the permanent answer to "who changed this",
-and a name no user query will ever match is a history that *looks* attributed and is not.
-Per-turn attribution needs the edge-attested initiator (`x-inbox-assign`) threaded to the
-authoring tools; it is not built. The **backfill** (#365) writes with **no** author for the
+whichever of N users is calling"). Unset ⇒ **null**, never a `'default'` placeholder: a
+version row is the permanent answer to "who changed this", and a name no user query will
+ever match is a history that *looks* attributed and is not. Per-turn attribution needs an
+edge-attested initiator threaded to the authoring tools; it is not built. The **backfill** (#365) writes with **no** author for the
 same reason: a migration is not a person, and a synthetic id in a column typed as a user id
 would be exactly the history that looks attributed and is not. Its provenance is the version
 row itself — v1, stamped at the time the backfill ran.
@@ -371,7 +299,7 @@ what destroyed every own-tier component on 2026-07-29.
 The canvas never changes code, so a workspace has no repos, no GitHub connection, no jobs and
 no token-holding turn for a gated layer to protect.
 
-**Inbound MCP** (outside agents interacting with a workspace) is the only supported programmatic surface — there is deliberately no inbound REST/turn API (a service credential that can execute turns is an RCE credential; MCP's OAuth keeps the boundary at humans delegating to their own agents). The server runs at the edge; a token acts as its user, and every tool is ownership-checked per workspace. Tools split by the same line: **content + read** (`upload_skill`, `read_canvas`, `list_inbox`, `read_conversation`, …) vs **execution** (`send_message`). An MCP-originated chat is an ordinary Conversation — same session index, visible in the Inbox, resumable from the UI; `send_message` is async (returns `conversation_id` immediately; callers poll `read_conversation`) and runs a plain chat turn. `create_canvas` uses the same registry create as the shell route. Mutations funnel through the bridge (single writer of the workspace tree — `upload_skill` proxies to a bridge endpoint and wakes the container); only pure reads are served edge-side.
+**Inbound MCP** (outside agents interacting with a workspace) is the only supported programmatic surface — there is deliberately no inbound REST/turn API (a service credential that can execute turns is an RCE credential; MCP's OAuth keeps the boundary at humans delegating to their own agents). The server runs at the edge; a token acts as its user, and every tool is ownership-checked per workspace. Every tool is **content + read** (`upload_skill`, `read_canvas`, `write_component`, …): since the Inbox was retired (2026-10-09) there is no MCP tool that starts or reads a chat turn — an outside agent changes the canvas directly, through the same tools the in-canvas chat uses. `create_canvas` uses the same registry create as the shell route. Mutations funnel through the bridge (single writer of the workspace tree — `upload_skill` proxies to a bridge endpoint and wakes the container); only pure reads are served edge-side.
 
 _Avoid_: "self-modifying app" (ADR 0001's framing) — there is now a boundary; only the extension zones are mutable+durable, the core is image-only.
 
@@ -422,23 +350,14 @@ never learned the document moved.
 a channel the server pushes over. There is more than one, deliberately and boundedly — **a
 new plane is justified only by a difference in message VOLUME or in who OWNS the state, never
 by a new feature.** High-volume ephemeral streams get a direct path (turn output from the
-container; canvas ops over sync); low-volume state-change notifications share one broker per
-durability tier (the per-workspace events hub, at the edge). Within a plane, multiplex by
-topic — one stream per client, not one per feature.
+container; canvas ops over sync). The low-volume notification plane (the per-workspace events
+hub) went with the Inbox on 2026-10-09; if one is needed again, ADR-0023's rules for it still
+apply — thin topic-only notices, coalesced. Within a plane, multiplex by topic — one stream
+per client, not one per feature.
 
-The deciding question is **who owns the state, not what the state is about**. The Inbox looks
-like a counterexample and is the proof: it is *about* chats, but a **Conversation** is an
-edge-owned D1 row that outlives every **turn** in it, so its badge pushes from the edge, while
-an opened conversation's `<ChatView>` speaks the container's chat plane. Same screen, two
-planes, two owners. The tiebreaker: **anything that must survive the container sleeping cannot
-live on the chat plane.**
-
-Two obligations come with the hub plane. Notices are **thin** — a topic, never data; the
-subscriber re-reads D1, so there is no second copy to diverge (the contract is `.strip()`ped
-so a count cannot ride the wire). And notices must be **coalesced**: push makes cost
-proportional to write rate, which is unbounded, where polling was bounded by a fixed tick.
-_Avoid_: a per-feature `/api/*/events` endpoint, or routing turn tokens through the hub to
-reach one connection — tidier, and practically worse.
+The deciding question is **who owns the state, not what the state is about**. The tiebreaker:
+**anything that must survive the container sleeping cannot live on the chat plane.**
+_Avoid_: a per-feature `/api/*/events` endpoint.
 
 > Live presence (#212) was a bespoke heartbeat with **throttled** SSE frames; #293 moved it
 > onto sync and deleted the transport — taking the throttle with it, and the hub was built
@@ -503,9 +422,8 @@ A `CanvasShape` is one of:
   whether something is allowed, and any "move everyone" fallback.
   - **The edge is its only writer, on every path.** It is set on a send and on the canvas
     stream subscribe, and **set-or-DELETED** everywhere else — in `worker/index.ts` for the
-    authenticated and guest paths, and again in `worker/inbox-bridge.ts`, which returns
-    *before* index.ts's strip block. Miss one and a member can aim an agent at a
-    colleague's screen.
+    authenticated and guest paths. Miss one and a member can aim an agent at a colleague's
+    screen.
   - **The result counts DELIVERY, not application** (`asked`, not `moved`): the leg is
     fire-and-forget and a browser declines a page it has not synced yet. Only `asked: 0`
     is certain. Agent-facing wording says "asked … to switch", never "switched".
@@ -892,12 +810,6 @@ and reconnect/resume are the sync protocol's job now, not ours. What remains our
   status overlay shows cedar's live state (listening/thinking/speaking), peers, and captions.
 
 ## Deliberately deferred
-
-- **Per-user Inbox read state.** `conversations.unread` stays a single row-level boolean
-  meaning "new activity nobody has seen yet" — the first member to open the conversation
-  clears it for everyone. A per-user `conversation_reads` table is the correct long-term
-  shape but is deferred until the shared-inbox ambiguity is actually felt (decided
-  2026-07-15 with the shared-inbox pivot).
 
 - **Interactive components — DONE for controls.** The content has
   `pointer-events: all`, and a capture-phase pointer guard stops propagation only

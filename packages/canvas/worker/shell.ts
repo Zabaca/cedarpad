@@ -100,14 +100,6 @@ export async function handleCanvasesApi(
   database: Database,
   user: GateUser,
   canvasId?: string,
-  /**
-   * Ring the workspace's events hub (#383). Only the two changes an INBOX depends on use
-   * it: a canvas's visibility dominates that of every chat linked to it (ADR-0016), so a
-   * flip or a delete changes what a badge counts. A rename does not, and neither does a
-   * create (a new canvas has no chats). Default-parameter seam, as elsewhere in this
-   * package; the route in worker/index.ts binds the real hub.
-   */
-  notify: (workspaceId: string) => Promise<void> = async () => {},
 ): Promise<Response> {
   const selected = readWorkspaceCookie(request.headers.get('cookie')) ?? DEFAULT_WORKSPACE_ID;
   const activeWs = await getWorkspace(database, selected, user.id);
@@ -193,7 +185,6 @@ export async function handleCanvasesApi(
       const flipped = await canvasRegistry.setVisibility(database, canvasId, parsed.data.visibility);
       if (!flipped) return Response.json({ error: 'canvas not found' }, { status: 404 });
       existing.visibility = flipped.visibility;
-      await notify(existing.workspaceId);
     }
     if (parsed.data.name) {
       // Renaming a private canvas is reading-adjacent: creator only (the owner's
@@ -212,9 +203,6 @@ export async function handleCanvasesApi(
     // `canvasId` came off the URL and was just proved to belong to this workspace, so the
     // scope always names a canvas — the shared library (`canvas_id NULL`) is unreachable here.
     await deleteCanvasRecords(d1RecordStore(database), { workspaceId: existing.workspaceId, canvasId });
-    // The chats that lived on it are no longer hidden by it (ADR-0016) — an inbox badge
-    // can move without a single conversation row changing.
-    await notify(existing.workspaceId);
     return new Response(null, { status: 204 });
   }
   return new Response('method not allowed', { status: 405 });

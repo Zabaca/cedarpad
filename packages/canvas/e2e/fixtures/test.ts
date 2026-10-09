@@ -11,7 +11,7 @@
  *   so it lifts the token out of D1 — see `readMagicLinkToken` for why that needs no
  *   test-only branch in production code.
  * - `joinBridgeWorkspace()` — the one piece of state no API can create: membership of the
- *   workspace the container files its Conversations into. Seeded straight into the local D1
+ *   workspace the container serves. Seeded straight into the local D1
  *   (production's `default` workspace row was seeded the same way, by hand, once, #179).
  *
  * Both are addressed at the EDGE ORIGIN, not vite's. In production the edge is in front of
@@ -32,7 +32,7 @@ import { requireLocalD1File } from '../../server/local-d1.ts';
 /** The edge Worker's own origin — the gate, as production has it in front of every request. */
 export const EDGE_BASE_URL = process.env.CANVAS_EDGE_URL ?? `http://localhost:${process.env.CANVAS_EDGE_PORT ?? 4513}`;
 
-/** The workspace the bridge files its Conversations into (server/bridge.ts reads the same env). */
+/** The workspace the bridge serves (server/bridge.ts reads the same env). */
 export const BRIDGE_WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
 
 /** A signed-in user: their Better Auth id, and a request context carrying their session. */

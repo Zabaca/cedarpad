@@ -9,7 +9,7 @@
 // the editor for removed chat shapes).
 
 import { type ChatEvent, type ChatFrame, type TaskStatus, type TodoStatus, isChatFrame } from './chat-wire.ts';
-import { registerStream, setBeatTargets, setBusyCheck } from '../src/idle.ts';
+import { registerStream, setBusyCheck } from '../src/idle.ts';
 import { withCanvasParam, withPadCanvasHeader } from '../src/active-canvas.ts';
 import { CANVAS_ID_HEADER } from './bridge-wire.ts';
 
@@ -80,33 +80,10 @@ const EMPTY: ChatSnapshot = { items: [], sdk: null, busy: false, status: '', sub
 const sessions = new Map<string, ChatSnapshot>();
 const listeners = new Map<string, Set<() => void>>();
 
-// Connection target (ADR-0009): a base prefix prepended to every bridge URL for a chat,
-// keyed by chatId. `''` (unset) = same-origin, so a canvas chat is byte-for-byte today's
-// behavior. A Shell-opened Conversation sets a proxy prefix (e.g. `/inbox/:id/bridge`) so
-// its stream/send/interrupt/alive reach the owning runner's bridge through the edge proxy
-// instead of same-origin. Per-chatId, never a global — two chats can target two bridges.
-const targets = new Map<string, string>();
-
-/** Point a chat at a bridge through `prefix` (a base path prepended to its bridge URLs).
- *  `''` = same-origin. Set before openStream so the chat's stream opens under the prefix. */
-export function setConnectionTarget(chatId: string, prefix: string): void {
-  targets.set(chatId, prefix);
-}
-
-/** The connection-target prefix for a chat (`''` = same-origin, the default). */
-export function connectionTarget(chatId: string): string {
-  return targets.get(chatId) ?? '';
-}
-
-/** Build a bridge URL for a chat: its connection-target prefix + the same-origin path. */
-function bridgeUrl(chatId: string, path: string): string {
-  return `${connectionTarget(chatId)}${path}`;
-}
-
 // Canvas override (docked chat panel): the Shell renders a canvas chat OUTSIDE the pad URL,
 // so the location-based stamp (withPadCanvasHeader) can't see which canvas it belongs to.
 // An explicit per-chat override keeps the docked chat's calls routed to — and claiming —
-// the canvas its panel fronts. Never set for in-pad or Inbox chats (the claim stays explicit).
+// the canvas its panel fronts. Never set for in-pad chats (the claim stays explicit).
 const canvasOverrides = new Map<string, string>();
 
 /** Stamp `canvasId` on all of a chat's bridge calls (a Shell-docked canvas chat). */
@@ -139,15 +116,6 @@ function chatHeaders(chatId: string, headers?: HeadersInit): Record<string, stri
   return id ? { ...base, [CANVAS_ID_HEADER]: id } : base;
 }
 
-/** The distinct set of bridge prefixes the idle beat must reach — one per bridge that
- *  currently holds a live chat session. Same-origin canvas chats collapse to `['']`.
- *  Fed to the idle gate so a Shell-connected chat beats its own bridge, not same-origin. */
-export function beatTargets(): string[] {
-  const set = new Set<string>();
-  for (const id of sessions.keys()) set.add(connectionTarget(id));
-  return [...set];
-}
-
 // One shared SSE connection for ALL chats (each frame arrives tagged with its
 // chatId), so a tab holds a single chat connection regardless of how many chat
 // cards are open. One EventSource per chat instead would, with the canvas stream,
@@ -155,10 +123,6 @@ export function beatTargets(): string[] {
 // (send / shape upserts) stuck pending. See the bridge's chatStream().
 let sharedStream: EventSource | null = null;
 let streamReady = false;
-// The prefix the shared stream was opened under, so an idle-driven reopen re-targets the
-// same bridge. One EventSource serves all chats in a tab; a tab is single-target in practice
-// (a canvas tab is same-origin; a Shell tab proxies its Conversation), so this holds.
-let sharedStreamTarget = '';
 // In-progress agent bubble id, keyed by chat AND parent (subagent text streams in its
 // own bubble, never merged into the main agent's). `''` parent = the main agent.
 const openBubble = new Map<string, string | null>();
@@ -270,7 +234,7 @@ export function ensureSession(chatId: string): void {
  *  any tab/device and survives a recycle. Best-effort: a failed fetch leaves state as-is. */
 async function rehydrate(chatId: string): Promise<void> {
   try {
-    const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/transcript`), { headers: chatHeaders(chatId) });
+    const res = await fetch(`/api/chat/${chatId}/transcript`, { headers: chatHeaders(chatId) });
     if (!res.ok) return;
     const { config, events, busy } = (await res.json()) as { config?: { model?: string; effort?: string; forkNext?: boolean; mcp?: McpSelection }; events?: ChatEvent[]; busy?: boolean };
     clearBubbles(chatId);
@@ -292,12 +256,10 @@ async function rehydrate(chatId: string): Promise<void> {
   }
 }
 
-/** Ensure the single shared chat SSE stream is open; route tagged frames per chat.
- *  Opens under `target` (the connecting chat's prefix; `''` = same-origin). */
-function ensureSharedStream(target = ''): void {
+/** Ensure the single shared chat SSE stream is open; route tagged frames per chat. */
+function ensureSharedStream(): void {
   if (sharedStream) return;
-  sharedStreamTarget = target;
-  const es = new EventSource(withCanvasParam(`${target}/api/chat/stream`));
+  const es = new EventSource(withCanvasParam('/api/chat/stream'));
   let opened = false;
   es.onopen = () => {
     streamReady = true;
@@ -352,7 +314,7 @@ function closeSharedStream(): void {
   for (const id of sessions.keys()) update(id, { subscribed: false });
 }
 function reopenSharedStream(): void {
-  ensureSharedStream(sharedStreamTarget);
+  ensureSharedStream();
   for (const id of sessions.keys()) void rehydrate(id);
 }
 registerStream({ open: reopenSharedStream, close: closeSharedStream });
@@ -360,15 +322,12 @@ setBusyCheck(() => {
   for (const s of sessions.values()) if (s.busy) return true;
   return false;
 });
-// Beat the bridge(s) behind our live sessions — same-origin for the canvas, or a Shell
-// chat's proxy prefix. No sessions ⇒ `[]`; idle then falls back to same-origin (unchanged).
-setBeatTargets(beatTargets);
 
 /** Attach a chat to the shared stream (idempotent). Never closed on view unmount.
  *  Pulls the server transcript on attach so a reload / fresh device rehydrates. */
 export function openStream(chatId: string): void {
   ensureSession(chatId);
-  ensureSharedStream(connectionTarget(chatId));
+  ensureSharedStream();
   void rehydrate(chatId);
   // If the stream is already live, this freshly-attached session can send right away.
   if (streamReady) update(chatId, { subscribed: true });
@@ -431,7 +390,7 @@ export function setMcpSelection(chatId: string, mcp: McpSelection): void {
 }
 
 function postConfig(chatId: string, patch: { model?: string; effort?: string; forkNext?: boolean; mcp?: McpSelection }): Promise<unknown> {
-  return fetch(bridgeUrl(chatId, `/api/chat/${chatId}/config`), { method: 'POST', headers: chatHeaders(chatId, { 'content-type': 'application/json' }), body: JSON.stringify(patch) }).catch(() => {});
+  return fetch(`/api/chat/${chatId}/config`, { method: 'POST', headers: chatHeaders(chatId, { 'content-type': 'application/json' }), body: JSON.stringify(patch) }).catch(() => {});
 }
 
 /** Seed `newId` as a fork of `parentId` on the SERVER (its ChatMeta resumes the parent's
@@ -439,7 +398,7 @@ function postConfig(chatId: string, patch: { model?: string; effort?: string; fo
  *  JSONL transcript until the fork diverges. The parent session is untouched (ADR 0004). */
 export function forkSession(parentId: string, newId: string): void {
   ensureSession(newId);
-  void fetch(bridgeUrl(newId, `/api/chat/${newId}/fork`), { method: 'POST', headers: chatHeaders(newId, { 'content-type': 'application/json' }), body: JSON.stringify({ from: parentId }) })
+  void fetch(`/api/chat/${newId}/fork`, { method: 'POST', headers: chatHeaders(newId, { 'content-type': 'application/json' }), body: JSON.stringify({ from: parentId }) })
     .then(() => rehydrate(newId))
     .catch(() => {});
 }
@@ -460,26 +419,8 @@ export function routeChatFrame(raw: string): void {
   }
   if (!isChatFrame(parsed)) return; // parsed is now narrowed to ChatFrame
   const { chatId, ...ev } = parsed;
-  // List-signal listeners (the Inbox doorbell) see EVERY frame — including chats this
-  // client doesn't hold a session for (a headless send, another tab's chat).
-  for (const l of frameListeners) l(chatId, ev);
   if (!sessions.has(chatId)) return; // a frame for a chat this client doesn't hold
   applyEvent(chatId, ev);
-}
-
-// The Inbox "list changed" doorbell (grill 2026-07-10): the container's chat stream is the
-// only live channel that observes turn starts/settles, so list consumers subscribe here and
-// refetch the authoritative D1 list when a frame implies a row changed. No list data
-// rides the stream — it is purely a signal.
-const frameListeners = new Set<(chatId: string, ev: ChatEvent) => void>();
-export function onChatFrame(cb: (chatId: string, ev: ChatEvent) => void): () => void {
-  frameListeners.add(cb);
-  return () => void frameListeners.delete(cb);
-}
-/** Open the shared stream WITHOUT attaching a chat — for signal-only consumers (the Inbox
- * list). Idempotent; the idle gate still closes/reopens it with tab visibility. */
-export function openFrameSignal(target = ''): void {
-  ensureSharedStream(target);
 }
 
 function applyEvent(chatId: string, ev: ChatEvent) {
@@ -535,10 +476,9 @@ function applyEvent(chatId: string, ev: ChatEvent) {
     const detail = toolDetail(ev);
     const { arg } = toolParts(ev);
     update(chatId, (s) => ({ ...s, status: 'working', items: [...s.items, { id, kind: 'tool', label: toolLabel(ev), ...(arg ? { arg } : {}), ...(detail ? { detail } : {}), ...(ev.parentId ? { parentId: ev.parentId } : {}), ...(ev.id ? { toolUseId: ev.id } : {}) }] }));
-    // end_turn (and its ask_human predecessor in old transcripts) is the one tool whose INPUT
-    // is human-facing — the question/summary it posts to the Inbox. Render it as a readable
-    // agent bubble after the chip (live AND replay emit the same tool event): a question the
-    // human can't read isn't a question.
+    // end_turn / ask_human (retired with the Inbox, still in old transcripts) are the tools
+    // whose INPUT is human-facing — the question/summary. On replay, render it as a readable
+    // agent bubble after the chip: a question the human can't read isn't a question.
     const input = ev.name === 'end_turn' || ev.name === 'ask_human' ? (ev.input as { question?: unknown; summary?: unknown } | null) : null;
     const q = typeof input?.question === 'string' && input.question ? input.question : input?.summary;
     if (typeof q === 'string' && q) {
@@ -615,7 +555,7 @@ async function dispatchSend(chatId: string, message: string, images: PendingImag
   try {
     // ADR 0004: sessionId / model / effort / fork are server-owned (ChatMeta); the body
     // carries only the turn's content.
-    const res = await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/send`), {
+    const res = await fetch(`/api/chat/${chatId}/send`, {
       method: 'POST',
       headers: chatHeaders(chatId, { 'content-type': 'application/json' }),
       body: JSON.stringify({ message, images: images.map(({ media_type, data }) => ({ media_type, data })) }),
@@ -648,7 +588,7 @@ export async function interrupt(chatId: string): Promise<void> {
   if (!s || !s.busy) return;
   if (s.queue.length) update(chatId, { queue: [] });
   try {
-    await fetch(bridgeUrl(chatId, `/api/chat/${chatId}/interrupt`), { method: 'POST', headers: chatHeaders(chatId) });
+    await fetch(`/api/chat/${chatId}/interrupt`, { method: 'POST', headers: chatHeaders(chatId) });
   } catch {
     /* ignore */
   }

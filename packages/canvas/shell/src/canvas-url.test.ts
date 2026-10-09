@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { canvasFromUrl, urlWithCanvas } from './canvas-url';
 
 // The canvas stage's selection is a URL, not just component state: reloading
-// `/?canvas=cv_1` must reopen that canvas. Mirrors stage.ts / inbox-url.ts.
+// `/?canvas=cv_1` must reopen that canvas. Mirrors stage.ts.
 describe('canvas ↔ URL', () => {
   test('bare `/` names no canvas', () => {
     expect(canvasFromUrl('')).toBeNull();

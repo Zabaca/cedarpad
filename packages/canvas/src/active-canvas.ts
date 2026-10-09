@@ -41,7 +41,7 @@ export function withCanvasHeader(headers?: HeadersInit): Record<string, string> 
 }
 
 /** `x-canvas-id` for CHAT calls: stamped only when this surface IS a pad. The chat-store is
- * shared with non-pad surfaces (the Inbox thread), where a defaulted stamp would falsely
+ * shared with non-pad surfaces (the Shell's docked panel), where a defaulted stamp would falsely
  * claim the Default canvas as the chat's home — the chat→canvas edge is a claim, not a
  * fallback, so absence must mean "no canvas". */
 export function withPadCanvasHeader(headers?: HeadersInit): Record<string, string> {

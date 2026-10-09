@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test';
 
 import { STAGES, stageFromUrl, urlForStage } from './stage';
 
-// The rail's selection is a URL, not just component state: reloading `/?stage=inbox` must
-// land back on Inbox. The shell is served from ASSETS at `/` only, so the stage rides in
-// the query string — a path like `/notebook` is a DIFFERENT edge route today (#107 re-homes it).
+// The rail's selection is a URL, not just component state: reloading `/?stage=settings` must
+// land back on Settings. The shell is served from ASSETS at `/` only, so the stage rides in
+// the query string.
 describe('stage ↔ URL', () => {
   test('bare `/` is the canvas stage', () => {
     expect(stageFromUrl('')).toBe('canvas');
@@ -18,6 +18,10 @@ describe('stage ↔ URL', () => {
   test('the canvas stage is the clean URL, not `?stage=canvas`', () => {
     expect(urlForStage('canvas')).toBe('/');
     expect(urlForStage('notebook')).toBe('/?stage=notebook');
+  });
+
+  test('a stage that no longer exists (the retired Inbox) lands on the canvas', () => {
+    expect(stageFromUrl('?stage=inbox')).toBe('canvas');
   });
 
   test('settings is a stage (#192) and round-trips', () => {

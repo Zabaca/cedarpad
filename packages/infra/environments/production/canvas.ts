@@ -88,15 +88,6 @@ export default cloudflareModule.instance({
       'FREDRIN_KEY',
       // One FREDRIN_<LABEL>_KEY per extra Fredrin project → the `fredrin-<label>` connection.
       'FREDRIN_CEDARPAD_KEY',
-      // Web push VAPID keypair (#87). Unlike the secrets above, the PRIVATE half IS
-      // forwarded into the container (worker/container-env.ts): the `notify` seam that
-      // signs and sends lives in the bridge, not at the edge. Deliberate, narrow exception
-      // to the ADR-0008 edge-only rule — the capability it grants is "send a notification
-      // to an endpoint already in push_subscriptions", and it reads nothing. VAPID_SUBJECT
-      // is the RFC 8292 contact the push service may reach us at.
-      'VAPID_PUBLIC_KEY',
-      'VAPID_PRIVATE_KEY',
-      'VAPID_SUBJECT',
     ],
     // Single always-warm DO-bound container; the gradual default never drains it,
     // so a redeployed image would silently never take effect. Roll immediately.

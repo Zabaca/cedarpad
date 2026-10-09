@@ -4,7 +4,6 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import * as schema from '../web-poc/lib/db/schema.ts';
-import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { addWorkspaceMember, createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { buildMcpTools, EditComponentInput, WriteComponentInput } from './mcp-tools.ts';
@@ -29,23 +28,15 @@ const client = createClient({ url: ':memory:' });
 const db = drizzle(client, { schema });
 const database = db as never;
 
-let sends: Array<{ workspaceId: string; chatId: string; message: string; canvasId?: string }> = [];
 let skillUploads: Array<{ workspaceId: string; name: string; files: number }> = [];
 let bridgeCalls: Array<{ workspaceId: string; path: string; method: string; headers: Record<string, string>; body?: unknown }> = [];
 // Canned bridge responses by path — set per test; unset paths 404. A key may be prefixed
 // with a method ("PUT /api/components/X") when one path answers differently per verb, which
 // a read-modify-write tool needs; a bare path still matches any method.
 let bridgeResponses: Record<string, unknown> = {};
-/** Which workspaces the tools rang the events hub for (#383). */
-const rung: string[] = [];
 const tools = buildMcpTools({
   db: database,
   userId: 'u_1',
-  notify: async (workspaceId) => void rung.push(workspaceId),
-  proxySend: async (workspaceId, chatId, message, canvasId) => {
-    sends.push({ workspaceId, chatId, message, canvasId });
-    return new Response(JSON.stringify({ ok: true }), { status: 202 });
-  },
   proxySkill: async (workspaceId, name, input) => {
     skillUploads.push({ workspaceId, name, files: input.files.length });
     return new Response(JSON.stringify({ ok: true, skill: name }), { status: 200 });
@@ -89,94 +80,6 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(ok.canvases.map((c) => c.name)).toContain('Roadmap');
 
     await expect(tools.listCanvases({ workspace_id: OTHER_WS })).rejects.toThrow(/not found/);
-  });
-
-  test('send_message mints a chat id, proxies the send, and returns the poll handle', async () => {
-    sends = [];
-    const res = await tools.sendMessage({ workspace_id: WS, message: 'hello agent' });
-    expect(res.chat_id.startsWith('mcp_')).toBe(true);
-    expect(res.status).toBe('running');
-    expect(sends).toEqual([{ workspaceId: WS, chatId: res.chat_id, message: 'hello agent', canvasId: undefined }]);
-  });
-
-  test('send_message to a stranger’s workspace never proxies', async () => {
-    sends = [];
-    await expect(tools.sendMessage({ workspace_id: OTHER_WS, message: 'nope' })).rejects.toThrow(/not found/);
-    expect(sends).toEqual([]);
-  });
-
-  test('read_conversation finds the row by the chat handle once row-at-start lands; before that it reports starting', async () => {
-    const chatId = 'mcp_test_read';
-    expect((await tools.readConversation({ chat_id: chatId })).status).toBe('starting');
-
-    await conversations.create(database, {
-      sessionId: 's_1',
-      userId: 'u_1',
-      workspaceId: WS,
-      ownerRef: chatId,
-      summary: 'hello agent',
-      lastMessagePreview: 'the reply text',
-    } as never);
-    const found = await tools.readConversation({ chat_id: chatId });
-    expect(found.status).toBe('open');
-    expect(found.last_message_preview).toBe('the reply text');
-    expect(found.workspace_id).toBe(WS);
-  });
-
-  test("read_conversation never returns a conversation from a workspace the user can't access", async () => {
-    await conversations.create(database, {
-      sessionId: 's_2',
-      userId: 'u_2',
-      workspaceId: OTHER_WS,
-      ownerRef: 'mcp_theirs',
-    } as never);
-    expect((await tools.readConversation({ chat_id: 'mcp_theirs' })).status).toBe('starting');
-  });
-
-  test('the inbox is workspace-shared: a member reads (and replies to) a conversation another member created', async () => {
-    // u_2 creates a row in WS (u_1's workspace — imagine u_2 was invited); u_1 still sees it.
-    await conversations.create(database, {
-      sessionId: 's_shared',
-      userId: 'u_2',
-      workspaceId: WS,
-      ownerRef: 'mcp_shared',
-      summary: 'their session',
-    } as never);
-    const read = await tools.readConversation({ chat_id: 'mcp_shared' });
-    expect(read.status).toBe('open');
-
-    sends = [];
-    const res = await tools.sendMessage({ workspace_id: WS, message: 'joining in', chat_id: 'mcp_shared' });
-    expect(res.chat_id).toBe('mcp_shared');
-    expect(sends).toHaveLength(1);
-  });
-
-  test('send_message with an existing chat_id replies into that conversation (same workspace)', async () => {
-    sends = [];
-    const chatId = 'mcp_test_read'; // created above, kind chat, WS, u_1
-    const res = await tools.sendMessage({ workspace_id: WS, message: 'follow-up', chat_id: chatId });
-    expect(res.chat_id).toBe(chatId);
-    expect(sends).toHaveLength(1);
-  });
-
-  test("send_message continuing a canvas-paired conversation addresses that canvas (the agent's canvas tools bind to it)", async () => {
-    sends = [];
-    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'Board' });
-    await conversations.create(database, {
-      sessionId: 's_paired',
-      userId: 'u_1',
-      workspaceId: WS,
-      ownerRef: 'mcp_paired',
-      canvasId: board.id,
-    } as never);
-
-    await tools.sendMessage({ workspace_id: WS, message: 'about the board', chat_id: 'mcp_paired' });
-    expect(sends).toEqual([{ workspaceId: WS, chatId: 'mcp_paired', message: 'about the board', canvasId: board.id }]);
-
-    // An explicit canvas_id wins over the pairing.
-    sends = [];
-    await tools.sendMessage({ workspace_id: WS, message: 'elsewhere', chat_id: 'mcp_paired', canvas_id: 'other_canvas' });
-    expect(sends[0]?.canvasId).toBe('other_canvas');
   });
 
   test('upload_skill is access-checked and proxies to the bridge (single writer of the tree)', async () => {
@@ -310,29 +213,6 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(await tools.viewCanvas({ workspace_id: WS })).toBeNull();
     expect(bridgeCalls.map((c) => c.path)).toEqual(['/api/canvas/view']);
     expect(bridgeCalls[0]?.body).toEqual({});
-  });
-
-  test('read_transcript restores the session (inbox open) then returns the full settled events — the user’s own conversations only', async () => {
-    const chatId = 'mcp_full_transcript';
-    const conv = await conversations.create(database, {
-      sessionId: 's_full',
-      userId: 'u_1',
-      workspaceId: WS,
-      ownerRef: chatId,
-    } as never);
-    bridgeResponses = {
-      [`/api/inbox/${conv.id}/chat`]: { chatId: 'chat_resolved' },
-      '/api/chat/chat_resolved/transcript': { events: [{ kind: 'text', text: 'the whole reply' }] },
-    };
-    bridgeCalls = [];
-
-    const res = await tools.readTranscript({ chat_id: chatId });
-    expect(res.chat_id).toBe(chatId);
-    expect(res.events).toEqual([{ kind: 'text', text: 'the whole reply' }]);
-    expect(bridgeCalls.map((c) => c.path)).toEqual([`/api/inbox/${conv.id}/chat`, '/api/chat/chat_resolved/transcript']);
-
-    await expect(tools.readTranscript({ chat_id: 'mcp_theirs' })).rejects.toThrow(/not found/); // u_2's
-    await expect(tools.readTranscript({ chat_id: 'mcp_ghost' })).rejects.toThrow(/not found/);
   });
 
   // ADR-0022 / PRD #354 story 29: the LISTING is answered at the edge from Records plus the
@@ -609,68 +489,6 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(bridgeCalls).toEqual([]);
   });
 
-  test('list_inbox lists the WHOLE workspace’s conversations (shared inbox), with assigned_to', async () => {
-    const res = await tools.listInbox({ workspace_id: WS });
-    expect(res.items.map((i) => i.chat_id)).toContain('mcp_test_read');
-    // Another member's session shows too — the index is workspace-shared, not per-user.
-    expect(res.items.map((i) => i.chat_id)).toContain('mcp_shared');
-    expect(res.items.every((i) => i.workspace_id === WS)).toBe(true);
-    expect(res.items.every((i) => 'assigned_to' in i)).toBe(true);
-  });
-
-  test('list_inbox filters by assignee: a user id, or "unassigned"', async () => {
-    await conversations.create(database, {
-      sessionId: 's_claimed',
-      userId: 'u_1',
-      workspaceId: WS,
-      ownerRef: 'mcp_claimed',
-      assignedTo: 'u_2',
-    } as never);
-    const theirs = await tools.listInbox({ workspace_id: WS, assigned: 'u_2' });
-    expect(theirs.items.map((i) => i.chat_id)).toEqual(['mcp_claimed']);
-    const unclaimed = await tools.listInbox({ workspace_id: WS, assigned: 'unassigned' });
-    expect(unclaimed.items.map((i) => i.chat_id)).not.toContain('mcp_claimed');
-  });
-});
-
-describe('assign_conversation — advisory assignment over MCP (full parity)', () => {
-  test('assigns a member, clears with null, and the change is visible in reads', async () => {
-    await conversations.create(database, {
-      sessionId: 's_assign',
-      userId: 'u_1',
-      workspaceId: WS,
-      ownerRef: 'mcp_assign',
-    } as never);
-    // u_2 must be a member of WS to be assignable.
-    await addWorkspaceMember(database, { workspaceId: WS, userId: 'u_2' });
-
-    const res = await tools.assignConversation({ chat_id: 'mcp_assign', user_id: 'u_2' });
-    expect(res.assigned_to).toBe('u_2');
-    expect((await tools.readConversation({ chat_id: 'mcp_assign' })).assigned_to).toBe('u_2');
-
-    const cleared = await tools.assignConversation({ chat_id: 'mcp_assign', user_id: null });
-    expect(cleared.assigned_to).toBeNull();
-  });
-
-  // #383: MCP is a third writer of the conversations table, alongside the edge routes and
-  // the container's platform RPC. A claim made from an agent has to reach the badge like
-  // one made from the Inbox does.
-  test('an MCP assignment rings the conversation’s workspace events hub', async () => {
-    rung.length = 0;
-    await tools.assignConversation({ chat_id: 'mcp_assign', user_id: 'u_2' });
-    expect(rung).toEqual([WS]);
-  });
-
-  test('a REFUSED assignment rings nothing', async () => {
-    rung.length = 0;
-    await expect(tools.assignConversation({ chat_id: 'mcp_assign', user_id: 'u_ghost' })).rejects.toThrow();
-    expect(rung).toEqual([]);
-  });
-
-  test('a non-member target errors; a conversation outside the user’s workspaces errors', async () => {
-    await expect(tools.assignConversation({ chat_id: 'mcp_assign', user_id: 'u_ghost' })).rejects.toThrow(/member/);
-    await expect(tools.assignConversation({ chat_id: 'mcp_theirs', user_id: 'u_1' })).rejects.toThrow(/not found/);
-  });
 });
 
 describe('create_canvas — the same registry create the shell route uses, access-checked', () => {
@@ -703,8 +521,6 @@ describe('notebook tools bind the token user’s workspace, never an argument', 
     const theirs = await buildMcpTools({
       db: database,
       userId: 'u_3',
-      notify: async () => {},
-      proxySend: async () => new Response(null, { status: 202 }),
       proxySkill: async () => new Response(null, { status: 200 }),
       proxyBridge: async () => new Response(null, { status: 404 }),
     }).notebook();

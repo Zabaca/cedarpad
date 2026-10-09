@@ -100,9 +100,7 @@ function target(): { rpc: MigrationRpc; label: string; detail?: string } {
     origin: 'http://local.invalid',
     secret,
     fetchImpl: (url, init) =>
-      // No hub off the edge (#383): this driver only invokes Record verbs, which touch no
-      // Conversation, and there is nobody watching a workspace from a migration script.
-      handlePlatformRpc(new Request(url, init), { BETTER_AUTH_SECRET: secret }, { db, send: null, origin: '', notify: async () => {} }),
+      handlePlatformRpc(new Request(url, init), { BETTER_AUTH_SECRET: secret }, { db }),
   });
   if (!rpc) throw new Error('could not build the in-process client');
   return { rpc, label: 'the local D1', detail: file };
