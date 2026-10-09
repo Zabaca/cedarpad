@@ -167,8 +167,12 @@
   "env": {
     "preview": {
       "name": "agent-canvas-preview",
-      // No custom domain: serve on the account's <name>.<subdomain>.workers.dev.
+      // No custom domain: serve on the account's <name>.<subdomain>.workers.dev. `routes` MUST
+      // be declared empty: a named env inherits the top-level `routes`, and on 2026-10-09 a
+      // preview deploy moved app.cedarpad.com and poc.cedarpad.com onto this Worker until the
+      // production Worker was redeployed.
       "workers_dev": true,
+      "routes": [],
       "observability": { "enabled": true },
       // Better Auth is origin-sensitive — these are the deployed preview origin
       // (the account's workers.dev subdomain, from the first deploy).
