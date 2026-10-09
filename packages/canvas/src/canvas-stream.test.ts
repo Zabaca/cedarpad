@@ -18,6 +18,14 @@ describe('respondToScreenshot', () => {
     expect(replies).toEqual([{ id: 'req1', url: 'data:image/png;base64,AAA' }]);
   });
 
+  test('hands the frame\'s page to the renderer, and no page when the frame names none', async () => {
+    const asked: Array<string | undefined> = [];
+    const render = async (pageId?: string) => (asked.push(pageId), 'data:image/png;base64,AAA');
+    await respondToScreenshot(JSON.stringify({ id: 'p1', pageId: 'page:two' }), render, () => {});
+    await respondToScreenshot(JSON.stringify({ id: 'p2' }), render, () => {});
+    expect(asked).toEqual(['page:two', undefined]);
+  });
+
   // An empty canvas is a legitimate answer, not a hang: the renderer returns null and we
   // still reply, so the agent's tool call completes with "nothing to show".
   test('replies null when there is nothing to render', async () => {

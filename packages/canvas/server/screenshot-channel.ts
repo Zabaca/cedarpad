@@ -11,8 +11,9 @@
 // protocol. The sync socket terminates at the edge Worker and never reaches this process,
 // so anything the BRIDGE needs to say to a browser needs a stream of its own:
 //
-//   - `screenshot`: the agent's `view_canvas` round-trip. The bridge asks for a PNG, the
-//     browser renders it with tldraw and POSTs it back, correlated by id.
+//   - `screenshot`: the agent's `view_canvas` round-trip (the in-canvas agent's and the MCP
+//     tool's). The bridge asks for a PNG, the browser renders it with tldraw and POSTs it
+//     back, correlated by id.
 //   - `page`: move this viewer's editor to a page. Fire-and-forget — there is no reply to
 //     correlate, because nothing downstream blocks on the human's screen having moved.
 //
@@ -42,8 +43,9 @@ export interface ScreenshotChannel {
   readonly canvasId: string;
   /** Subscribed browsers. Also the /api/status client count and the idle-reaper's signal. */
   readonly clients: Set<CanvasSubscriber>;
-  /** Ask the browser for a PNG; resolves null if nobody is connected or it times out. */
-  requestScreenshot(timeoutMs?: number): Promise<string | null>;
+  /** Ask the browser for a PNG; resolves null if nobody is connected or it times out.
+   *  `pageId` renders that page; without it, whatever page the answering tab is on. */
+  requestScreenshot(timeoutMs?: number, pageId?: string): Promise<string | null>;
   /** Resolve a pending screenshot (the browser POSTs the PNG back, correlated by id). */
   resolveScreenshot(id: string, url: string | null): void;
   /**
@@ -80,12 +82,12 @@ export function createScreenshotChannel(canvasId: string): ScreenshotChannel {
     return sent;
   };
 
-  function requestScreenshot(timeoutMs = 7000): Promise<string | null> {
+  function requestScreenshot(timeoutMs = 7000, pageId?: string): Promise<string | null> {
     if (clients.size === 0) return Promise.resolve(null);
     const id = `shot${(shotSeq += 1)}`;
     // Every subscriber: a screenshot is a question about the CANVAS, not about a person,
     // and the first browser to answer resolves it.
-    fanOut(sseEvent('screenshot', { id }), () => true);
+    fanOut(sseEvent('screenshot', pageId ? { id, pageId } : { id }), () => true);
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         pendingShots.delete(id);

@@ -276,6 +276,44 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(await tools.selectPage({ workspace_id: WS, page: 'page:two' })).toEqual({ page_id: 'page:two', asked: 0 });
   });
 
+  test('read_image proxies the shape id to the canvas the token user can reach and returns the pixels', async () => {
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'Shots' });
+    bridgeResponses = { '/api/canvas/image?id=shape%3Apic': { data: 'iVBOR', mimeType: 'image/png' } };
+    bridgeCalls = [];
+
+    expect(await tools.readImage({ workspace_id: WS, canvas_id: board.id, id: 'shape:pic' })).toEqual({ data: 'iVBOR', mimeType: 'image/png' });
+    expect(bridgeCalls[0]?.headers['x-canvas-id']).toBe(board.id);
+  });
+
+  test('read_image refuses another workspace’s canvas before the bridge is asked', async () => {
+    const theirs = await canvasRegistry.create(database, { workspaceId: OTHER_WS, name: 'Theirs' });
+    bridgeCalls = [];
+    await expect(tools.readImage({ workspace_id: WS, canvas_id: theirs.id, id: 'shape:pic' })).rejects.toThrow(/canvas not found/);
+    expect(bridgeCalls).toEqual([]);
+  });
+
+  test('view_canvas resolves a page NAME at the edge and asks the bridge for that page id', async () => {
+    const board = await canvasRegistry.create(database, { workspaceId: WS, name: 'Look' });
+    bridgeResponses = {
+      '/api/canvas': { version: 3, shapes: [], pages: [{ id: 'page:page', name: 'Page 1' }, { id: 'page:two', name: 'Roadmap' }] },
+      '/api/canvas/view': { url: 'data:image/png;base64,AAAA' },
+    };
+    bridgeCalls = [];
+
+    expect(await tools.viewCanvas({ workspace_id: WS, canvas_id: board.id, page: 'Roadmap' })).toEqual({ data: 'AAAA', mimeType: 'image/png' });
+    const post = bridgeCalls.find((c) => c.path === '/api/canvas/view');
+    expect(post?.body).toEqual({ pageId: 'page:two' });
+    expect(post?.headers['x-canvas-id']).toBe(board.id);
+  });
+
+  test('view_canvas without a page skips the canvas read, and "no tab answered" comes back as null', async () => {
+    bridgeResponses = { '/api/canvas/view': { url: null } };
+    bridgeCalls = [];
+    expect(await tools.viewCanvas({ workspace_id: WS })).toBeNull();
+    expect(bridgeCalls.map((c) => c.path)).toEqual(['/api/canvas/view']);
+    expect(bridgeCalls[0]?.body).toEqual({});
+  });
+
   test('read_transcript restores the session (inbox open) then returns the full settled events — the user’s own conversations only', async () => {
     const chatId = 'mcp_full_transcript';
     const conv = await conversations.create(database, {
