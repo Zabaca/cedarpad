@@ -41,6 +41,7 @@ mock.module('./sandbox-runtime.ts', () => ({
     return new Response('pad-html');
   },
   sandboxFor: () => ({}),
+  serveCanvasContainer: () => new Response('container'),
 }));
 mock.module('./auth-gate.ts', () => ({
   ...realAuthGate,

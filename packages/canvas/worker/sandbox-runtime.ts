@@ -2,6 +2,7 @@ import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from './index.ts';
 import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
 import type { CanvasBootSpec } from './canvas-boot.ts';
+import { COORDS_HEADER, containerChoice } from './canvas-container-lifecycle.ts';
 import { singleFlight } from './single-flight.ts';
 import { selfHostedTarget, serveSelfHosted, staysOnContainer } from './self-hosted.ts';
 import { type SandboxCoords, decideWarm, localBridgeOrigin, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
@@ -85,6 +86,7 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
   // container even for a self-hosted workspace — see its docstring.
   const selfHosted = staysOnContainer(url.pathname) ? null : selfHostedTarget(env, coords.canvasWorkspace);
   if (selfHosted) return serveSelfHosted(request, selfHosted, containerEnv(env, coords), coords);
+  if (containerChoice(env) === 'durable') return serveCanvasContainer(request, env, coords);
   const sandbox = sandboxFor(env, sandboxId);
   // Warm fast path: the container's been up since a prior request, so the port
   // is still exposed — just proxy (1 round-trip). The handshake (setEnvVars,
@@ -136,6 +138,47 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
     await singleFlight(inflightBoot, sandboxId, () => sandbox.ensureCanvasStack(bootSpec(env, coords)));
     const res = await proxy(sandbox, retryReq, sandboxId);
     return streamReq && res.status >= 400 ? sseRetryResponse() : res;
+  } catch (e: unknown) {
+    if (streamReq) return sseRetryResponse();
+    return new Response('canvas error:\n' + String((e as Error)?.stack ?? e), { status: 500 });
+  }
+}
+
+/** The workspace's `CanvasContainer` DO (worker/canvas-container.ts), one per sandbox id. */
+const canvasContainerFor = (env: Env, sandboxId: string) => {
+  const ns = env.CanvasContainer;
+  if (!ns) throw new Error('CANVAS_CONTAINER=durable but no CanvasContainer binding');
+  return ns.get(ns.idFromName(sandboxId));
+};
+
+// What a deploy does to a DO a request is in the middle of: the request fails, and the next
+// one reaches the new code. Safe to send again only when it has no body.
+const RESET_BY_DEPLOY = 'reset because its code was updated';
+
+/**
+ * The container path under the `durable_object` policy. Everything the Sandbox path does
+ * around the boot — warm probe, single-flight, lock, retry — lives in the DO now, which is
+ * the one place there is exactly one of per container. What stays here is the edge's job:
+ * telling the DO which workspace it is, and never handing an EventSource a non-SSE error.
+ */
+export async function serveCanvasContainer(request: Request, env: Env, coords: SandboxCoords): Promise<Response> {
+  const stub = canvasContainerFor(env, coords.sandboxId);
+  const streamReq = wantsEventStream(request.headers.get('accept'));
+  const bodiless = request.method === 'GET' || request.method === 'HEAD';
+  const send = () => {
+    const proxied = new Request(request);
+    proxied.headers.set(COORDS_HEADER, JSON.stringify(coords));
+    return stub.fetch(proxied);
+  };
+  try {
+    let res: Response;
+    try {
+      res = await send();
+    } catch (e) {
+      if (!bodiless || !String((e as Error)?.message ?? e).includes(RESET_BY_DEPLOY)) throw e;
+      res = await send();
+    }
+    return streamReq && res.status >= 500 ? sseRetryResponse() : res;
   } catch (e: unknown) {
     if (streamReq) return sseRetryResponse();
     return new Response('canvas error:\n' + String((e as Error)?.stack ?? e), { status: 500 });
