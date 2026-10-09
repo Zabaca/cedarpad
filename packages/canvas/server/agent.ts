@@ -38,7 +38,7 @@ import type { ComponentVersion } from '../shared/platform-rpc.ts';
 import { chatSkillSources, writeSkill } from './skills.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
 
-const MODEL = process.env.CANVAS_MODEL ?? 'sonnet';
+const MODEL = process.env.CANVAS_MODEL ?? 'haiku';
 
 // 1M context is selected via the `[1m]` model suffix (the same one the Claude Code CLI
 // uses; works on subscription auth — the `betas` option does NOT). BILLING: on
@@ -49,11 +49,11 @@ const MODEL = process.env.CANVAS_MODEL ?? 'sonnet';
 const FREE_1M_MODELS = new Set(['opus', 'claude-opus-4-8', 'claude-opus-5-5']);
 const withContext = (m: string): string => (FREE_1M_MODELS.has(m) ? `${m}[1m]` : m);
 
-// The chat sends friendly family aliases (sonnet/opus/haiku). The SDK's bundled `sonnet` and
-// `opus` aliases still resolve to claude-sonnet-4-6 / claude-opus-4-8, so pin them to the explicit
-// Sonnet 5 / Opus 5.5 ids. The `haiku` alias already tracks the latest, and any explicit id (or a
-// `[1m]` suffix) isn't in the map and passes through untouched.
-const ALIAS_TO_ID: Record<string, string> = { sonnet: 'claude-sonnet-5', opus: 'claude-opus-5-5' };
+// The chat sends friendly family aliases (sonnet/opus/haiku). The SDK's bundled aliases still
+// resolve to claude-sonnet-4-6 / claude-opus-4-8 / claude-haiku-4-5, so pin them to the explicit
+// Sonnet 5 / Opus 5.5 / Haiku 5.5 ids. Any explicit id (or a `[1m]` suffix) isn't in the map and
+// passes through untouched.
+const ALIAS_TO_ID: Record<string, string> = { sonnet: 'claude-sonnet-5', opus: 'claude-opus-5-5', haiku: 'claude-haiku-5-5' };
 // The SDK model string for a selected alias: pin the alias to an explicit id, then apply the 1M
 // context suffix (opus-only, free). Exported for the model-resolution test.
 export const resolveModelForSdk = (m: string): string => withContext(ALIAS_TO_ID[m] ?? m);

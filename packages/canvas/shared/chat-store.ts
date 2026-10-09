@@ -42,7 +42,7 @@ export type McpSelection = { disabledServers: string[]; disabledTools: Record<st
 
 // Models offered in the chat card's selector. Aliases the Claude Agent SDK resolves.
 export const MODELS = ['sonnet', 'opus', 'haiku'] as const;
-export const DEFAULT_MODEL = 'sonnet';
+export const DEFAULT_MODEL = 'haiku';
 
 // Reasoning effort, sent alongside the model. 'default' omits the param (adaptive). Lower
 // effort = faster, less time staring at "thinking…"; higher = deeper but slower.
