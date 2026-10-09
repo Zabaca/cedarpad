@@ -7,7 +7,7 @@
 import { type McpHttpServerConfig, type SDKUserMessage, createSdkMcpServer, query, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
-import { DATA_MAX_BYTES } from '../shared/bridge-wire.ts';
+import { DATA_MAX_BYTES, type ScreenshotTarget } from '../shared/bridge-wire.ts';
 import { resolvePageRef } from '../shared/canvas-pages.ts';
 import { SHAPE_COLORS } from '../src/shapes.ts';
 import { DataSourceSchema, type MartSidecar } from '../shared/mart-contract.ts';
@@ -84,8 +84,8 @@ const shapeInput = z.object({
 
 const result = (r: OpResult) => ({ content: [{ type: 'text' as const, text: r.text }], ...(r.isError ? { isError: true } : {}) });
 
-/** Capture a PNG of the canvas (data URL), or null if no browser is connected. */
-export type CaptureView = () => Promise<string | null>;
+/** Capture a PNG of `target` (data URL), or null if no browser answered. */
+export type CaptureView = (target?: ScreenshotTarget) => Promise<string | null>;
 
 /** Build the in-process MCP server whose tools mutate `store`. `originChatId` is the
  * chat shape id this turn runs in; shapes the agent creates are tucked beside it and
@@ -236,6 +236,25 @@ export function selectPageOp(store: CanvasStore, selectPage: SelectPage, page: s
   return { text: `Asked your open view(s) to switch to ${JSON.stringify(name)} (${pageId}). The canvas itself is unchanged and nobody else's view moved. Say you have switched them over, not that you have verified it — this is a one-way message to their browser, so if they say they are still on the old page, believe them.` };
 }
 
+/** What `view_canvas` asks the browser to render. Named shapes are checked against the
+ *  store first: the browser silently skips an id it does not have, so an unchecked typo would
+ *  come back as "nothing to show" instead of naming the bad id. */
+export function viewTargetOp(store: CanvasStore, page?: string, ids?: string[]): { target: ScreenshotTarget } | OpResult {
+  const state = store.getState();
+  if (ids?.length) {
+    const known = new Set(state.shapes.map((s) => s.id));
+    const missing = ids.filter((id) => !known.has(id));
+    if (missing.length) return { text: `No shape with id ${missing.join(', ')} on this canvas — read_canvas lists the ids.`, isError: true };
+    return { target: { ids } };
+  }
+  if (!page) return { target: {} };
+  try {
+    return { target: { pageId: resolvePageRef(state.pages ?? [], page) } };
+  } catch (e) {
+    return { text: (e as Error).message, isError: true };
+  }
+}
+
 /** The Inbox-list line for an end_turn call: the given summary, else derived from the
  *  question (the Stop-gate-nudged path routinely supplies question-only calls — a required
  *  summary made those fail schema validation and retry, doubling end_turn in the transcript). */
@@ -347,11 +366,16 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
       ),
       tool(
         'view_canvas',
-        'Look at a PNG of the canvas. Good for checking spacing, overlapping labels, and layout of primitive shapes. CAVEAT: this is a tldraw EXPORT that re-renders shapes cleanly, NOT a capture of the human\'s live screen — a custom render_component (especially Mermaid) can look perfect here while being broken/empty in the human\'s actual view. So do not treat a good view_canvas as proof the human can see a component; if the human says a component looks empty or wrong, believe them over this tool. Pairs well with read_canvas (which gives exact coordinates).',
-        {},
-        async () => {
+        'Look at a PNG of the canvas. Good for checking spacing, overlapping labels, and layout of primitive shapes. With no arguments you get the page the human is on; pass `page` for another page, or `ids` to look at just those shapes (a frame brings everything inside it) — use `ids` to read a busy area or a single card, since a whole page is shrunk to fit. CAVEAT: this is a tldraw EXPORT that re-renders shapes cleanly, NOT a capture of the human\'s live screen — a custom render_component (especially Mermaid) can look perfect here while being broken/empty in the human\'s actual view. So do not treat a good view_canvas as proof the human can see a component; if the human says a component looks empty or wrong, believe them over this tool. Pairs well with read_canvas (which gives exact coordinates).',
+        {
+          page: z.string().min(1).optional().describe("A page name as the human says it, or a page: id from read_canvas's Pages: line."),
+          ids: z.array(z.string().min(1)).min(1).optional().describe('Shape ids to render instead of a whole page. Takes precedence over `page`.'),
+        },
+        async ({ page, ids }) => {
           if (!captureView) return { content: [{ type: 'text' as const, text: 'Visual view is unavailable in this setup.' }] };
-          const url = await captureView();
+          const asked = viewTargetOp(store, page, ids);
+          if (!('target' in asked)) return result(asked);
+          const url = await captureView(asked.target);
           if (!url) {
             return { content: [{ type: 'text' as const, text: 'No canvas view is open right now (the browser tab may be closed or empty), so I cannot see it. Use read_canvas for the shape list.' }] };
           }

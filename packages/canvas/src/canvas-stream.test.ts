@@ -7,7 +7,7 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import { SCREENSHOT_MAX_EDGE, respondToScreenshot, respondToSelectPage, screenshotScale } from './canvas-stream.ts';
+import { SCREENSHOT_MAX_EDGE, SCREENSHOT_MAX_UPSCALE, respondToScreenshot, respondToSelectPage, screenshotScale } from './canvas-stream.ts';
 
 describe('respondToScreenshot', () => {
   test('renders the canvas and replies with the data URL, tagged with the request id', async () => {
@@ -18,12 +18,24 @@ describe('respondToScreenshot', () => {
     expect(replies).toEqual([{ id: 'req1', url: 'data:image/png;base64,AAA' }]);
   });
 
-  test('hands the frame\'s page to the renderer, and no page when the frame names none', async () => {
-    const asked: Array<string | undefined> = [];
-    const render = async (pageId?: string) => (asked.push(pageId), 'data:image/png;base64,AAA');
+  test('hands the frame\'s target to the renderer — a page, named shapes, or neither', async () => {
+    const asked: unknown[] = [];
+    const render = async (target: unknown) => (asked.push(target), 'data:image/png;base64,AAA');
     await respondToScreenshot(JSON.stringify({ id: 'p1', pageId: 'page:two' }), render, () => {});
-    await respondToScreenshot(JSON.stringify({ id: 'p2' }), render, () => {});
-    expect(asked).toEqual(['page:two', undefined]);
+    await respondToScreenshot(JSON.stringify({ id: 'p2', ids: ['shape:a', 'shape:b'] }), render, () => {});
+    await respondToScreenshot(JSON.stringify({ id: 'p3' }), render, () => {});
+    expect(asked).toEqual([{ pageId: 'page:two' }, { ids: ['shape:a', 'shape:b'] }, {}]);
+  });
+
+  // It has an id, so something is waiting on it: answer null now rather than let it time out.
+  test('an off-contract target still gets a reply, without rendering anything', async () => {
+    const replies: Array<{ id: string; url: string | null }> = [];
+    let rendered = false;
+    await respondToScreenshot(JSON.stringify({ id: 'bad', ids: 'shape:a' }), async () => ((rendered = true), 'x'), (id, url) =>
+      replies.push({ id, url }),
+    );
+    expect(replies).toEqual([{ id: 'bad', url: null }]);
+    expect(rendered).toBe(false);
   });
 
   // An empty canvas is a legitimate answer, not a hang: the renderer returns null and we
@@ -92,8 +104,12 @@ describe('screenshotScale', () => {
     expect(screenshotScale({ w: 3_000, h: 8_000 })).toBe(SCREENSHOT_MAX_EDGE / 8_000);
   });
 
-  test('never enlarges a small page, and an unknown bound renders as-is', () => {
-    expect(screenshotScale({ w: 800, h: 600 })).toBe(1);
+  test('enlarges a small export so its text is readable, but no further than the upscale cap', () => {
+    expect(screenshotScale({ w: 1_600, h: 600 })).toBe(SCREENSHOT_MAX_EDGE / 1_600);
+    expect(screenshotScale({ w: 200, h: 150 })).toBe(SCREENSHOT_MAX_UPSCALE);
+  });
+
+  test('an unknown bound renders as-is', () => {
     expect(screenshotScale(null)).toBe(1);
   });
 });

@@ -372,3 +372,29 @@ describe('writeSkillOp: the chat agent authoring a workspace skill', () => {
     expect(out).toEqual({ text: 'Error: the workspace store refused this write', isError: true });
   });
 });
+
+// view_canvas's target. Named shapes are checked against the store because the browser
+// skips an id it lacks — an unchecked typo would read as "nothing to show".
+import { viewTargetOp } from './agent.ts';
+
+describe('viewTargetOp: what view_canvas asks the browser to render', () => {
+  const withShapes = (ids: string[]) =>
+    ({ getState: () => ({ version: 1, shapes: ids.map((id) => ({ id, type: 'note' })), pages: TWO }) }) as never;
+
+  test('named shapes that exist become the target, and win over a page', () => {
+    expect(viewTargetOp(withShapes(['shape:a', 'shape:b']), 'Roadmap', ['shape:a'])).toEqual({ target: { ids: ['shape:a'] } });
+  });
+
+  test('an id that is not on the canvas is refused by name', () => {
+    const r = viewTargetOp(withShapes(['shape:a']), undefined, ['shape:a', 'shape:typo']) as { text: string; isError?: boolean };
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('shape:typo');
+    expect(r.text).not.toContain('shape:a,');
+  });
+
+  test('a page is resolved from the human\'s word; neither means the current page', () => {
+    expect(viewTargetOp(withShapes([]), 'roadmap')).toEqual({ target: { pageId: 'page:two' } });
+    expect(viewTargetOp(withShapes([]))).toEqual({ target: {} });
+    expect((viewTargetOp(withShapes([]), 'Sprint 12') as { isError?: boolean }).isError).toBe(true);
+  });
+});

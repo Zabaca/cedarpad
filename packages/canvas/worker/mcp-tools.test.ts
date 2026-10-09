@@ -306,6 +306,15 @@ describe('mcp tools — every read/act is scoped to the token user’s workspace
     expect(post?.headers['x-canvas-id']).toBe(board.id);
   });
 
+  test('view_canvas with ids posts them as-is, without reading the canvas first', async () => {
+    bridgeResponses = { '/api/canvas/view': { url: 'data:image/png;base64,BBBB' } };
+    bridgeCalls = [];
+    expect(await tools.viewCanvas({ workspace_id: WS, ids: ['shape:frame'], page: 'Roadmap' })).toEqual({ data: 'BBBB', mimeType: 'image/png' });
+    // ids win over page, and a busy canvas is never read whole just to check them.
+    expect(bridgeCalls.map((c) => c.path)).toEqual(['/api/canvas/view']);
+    expect(bridgeCalls[0]?.body).toEqual({ ids: ['shape:frame'] });
+  });
+
   test('view_canvas without a page skips the canvas read, and "no tab answered" comes back as null', async () => {
     bridgeResponses = { '/api/canvas/view': { url: null } };
     bridgeCalls = [];

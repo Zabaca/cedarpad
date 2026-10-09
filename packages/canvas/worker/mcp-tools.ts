@@ -11,6 +11,7 @@ import {
   PlaceComponentBody,
   CallComponentBody,
   CanvasImageResult,
+  type ScreenshotTarget,
   UpdateShapesBody,
   ViewCanvasResult,
   WriteComponentBody,
@@ -81,9 +82,12 @@ export const ListComponentsInput = ReadCanvasInput;
  *  both, so the caller never has to know which one it is holding. */
 export const SelectPageInput = ReadCanvasInput.extend({ page: z.string().min(1) });
 export const ReadImageInput = ReadCanvasInput.extend({ id: z.string().min(1) });
-/** Optional here: without it the PNG is whatever page the answering tab is on. Name or id,
- *  as for `SelectPageInput`. */
-export const ViewCanvasInput = ReadCanvasInput.extend({ page: z.string().min(1).optional() });
+/** Both optional: without either, the PNG is whatever page the answering tab is on. `page`
+ *  is a name or id, as for `SelectPageInput`; `ids` renders just those shapes and wins. */
+export const ViewCanvasInput = ReadCanvasInput.extend({
+  page: z.string().min(1).optional(),
+  ids: z.array(z.string().min(1)).min(1).optional(),
+});
 
 const DATA_URL = /^data:(image\/[a-z+]+);base64,(.+)$/s;
 /** Addressing one module in one canvas — where read/write/edit all start. Not exported: it is
@@ -416,20 +420,25 @@ export function buildMcpTools(deps: McpToolDeps) {
     },
 
     /**
-     * A PNG of a canvas page, rendered by an open browser tab — anyone's, since a picture of
-     * the canvas is a question about the canvas, not about a person. Null when no tab is open
-     * on it (or the page is empty): there is no headless renderer behind this.
+     * A PNG of a canvas page or of named shapes, rendered by an open browser tab — anyone's,
+     * since a picture of the canvas is a question about the canvas, not about a person. Null
+     * when no tab answered (or the target is empty): there is no headless renderer behind this.
+     *
+     * `ids` are NOT checked here, unlike the in-canvas agent's: that would mean reading the
+     * whole canvas, which on a busy one is the very response limit this tool works around.
      */
     async viewCanvas(input: z.infer<typeof ViewCanvasInput>): Promise<CanvasImageResult | null> {
       const ws = await requireWorkspace(input.workspace_id);
       const headers = await canvasHeader(ws.id, input.canvas_id);
-      let pageId: string | undefined;
-      if (input.page) {
+      let target: ScreenshotTarget = {};
+      if (input.ids) {
+        target = { ids: input.ids };
+      } else if (input.page) {
         const state = (await bridgeJson(ws.id, BRIDGE_ROUTES.canvas, { headers })) as { pages?: CanvasPage[] };
-        pageId = resolvePageRef(state.pages ?? [], input.page);
+        target = { pageId: resolvePageRef(state.pages ?? [], input.page) };
       }
       const { url } = ViewCanvasResult.parse(
-        await bridgeJson(ws.id, BRIDGE_ROUTES.canvasView, { method: 'POST', headers, body: pageId ? { pageId } : {} }),
+        await bridgeJson(ws.id, BRIDGE_ROUTES.canvasView, { method: 'POST', headers, body: target }),
       );
       if (!url) return null;
       const m = DATA_URL.exec(url);

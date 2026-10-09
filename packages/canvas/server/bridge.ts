@@ -940,7 +940,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (path === BRIDGE_ROUTES.canvasView && req.method === 'POST') {
       const parsed = ViewCanvasBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
-      const shot = await screenshotChannels.get(canvasIdFrom(req, url)).requestScreenshot(undefined, parsed.data.pageId);
+      const shot = await screenshotChannels.get(canvasIdFrom(req, url)).requestScreenshot(parsed.data);
       return json({ url: shot } satisfies ViewCanvasResult);
     }
     if (path === BRIDGE_ROUTES.deleteShapes && req.method === 'POST') {

@@ -91,7 +91,7 @@ describe('screenshot stays canvas-wide', () => {
     ch.clients.add(alice);
     ch.clients.add(guest);
 
-    void ch.requestScreenshot(10);
+    void ch.requestScreenshot({}, 10);
     expect(alice.frames[0]).toContain('event: screenshot');
     expect(guest.frames[0]).toContain('event: screenshot');
   });
@@ -101,11 +101,20 @@ describe('screenshot stays canvas-wide', () => {
     const alice = sub('user_alice');
     ch.clients.add(alice);
 
-    void ch.requestScreenshot(10, 'page:two');
+    void ch.requestScreenshot({ pageId: 'page:two' }, 10);
     expect(alice.frames[0]).toContain('"pageId":"page:two"');
   });
 
+  test('named shapes ride the frame too', () => {
+    const ch = createScreenshotChannel('c1');
+    const alice = sub('user_alice');
+    ch.clients.add(alice);
+
+    void ch.requestScreenshot({ ids: ['shape:frame'] }, 10);
+    expect(alice.frames[0]).toContain('"ids":["shape:frame"]');
+  });
+
   test('resolves null when nobody is connected', async () => {
-    expect(await createScreenshotChannel('c1').requestScreenshot(10)).toBeNull();
+    expect(await createScreenshotChannel('c1').requestScreenshot({}, 10)).toBeNull();
   });
 });

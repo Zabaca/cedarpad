@@ -92,5 +92,6 @@ describe('POST /api/canvas/view', () => {
 
   test('a malformed body is a 400, not a screenshot of some default', async () => {
     expect((await view({ pageId: '' })).status).toBe(400);
+    expect((await view({ ids: [] })).status).toBe(400);
   });
 });

@@ -20,8 +20,9 @@
 // still true of this stream, because this stream still hits the bridge. (The sync
 // WebSocket does not — it terminates at the edge Worker, so it cannot pin the container.)
 
-import type { Editor } from 'tldraw';
+import type { Editor, TLPageId, TLShapeId } from 'tldraw';
 
+import { ScreenshotTarget } from '../shared/bridge-wire';
 import { registerStream } from './idle';
 import { createRecoveringStream } from './stream-recovery';
 import { withCanvasHeader, withCanvasParam } from './active-canvas';
@@ -33,25 +34,26 @@ const API = '/api';
  * every-path-replies rule is testable: the agent's tool call BLOCKS on this reply, so a
  * dropped one is a hung turn, not a missing image.
  *
- * The one case that must NOT reply is a frame with no id — there is nothing to answer.
+ * The one case that must NOT reply is a frame with no id — there is nothing to answer. A
+ * frame whose target is off-contract still has an id, so it gets a null rather than a hang.
  */
 export async function respondToScreenshot(
   data: string,
-  render: (pageId?: string) => Promise<string | null>,
+  render: (target: ScreenshotTarget) => Promise<string | null>,
   reply: (id: string, url: string | null) => void,
 ): Promise<void> {
-  let id: string;
-  let pageId: string | undefined;
+  let parsed: { id?: unknown };
   try {
-    const parsed = JSON.parse(data) as { id?: unknown; pageId?: unknown };
-    if (typeof parsed.id !== 'string') return;
-    id = parsed.id;
-    if (typeof parsed.pageId === 'string') pageId = parsed.pageId;
+    parsed = JSON.parse(data) as { id?: unknown };
   } catch {
     return;
   }
+  if (typeof parsed.id !== 'string') return;
+  const id = parsed.id;
+  const target = ScreenshotTarget.safeParse(parsed);
+  if (!target.success) return reply(id, null);
   try {
-    reply(id, await render(pageId));
+    reply(id, await render(target.data));
   } catch {
     reply(id, null);
   }
@@ -84,21 +86,30 @@ export function respondToSelectPage(data: string, setPage: (pageId: string) => v
  *  past roughly this anyway, so anything larger is bytes nobody sees. */
 export const SCREENSHOT_MAX_EDGE = 2000;
 
-/** The export scale that fits `bounds` inside SCREENSHOT_MAX_EDGE — never above 1, so a
- *  small page is not blown up. */
+/** How far a small export is enlarged. A single sticky note or card is a few hundred page
+ *  units across, and at 1:1 its text is too small to read. */
+export const SCREENSHOT_MAX_UPSCALE = 2;
+
+/** The export scale that fits `bounds` inside SCREENSHOT_MAX_EDGE, enlarging a small export
+ *  up to SCREENSHOT_MAX_UPSCALE. */
 export function screenshotScale(bounds: { w: number; h: number } | null): number {
   const edge = bounds ? Math.max(bounds.w, bounds.h) : 0;
-  return edge > SCREENSHOT_MAX_EDGE ? SCREENSHOT_MAX_EDGE / edge : 1;
+  return edge > 0 ? Math.min(SCREENSHOT_MAX_UPSCALE, SCREENSHOT_MAX_EDGE / edge) : 1;
 }
 
-/** Render a whole page as a PNG data URL — the named one, else the current one — or null
- *  when there is nothing on it. Exporting by id never moves this viewer's own view. */
-async function renderCanvasPng(editor: Editor, pageId?: string): Promise<string | null> {
-  // A page this client has not synced yet renders as nothing, like select_page's leg.
-  if (pageId && !editor.getPages().some((p) => p.id === pageId)) return null;
-  const ids = [
-    ...(pageId ? editor.getPageShapeIds(pageId as Parameters<Editor['getPageShapeIds']>[0]) : editor.getCurrentPageShapeIds()),
-  ];
+/** The shapes a target names: its `ids` that exist here, else a whole page — the named one,
+ *  else the current one. A page this client has not synced yet is empty, like select_page's
+ *  leg. */
+function targetShapeIds(editor: Editor, target: ScreenshotTarget): TLShapeId[] {
+  if (target.ids) return (target.ids as TLShapeId[]).filter((id) => editor.getShape(id));
+  if (target.pageId && !editor.getPages().some((p) => p.id === target.pageId)) return [];
+  return [...(target.pageId ? editor.getPageShapeIds(target.pageId as TLPageId) : editor.getCurrentPageShapeIds())];
+}
+
+/** Render a target as a PNG data URL, or null when it names nothing. Exporting by id never
+ *  moves this viewer's own view. */
+async function renderCanvasPng(editor: Editor, target: ScreenshotTarget): Promise<string | null> {
+  const ids = targetShapeIds(editor, target);
   if (ids.length === 0) return null;
   // pixelRatio 1: tldraw's bitmap default is 2, which doubles both edges for no reader.
   const scale = screenshotScale(editor.getShapesPageBounds(ids));
@@ -119,7 +130,7 @@ export function wireCanvasStream(editor: Editor): () => void {
   const stream = createRecoveringStream(() => {
     const es = new EventSource(withCanvasParam(`${API}/canvas/stream`));
     es.addEventListener('screenshot', (e) => {
-      void respondToScreenshot((e as MessageEvent).data as string, (pageId) => renderCanvasPng(editor, pageId), postScreenshot);
+      void respondToScreenshot((e as MessageEvent).data as string, (target) => renderCanvasPng(editor, target), postScreenshot);
     });
     es.addEventListener('page', (e) => {
       respondToSelectPage(
