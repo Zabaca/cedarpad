@@ -245,13 +245,13 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'view_canvas',
       {
         description:
-          "Look at a PNG of a canvas page — for layout, spacing, and how shapes relate visually. An open browser tab on the canvas renders it, so it only works while someone has the canvas open; otherwise use read_canvas. Pass `page` (a name or an id from read_canvas's `pages`) to pick the page; without it you get whatever page the answering tab is on. CAVEAT: this is a tldraw export that redraws shapes cleanly, not a capture of anyone's screen, so a component can look fine here and still be broken for a human.",
+          "Look at a PNG of a canvas page, or of specific shapes — for layout, spacing, and how shapes relate visually. An open browser tab on the canvas renders it, so it only works while someone has the canvas open; otherwise use read_canvas. Pass `ids` (shape ids from read_canvas) to render just those shapes — a frame brings everything inside it — which is how to read a busy area, since a whole page is shrunk to fit 2000px. Or pass `page` (a name or an id from read_canvas's `pages`) to pick a page; with neither you get whatever page the answering tab is on. CAVEAT: this is a tldraw export that redraws shapes cleanly, not a capture of anyone's screen, so a component can look fine here and still be broken for a human.",
         inputSchema: ViewCanvasInput.shape,
       },
       async (input) => {
         const img = await tools.viewCanvas(input);
         if (!img) {
-          return text({ error: 'No browser tab answered: nobody has this canvas open, or the page is empty. Use read_canvas instead.' });
+          return text({ error: 'No browser tab answered: nobody has this canvas open, or the page is empty, or none of the ids exist on it. Use read_canvas instead.' });
         }
         return { content: [{ type: 'image' as const, data: img.data, mimeType: img.mimeType }] };
       },

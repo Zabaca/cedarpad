@@ -29,6 +29,7 @@
 // direction: an unidentified subscriber is never targeted, and a fan-out with no viewer
 // targets nobody. Both halves fail closed, so the worst outcome is that nothing moves.
 
+import type { ScreenshotTarget } from '../shared/bridge-wire.ts';
 import { sseEvent } from './sse.ts';
 
 /** One subscribed browser: its stream, and who the edge said it belongs to (null for a
@@ -43,9 +44,9 @@ export interface ScreenshotChannel {
   readonly canvasId: string;
   /** Subscribed browsers. Also the /api/status client count and the idle-reaper's signal. */
   readonly clients: Set<CanvasSubscriber>;
-  /** Ask the browser for a PNG; resolves null if nobody is connected or it times out.
-   *  `pageId` renders that page; without it, whatever page the answering tab is on. */
-  requestScreenshot(timeoutMs?: number, pageId?: string): Promise<string | null>;
+  /** Ask the browser for a PNG of `target` (see ScreenshotTarget); resolves null if nobody
+   *  is connected or it times out. */
+  requestScreenshot(target?: ScreenshotTarget, timeoutMs?: number): Promise<string | null>;
   /** Resolve a pending screenshot (the browser POSTs the PNG back, correlated by id). */
   resolveScreenshot(id: string, url: string | null): void;
   /**
@@ -84,12 +85,12 @@ export function createScreenshotChannel(canvasId: string): ScreenshotChannel {
 
   // 20s, not 7: a page heavy with pasted images can take seconds to render and upload even
   // downscaled, and a reply that lands after the deadline is thrown away.
-  function requestScreenshot(timeoutMs = 20_000, pageId?: string): Promise<string | null> {
+  function requestScreenshot(target: ScreenshotTarget = {}, timeoutMs = 20_000): Promise<string | null> {
     if (clients.size === 0) return Promise.resolve(null);
     const id = `shot${(shotSeq += 1)}`;
     // Every subscriber: a screenshot is a question about the CANVAS, not about a person,
     // and the first browser to answer resolves it.
-    fanOut(sseEvent('screenshot', pageId ? { id, pageId } : { id }), () => true);
+    fanOut(sseEvent('screenshot', { ...target, id }), () => true);
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         pendingShots.delete(id);

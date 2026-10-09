@@ -288,10 +288,17 @@ export type SelectPageBody = z.infer<typeof SelectPageBody>;
 export const CanvasImageResult = z.object({ data: z.string(), mimeType: z.string() });
 export type CanvasImageResult = z.infer<typeof CanvasImageResult>;
 
-/** Ask an open browser for a PNG of the canvas (`POST /api/canvas/view`). `pageId` is
- *  already resolved, as for `SelectPageBody`; absent means whatever page the answering
- *  tab is on. A null `url` is "nobody answered", not an error. */
-export const ViewCanvasBody = z.object({ pageId: z.string().min(1).optional() });
-export type ViewCanvasBody = z.infer<typeof ViewCanvasBody>;
+/** What a canvas screenshot renders: `ids` (those shapes — a frame brings its contents),
+ *  else page `pageId` (already resolved, as for `SelectPageBody`), else whatever page the
+ *  answering tab is on. The same object is the `POST /api/canvas/view` body and rides the
+ *  `screenshot` SSE frame to the browser. */
+export const ScreenshotTarget = z.object({
+  pageId: z.string().min(1).optional(),
+  ids: z.array(z.string().min(1)).min(1).optional(),
+});
+export type ScreenshotTarget = z.infer<typeof ScreenshotTarget>;
+/** A null `url` from the view route is "nobody answered", not an error. */
+export const ViewCanvasBody = ScreenshotTarget;
+export type ViewCanvasBody = ScreenshotTarget;
 export const ViewCanvasResult = z.object({ url: z.string().nullable() });
 export type ViewCanvasResult = z.infer<typeof ViewCanvasResult>;
