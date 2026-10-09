@@ -78,12 +78,23 @@
       "image_build_context": "../..",
       "instance_type": "standard-4",
       "max_instances": 3
+    },
+    {
+      // The workspace container on the `durable_object` scheduling policy
+      // (worker/canvas-container.ts): the DO starts it with `ctx.container.start`, so there
+      // are no rollouts. Routed to only when CANVAS_CONTAINER=durable. The policy is fixed
+      // when the application is created, hence a new class rather than a change to Sandbox.
+      // Instance type is chosen per start in code, not here.
+      "class_name": "CanvasContainer",
+      "scheduling_policy": "durable_object",
+      "images": { "canvas": { "dockerfile": "./Dockerfile.durable", "build_context": "../.." } }
     }
   ],
   "durable_objects": {
     "bindings": [
       { "class_name": "Sandbox", "name": "Sandbox" },
       { "class_name": "Warehouse", "name": "Warehouse" },
+      { "class_name": "CanvasContainer", "name": "CanvasContainer" },
       // One instance per canvas, hosting that canvas's tldraw sync room (ADR-0019, #288).
       // Unlike Sandbox/Warehouse this is NOT a container class — it is a plain SQLite-backed
       // DO, and its SQLite tables ARE the room's persistence.
@@ -144,7 +155,8 @@
     // convention. `new_sqlite_classes` even though the hub persists nothing: it is the
     // current default backend for a new class, and declaring the KV one would pin a
     // deprecated storage engine to a class that will never use either.
-    { "tag": "v4", "new_sqlite_classes": ["WorkspaceEvents"] }
+    { "tag": "v4", "new_sqlite_classes": ["WorkspaceEvents"] },
+    { "tag": "v5", "new_sqlite_classes": ["CanvasContainer"] }
   ],
   // Preview environment (zbc: `apply preview canvas` -> `wrangler deploy --env
   // preview`). A SEPARATE worker `agent-canvas-preview` in the same account, on a
@@ -169,7 +181,11 @@
         // concurrent readers (#276) — this sharing is pre-existing debt (it also shared
         // Turso before #268), not new. Give preview its own D1 database before using it
         // for anything real (see canvas.ts).
-        "CANVAS_USER": "2hfe21p0OsrHWQBPgfKhwSH9ZYUK9ajw"
+        "CANVAS_USER": "2hfe21p0OsrHWQBPgfKhwSH9ZYUK9ajw",
+        // The test bed for the durable_object container (worker/canvas-container.ts): with no
+        // SELF_HOSTED_WORKSPACES here, preview's workspaces run on Cloudflare, and this sends
+        // them to CanvasContainer instead of the Sandbox. Production leaves it unset.
+        "CANVAS_CONTAINER": "durable"
       },
       "assets": {
         "directory": "./shell/dist",
@@ -193,12 +209,18 @@
           "image_build_context": "../..",
           "instance_type": "standard-4",
           "max_instances": 3
+        },
+        {
+          "class_name": "CanvasContainer",
+          "scheduling_policy": "durable_object",
+          "images": { "canvas": { "dockerfile": "./Dockerfile.durable", "build_context": "../.." } }
         }
       ],
       "durable_objects": {
         "bindings": [
           { "class_name": "Sandbox", "name": "Sandbox" },
           { "class_name": "Warehouse", "name": "Warehouse" },
+          { "class_name": "CanvasContainer", "name": "CanvasContainer" },
           // Redeclared verbatim from the top level (#288) — named envs inherit no
           // durable_objects. Preview gets its OWN room instances: DO storage is per-worker,
           // not shared like Turso/R2/D1 are.
@@ -230,7 +252,8 @@
         { "tag": "v1", "new_sqlite_classes": ["Sandbox"] },
         { "tag": "v2", "new_sqlite_classes": ["Warehouse"] },
         { "tag": "v3", "new_sqlite_classes": ["CanvasSyncRoom"] },
-        { "tag": "v4", "new_sqlite_classes": ["WorkspaceEvents"] }
+        { "tag": "v4", "new_sqlite_classes": ["WorkspaceEvents"] },
+        { "tag": "v5", "new_sqlite_classes": ["CanvasContainer"] }
       ]
     }
   }

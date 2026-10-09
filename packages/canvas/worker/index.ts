@@ -13,7 +13,8 @@ import { handleComponentInventory, INVENTORY_PATH } from './component-inventory-
 import { handleMembersApi } from './members.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { DEFAULT_WORKSPACE, coordsForWorkspace, resolve, type SandboxCoords } from './sandbox-resolver.ts';
-import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
+import { sandboxFor, serveCanvasContainer, serveWorkspace } from './sandbox-runtime.ts';
+import { containerChoice } from './canvas-container-lifecycle.ts';
 import { handleCanvasesApi, handleRecordPurgeApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 import { PLATFORM_RPC_PATH } from '../shared/platform-rpc.ts';
 import { handlePlatformRpc, platformRpcDeps } from './platform-rpc.ts';
@@ -84,6 +85,10 @@ export class Sandbox extends BaseSandbox {
 // it; deleting a container class waits for the Cloudflare container migration.
 export class Warehouse extends BaseSandbox {}
 
+// The workspace container on the `durable_object` scheduling policy. Re-exported here because
+// wrangler resolves Durable Object classes off the entrypoint module's exports.
+export { CanvasContainer } from './canvas-container.ts';
+
 // The canvas sync room class (ADR-0019, #288). Re-exported here because wrangler resolves
 // Durable Object classes off the entrypoint module's exports.
 export { CanvasSyncRoom } from './canvas-sync-do.ts';
@@ -93,6 +98,11 @@ export class WorkspaceEvents {}
 
 export interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
+  // The workspace's container under the `durable_object` scheduling policy
+  // (worker/canvas-container.ts), used instead of the Sandbox when CANVAS_CONTAINER=durable.
+  // Unparameterised for the reason CANVAS_SYNC is: a plain class, reached only by stub.fetch.
+  CanvasContainer?: DurableObjectNamespace;
+  CANVAS_CONTAINER?: string;
   // One Durable Object per canvas, hosting that canvas's tldraw sync room (ADR-0019).
   // Addressed ONLY via `idFromName(syncRoomName(canvasId))` — see worker/sync-api.ts.
   // Unparameterised on purpose: `CanvasSyncRoom` is a plain class rather than a
@@ -652,6 +662,10 @@ export default {
     // Force the container to recycle so a freshly deployed image takes effect (CF
     // keeps the in-use instance on the old image until it idle-sleeps). The next
     // request cold-boots the new image; canvas-state restores from R2.
+    // Under the durable_object policy the DO answers both debug routes itself.
+    if ((url.pathname === '/__recycle' || url.pathname === '/__bootlog') && containerChoice(env) === 'durable') {
+      return serveCanvasContainer(request, env, coords);
+    }
     if (url.pathname === '/__recycle') {
       const sandbox = sandboxFor(env, coords.sandboxId);
       const r = await sandbox.stop().then(() => 'stopped').catch((e) => String(e));
