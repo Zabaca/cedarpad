@@ -79,7 +79,7 @@ jobs:
       # real. The package script scopes the directories. (CLAUDE.md says this;
       # it is repeated here because this file is where it would be got wrong.)
       # The server tests run against a REAL local D1 (miniflare), not a stub —
-      # `handleInboxApi` and friends create rows and read them back. On a dev box
+      # the Record stores and friends create rows and read them back. On a dev box
       # `.wrangler/state` already exists because someone migrated it once, so this
       # step is invisible there; on a fresh runner there is no database and 63
       # tests fail with "the workspace store is unreachable". Found by this

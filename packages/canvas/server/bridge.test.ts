@@ -12,7 +12,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { readFileSync, rmSync } from 'node:fs';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { chatHub, handleRequest, indexSessionStart, setCanvasRoomOpener, setChatTurnDispatcher } from './bridge.ts';
+import { chatHub, handleRequest, onSessionStart, setCanvasRoomOpener, setChatTurnDispatcher } from './bridge.ts';
 import { createStore } from '../src/store.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
 
@@ -29,9 +29,6 @@ setCanvasRoomOpener(async (canvasId) => {
   }
   return store;
 });
-import type { PlatformRpc } from './platform-rpc-client.ts';
-import type { ConversationStartInput } from '../shared/platform-rpc.ts';
-import { INBOX_CONVERSATION_HEADER } from '../shared/bridge-wire.ts';
 
 const sendReq = (chatId: string, body: unknown = { message: 'hi' }): Request =>
   new Request(`http://localhost/api/chat/${encodeURIComponent(chatId)}/send`, {
@@ -110,44 +107,6 @@ describe('/api/chat/:id/send: subscribe-before-send (425)', () => {
   });
 });
 
-// Shared-inbox assignment (CONTEXT.md): the edge stamps the human initiator on a send as
-// x-inbox-assign; the bridge threads it into the turn so the Conversation is assigned at
-// birth / claimed-if-unassigned on a reply. No header ⇒ undefined ⇒ unassigned.
-describe('/api/chat/:id/send: the x-inbox-assign header reaches the dispatched turn', () => {
-  let restore: () => void = () => {};
-  let dispatched: Array<{ chatId: string; assignTo?: string }> = [];
-
-  beforeEach(() => {
-    dispatched = [];
-    chatHub.subscribe(fakeSubscriber());
-    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, _mcp, assignTo) => {
-      dispatched.push({ chatId, assignTo });
-    });
-  });
-
-  afterEach(() => {
-    restore();
-    chatHub.resetForTests();
-  });
-
-  test('a send WITH the header dispatches the turn carrying its initiator', async () => {
-    const req = new Request('http://localhost/api/chat/chat_as/send', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-inbox-assign': 'user_james' },
-      body: JSON.stringify({ message: 'hi' }),
-    });
-    const res = await handleRequest(req);
-    expect(res.status).toBe(202);
-    expect(dispatched).toEqual([{ chatId: 'chat_as', assignTo: 'user_james' }]);
-  });
-
-  test('a send WITHOUT the header dispatches with undefined (unattended starts stay unassigned)', async () => {
-    const res = await handleRequest(sendReq('chat_noassign'));
-    expect(res.status).toBe(202);
-    expect(dispatched).toEqual([{ chatId: 'chat_noassign', assignTo: undefined }]);
-  });
-});
-
 // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens ride the send as the
 // x-mcp-tokens header (server/mcp-registry.ts's shared contract); the bridge decodes it and
 // hands it to the dispatched turn — here we pin the header → decode → dispatch wiring.
@@ -158,7 +117,7 @@ describe('/api/chat/:id/send: the x-mcp-tokens header reaches the dispatched tur
   beforeEach(() => {
     dispatched = [];
     chatHub.subscribe(fakeSubscriber());
-    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, mcpTokens, _assign, mcpDisallowed) => {
+    restore = setChatTurnDispatcher((chatId, _message, _sessionId, _images, _model, _fork, _effort, _canvasId, mcpTokens, mcpDisallowed) => {
       dispatched.push({ chatId, mcpTokens, ...(mcpDisallowed && mcpDisallowed.length > 0 ? { mcpDisallowed } : {}) });
     });
   });
@@ -276,180 +235,35 @@ describe('/api/chat/:id/send: 409 turn_in_flight while the chat’s turn runs', 
   });
 });
 
-// ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
-// (the init event), not when the first turn settles — that's what makes a long first turn
-// visible live in the "All" view.
-//
-// ADR-0018 / #266: the bridge has NO platform-data-layer client, so what it can be asserted to
-// do is exactly what it asks the edge for. The row semantics behind `conversation.start`
-// (idempotence, re-pointing the session, the canvas edge) are the edge's, and are asserted
-// against a real database in worker/platform-rpc.test.ts and web-poc's find-or-create tests.
-describe('indexSessionStart: a session enters the index when it starts (ADR-0011)', () => {
-  const recordingRpc = () => {
-    const started: ConversationStartInput[] = [];
-    const rpc: PlatformRpc = {
-      conversationStart: async (input) => void started.push(input),
-      conversationSettle: async () => {},
-      turnEnd: async () => null,
-      notify: async () => {},
-      componentWrite: async () => ({ rev: 1 }),
-      componentRead: async () => null,
-      componentHistory: async () => [],
-      componentRestore: async () => null,
-      componentList: async () => [],
-      componentPromote: async () => ({ rev: 1 }),
-      componentAdopt: async () => ({ rev: 1 }),
-      skillWrite: async () => ({ files: 0 }),
-      skillList: async () => [],
-      dataWrite: async () => ({ rev: 1 }),
-      dataRead: async () => null,
-      notebook: async () => ({}),
-    };
-    return { rpc, started };
-  };
-
-  test('files the session over the platform RPC at init — titled from the message', async () => {
-    const { rpc, started } = recordingRpc();
-    const sessionId = `sess_start_${crypto.randomUUID()}`;
-
-    await indexSessionStart('chat_start', sessionId, 'Architecture explore: survey this repo for deepening opportunities. (long instructions follow)', undefined, undefined, undefined, { rpc });
-
-    expect(started).toHaveLength(1);
-    expect(started[0]).toMatchObject({ sessionId, ownerRef: 'chat_start' });
-    expect(started[0]!.summary).toContain('Architecture explore');
-  });
-
-  test('records the chat→canvas edge when the turn carries one, and claims nothing when it does not', async () => {
-    const { rpc, started } = recordingRpc();
-
-    await indexSessionStart('chat_cv', 'sess_cv', 'born on a canvas', undefined, 'cv_9', undefined, { rpc });
-    await indexSessionStart('chat_nocv', 'sess_nocv', 'born in the inbox', undefined, undefined, undefined, { rpc });
-
-    expect(started.map((s) => s.canvasId)).toEqual(['cv_9', undefined]);
-  });
-
-  // The best-effort contract (ADR-0018): "an index failure never fails the turn" must survive
-  // the hop exactly as it survived a failed platform-data-layer write.
-  test('an unreachable edge is logged and the turn continues', async () => {
-    const logged: unknown[] = [];
-    const realError = console.error;
-    console.error = (...args: unknown[]) => void logged.push(args);
-    try {
-      await indexSessionStart('chat_down', `sess_down_${crypto.randomUUID()}`, 'edge is down', undefined, undefined, undefined, {
-        rpc: {
-          conversationStart: async () => {
-            throw new Error('connect ECONNREFUSED');
-          },
-          conversationSettle: async () => {},
-          turnEnd: async () => null,
-          notify: async () => {},
-          componentWrite: async () => ({ rev: 1 }),
-          componentRead: async () => null,
-          componentHistory: async () => [],
-          componentRestore: async () => null,
-          componentList: async () => [],
-          componentPromote: async () => ({ rev: 1 }),
-          componentAdopt: async () => ({ rev: 1 }),
-          skillWrite: async () => ({ files: 0 }),
-          skillList: async () => [],
-          dataWrite: async () => ({ rev: 1 }),
-          dataRead: async () => null,
-          notebook: async () => ({}),
-        },
-      });
-    } finally {
-      console.error = realError;
-    }
-    expect(logged).toHaveLength(1);
-    expect(String(logged[0])).toContain('session-start');
-  });
-
-  // With no edge in front of it the bridge is DEGRADED, not locally-backed: #266 removed the
-  // fallback client, so the index is simply skipped — never a throw into the turn.
-  test('with no platform RPC at all, indexing is skipped rather than failing the turn', async () => {
-    await expect(
-      indexSessionStart('chat_no_edge', 'sess_no_edge', 'no edge', undefined, undefined, undefined, { rpc: null }),
-    ).resolves.toBeUndefined();
+// The session's id lands at the turn's init event: the bridge binds the chat to the canvas
+// it was EXPLICITLY addressed to then (the guest stream filter's binding, #220), and claims
+// nothing for an unaddressed turn.
+describe('onSessionStart: the chat binds to its canvas when its session starts', () => {
+  test('an addressed turn binds the chat to that canvas; an unaddressed one binds nothing', () => {
+    onSessionStart('chat_cv', 'sess_cv', 'cv_9');
+    onSessionStart('chat_nocv', 'sess_nocv');
+    expect(chatHub.canvasOf('chat_cv')).toBe('cv_9');
+    expect(chatHub.canvasOf('chat_nocv')).toBeUndefined();
+    chatHub.resetForTests();
   });
 });
 
-describe('reply/send share ONE image contract (#123)', () => {
-  test('one parse feeds the turn, whether the message came from a canvas send or an Inbox reply', () => {
+describe('a send has ONE image contract (#123)', () => {
+  test('the shared parse feeds the turn', () => {
     // A messy body: one valid image + two malformed entries the shared parse must drop.
     const body = { images: [{ media_type: 'image/png', data: 'AAAA' }, { media_type: 'image/png' }, null] };
     const parsed = parseCanvasImages(body);
     expect(parsed).toEqual([{ media_type: 'image/png', data: 'AAAA' }]);
 
-    // Type-level: the parse output is exactly what the turn accepts. There is only ONE sink to
-    // check now — an Inbox reply IS a chat send since ADR-0009 / #124, and #266 removed the
-    // retired /api/inbox/:id/reply route that was the second one.
+    // Type-level: the parse output is exactly what the turn accepts.
     const toSend: Parameters<typeof runChat>[4] = parsed;
     expect(toSend).toBe(parsed);
   });
 });
 
-// ADR-0018 / #261: the edge resolved and ownership-checked the Conversation already, so it
-// forwards it on the header instead of the bridge re-reading the platform data layer. The
-// bridge PARSES the forwarded shape (guideline 7) — it never trusts the raw header.
-describe('GET /api/inbox/:id/chat: served from the forwarded Conversation, no row read (#261)', () => {
-  const openReq = (id: string, forwarded: unknown) =>
-    new Request(`http://localhost/api/inbox/${id}/chat`, {
-      headers: forwarded === undefined ? {} : { [INBOX_CONVERSATION_HEADER]: JSON.stringify(forwarded) },
-    });
-
-  test('resolves the chatId from the forwarded row — no Conversation row exists in the database', async () => {
-    const id = `conv_forwarded_${crypto.randomUUID()}`;
-    const res = await handleRequest(openReq(id, { id, sessionId: `sess_${id}`, ownerRef: 'chat_owner' }));
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ chatId: 'chat_owner' });
-    // Nothing was read: since #266 this bridge has no platform-data-layer client at all, so the
-    // forwarded header is not merely preferred over a row read — it is the only source there is.
-  });
-
-  test('an absent, off-contract, or id-mismatched payload is a 404 — never acted on', async () => {
-    const id = 'conv_guard';
-    const absent = await handleRequest(openReq(id, undefined));
-    const offContract = await handleRequest(openReq(id, { id, ownerRef: null })); // no sessionId
-    const mismatched = await handleRequest(openReq(id, { id: 'conv_other', sessionId: 's', ownerRef: null }));
-
-    expect([absent.status, offContract.status, mismatched.status]).toEqual([404, 404, 404]);
-  });
-});
-
-describe('/api/buildrev: public build stamp (#74)', () => {
-  test('returns ONLY the two build stamps — none of /api/status persistence/client fields', async () => {
-    const res = await handleRequest(new Request('http://localhost/api/buildrev'));
-
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
-    // Exactly two fields: the SHA stamp and the release version (ADR-0025). No
-    // backend/degraded/save/clients/etc. The second field is a deliberate amendment to the
-    // "exactly one non-sensitive field" sizing — a version reveals strictly less than the
-    // SHA already here — so it is asserted, not merely allowed.
-    expect(Object.keys(body)).toEqual(['buildRev', 'version']);
-    expect(typeof body.buildRev).toBe('string');
-    expect(typeof body.version).toBe('string');
-  });
-
-  // ADR-0025: deploy.sh polls this to prove a release is live by string-comparing both
-  // fields, so an unstamped image must say "dev" rather than serve an empty string — ''
-  // would compare equal to an unset expectation and turn a failed stamp into a green
-  // deploy. (Asserted as non-empty, not as literally 'dev': build-rev.txt is gitignored, so
-  // whether a stamp file exists is a property of the checkout, not of this behavior.)
-  test('neither stamp is ever an empty string', async () => {
-    const res = await handleRequest(new Request('http://localhost/api/buildrev'));
-
-    const body = (await res.json()) as { buildRev: string; version: string };
-    expect(body.buildRev).not.toBe('');
-    expect(body.version).not.toBe('');
-  });
-});
-
 // Chat→canvas pairing (slice 1): a send that EXPLICITLY addresses a canvas (x-canvas-id /
-// ?canvas — the pad stamps it) dispatches that id; an unaddressed send (inbox thread)
-// dispatches undefined so the turn routes to the default store WITHOUT
-// claiming a canvas edge for the conversation.
+// ?canvas — the pad stamps it) dispatches that id; an unaddressed send dispatches undefined
+// so the turn routes to the default store WITHOUT claiming a canvas.
 describe('/api/chat/:id/send: the explicit canvas reaches the dispatch; absence claims nothing', () => {
   let restore: () => void = () => {};
   let dispatched: Array<{ chatId: string; canvasId?: string }> = [];
@@ -479,55 +293,9 @@ describe('/api/chat/:id/send: the explicit canvas reaches the dispatch; absence 
   });
 
   test('an unaddressed send dispatches undefined — never a defaulted claim', async () => {
-    const res = await handleRequest(sendReq('chat_inbox'));
+    const res = await handleRequest(sendReq('chat_unaddressed'));
     expect(res.status).toBe(202);
-    expect(dispatched).toEqual([{ chatId: 'chat_inbox', canvasId: undefined }]);
-  });
-});
-
-// Canvas pairing slice 3, container half (ADR-0018 / #264): POST /api/inbox/:id/attach-canvas
-// places a live chat card on the canvas the EDGE already paired and wrote the row edge for,
-// reading that pairing off x-inbox-canvas-pairing. The route makes NO database write — it wires
-// the placement core (inbox.ts) to the bridge's canvas-session registry.
-describe('POST /api/inbox/:id/attach-canvas', () => {
-  const attachReq = (id: string, pairing?: Record<string, unknown>): Request =>
-    new Request(`http://localhost/api/inbox/${encodeURIComponent(id)}/attach-canvas`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(pairing ? { 'x-inbox-canvas-pairing': JSON.stringify(pairing) } : {}),
-      },
-      body: JSON.stringify({}),
-    });
-
-  test('the forwarded pairing places the chat card on that canvas, and 200s with it', async () => {
-    const canvasId = `cv_pair_${crypto.randomUUID().slice(0, 8)}`;
-    const ownerRef = `chat_attach_${crypto.randomUUID()}`;
-
-    const res = await handleRequest(
-      attachReq('conv_paired', { id: 'conv_paired', sessionId: 'sess_paired', ownerRef, canvasId, summary: 'Pick a pricing model' }),
-    );
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, canvasId });
-    const read = await handleRequest(new Request(`http://localhost/api/canvas?canvas=${canvasId}`));
-    const { shapes } = (await read.json()) as { shapes: Array<Record<string, unknown>> };
-    const card = shapes.find((s) => s.type === 'chat');
-    expect(card?.chatId).toBe(ownerRef);
-  });
-
-  test('a missing or id-mismatched pairing header → 404, and no card is placed', async () => {
-    const canvasId = `cv_nopair_${crypto.randomUUID().slice(0, 8)}`;
-
-    expect((await handleRequest(attachReq('conv_paired'))).status).toBe(404);
-    const mismatched = await handleRequest(
-      attachReq('conv_paired', { id: 'conv_OTHER', sessionId: 's', ownerRef: null, canvasId, summary: null }),
-    );
-    expect(mismatched.status).toBe(404);
-
-    const read = await handleRequest(new Request(`http://localhost/api/canvas?canvas=${canvasId}`));
-    const { shapes } = (await read.json()) as { shapes: Array<Record<string, unknown>> };
-    expect(shapes.filter((s) => s.type === 'chat')).toHaveLength(0);
+    expect(dispatched).toEqual([{ chatId: 'chat_unaddressed', canvasId: undefined }]);
   });
 });
 

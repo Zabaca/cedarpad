@@ -1,6 +1,6 @@
 # Every turn ends with end_turn
 
-Status: accepted (design). Amends [ADR-0011](./0011-a-dev-agent-run-is-a-chat-turn.md)
+Status: **superseded (2026-10-09)** — `end_turn` and its Stop-hook gate were removed with the Inbox, which was the only consumer of a turn's declared ending. Kept as history. Was: accepted (design). Amends [ADR-0011](./0011-a-dev-agent-run-is-a-chat-turn.md)
 (supersedes its quiet-run contract and renames `ask_human`). Vocabulary: root
 [CONTEXT.md](../../CONTEXT.md) ("Promote protocol").
 

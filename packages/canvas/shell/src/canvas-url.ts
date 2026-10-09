@@ -1,5 +1,5 @@
-// The canvas stage's selected canvas rides in the URL (query params), same spirit as stage.ts
-// and inbox/inbox-url.ts: a reload/back-button lands back on the same open canvas. These are
+// The canvas stage's selected canvas rides in the URL (query params), same spirit as stage.ts:
+// a reload/back-button lands back on the same open canvas. These are
 // pure helpers (parse/serialize) so Shell.tsx's CanvasStage just reads `canvas` on mount and
 // calls history.replaceState on change — no popstate handling needed, since replaceState never
 // grows back/forward history.

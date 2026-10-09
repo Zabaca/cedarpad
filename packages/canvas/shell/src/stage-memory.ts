@@ -1,6 +1,6 @@
 // The rail navigates stages by building a FRESH URL per click (urlForStage), which drops
 // whatever query params the outgoing stage had accumulated: the canvas stage's `?canvas=<id>`
-// (canvas-url.ts) and the inbox stage's `?view=&workspace=&conv=` (inbox/inbox-url.ts). A
+// (canvas-url.ts). A
 // reload restores those fine (they're read from the URL on mount), but rail navigation away
 // and back forgets them. Stage memory closes that gap: Shell.tsx records `location.search`
 // for the stage it's leaving, and consults it when entering a stage instead of always using

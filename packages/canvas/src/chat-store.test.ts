@@ -7,8 +7,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 
 import { type ChatEvent, isChatFrame } from '../shared/chat-wire.ts';
 import type { ChatSnapshot } from '../shared/chat-store';
-import { __closeSharedStreamForTests, armFirstPrompt, beatTargets, connectionTarget, ensureSession, forkSession, getSnapshot, interrupt, isSubscribed, openStream, routeChatFrame, send, setCanvasOverride, setConnectionTarget, subscribe, takeFirstPrompt, toolDetail, toolNameOf, toolParts } from '../shared/chat-store';
-import { aliveUrl } from './idle.ts';
+import { __closeSharedStreamForTests, armFirstPrompt, ensureSession, forkSession, getSnapshot, interrupt, isSubscribed, openStream, routeChatFrame, send, setCanvasOverride, subscribe, takeFirstPrompt, toolDetail, toolNameOf, toolParts } from '../shared/chat-store';
 
 /** Serialize a wire frame the way the bridge does: a ChatEvent tagged with its chatId. */
 const frame = (chatId: string, ev: ChatEvent): string => JSON.stringify({ chatId, ...ev });
@@ -113,10 +112,9 @@ describe('toolParts / toolNameOf: the two halves of a tool line', () => {
   });
 });
 
-// end_turn (and legacy ask_human in old transcripts) is the one tool whose INPUT is human-facing:
-// the question/summary it posts to the Inbox. The thread must RENDER it — a chip with the text
-// discarded left the human unable to read what they were being asked (both live and on rehydrate,
-// since replay emits the same tool event).
+// end_turn / ask_human (retired with the Inbox, still in old transcripts) are the tools whose
+// INPUT is human-facing: the question/summary. On rehydrate the thread must RENDER it — a chip
+// with the text discarded leaves the human unable to read what they were asked.
 describe('end_turn tool event → the question/summary renders as a readable bubble', () => {
   test('needs_human: the tool chip is followed by the question text as an agent message', () => {
     const id = 'chat_endturn_q';
@@ -445,119 +443,10 @@ describe('isSubscribed: the client half of the subscribe-before-send contract', 
   });
 });
 
-describe('connection target: per-chatId bridge prefix (ADR-0009 slice #121)', () => {
-  // A tiny fake EventSource so openStream can construct the shared stream without a real
-  // network. Captures constructed URLs + lets a test fire `onopen`.
-  function withStubs(run: (ctx: { fetchCalls: string[]; esUrls: string[]; fireOpen: () => void }) => Promise<void> | void) {
-    return async () => {
-      const realES = (globalThis as Record<string, unknown>).EventSource;
-      const realFetch = globalThis.fetch;
-      const esUrls: string[] = [];
-      let inst: { onopen: (() => void) | null } | null = null;
-      (globalThis as Record<string, unknown>).EventSource = class {
-        onopen: (() => void) | null = null;
-        onerror: (() => void) | null = null;
-        onmessage: ((e: { data: string }) => void) | null = null;
-        constructor(url: string) {
-          esUrls.push(url);
-          inst = this;
-        }
-        close() {}
-      };
-      const fetchCalls: string[] = [];
-      globalThis.fetch = (async (url: unknown) => {
-        fetchCalls.push(String(url));
-        return new Response('{"ok":true}', { status: 202, headers: { 'content-type': 'application/json' } });
-      }) as typeof fetch;
-      try {
-        await run({ fetchCalls, esUrls, fireOpen: () => inst?.onopen?.() });
-      } finally {
-        globalThis.fetch = realFetch;
-        (globalThis as Record<string, unknown>).EventSource = realES;
-      }
-    };
-  }
-
-  test('connectionTarget defaults to same-origin (empty prefix) for an unset chat', () => {
-    expect(connectionTarget('chat_ct_unset')).toBe('');
-  });
-
-  test('setConnectionTarget records the prefix per chatId', () => {
-    setConnectionTarget('chat_ct_set', '/inbox/conv9/bridge');
-    expect(connectionTarget('chat_ct_set')).toBe('/inbox/conv9/bridge');
-    expect(connectionTarget('chat_ct_other')).toBe(''); // isolation: unset chats stay same-origin
-  });
-
-  test(
-    'send builds /send under the chat\'s prefix; a same-origin chat is unaffected (per-chatId isolation)',
-    withStubs(async ({ fetchCalls, fireOpen }) => {
-      const proxied = 'chat_ct_proxied';
-      const local = 'chat_ct_local';
-      setConnectionTarget(proxied, '/inbox/conv1/bridge');
-      openStream(proxied);
-      if (!isSubscribed(proxied)) fireOpen();
-      openStream(local);
-      if (!isSubscribed(local)) fireOpen();
-
-      await send(proxied, 'hi bridge', []);
-      await send(local, 'hi origin', []);
-
-      expect(fetchCalls).toContain('/inbox/conv1/bridge/api/chat/chat_ct_proxied/send');
-      expect(fetchCalls).toContain('/api/chat/chat_ct_local/send');
-      // The proxied chat must NOT leak the same-origin path (this fails if the prefix is ignored).
-      expect(fetchCalls).not.toContain('/api/chat/chat_ct_proxied/send');
-    }),
-  );
-
-  test(
-    'interrupt builds /interrupt under the chat\'s prefix',
-    withStubs(async ({ fetchCalls, fireOpen }) => {
-      const id = 'chat_ct_interrupt';
-      setConnectionTarget(id, '/inbox/conv2/bridge');
-      openStream(id);
-      if (!isSubscribed(id)) fireOpen();
-      // interrupt is a no-op unless a turn is in flight; put the chat in busy state via a send.
-      await send(id, 'start a turn', []);
-      await interrupt(id);
-      expect(fetchCalls).toContain('/inbox/conv2/bridge/api/chat/chat_ct_interrupt/interrupt');
-      expect(fetchCalls).not.toContain('/api/chat/chat_ct_interrupt/interrupt');
-    }),
-  );
-
-  test(
-    'openStream rehydrates the transcript under the chat\'s prefix',
-    withStubs(async ({ fetchCalls }) => {
-      const id = 'chat_ct_open';
-      setConnectionTarget(id, '/inbox/conv3/bridge');
-      openStream(id);
-      await new Promise((r) => setTimeout(r, 0)); // let rehydrate's fetch settle
-      expect(fetchCalls).toContain('/inbox/conv3/bridge/api/chat/chat_ct_open/transcript');
-      expect(fetchCalls).not.toContain('/api/chat/chat_ct_open/transcript');
-    }),
-  );
-
-  test('beatTargets reports the distinct set of bridges holding live sessions', () => {
-    // Fresh ids so the set is predictable regardless of what other tests left in `sessions`.
-    const a = 'chat_beat_a';
-    const b = 'chat_beat_b';
-    const c = 'chat_beat_c';
-    ensureSession(a); // same-origin
-    setConnectionTarget(b, '/inbox/convX/bridge');
-    ensureSession(b);
-    setConnectionTarget(c, '/inbox/convX/bridge'); // same bridge as b — must dedupe
-    ensureSession(c);
-    const set = new Set(beatTargets());
-    expect(set.has('')).toBe(true); // the same-origin session
-    expect(set.has('/inbox/convX/bridge')).toBe(true); // the proxied bridge
-    // b and c share one bridge — it appears once, not twice.
-    expect(beatTargets().filter((t) => t === '/inbox/convX/bridge')).toHaveLength(1);
-  });
-});
-
 // Docked chat panel: the Shell renders a canvas chat OUTSIDE the pad URL, so the
 // location-based x-canvas-id stamp (withPadCanvasHeader) can't see its canvas. An explicit
 // per-chat override keeps that chat's sends routed to — and claiming — the canvas the
-// panel fronts, without ever stamping chats that have no canvas (Inbox threads).
+// panel fronts, without ever stamping chats that have no canvas.
 describe('canvas override: a Shell-docked canvas chat stamps x-canvas-id explicitly', () => {
   function withHeaderSpy(run: (ctx: { headersFor: (path: string) => Record<string, string> | undefined; fireOpen: () => void }) => Promise<void>) {
     return async () => {
@@ -617,16 +506,6 @@ describe('canvas override: a Shell-docked canvas chat stamps x-canvas-id explici
       expect(headersFor(`/api/chat/${id}/transcript`)?.['x-canvas-id']).toBe('cv_roadmap');
     }),
   );
-});
-
-describe('aliveUrl: the heartbeat URL under a connection-target prefix (slice #121)', () => {
-  test('same-origin (empty prefix) is byte-identical to today: /api/alive', () => {
-    expect(aliveUrl('')).toBe('/api/alive');
-  });
-
-  test('a proxy prefix routes the beat to that bridge', () => {
-    expect(aliveUrl('/inbox/conv1/bridge')).toBe('/inbox/conv1/bridge/api/alive');
-  });
 });
 
 // ADR-0011: the wire's 409 turn_in_flight means "a turn is running — wait". The client

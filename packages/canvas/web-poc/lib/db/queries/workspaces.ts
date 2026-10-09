@@ -83,18 +83,11 @@ export async function getWorkspace(
   return row ? toRecord(row) : null;
 }
 
-/** Get a workspace row by id with NO access check — edge-internal resolution only
- *  (repo-connection lookups keyed off an already-authorized artifact, e.g. a
- *  Conversation the caller owns). Never expose through a user-facing route. */
+/** Get a workspace row by id with NO access check — edge-internal resolution only (the
+ *  platform RPC's workspace-exists check). Never expose through a user-facing route. */
 export async function getWorkspaceRecord(db: Database, workspaceId: string): Promise<WorkspaceRecord | null> {
   const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
   return row ? toRecord(row) : null;
-}
-
-/** Stamp the shared inbox read mark (read-for-all): any member opening the Inbox
- *  clears the whole workspace's badge. Caller must have verified membership. */
-export async function setInboxReadAt(db: Database, workspaceId: string, at: Date): Promise<void> {
-  await db.update(workspaces).set({ inboxReadAt: at }).where(eq(workspaces.id, workspaceId));
 }
 
 /** Add a GitHub App installation to the workspace (repository connection, ADR-0015).

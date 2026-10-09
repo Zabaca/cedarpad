@@ -37,28 +37,7 @@ describe('buildExternalMcpServers: this turn’s external MCP servers from a reg
   });
 });
 
-// The end_turn summary line: a required summary made a question-only needs_human call fail
-// schema validation, forcing a visible retry (the doubled end_turn transcript bug).
-import { endTurnSummaryLine, sendMessageOp } from './agent.ts';
-
-describe('endTurnSummaryLine: end_turn works without an explicit summary', () => {
-  test('an explicit summary wins', () => {
-    expect(endTurnSummaryLine('shipped it', 'ignored?')).toBe('shipped it');
-  });
-
-  test('question-only (the Stop-gate-nudged path) derives the line from the question', () => {
-    expect(endTurnSummaryLine(undefined, 'Should I build cross-chat messaging?')).toBe('Should I build cross-chat messaging?');
-  });
-
-  test('a long question is truncated to one Inbox line', () => {
-    const q = 'x'.repeat(200);
-    expect(endTurnSummaryLine(undefined, q)).toBe(`${'x'.repeat(140)}…`);
-  });
-
-  test('neither ⇒ a plain fallback, never a schema failure', () => {
-    expect(endTurnSummaryLine(undefined, undefined)).toBe('Turn complete.');
-  });
-});
+import { sendMessageOp } from './agent.ts';
 
 // Cross-chat send_message: guard rails around the bridge-bound seam.
 import { createStore } from '../src/store.ts';
@@ -290,7 +269,7 @@ describe('select_page is seam-gated', () => {
 
   test('with the seam bound it appears', () => {
     const tools = names(
-      createCanvasTools(createStore([]), undefined, undefined, 'default', undefined, undefined, undefined, undefined, () => 1),
+      createCanvasTools(createStore([]), undefined, undefined, 'default', undefined, undefined, undefined, () => 1),
     );
     expect(tools).toContain('select_page');
   });

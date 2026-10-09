@@ -31,7 +31,6 @@ import {
 import { componentHistory, editComponent, isShared, listComponents, readComponent, restoreComponent, writeComponent, writeDataFile } from './components.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { callComponent } from './component-commands.ts';
-import { type EndTurnDeps, type EndTurnInput, endTurn } from './inbox.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
 import { type McpRegistryEntry, MCP_REGISTRY, resolveMcpEntry } from './mcp-registry.ts';
 import type { TurnCanvasStore } from './turn-canvas-store.ts';
@@ -93,11 +92,6 @@ export type CaptureView = (target?: ScreenshotTarget) => Promise<string | null>;
  * bridge injects this (it holds the session registry); it returns how many canvases reloaded.
  * Absent (single-store contexts, tests) ⇒ only the current store is bumped. */
 export type BumpShared = (module: string) => number;
-
-/** The `end_turn` tool body (server/inbox.ts binds db + sessionId + notify). Present ⇒ the agent
- * gets an `end_turn` tool + the Stop-hook gate (ADR-0012); absent (canvas-only contexts, tests)
- * ⇒ both are omitted, unchanged. */
-export type EndTurn = (input: EndTurnInput) => Promise<string>;
 
 /** The `send_message` tool body (bridge binds it — it holds ChatMeta + the turn dispatcher).
  * Posts a message into ANOTHER chat card's thread and kicks its turn, fire-and-forget (the
@@ -223,15 +217,6 @@ export function viewTargetOp(store: CanvasStore, page?: string, ids?: string[]):
   }
 }
 
-/** The Inbox-list line for an end_turn call: the given summary, else derived from the
- *  question (the Stop-gate-nudged path routinely supplies question-only calls — a required
- *  summary made those fail schema validation and retry, doubling end_turn in the transcript). */
-export function endTurnSummaryLine(summary: string | undefined, question: string | undefined): string {
-  if (summary) return summary;
-  if (question) return question.length > 140 ? `${question.slice(0, 140)}…` : question;
-  return 'Turn complete.';
-}
-
 /** True for the room-backed store a chat turn runs on (#310); a plain `CanvasStore` (tests,
  *  single-process contexts) has no settle points and the wrapper below is a no-op. */
 const isTurnStore = (s: CanvasStore): s is TurnCanvasStore => typeof (s as TurnCanvasStore).commit === 'function';
@@ -256,7 +241,7 @@ const isTurnStore = (s: CanvasStore): s is TurnCanvasStore => typeof (s as TurnC
  * tools are what most need it: the next `read_canvas` then answers from a mirror taken after the
  * previous tool call, which is how a human's mid-turn edit becomes visible to the agent.
  */
-export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
+export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
   const settle = <T extends { handler: (args: never, extra: never) => Promise<{ isError?: boolean }> }>(def: T): T => {
     if (!isTurnStore(store)) return def;
     const inner = def.handler;
@@ -277,18 +262,18 @@ export function createCanvasTools(store: CanvasStore, captureView?: CaptureView,
       },
     };
   };
-  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, endTurn, sendToChat, fetchAsset, selectPage).map(settle);
+  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, sendToChat, fetchAsset, selectPage).map(settle);
 }
 
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
   return createSdkMcpServer({
     name: 'canvas',
     version: '0.1.0',
-    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, endTurn, sendToChat, fetchAsset, selectPage),
+    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, sendToChat, fetchAsset, selectPage),
   });
 }
 
-function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, endTurn?: EndTurn, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
+function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -601,33 +586,6 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
             ),
           ]
         : []),
-      // The turn's mandatory terminal (ADR-0012): present only when the bridge injected the inbox
-      // seam. Declares the ending — needs_human promotes to the Inbox + notifies; done records
-      // completion. Either way the agent then STOPS — this tool NEVER blocks for a reply.
-      ...(endTurn
-        ? [
-            tool(
-              'end_turn',
-              'ALWAYS call this exactly once as the LAST tool call of your turn, to declare how the turn ends. outcome "needs_human": you are blocked on the human — a decision, approval, or information only they have; supply `question` (it is posted to their Inbox and they are notified; the tool does NOT wait — after calling it, stop; their reply resumes this session). outcome "done": the work for this turn is complete and nothing is pending on the human; the summary is shown in their Inbox list. Never end a turn with an unanswered question in prose — route it through outcome "needs_human". Say everything important in your message first: `summary` is for the Inbox list, not a substitute for your reply.',
-              {
-                outcome: z.enum(['needs_human', 'done']).describe('needs_human = blocked on the human (requires `question`); done = work complete, nothing pending.'),
-                // Optional with a derived fallback: a REQUIRED summary made the schema reject a
-                // question-only needs_human call, forcing a visible retry (a doubled end_turn in
-                // the transcript). Missing ⇒ derived from the question / a plain "Turn complete."
-                summary: z.string().optional().describe('One-line summary of where the turn ended (shown in the inbox list).'),
-                question: z.string().optional().describe('needs_human only: the full question / context for the human.'),
-              },
-              async ({ outcome, summary, question }) => {
-                if (outcome === 'needs_human' && !question) {
-                  return result({ text: 'outcome "needs_human" requires a `question` — call end_turn again with the question for the human.' });
-                }
-                const line = endTurnSummaryLine(summary, question);
-                const input: EndTurnInput = outcome === 'done' ? { outcome, summary: line } : { outcome, summary: line, question: question! };
-                return result({ text: await endTurn(input) });
-              },
-            ),
-          ]
-        : []),
     ];
 }
 
@@ -659,44 +617,14 @@ export const CANVAS_APPEND = `\n\nYou also share a tldraw canvas with the human 
 
 BOUNDARY (important): you may author ONLY through the component/data tools (which write per-canvas \`src/canvas-<id>/components/\` dirs and the workspace \`shared/components/\` library — both persist across restarts and hot-reload). There is no backend-handler capability: a component cannot get a server-side route of its own, so do not plan around one. Do NOT modify the CORE: the app shell, \`src/canvas-components/\` (the read-only platform library), anything else in \`src/\`, or anything in \`server/\` (especially \`bridge.ts\`). The core is image-only — edits there will NOT persist and can break the live canvas for everyone.
 
-CROSS-CHAT: if you have a send_message tool, you can post a message into another chat card on this canvas and trigger its agent to take a turn (fire-and-forget — poll read_canvas/read_connected for its reply). Messages you send are attributed to your chat card. Use it when the human asks chats to coordinate; never build unattended agent-to-agent reply loops.
-
-ENDING A TURN: if you have an end_turn tool, ALWAYS finish your turn by calling it exactly once — outcome "needs_human" when you are blocked on the human (include your question; never leave a question only in prose), outcome "done" when the work is complete. Say everything important in your message first; the summary is for the human's Inbox list.`;
-
-/** The Stop-hook gate (ADR-0012): a turn may not end until the agent declared its ending via
- * `end_turn`. Pure factory so the guard unit-tests without the SDK: `ended()` reads the per-turn
- * flag (set by the end_turn handler), `aborted()` exempts user interrupts, and after `maxBlocks`
- * refusals the stop is let through (a guardrail, not a cage — the mechanical settle is the
- * fallback) with a log line so degrading compliance is visible. */
-export function makeStopGate(
-  ended: () => boolean,
-  aborted: () => boolean,
-  maxBlocks = 2,
-): () => Promise<{ decision?: 'block'; reason?: string }> {
-  let blocks = 0;
-  return async () => {
-    if (ended() || aborted()) return {};
-    if (blocks >= maxBlocks) {
-      console.error('[inbox] turn ended ungated: end_turn was never called after', blocks, 'blocks');
-      return {};
-    }
-    blocks += 1;
-    return {
-      decision: 'block',
-      reason:
-        'You must declare how this turn ends before stopping: call the end_turn tool with outcome "needs_human" (you are blocked on the human — include your question) or outcome "done" (the work is complete). Then stop.',
-    };
-  };
-}
+CROSS-CHAT: if you have a send_message tool, you can post a message into another chat card on this canvas and trigger its agent to take a turn (fire-and-forget — poll read_canvas/read_connected for its reply). Messages you send are attributed to your chat card. Use it when the human asks chats to coordinate; never build unattended agent-to-agent reply loops.`;
 
 /** A pasted screenshot the human attached to their message (base64, no data: prefix). */
 export type CanvasImage = { media_type: string; data: string };
 
 /**
  * Parse the `images` field of a chat-turn request body into validated {@link CanvasImage}s,
- * dropping any malformed entry. The ONE parse both chat-turn entry points share — a canvas
- * `/send` and an Inbox `/reply` speak the same reply/send contract (ADR-0009 / #123), so
- * neither hand-rolls a second, narrower image schema.
+ * dropping any malformed entry.
  */
 export function parseCanvasImages(body: { images?: unknown }): CanvasImage[] {
   const raw = Array.isArray(body.images) ? body.images : [];
@@ -760,7 +688,6 @@ export async function* runChat(
   effort?: string,
   canvasId: string = 'default',
   bumpShared?: BumpShared,
-  inbox?: Omit<EndTurnDeps, 'getSessionId'>,
   // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, keyed by registry
   // server name (already decoded from the proxied `x-mcp-tokens` header). Absent/empty ⇒ no
   // external server.
@@ -780,30 +707,13 @@ export async function* runChat(
   // person it is talking to. Absent ⇒ omitted — never a broadcast fallback.
   selectPage?: SelectPage,
 ): AsyncGenerator<ChatEvent> {
-  // acc tracks the (possibly newly-assigned) sessionId across the turn; end_turn reads it lazily
-  // so a fresh session — whose id only lands in the SDK init message — still promotes correctly.
+  // acc tracks the (possibly newly-assigned) sessionId across the turn.
   let acc: TurnAccum = { sessionId, costUsd: 0 };
-  // ADR-0012: the end_turn handler flips this flag; the Stop-hook gate below refuses to let the
-  // turn end while it is unset (with a bounded retry budget + abort exemption).
-  let turnEnded = false;
-  const endTurnSeam = inbox
-    ? async (input: EndTurnInput) => {
-        const text = await endTurn({ ...inbox, getSessionId: () => acc.sessionId }, input);
-        turnEnded = true;
-        return text;
-      }
-    : undefined;
-  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, endTurnSeam, sendToChat, fetchAsset, selectPage);
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, sendToChat, fetchAsset, selectPage);
   // The Notebook (ADR-0024): the store agents write and canvas reads. Null when this process
   // has no edge in front of it (local dev without the Worker, the unit suite) — the turn then
   // simply has no notebook tools, rather than tools that quietly write nowhere.
   const notebook = createNotebookMcpServer();
-  const stopGate = endTurnSeam
-    ? makeStopGate(
-        () => turnEnded,
-        () => abortController?.signal.aborted ?? false,
-      )
-    : undefined;
 
   const fullOptions = {
     systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: CANVAS_APPEND },
@@ -834,8 +744,6 @@ export async function* runChat(
         forwardSubagentText: true, // stream Task-subagent text/thinking inline (parent_tool_use_id-tagged) so the UI can nest it
         agentProgressSummaries: true, // periodic "Analyzing X" summaries on task_progress
         ...(abortController ? { abortController } : {}), // Esc / Stop -> abort this turn
-        // ADR-0012: the Stop-hook gate — a turn may not end without an end_turn declaration.
-        ...(stopGate ? { hooks: { Stop: [{ hooks: [stopGate] }] } } : {}),
         ...fullOptions,
         ...(sessionId ? { resume: sessionId, ...(forkSession ? { forkSession: true } : {}) } : {}),
       },

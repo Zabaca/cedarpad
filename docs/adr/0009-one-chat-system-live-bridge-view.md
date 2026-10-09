@@ -1,6 +1,6 @@
 # One chat system: every chat interface is a live view of its session's bridge
 
-Status: accepted. Amends the Inbox transport described in root [CONTEXT.md](../../CONTEXT.md)
+Status: **superseded (2026-10-09)** — the Inbox, its edge chat proxy and connection targets were removed; a chat is now only a card on its canvas (or that card docked in the Shell). Kept as history. Was: accepted. Amends the Inbox transport described in root [CONTEXT.md](../../CONTEXT.md)
 (supersedes the "Inbox UI renders history from the R2 JSONL while runners sleep" storage
 note) and the dev-agent reply path in `packages/canvas/server/bridge.ts`. Target model;
 Tier 1 built now. Tier 2 (a dev-agent-sandbox interactive bridge) is revised by

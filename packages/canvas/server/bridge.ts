@@ -20,11 +20,8 @@ import { sseComment } from './sse.ts';
 import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import type { PlatformRpc } from './platform-rpc-client.ts';
-import { isLocalhostEdge, loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
+import { isLocalhostEdge, loadWebPocEnv } from './platform-rpc-env.ts';
 import { LOCAL_DEV_PLATFORM_SECRET } from '../shared/platform-rpc.ts';
-import { type Notify, openConversation, placeChatCard } from './inbox.ts';
-import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
   BRIDGE_ROUTES,
   CANVAS_ID_HEADER,
@@ -37,8 +34,6 @@ import {
   HEADLESS_SEND_HEADER,
   HUDDLE_AGENT_TOKEN_HEADER,
   HUDDLE_CANVAS_HEADER,
-  INBOX_CONVERSATION_HEADER,
-  INBOX_PAIRING_HEADER,
   LIVEKIT_API_KEY_HEADER,
   LIVEKIT_API_SECRET_HEADER,
   LIVEKIT_URL_HEADER,
@@ -51,8 +46,6 @@ import {
   type ViewCanvasResult,
   WriteComponentBody,
   WriteDataBody,
-  decodeForwardedConversation,
-  decodeForwardedPairing,
   wireError,
 } from '../shared/bridge-wire.ts';
 import { callComponent } from './component-commands.ts';
@@ -104,31 +97,6 @@ const BOOT_AT = Date.now();
 // needs the same hop for on-demand Component materialization — ADR-0022.)
 const webPocEnv = loadWebPocEnv();
 
-// Inbox (#61): the bridge is a single-user localhost surface, so the inbox owner + platform
-// workspace come from env (the authenticated-user wiring is a platform/#62 concern).
-const INBOX_USER = process.env.CANVAS_USER ?? 'default';
-// The platform RPC (ADR-0018 / #266): the container's ONLY path back into the platform data
-// layer. There is no local client behind it any more — this bridge constructs no database
-// client, holds no connection string, and is handed no credentials (worker/container-env.ts).
-// Null when unconfigured, which is now a DEGRADED bridge rather than one with a fallback: the
-// chat-lifecycle writes are best-effort by contract, so a turn still runs, streams, persists to
-// R2 and answers the human; it just does not file its Inbox row.
-//
-// The local-dev fallback secret applies ONLY to a localhost edge: a fresh worktree has no
-// `web-poc/.dev.vars`, and without a shared trust root the dev loop would 401 silently rather
-// than obviously. A real `.dev.vars` (and the container's real env) always wins.
-const platformRpcClient = platformRpcFromEnv(webPocEnv);
-if (!platformRpcClient) console.warn('[inbox] no platform RPC configured — Inbox rows will not be filed for this bridge');
-// #87: the real attention signal. Web push (shell/src/push.ts → worker/push.ts →
-// push_subscriptions), logged either way. Delivery itself now runs at the EDGE (it reads the
-// subscription rows and prunes dead endpoints), so the container asks for it by name and never
-// learns who is subscribed. #231: recipients follow the Conversation's assignment — the assignee
-// alone, or the whole workspace roster when nobody has claimed it — resolved edge-side.
-const notify: Notify = async (conversationId, question) => {
-  console.log(`[inbox] waiting_on:human conv=${conversationId} q=${question.slice(0, 80)}`);
-  await platformRpcClient?.notify({ conversationId, question });
-};
-
 
 // Workspace blob storage: local disk in dev, R2 in the container (selected by env). It no
 // longer holds canvas state — ADR-0019 / #297 deleted that writer, and the retained
@@ -138,8 +106,8 @@ const notify: Notify = async (conversationId, question) => {
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
 const DEFAULT_CANVAS_ID = process.env.CANVAS_ID ?? 'default';
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
-// Capture the raw backend too: the Inbox transcript backup/restore (#60/#61) keys blobs by
-// sessionId (transcript-store), so it needs the low-level get/put seam, not BlobStore's canvas API.
+// Capture the raw backend too: the transcript backup/restore keys blobs by sessionId
+// (transcript-store), so it needs the low-level get/put seam, not BlobStore's canvas API.
 const blobBackend = selectBackend(`${PKG_ROOT}.persist`);
 const blobStore = new BlobStore(blobBackend);
 
@@ -147,10 +115,6 @@ const blobStore = new BlobStore(blobBackend);
 // per-canvas session (ADR-0019 / #297). The store, its R2 persistence and the full-state
 // SSE broadcast are gone; a canvas's document lives in its room. The browser still selects
 // a canvas via the `x-canvas-id` header (or `?canvas=`); absent → the default.
-// (The lazy canvas-edge backfill that used to run here went with the container's database in
-// ADR-0018 / #266. It was a one-time migration for chats born before edge capture existed, it
-// has long since run everywhere, and the live path — `findOrCreateConversation`'s first-wins
-// canvas edge, at the edge — still fills a null edge on the chat's next turn.)
 const screenshotChannels = createScreenshotChannels();
 function canvasIdFrom(req: Request, url: URL): string {
   return req.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas') ?? DEFAULT_CANVAS_ID;
@@ -368,64 +332,21 @@ function chatStream(guestCanvas?: string): Response {
 }
 
 
-/** ADR-0011 row-at-start: a session enters the Inbox index the moment the SDK assigns its id
- * (the turn's `init` event), landing in waiting_on:none — visible live in "All", never
- * cluttering "Needs me". Also seeds ChatMeta right away so `chatIdForSession` resolves this
- * chat MID-turn (opening the running Conversation attaches to this chat's live stream).
- * Idempotent (find-or-create by chat, rebinding the newest sessionId) and
- * best-effort — an index failure never fails the turn.
- *
- * ADR-0018: this write ORIGINATES in the container, so the row is filed over the platform
- * RPC's `conversation.start` operation. Since #266 there is no local client behind it. The
- * best-effort contract is unchanged — the hop can fail exactly as the write could, and the
- * turn continues. */
-export async function indexSessionStart(chatId: string, sessionId: string, message: string, workspaceId: string = WORKSPACE, canvasId?: string, assignTo?: string, deps: { rpc: PlatformRpc | null } = { rpc: platformRpcClient }): Promise<void> {
+/** The session's id just landed (the turn's `init` event): seed ChatMeta right away so the
+ * resume pointer holds mid-turn, and bind the chat to its canvas — the guest stream filter's
+ * binding (#220). */
+export function onSessionStart(chatId: string, sessionId: string, canvasId?: string): void {
   if (chatMeta.get(chatId).sessionId !== sessionId) chatMeta.set(chatId, { sessionId });
-  if (canvasId) chatHub.bindCanvas(chatId, canvasId); // #220: the guest stream filter's binding
-  const input = {
-    sessionId,
-    userId: INBOX_USER,
-    workspaceId,
-    ownerRef: chatId,
-    canvasId,
-    summary: message.slice(0, 200),
-    assignTo,
-  };
-  await (deps.rpc?.conversationStart(input) ?? Promise.resolve()).catch((err) =>
-    console.error('[inbox] session-start row upsert failed:', err),
-  );
-}
-
-/** Settle-time Conversation upsert (the finally-block backstop): every settled turn marks
- * activity (unread + touch) so the session surfaces in the Inbox "All" view even when the
- * end_turn gate was bypassed (ungated stop, error turn). Idempotent by CHAT (ownerRef; resume
- * mints a new sessionId per turn, so the chat is the identity and the row is re-pointed at the
- * newest session). The turn awaits the row-at-start index first (see TurnDeps.indexSession), so
- * this find-or-create finds the one row instead of racing it into a duplicate. Best-effort.
- *
- * ADR-0018 / #266: the find-or-create-and-mark-active pair is ONE named operation at the edge
- * (`conversation.settle`) — the container has no client to make it with, and splitting it into
- * two hops would let a turn land a row it then failed to mark. */
-async function settleConversation(input: { chatId: string; sessionId: string; message: string; workspaceId: string; canvasId?: string }): Promise<void> {
-  await (
-    platformRpcClient?.conversationSettle({
-      sessionId: input.sessionId,
-      userId: INBOX_USER,
-      workspaceId: input.workspaceId,
-      ownerRef: input.chatId,
-      canvasId: input.canvasId,
-      summary: input.message.slice(0, 200),
-    }) ?? Promise.resolve()
-  ).catch((err) => console.error('[inbox] session-row upsert failed:', err));
+  if (canvasId) chatHub.bindCanvas(chatId, canvasId);
 }
 
 /**
  * E2E shim (.claude/skills/worktree — "shim only what blocks e2e"). The one thing a spec cannot
  * drive is the Claude SDK turn itself: it needs a real OAuth token and a real model round-trip.
  * Under `E2E_MODE=1` (exported by scripts/with-worktree-port.sh, and only outside production)
- * the SDK call is replaced by a turn that emits the two events the Inbox path keys on — `init`
- * with a session id, then `done`. Everything after that is the REAL pipeline: the row-at-start
- * index, the settle-time upsert, the transcript backup. Nothing else is stubbed.
+ * the SDK call is replaced by a turn that emits the two events the settle path keys on — `init`
+ * with a session id, then `done`. Everything after that is the REAL pipeline: the session
+ * stamp and the transcript backup. Nothing else is stubbed.
  */
 const E2E_MODE = process.env.NODE_ENV !== 'production' && process.env.E2E_MODE === '1';
 async function* e2eRunChat(...args: Parameters<typeof runChat>): AsyncGenerator<ChatEvent> {
@@ -460,7 +381,6 @@ async function* e2eRunChat(...args: Parameters<typeof runChat>): AsyncGenerator<
  * into a `TurnInput` and hands it here; `server/turn.ts` owns the phase order. */
 const turnDeps: TurnDeps = {
   aborters: chatHub.aborters,
-  workspaceId: WORKSPACE,
   // The agent's view_canvas round-trip, over the canvas's screenshot SSE channel (#297).
   requestScreenshot: (canvasId) => screenshotChannels.get(canvasId).requestScreenshot,
   selectPage: (canvasId) => screenshotChannels.get(canvasId).selectPage,
@@ -475,15 +395,13 @@ const turnDeps: TurnDeps = {
   materializeSkills: () => materializeSkills(),
   runChat: E2E_MODE ? e2eRunChat : runChat,
   broadcast: broadcastChat,
-  inbox: { rpc: platformRpcClient, userId: INBOX_USER, notify },
-  indexSession: indexSessionStart,
+  onSessionStart,
   stampSession: (chatId, sessionId) => chatMeta.set(chatId, { sessionId }),
   onTurnComplete,
-  settleConversation,
-  // Inbox (#60/#61): mirror the transcript to R2 keyed by sessionId so the Inbox can render
-  // history and resume can restore it while the runner sleeps. Best-effort — never fails a turn.
+  // Mirror the transcript to R2 keyed by sessionId so resume can restore it after a recycle.
+  // Best-effort — never fails a turn.
   backupTranscript: (sessionId) =>
-    transcripts.put(sessionId).catch((err) => console.error('[inbox] transcript backup failed:', err)),
+    transcripts.put(sessionId).catch((err) => console.error('[transcript] backup failed:', err)),
   // #356: boot downloads no transcripts, so a resumed turn fetches its OWN session — one object,
   // at the moment it is needed. Deliberately NOT `.catch`ed: a failed fetch must fail the turn
   // rather than let the agent resume with no history and answer as if there were none.
@@ -588,12 +506,10 @@ export function setTurnRunChat(fn: TurnDeps['runChat']): () => void {
 
 /** Run one turn for a chat and broadcast its events. Fire-and-forget (output is the SSE).
  * The turn runs against the session for `requestCanvasId` (the request's active canvas, #79)
- * so the agent reads/draws on the canvas the human is on; absent ⇒ the default store,
- * unchanged — BUT absence also means the turn claims no chat→canvas edge for the
- * Conversation (an inbox reply must never link a chat to the Default canvas by default).
+ * so the agent reads/draws on the canvas the human is on; absent ⇒ the default store.
  * The lifecycle itself lives in `server/turn.ts`. */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, mcpTokens?: Record<string, string>, assignTo?: string, mcpDisallowed?: string[], viewer?: string): void {
-  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, mcpTokens, assignTo, mcpDisallowedTools: mcpDisallowed, viewer }, turnDeps);
+function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, mcpTokens?: Record<string, string>, mcpDisallowed?: string[], viewer?: string): void {
+  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, mcpTokens, mcpDisallowedTools: mcpDisallowed, viewer }, turnDeps);
 }
 
 // Test seam: the turn dispatcher is indirected so a test can substitute a spy and
@@ -649,13 +565,6 @@ const huddleSupervisor = createHuddleSupervisor<{
     return { kill: () => child.kill(), onExit: (cb) => exitCbs.push(cb) };
   },
 });
-
-// The JSONL carries no chatId, so the chatId→sessionId link lives in ChatMeta (ADR 0004). Reverse
-// it to route a resumed inbox turn back to its chat card's SSE; absent (a session with no canvas
-// chat home) ⇒ fall back to the conversation id so the turn still streams under a stable channel.
-function chatIdForSession(sessionId: string): string | undefined {
-  return Object.entries(chatMeta.snapshot()).find(([, m]) => m.sessionId === sessionId)?.[0];
-}
 
 export async function handleRequest(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -1000,10 +909,8 @@ export async function handleRequest(req: Request): Promise<Response> {
       // subscribed, the turn's events would broadcast into the void (there is no
       // replay), so reject early with 425 Too Early and dispatch nothing. Only a
       // race-losing / misbehaving client reaches here; the client gates on `subscribed`.
-      // EXCEPT a headless send (#177: the edge MCP proxy stamps x-headless-send): like
-      // no subscriber exists BY DESIGN — the caller polls
-      // read_conversation instead of watching the stream, the turn persists to the
-      // session JSONL regardless, and the Inbox attaches live if opened mid-turn.
+      // EXCEPT a headless send (x-headless-send, the e2e suite's request-only turns): no
+      // subscriber exists BY DESIGN, and the turn persists to the session JSONL regardless.
       const headless = req.headers.get(HEADLESS_SEND_HEADER) === '1';
       if (!headless && chatHub.subscriberCount() === 0) return json({ error: 'no_subscribers', chatId }, 425);
       // One turn per chat, enforced at the wire (ADR-0011): a send while this chat's turn
@@ -1024,7 +931,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       // Route the turn to the request's active canvas (#79): the agent draws on the canvas the
       // human is on (x-canvas-id / ?canvas), exactly how the canvas reads/SSE already resolve.
       // EXPLICIT canvas only (no default): the pad stamps x-canvas-id; an unaddressed send
-      // (inbox thread) routes to the default store without claiming a canvas edge.
+      // routes to the default store.
       const requestCanvasId = req.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas') ?? undefined;
       // #220 slice 6: a GUEST send (edge-stamped x-guest-canvas). Member conversations are
       // view-only — a guest may address only the link's canvas, and only chats they started
@@ -1039,17 +946,12 @@ export async function handleRequest(req: Request): Promise<Response> {
       }
       if (requestCanvasId) chatHub.bindCanvas(chatId, requestCanvasId);
       // ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, set by the edge
-      // proxy (worker/inbox-bridge.ts, worker/index.ts) on this send only. The chat's own MCP selection
+      // (worker/index.ts) on this send only. The chat's own MCP selection
       // (ChatMeta, default all-on) then opts out: a disabled server's token is dropped here, so
       // it is never even connected; disabled tools ride as SDK disallowedTools.
       const mcpSelection = chatMeta.get(chatId).mcp;
       const mcpTokens = applyMcpSelection(decodeMcpTokens(req.headers.get(MCP_TOKENS_HEADER)), mcpSelection);
-      // The send's HUMAN INITIATOR (shared inbox, CONTEXT.md), stamped by the edge proxies:
-      // assigns the Conversation at birth / claims-if-unassigned on a reply.
-      const assignTo = req.headers.get(INBOX_ASSIGN_HEADER) ?? undefined;
-      // WHOSE SCREEN this turn may move (presentation only — see CANVAS_VIEWER_HEADER). Read
-      // separately from assignTo even though the edge stamps both from the same session: they
-      // answer different questions, and only this one is allowed near a person's viewport.
+      // WHOSE SCREEN this turn may move (presentation only — see CANVAS_VIEWER_HEADER).
       const viewer = req.headers.get(CANVAS_VIEWER_HEADER) ?? undefined;
       // Belt on top of the edge gate: a guest turn is a PLAIN chat turn on the link's canvas —
       // never armed with the workspace's external-MCP tokens.
@@ -1063,7 +965,6 @@ export async function handleRequest(req: Request): Promise<Response> {
         effort,
         requestCanvasId,
         guestCanvas ? undefined : mcpTokens,
-        assignTo,
         guestCanvas ? undefined : mcpDisallowedTools(mcpSelection),
         // A guest is never a select_page target: their per-browser identity lives in
         // localStorage and never reaches the edge, so there is no id here to match a
@@ -1130,81 +1031,6 @@ export async function handleRequest(req: Request): Promise<Response> {
       chatHub.abort(chatId);
       return json({ ok: true });
     }
-
-    // GET /api/inbox/:id/chat — resolve a Conversation to the chatId a Shell-mounted <ChatView>
-    // subscribes to (ADR-0009 / #124). Reached ONLY through the edge proxy (/inbox/:id/bridge/*),
-    // which already ownership-checked the Conversation against the gated user, FORWARDS it on
-    // x-inbox-conversation, and cleared its unread (ADR-0018 / #261). Wakes THIS bridge:
-    // restores the session JSONL from R2 if the container cold-booted, resolves
-    // `chatIdForSession(sessionId) ?? conv.id` (a double-homed canvas chat shares its id — two live
-    // views of one stream), and seeds that chatId's ChatMeta so its transcript + send resume this
-    // session. The Shell then points its connection target here and renders <ChatView chatId>.
-    const openConvRoute = /^\/api\/inbox\/([^/]+)\/chat$/.exec(path);
-    if (openConvRoute && req.method === 'GET') {
-      const id = decodeURIComponent(openConvRoute[1] as string);
-      // ADR-0018 / #261: the row rides the edge's header (which also cleared unread). Parsed,
-      // never trusted — an absent, malformed, or mismatched payload is the same 404 as before.
-      const conv = decodeForwardedConversation(req.headers.get(INBOX_CONVERSATION_HEADER));
-      if (!conv || conv.id !== id) return json({ error: `conversation not found: ${id}` }, 404);
-      const { chatId } = await openConversation(
-        {
-          transcripts,
-          cwd: CANVAS_CWD,
-          chatIdForSession,
-          seedChatMeta: (cid, sid) => {
-            if (chatMeta.get(cid).sessionId !== sid) chatMeta.set(cid, { sessionId: sid });
-          },
-        },
-        conv,
-      );
-      return json({ chatId });
-    }
-
-    // POST /api/inbox/:id/attach-canvas — canvas pairing (slice 3), container half. ADR-0018 /
-    // #264: the edge already did the row work — picked the canvas (same-workspace only) or
-    // created one in the Conversation's workspace, and wrote the Conversation→canvas edge — and
-    // forwards the result on x-inbox-canvas-pairing. All that is left here is the part that
-    // genuinely needs the container: mutating the live canvas session to place the chat card.
-    const attachRoute = /^\/api\/inbox\/([^/]+)\/attach-canvas$/.exec(path);
-    if (attachRoute && req.method === 'POST') {
-      const id = decodeURIComponent(attachRoute[1] as string);
-      // Parsed, never trusted — an absent, malformed, or mismatched payload is a 404, exactly as
-      // an unresolvable Conversation was before the split.
-      const pairing = decodeForwardedPairing(req.headers.get(INBOX_PAIRING_HEADER));
-      if (!pairing || pairing.id !== id) return json({ error: 'not_found' }, 404);
-      // The card goes into the ROOM (#305), like every other canvas write: one store per
-      // request, flushed before the 200. `placeChatCard` may touch more than one canvas
-      // (it moves a card off its old one), so each opened store is flushed.
-      const opened = new Map<string, RemoteCanvasStore>();
-      try {
-        await placeChatCard(
-          {
-            getSession: async (cid) => {
-              let store = opened.get(cid);
-              if (!store) {
-                store = await openCanvasRoom(cid);
-                opened.set(cid, store);
-              }
-              return {
-                shapes: () => store!.getState().shapes,
-                upsert: (shapes) => void store!.upsert(shapes as never),
-              };
-            },
-            chatIdForSession: (sid: string) => chatIdForSession(sid) ?? null,
-          },
-          pairing,
-        );
-        for (const store of opened.values()) await store.flush();
-      } catch (e) {
-        return json({ error: `chat card placement failed: ${(e as Error).message}` }, 502);
-      }
-      return json({ ok: true, canvasId: pairing.canvasId });
-    }
-
-    // (POST /api/inbox/:id/reply is gone. It was retired by ADR-0009 / #124 — a reply is a
-    // chat SEND through the edge proxy now (worker/inbox-bridge.ts flips waiting_on there) —
-    // and it was the last route on this bridge that read a Conversation from a database.
-    // ADR-0018 / #266 removed that database, and with it the unreachable route.)
 
     // #297: the shape count went with the in-process store. Liveness is what this answers.
     if (path === '/api/health') return json({ ok: true });

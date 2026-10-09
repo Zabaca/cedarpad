@@ -7,7 +7,7 @@
 // delivers a guest only the frames of chats known to live on that canvas.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { broadcastChatEvent, chatHub, handleRequest, indexSessionStart, setChatTurnDispatcher } from './bridge.ts';
+import { broadcastChatEvent, chatHub, handleRequest, onSessionStart, setChatTurnDispatcher } from './bridge.ts';
 
 const guestSend = (chatId: string, canvas: string | null, guestCanvas = 'cv_g', body: unknown = { message: 'hi' }) =>
   new Request(`http://localhost/api/chat/${encodeURIComponent(chatId)}/send`, {
@@ -54,7 +54,7 @@ describe('guest sends (#220 slice 6)', () => {
   });
 
   test('a guest send into an ESTABLISHED member conversation is 403 (view-only), nothing dispatched', async () => {
-    await indexSessionStart('member_chat_1', 'sess_member_1', 'member thread', 'default', 'cv_g');
+    onSessionStart('member_chat_1', 'sess_member_1', 'cv_g');
     const res = await handleRequest(guestSend('member_chat_1', 'cv_g'));
     expect(res.status).toBe(403);
     expect(dispatched).toEqual([]);
@@ -64,7 +64,7 @@ describe('guest sends (#220 slice 6)', () => {
     const chatId = `guest_mine_${Date.now()}`;
     await handleRequest(guestSend(chatId, 'cv_g'));
     // The first turn established a session for it — a member chat would now be locked.
-    await indexSessionStart(chatId, 'sess_guest_1', 'guest thread', 'default', 'cv_g');
+    onSessionStart(chatId, 'sess_guest_1', 'cv_g');
     const res = await handleRequest(guestSend(chatId, 'cv_g'));
     expect(res.status).toBe(202);
     expect(dispatched).toEqual([chatId, chatId]);
@@ -77,9 +77,9 @@ describe('guest chat stream filtering (#220 slice 6)', () => {
   });
 
   test("a guest stream receives frames ONLY for chats known to live on the link's canvas", async () => {
-    // Bind two chats to canvases via the session index (the same call the turn makes).
-    await indexSessionStart('stream_mine', 'sess_sm', 'on the shared canvas', 'default', 'cv_g');
-    await indexSessionStart('stream_other', 'sess_so', 'elsewhere', 'default', 'cv_other');
+    // Bind two chats to canvases at session start (the same call the turn makes).
+    onSessionStart('stream_mine', 'sess_sm', 'cv_g');
+    onSessionStart('stream_other', 'sess_so', 'cv_other');
 
     const res = await handleRequest(
       new Request('http://localhost/api/chat/stream', { headers: { 'x-guest-canvas': 'cv_g' } }),

@@ -155,9 +155,9 @@ export interface ChatShape extends BaseShape {
   w: number;
   h: number;
   title: string;
-  /** When set, the card fronts this EXISTING chat instead of `shape.id` — the attach flow
-   * places a card for a chat born elsewhere (an Inbox conversation), whose id isn't a valid
-   * tldraw shape id. Absent on canvas-born cards (the shape id IS the chat id, above). */
+  /** When set, the card fronts this EXISTING chat instead of `shape.id` — the retired Inbox's
+   * attach flow placed cards for chats born elsewhere, whose ids aren't valid tldraw shape ids,
+   * and those cards still exist. Absent on canvas-born cards (the shape id IS the chat id). */
   chatId?: string;
 }
 

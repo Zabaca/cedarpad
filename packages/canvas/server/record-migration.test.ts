@@ -66,7 +66,7 @@ const rpc = platformRpc({
   origin: 'http://edge.invalid',
   secret: SECRET,
   fetchImpl: (url, init) =>
-    handlePlatformRpc(new Request(url, init), { BETTER_AUTH_SECRET: SECRET }, { db: db as never, send: null, origin: '', notify: async () => {} }),
+    handlePlatformRpc(new Request(url, init), { BETTER_AUTH_SECRET: SECRET }, { db: db as never }),
 })!;
 
 beforeAll(async () => {

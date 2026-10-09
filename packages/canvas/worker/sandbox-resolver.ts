@@ -45,6 +45,11 @@ export function resolve(workspace: ResolvableWorkspace): SandboxCoords {
   };
 }
 
+/** A workspace id → its runner's coordinates: the legacy `default` id → the legacy/prod
+ *  container; any other id → its derived per-workspace container. */
+export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
+  resolve(workspaceId === DEFAULT_WORKSPACE.id ? DEFAULT_WORKSPACE : { id: workspaceId });
+
 export type WarmDecision = 'serve' | 'cold-start';
 
 // Pure warm-vs-cold path selection, extracted from the fetch handler so it's

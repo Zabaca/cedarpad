@@ -5,11 +5,8 @@ import { Hono } from 'hono';
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { edgeAuth } from './auth-gate.ts';
-import { coordsForWorkspace } from './inbox-bridge.ts';
-import { withMcpTokensHeader } from './mcp-tokens-proxy.ts';
-import { notifyInboxChanged } from './workspace-events.ts';
+import { coordsForWorkspace } from './sandbox-resolver.ts';
 import {
-  AssignConversationInput,
   CreateCanvasInput,
   CreateShapesInput,
   DeleteShapesInput,
@@ -17,15 +14,11 @@ import {
   ListCanvasesInput,
   ListComponentsInput,
   SelectPageInput,
-  ListInboxInput,
   PlaceComponentInput,
   CallComponentInput,
   ReadCanvasPageInput,
   ReadComponentInput,
-  ReadConversationInput,
   ReadImageInput,
-  ReadTranscriptInput,
-  SendMessageInput,
   UpdateShapesInput,
   UploadSkillInput,
   ViewCanvasInput,
@@ -66,27 +59,6 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
     const tools = buildMcpTools({
       db,
       userId: session.userId,
-      // #383: an MCP write reaches the badge the same way an Inbox click does.
-      notify: (workspaceId) => notifyInboxChanged(env.WORKSPACE_EVENTS, workspaceId),
-      // The same proxied-send path every chat send takes: x-mcp-tokens attached (train 2),
-      // the workspace's coords resolved, the container woken if asleep.
-      proxySend: async (workspaceId, chatId, message, canvasId) => {
-        const target = new Request(`${new URL(req.url).origin}/api/chat/${encodeURIComponent(chatId)}/send`, {
-          method: 'POST',
-          // x-headless-send: no SSE subscriber exists for an MCP send BY DESIGN (callers
-          // poll read_conversation) — the bridge skips its subscribe-before-send 425.
-          headers: {
-            'content-type': 'application/json',
-            [HEADLESS_SEND_HEADER]: '1',
-            // Shared-inbox assignment: an MCP send is the token user's act — the bridge
-            // assigns the Conversation to them at birth / claims-if-unassigned on a reply.
-            'x-inbox-assign': session.userId,
-            ...(canvasId ? { [CANVAS_ID_HEADER]: canvasId } : {}),
-          },
-          body: JSON.stringify({ message }),
-        });
-        return serveWorkspace(await withMcpTokensHeader(target, env, workspaceId), env, coordsForWorkspace(workspaceId));
-      },
       // The bridge is the single writer of the skills tree — PUT lands there, `writeSkill`
       // persists the Records (#361) before the files, and the next chat turn discovers it.
       proxySkill: (workspaceId, name, input) => {
@@ -97,8 +69,8 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         });
         return serveWorkspace(target, env, coordsForWorkspace(workspaceId));
       },
-      // MCP full access: the generic bridge proxy behind read_canvas / read_transcript /
-      // the component tools. Same wake-the-container path as every other bridge call.
+      // MCP full access: the generic bridge proxy behind read_canvas and the component
+      // tools. Same wake-the-container path as every other bridge call.
       proxyBridge: (workspaceId, path, init) => {
         const target = new Request(`${new URL(req.url).origin}${path}`, {
           method: init?.method ?? 'GET',
@@ -130,52 +102,6 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
         inputSchema: CreateCanvasInput.shape,
       },
       async (input) => text(await tools.createCanvas(input)),
-    );
-    server.registerTool(
-      'list_inbox',
-      {
-        description:
-          "List a workspace's conversations — the WHOLE workspace's shared index (view: open | all | closed; default open). Optional assigned filter: a member's user id, or 'unassigned' for the unclaimed queue.",
-        inputSchema: ListInboxInput.shape,
-      },
-      async (input) => text(await tools.listInbox(input)),
-    );
-    server.registerTool(
-      'assign_conversation',
-      {
-        description:
-          "Assign a conversation to a workspace member (advisory — a coordination signal, not a lock), or pass user_id: null to unassign. Any member may assign anyone; replying to an unassigned conversation auto-assigns the replier.",
-        inputSchema: AssignConversationInput.shape,
-      },
-      async (input) => text(await tools.assignConversation(input)),
-    );
-    server.registerTool(
-      'read_conversation',
-      {
-        description:
-          'Poll a conversation by its chat_id (from send_message or list_inbox). status "starting" means the send has not been indexed yet; when waiting_on flips away from "agent", last_message_preview carries the reply.',
-        inputSchema: ReadConversationInput.shape,
-      },
-      async (input) => text(await tools.readConversation(input)),
-    );
-    server.registerTool(
-      'send_message',
-      {
-        description:
-          'Send a message to the workspace agent (async: returns a chat_id immediately — poll read_conversation for the reply). Omit chat_id to start a new conversation; pass one to continue it. Optionally address a canvas_id so the agent works on that canvas.',
-        inputSchema: SendMessageInput.shape,
-      },
-      async (input) => text(await tools.sendMessage(input)),
-    );
-
-    server.registerTool(
-      'read_transcript',
-      {
-        description:
-          "Read a conversation's FULL settled transcript (every message and tool event), not just the preview read_conversation returns. Wakes the workspace container if asleep.",
-        inputSchema: ReadTranscriptInput.shape,
-      },
-      async (input) => text(await tools.readTranscript(input)),
     );
     server.registerTool(
       'read_canvas',

@@ -51,7 +51,7 @@ const web = Bun.spawn(['bun', 'run', 'dev:web'], {
   env: { ...process.env, CANVAS_BRIDGE: BRIDGE, CANVAS_EDGE: EDGE, ...(edge ? { PLATFORM_RPC_ORIGIN: EDGE } : {}) },
 });
 
-// The Shell (rail, canvas picker, Inbox) has NO dev server: the edge Worker serves it from
+// The Shell (rail, canvas picker) has NO dev server: the edge Worker serves it from
 // `shell/dist` through its ASSETS binding, exactly as production does. So the Shell at :4513
 // serves whatever was last BUILT — an edit to `shell/src/` or to anything shared with it
 // (`shared/ChatView.tsx`, `shared/chat.css`) needs a rebuild to show up:

@@ -3,11 +3,9 @@ import { describe, expect, test } from 'bun:test';
 import { containerEnv } from './container-env.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
-// Regression: `ask_human` files every Conversation under `process.env.CANVAS_USER ??
-// 'default'` (server/bridge.ts), and the Inbox UI queries by the real Better Auth
-// user.id — so if this Worker-side env var isn't forwarded into the container's
-// process env, promoted items silently never appear in the Inbox (no error, no visible
-// failure — the conversation just never matches anyone's query).
+// Regression: the container attributes every Record it writes to `CANVAS_USER`
+// (server/components.ts `recordAuthor`) — if this Worker-side env var isn't forwarded into
+// the container's process env, every version row is silently unattributed.
 describe('containerEnv — CANVAS_USER forwarding', () => {
   const coords: SandboxCoords = { sandboxId: 'canvas', r2Prefix: 'workspaces/default/', canvasWorkspace: 'default' };
 

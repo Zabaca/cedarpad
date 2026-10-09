@@ -1,9 +1,8 @@
 // The turn: one chat turn's lifecycle, made a module (extracted from bridge.ts's inline
 // runChatTurn). A turn is the one thing in this system that sequences the others — it opens a
 // store on the active canvas's room, drives the agent (runChat), streams its events, and on
-// settle stamps the resume pointer, persists, indexes the Inbox Conversation, and backs up the
-// transcript. Every collaborator it touches is already a module (the room store, inbox
-// transition, persist batch); this makes the
+// settle stamps the resume pointer, persists, and backs up the transcript. Every collaborator
+// it touches is already a module (the room store, persist batch); this makes the
 // SEQUENCE that calls them a module too, so the settle path is testable under fakes instead of
 // only through a live SDK turn.
 //
@@ -13,7 +12,6 @@
 
 import type { CanvasImage, CaptureView, ChatEvent, SendToChat, runChat } from './agent.ts';
 import type { FetchAsset } from '../src/canvas-ops.ts';
-import type { EndTurnDeps } from './inbox.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
 import { openTurnCanvasStore } from './turn-canvas-store.ts';
 
@@ -26,28 +24,20 @@ export interface TurnInput {
   model?: string;
   forkSession?: boolean;
   effort?: string;
-  /** The EXPLICITLY addressed canvas (the pad's x-canvas-id / ?canvas, or an edge-stamped
-   * linked send). Absent ⇒ the turn routes to `deps.defaultCanvasId` but claims NO chat→canvas
-   * edge for the Conversation — an inbox reply must never link a chat to the default canvas. */
+  /** The EXPLICITLY addressed canvas (the pad's x-canvas-id / ?canvas). Absent ⇒ the turn
+   * routes to `deps.defaultCanvasId`. */
   canvasId?: string;
   /** ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, decoded from the
    * proxied `x-mcp-tokens` header. */
   mcpTokens?: Record<string, string>;
-  /** The turn's HUMAN INITIATOR (shared inbox, CONTEXT.md), from the edge-stamped
-   * x-inbox-assign header: assigns the Conversation at birth / claims-if-unassigned on a
-   * reply. Absent on unattended (cron) kicks ⇒ the row stays in the unassigned queue. */
-  assignTo?: string;
   /** Per-chat MCP tool opt-outs (`mcp__<server>__<tool>` names) from the chat's ChatMeta
    * selection — appended to the SDK disallowedTools for chat turns. Wholly-disabled servers
    * never appear here; their tokens were already dropped at the send. */
   mcpDisallowedTools?: string[];
   /** WHOSE SCREEN this turn may move, from the edge-stamped x-canvas-viewer header — the
    * human who sent the message. PRESENTATION ONLY: it arms `select_page` and nothing else,
-   * and must never gate a capability (see CANVAS_VIEWER_HEADER). Deliberately separate from
-   * `assignTo`, which happens to hold the same id today but answers a different question
-   * (who OWNS the conversation) and is free to diverge — a change to assignment semantics
-   * must not silently redirect somebody's screen. Absent on a guest send or a headless send
-   * ⇒ `select_page` is not offered at all. */
+   * and must never gate a capability (see CANVAS_VIEWER_HEADER). Absent on a guest send or a
+   * headless send ⇒ `select_page` is not offered at all. */
   viewer?: string;
 }
 
@@ -57,8 +47,6 @@ export interface TurnDeps {
   /** Live-turn registry, keyed by chatId — set at start, cleared at settle (drives /interrupt +
    *  the one-turn-per-chat 409 guard at the wire). */
   aborters: Map<string, AbortController>;
-  /** The workspace the turn's Inbox Conversation is filed under (the bridge's own). */
-  workspaceId: string;
   /** The active canvas's screenshot round-trip (`view_canvas`) — the one rider left on the
    *  bridge's SSE stream after #297 (server/screenshot-channel.ts). */
   requestScreenshot: (canvasId: string) => CaptureView;
@@ -82,26 +70,13 @@ export interface TurnDeps {
   runChat: typeof runChat;
   /** Tag each ChatEvent with its chatId and push it to every SSE subscriber. */
   broadcast: (chatId: string, ev: ChatEvent) => void;
-  /** The inbox context base for the end_turn tool — workspaceId + ownerRef are per-turn. */
-  inbox: Omit<EndTurnDeps, 'getSessionId' | 'workspaceId' | 'ownerRef'>;
-  /** Row-at-start (ADR-0011): index this session's Conversation the moment its id is known. The
-   *  returned promise is AWAITED before the settle upsert, so the create-at-init and the
-   *  settle-time find-or-create can never race into two rows for one chat (ownerRef has no
-   *  unique index). Best-effort — never throws into the turn. */
-  indexSession: (chatId: string, sessionId: string, message: string, workspaceId: string, canvasId?: string, assignTo?: string) => Promise<void>;
+  /** The moment the session's id is known (the turn's `init` event): seed the chat's resume
+   *  pointer and bind the chat to its canvas, so both hold mid-turn rather than only at settle. */
+  onSessionStart: (chatId: string, sessionId: string, canvasId?: string) => void;
   /** Persist the (possibly new/forked) resume pointer for this chat (ADR 0004). */
   stampSession: (chatId: string, sessionId: string) => void;
   /** ADR 0003 turn-completion persistence batch. */
   onTurnComplete: () => Promise<void>;
-  /** Settle-time Conversation upsert: touch/rebind by chat + mark activity so the session shows
-   *  in "All" even when the end_turn gate was bypassed. Runs AFTER indexSession settles. */
-  settleConversation: (input: {
-    chatId: string;
-    sessionId: string;
-    message: string;
-    workspaceId: string;
-    canvasId?: string;
-  }) => Promise<void>;
   /** Mirror this session's transcript to R2 (resume-restore substrate). Best-effort. */
   backupTranscript: (sessionId: string) => Promise<unknown>;
   /** #356: fetch THIS session's transcript onto the runner before resuming it. Boot downloads
@@ -128,14 +103,10 @@ export interface TurnDeps {
  * first await) so a concurrent /send sees the in-flight turn.
  */
 export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<void> {
-  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, mcpTokens, assignTo, mcpDisallowedTools, viewer } = input;
+  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, mcpTokens, mcpDisallowedTools, viewer } = input;
   const ac = new AbortController();
   deps.aborters.set(chatId, ac);
-  const { workspaceId } = deps;
   let finalSessionId = sessionId;
-  // Held so the settle upsert can await it — the create-at-init and the settle-time upsert both
-  // go through find-or-create-by-chat, so awaiting here is what stops them racing into two rows.
-  let indexed: Promise<void> = Promise.resolve();
   try {
     // Workspace skills are Records (ADR-0022, #361), and this is the moment their tree has to
     // exist: skill discovery is a filesystem scan the SDK performs as it builds the turn's
@@ -153,7 +124,6 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
     // session to resume. A throw lands in the catch below — resuming with no history would look
     // like an ordinary reply.
     if (sessionId) await deps.materializeTranscript?.(sessionId);
-    const inbox = { ...deps.inbox, workspaceId, ownerRef: chatId };
     for await (const ev of deps.runChat(
       store,
       message,
@@ -170,7 +140,6 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // registry, which nothing has read since #290. Without it, `write_component` on a
       // shared module bumps the agent's OWN canvas (agent.ts's `reloadAfterAuthor` fallback).
       undefined,
-      inbox,
       mcpTokens,
       deps.sendToChat,
       mcpDisallowedTools,
@@ -183,12 +152,10 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       viewer ? (pageId: string) => deps.selectPage(activeCanvasId)(pageId, viewer) : undefined,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
-      // Row-at-start: index the session the moment its id lands (the init event). Tracked (not
-      // fire-and-forget) so the finally-block settle awaits it — the ordering IS the race fix.
       if (ev.kind === 'init') {
         finalSessionId = ev.sessionId;
-        // The EXPLICIT canvas (never the routing default) is the chat→canvas edge claim.
-        indexed = deps.indexSession(chatId, ev.sessionId, message, workspaceId, canvasId, assignTo);
+        // The EXPLICIT canvas (never the routing default) is the chat→canvas binding.
+        deps.onSessionStart(chatId, ev.sessionId, canvasId);
       }
       deps.broadcast(chatId, ev satisfies ChatEvent);
     }
@@ -200,13 +167,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
     if (finalSessionId && finalSessionId !== sessionId) deps.stampSession(chatId, finalSessionId);
     // ADR 0003: persist sessions/components/skills now that the turn settled.
     await deps.onTurnComplete();
-    if (finalSessionId) {
-      // The race fix: let the row-at-start create settle before the settle-time upsert reads
-      // it, so find-or-create-by-chat finds the one row instead of inserting a second.
-      await indexed.catch(() => {});
-      await deps.settleConversation({ chatId, sessionId: finalSessionId, message, workspaceId, canvasId });
-      await deps.backupTranscript(finalSessionId);
-    }
+    if (finalSessionId) await deps.backupTranscript(finalSessionId);
   }
 }
 

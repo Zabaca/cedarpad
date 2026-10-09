@@ -1,6 +1,4 @@
 import type { Database } from '../web-poc/lib/db/client.ts';
-import { conversations } from '../web-poc/lib/db/index.ts';
-import { findOrCreateConversation } from '../web-poc/lib/db/find-or-create-conversation.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import {
@@ -9,26 +7,22 @@ import {
   type ComponentReadOutput,
   type ComponentRestoreOutput,
   type ComponentWriteOutput,
-  type ConversationStartOutput,
   type DataReadOutput,
   type DataWriteOutput,
   type NotebookCallOutput,
   PlatformRpcRequest,
   type SkillListOutput,
   type SkillWriteOutput,
-  type TurnEndOutput,
   verifyPlatformRpcToken,
 } from '../shared/platform-rpc.ts';
 import { buildNotebookTools, runNotebookCall } from '../web-poc/worker/notebook-tools.ts';
 import { componentCatalog } from './component-catalog.ts';
 import { componentStore } from './component-store.ts';
 import { dataStore } from './data-store.ts';
-import { makeAssignmentPushNotify, type PushSend, webPushSender } from './push-notify.ts';
 import { d1RecordStore } from './record-store.ts';
 import { d1SkillFileStore } from './skill-file-store.ts';
 import { skillStore } from './skill-store.ts';
 import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
-import { notifyInboxChanged } from './workspace-events.ts';
 
 // The edge half of the platform RPC (ADR-0018). See `shared/platform-rpc.ts` for the contract
 // and for why this is a behavioural surface rather than a data-access one.
@@ -43,44 +37,19 @@ import { notifyInboxChanged } from './workspace-events.ts';
  */
 export type PlatformRpcEnv = {
   BETTER_AUTH_SECRET?: string;
-  WEB_ORIGIN?: string;
-  /** The per-workspace events hub (#383). Structurally typed, not `DurableObjectNamespace`,
-   *  for the same reason the whole env slice is declared here: this module has node-side
-   *  callers whose TS program carries no `@cloudflare/workers-types`. */
-  WORKSPACE_EVENTS?: import('./workspace-events.ts').WorkspaceEventsHub;
 };
 
 /** The collaborators the operations need. Default-parameter seam (as `bridge.ts` uses), so
  * tests drive the real handler against an in-memory platform data layer. */
 export interface PlatformRpcDeps {
   db: Database;
-  /** The push transport; null when VAPID is unconfigured (push simply off). */
-  send: PushSend | null;
-  /** Shell origin a notification click should open. */
-  origin: string;
-  /**
-   * Ring a workspace's events hub (#383). Every container-side conversation write arrives
-   * through this handler, so this is where the whole agent path is covered — the human
-   * path is covered at its own call sites in `inbox.ts` and `inbox-bridge.ts`, because a
-   * badge that moved for agents and not for humans would look fixed and be worse.
-   *
-   * A dep rather than a direct binding read, for the same reason `send` is one: this
-   * module is driven directly by node-side callers (the #365 migration) that hold no
-   * Worker env at all.
-   */
-  notify: (workspaceId: string) => Promise<void>;
 }
 
 /** The production wiring, minus the platform-data-layer client (the caller passes the one the
  * edge already builds — this module stays free of `web-poc/worker/runtime.ts`, so a bun test
  * can import it without the workerd-only libSQL client coming along). */
-export function platformRpcDeps(env: PlatformRpcEnv, db: Database): PlatformRpcDeps {
-  return {
-    db,
-    send: webPushSender(env as unknown as Record<string, string | undefined>),
-    origin: (env.WEB_ORIGIN ?? '').replace(/\/$/, ''),
-    notify: (workspaceId) => notifyInboxChanged(env.WORKSPACE_EVENTS, workspaceId),
-  };
+export function platformRpcDeps(db: Database): PlatformRpcDeps {
+  return { db };
 }
 
 /** Bearer check: the caller must present the token derived from the shared trust root. */
@@ -142,47 +111,6 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
   // dispatchable operation.
   const parsed = PlatformRpcRequest.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: 'invalid request' }, { status: 400 });
-
-  // Each of the three conversation operations below rings the workspace's events hub after
-  // its row work lands (#383), so an open Shell's badge follows an agent turn within a hub
-  // hop instead of a poll interval. `ring` never throws (`notifyInboxChanged` swallows) —
-  // and it is deliberately caught here as well, because `notify` is a DEP and a test or a
-  // node-side caller could supply one that does.
-  const ring = async (workspaceId: string) => {
-    try {
-      await deps.notify(workspaceId);
-    } catch {
-      /* the doorbell is not the signal — the row is already written */
-    }
-  };
-
-  if (parsed.data.op === 'conversation.start') {
-    const conv = await findOrCreateConversation(deps.db, parsed.data.input);
-    await ring(conv.workspaceId);
-    return Response.json({ conversationId: conv.id } satisfies ConversationStartOutput);
-  }
-
-  // The settle-time backstop (#266): find-or-create by CHAT — the same call the start made, so
-  // a settle after a start touches the one row rather than racing a second into existence —
-  // then mark it active so an `end_turn`-less turn still surfaces in "All".
-  if (parsed.data.op === 'conversation.settle') {
-    const conv = await findOrCreateConversation(deps.db, parsed.data.input);
-    await conversations.markActivity(deps.db, conv.id);
-    await ring(conv.workspaceId);
-    return new Response(null, { status: 200 });
-  }
-
-  // `end_turn` (ADR-0012 / #266): the turn declares its ending and the EDGE owns the row
-  // transition. The container gets back only the id, which is the handle it then names in
-  // `notify` — it never learns the row.
-  if (parsed.data.op === 'turn.end') {
-    const { outcome, question, summary, ...identity } = parsed.data.input;
-    const conv = await findOrCreateConversation(deps.db, { ...identity, summary });
-    if (outcome === 'done') await conversations.markDone(deps.db, conv.id, summary);
-    else await conversations.promote(deps.db, conv.id, question ?? summary);
-    await ring(conv.workspaceId);
-    return Response.json({ conversationId: conv.id } satisfies TurnEndOutput);
-  }
 
   // The Record verbs (ADR-0022). Validation already happened in the parse above — the name
   // rule and the non-empty rule are IN the contract, so a bad payload is a 400 here and never
@@ -360,12 +288,5 @@ export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, d
     }
   }
 
-  const { conversationId, question } = parsed.data.input;
-  const conv = await conversations.get(deps.db, conversationId);
-  // Push is the doorbell, not the signal: an unknown Conversation or unconfigured VAPID
-  // simply means no ping (the Inbox row is already the durable record).
-  if (conv && deps.send) {
-    await makeAssignmentPushNotify({ db: deps.db, origin: deps.origin, send: deps.send })(conv, question);
-  }
-  return new Response(null, { status: 200 });
+  return Response.json({ error: 'invalid request' }, { status: 400 });
 }

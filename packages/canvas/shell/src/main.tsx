@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { Shell } from './Shell';
-import '../../shared/chat.css'; // the shared <ChatView> chrome (Inbox thread renders it)
+import '../../shared/chat.css'; // the shared <ChatView> chrome (the canvas dock renders it)
 import './shell.css';
 
 const root = document.getElementById('root');

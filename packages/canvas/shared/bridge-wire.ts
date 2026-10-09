@@ -7,7 +7,7 @@ import { DataSourceSchema } from './data-source';
 // shared/chat-wire.ts and shared/skills-wire.ts. Both sides import from here, so a
 // header rename, a name rule, or a route path changes in exactly one place:
 //   - EDGE (stamps headers, proxies bodies): worker/index.ts, worker/mcp-server.ts,
-//     worker/mcp-tools.ts, worker/inbox-bridge.ts, worker/huddle.ts,
+//     worker/mcp-tools.ts, worker/huddle.ts,
 //     and worker/guest-gate.ts (whose allowlist derives from BRIDGE_ROUTES below).
 //   - BRIDGE (reads headers, parses bodies): server/bridge.ts (+ server/components.ts,
 //     which enforces the same name rules on the filesystem).
@@ -16,9 +16,8 @@ import { DataSourceSchema } from './data-source';
 // A typo used to fail silently on either side (`?? undefined`); a renamed bridge route
 // used to silently drop guests. Constants close both holes.
 //
-// Two neighbouring header contracts deliberately stay where their consumers already
-// import them: INBOX_ASSIGN_HEADER (shared/chat-wire.ts) and MCP_TOKENS_HEADER
-// (server/mcp-registry.ts).
+// One neighbouring header contract deliberately stays where its consumers already import
+// it: MCP_TOKENS_HEADER (server/mcp-registry.ts).
 
 // --- header names ---------------------------------------------------------------
 
@@ -46,14 +45,8 @@ export const GUEST_CAPS_HEADER = 'x-guest-caps';
  * viewer targets nobody, so the failure mode is "nothing moved", never "everyone moved".
  */
 export const CANVAS_VIEWER_HEADER = 'x-canvas-viewer';
-/** A send with no subscriber by design (MCP / inbox), bypassing the subscribe-before-send guard. */
+/** A send with no subscriber by design (the e2e suite), bypassing the subscribe-before-send guard. */
 export const HEADLESS_SEND_HEADER = 'x-headless-send';
-/** The Conversation the edge already resolved + ownership-checked, forwarded on the
- * open-conversation GET so the container never re-reads the row (ADR-0018 / #261). */
-export const INBOX_CONVERSATION_HEADER = 'x-inbox-conversation';
-/** The canvas pairing the edge already resolved AND wrote (link/create + same-workspace check),
- * forwarded on attach-canvas so the container only places the chat card (ADR-0018 / #264). */
-export const INBOX_PAIRING_HEADER = 'x-inbox-canvas-pairing';
 /** Huddles (ADR-0017): the canvas whose voice room the agent worker should join. */
 export const HUDDLE_CANVAS_HEADER = 'x-huddle-canvas';
 /** The agent's edge-minted LiveKit room token (signing keys never enter the container). */
@@ -189,55 +182,6 @@ export const WriteDataBody = z.object({ source: DataFileSource });
 /** One human-readable line out of a failed `safeParse`, for the bridge's `{ error }` 400s. */
 export function wireError(err: z.ZodError): string {
   return err.issues.map((i) => (i.path.length ? `${i.path.join('.')}: ${i.message}` : i.message)).join('; ');
-}
-
-// --- forwarded conversation (INBOX_CONVERSATION_HEADER) -------------------------
-
-/** The only fields the bridge's open-conversation route needs off the row: which session to
- * restore, and the durable owner pointer it resolves the chatId from. The edge stamps it;
- * the bridge PARSES it (never trusts it) and cross-checks `id` against the path. */
-export const ForwardedConversation = z.object({
-  id: z.string().min(1),
-  sessionId: z.string().min(1),
-  ownerRef: z.string().min(1).nullable(),
-});
-export type ForwardedConversation = z.infer<typeof ForwardedConversation>;
-
-export const encodeForwardedConversation = (conv: ForwardedConversation): string =>
-  JSON.stringify(ForwardedConversation.parse(conv));
-
-/** Parse a forwarded Conversation header; `null` for absent, non-JSON, or off-contract. */
-export function decodeForwardedConversation(header: string | null): ForwardedConversation | null {
-  if (!header) return null;
-  try {
-    return ForwardedConversation.parse(JSON.parse(header));
-  } catch {
-    return null;
-  }
-}
-
-// --- forwarded canvas pairing (INBOX_PAIRING_HEADER) ----------------------------
-
-/** #264: the same forwarded row as above, plus the canvas the edge picked (or created) and
- * linked — everything the container needs to place the chat card, and nothing more. Same
- * discipline: the edge stamps it, the bridge PARSES it and cross-checks `id` against the path. */
-export const ForwardedPairing = ForwardedConversation.extend({
-  canvasId: z.string().min(1),
-  summary: z.string().nullable(),
-});
-export type ForwardedPairing = z.infer<typeof ForwardedPairing>;
-
-export const encodeForwardedPairing = (pairing: ForwardedPairing): string =>
-  JSON.stringify(ForwardedPairing.parse(pairing));
-
-/** Parse a forwarded pairing header; `null` for absent, non-JSON, or off-contract. */
-export function decodeForwardedPairing(header: string | null): ForwardedPairing | null {
-  if (!header) return null;
-  try {
-    return ForwardedPairing.parse(JSON.parse(header));
-  } catch {
-    return null;
-  }
 }
 
 // --- routes ---------------------------------------------------------------------

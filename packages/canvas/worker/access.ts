@@ -1,48 +1,20 @@
 import type { Database } from '../web-poc/lib/db/index.ts';
-import type { CanvasRow, ConversationRow } from '../web-poc/lib/db/schema.ts';
+import type { CanvasRow } from '../web-poc/lib/db/schema.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
-import * as conversations from '../web-poc/lib/db/queries/conversations.ts';
 import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
-import { canvasHiddenFrom, conversationHiddenFrom } from './visibility.ts';
+import { canvasHiddenFrom } from './visibility.ts';
 
 // The ONE composition seam for "may this user touch this thing" at the edge (#225).
 // `visibility.ts` holds the PREDICATES (ADR-0016); `getWorkspace` holds the membership
 // predicate (owner-OR-member). What lives here is their three-step COMPOSITION — resolve
 // the row, check membership, apply visibility with the canvas join — which every handler
-// used to re-derive by hand. One forgotten `conversationHiddenFrom` leg is a visibility
-// leak, so the composition is a seam, not a convention.
+// used to re-derive by hand. One forgotten `canvasHiddenFrom` leg is a visibility leak, so
+// the composition is a seam, not a convention.
 //
 // Every function FAILS CLOSED and indistinguishably: a missing row, a non-member, and a
 // hidden row all return null / drop out of the list. Callers keep their own 404 / error
-// shapes (some 404, some report 'starting', some throw) — that mapping stays at the site.
-
-/** A conversation the user may act on, resolved by its `ownerRef` (the MCP `chat_id`). */
-export async function resolveConversationByOwnerRef(
-  db: Database,
-  ownerRef: string,
-  userId: string,
-): Promise<ConversationRow | null> {
-  return accessible(db, await conversations.getByOwnerRef(db, ownerRef), userId);
-}
-
-/** A conversation the user may act on, resolved by its row id. */
-export async function resolveConversationById(
-  db: Database,
-  id: string,
-  userId: string,
-): Promise<ConversationRow | null> {
-  return accessible(db, await conversations.get(db, id), userId);
-}
-
-/** Membership + ADR-0016 visibility for one already-fetched conversation. The canvas join
- *  is fetched per call here (single-row path); the list path below batches it instead. */
-async function accessible(db: Database, conv: ConversationRow | null, userId: string): Promise<ConversationRow | null> {
-  if (!conv) return null;
-  if (!(await getWorkspace(db, conv.workspaceId, userId))) return null;
-  const canvas = conv.canvasId ? await canvasRegistry.get(db, conv.canvasId) : null;
-  return conversationHiddenFrom(conv, canvas, userId) ? null : conv;
-}
+// shapes (some 404, some throw) — that mapping stays at the site.
 
 /** A canvas the user may read: registered to `workspaceId`, the user a member of it, and
  *  not private-to-someone-else. Note the legacy `default` canvas has NO registry row —
@@ -78,18 +50,4 @@ export async function resolveCanvasWorkspace(db: Database, canvasId: string, use
   const workspaceId = canvasId === DEFAULT_CANVAS_ID ? DEFAULT_WORKSPACE_ID : row?.workspaceId;
   if (!workspaceId) return null;
   return (await getWorkspace(db, workspaceId, userId)) ? workspaceId : null;
-}
-
-/** The workspace's conversations the user may see, ADR-0016-filtered. Membership is the
- *  CALLER's job here (it already resolved the workspace to list) — this applies only the
- *  canvas join + visibility filter, batched via one registry read (inbox list hot path). */
-export async function listVisibleConversations(
-  db: Database,
-  workspaceId: string,
-  userId: string,
-  opts: Omit<Parameters<typeof conversations.list>[1], 'workspaceId'> = {},
-): Promise<ConversationRow[]> {
-  const rows = await conversations.list(db, { ...opts, workspaceId });
-  const canvasById = new Map((await canvasRegistry.list(db, workspaceId)).map((c) => [c.id, c]));
-  return rows.filter((r) => !conversationHiddenFrom(r, (r.canvasId && canvasById.get(r.canvasId)) || null, userId));
 }

@@ -26,8 +26,7 @@ for (const [name, value] of natives) {
 
 // ── An inert EventSource, because happy-dom ships none ─────────────────────
 //
-// A component that opens an SSE stream in an effect — `Shell.tsx` does, for the
-// inbox badge — throws `undefined is not a constructor` the moment it mounts.
+// A component that opens an SSE stream in an effect — `<ChatView>` does — throws `undefined is not a constructor` the moment it mounts.
 // Until now that did not show, because SOME other test file installs a fake
 // `EventSource` on `globalThis` and whether it had run yet decided whether
 // `Shell.test.tsx` passed. That made 34 tests a function of file ordering, which

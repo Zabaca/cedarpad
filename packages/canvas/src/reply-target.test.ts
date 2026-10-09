@@ -36,7 +36,7 @@ describe('resolveReplyTarget', () => {
   });
 
   it("resolves an attach-flow chat to its session id (chatId), not its shape id", () => {
-    // A chat card fronting an Inbox conversation: props.chatId is the session; shape id differs.
+    // A card the retired Inbox's attach flow placed: props.chatId is the session; shape id differs.
     const shapes = [
       chat('shape:cardX', 'conv_abc'),
       component('shape:comp1'),

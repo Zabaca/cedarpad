@@ -13,15 +13,11 @@ import { handleComponentsApi } from './components-api.ts';
 import { handleComponentInventory, INVENTORY_PATH } from './component-inventory-api.ts';
 import { handleMembersApi } from './members.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
-import { DEFAULT_WORKSPACE, resolve, type SandboxCoords } from './sandbox-resolver.ts';
+import { DEFAULT_WORKSPACE, coordsForWorkspace, resolve, type SandboxCoords } from './sandbox-resolver.ts';
 import { sandboxFor, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleRecordPurgeApi, handleWorkspacesApi, renderLogin } from './shell.ts';
-import { coordsForWorkspace, handleInboxBridge } from './inbox-bridge.ts';
-import { handleInboxApi } from './inbox.ts';
-import { handlePushApi } from './push.ts';
 import { PLATFORM_RPC_PATH } from '../shared/platform-rpc.ts';
 import { handlePlatformRpc, platformRpcDeps } from './platform-rpc.ts';
-import { notifyInboxChanged } from './workspace-events.ts';
 import { handleMcpReadApi, handleMcpTokenApi } from './mcp-tokens-api.ts';
 import { probeMcpTools } from './mcp-probe.ts';
 import { MCP_REGISTRY } from '../server/mcp-registry.ts';
@@ -37,7 +33,6 @@ import { handleNotebookApi, NOTEBOOK_ROUTE } from './notebook-data-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
 import { IS_CHAT_SEND, effectiveMcpTokens, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
-import { INBOX_ASSIGN_HEADER } from '../shared/chat-wire.ts';
 import {
   DEFAULT_CANVAS_ID,
   DEFAULT_WORKSPACE_ID,
@@ -95,10 +90,8 @@ export class Warehouse extends BaseSandbox {}
 // Durable Object classes off the entrypoint module's exports.
 export { CanvasSyncRoom } from './canvas-sync-do.ts';
 
-// The per-workspace events hub (#383), re-exported for the same reason. Like
-// CanvasSyncRoom it is a plain class, not a container class — but unlike it, it has no
-// storage at all: the hub keeps no state, so its whole job is fan-out.
-export { WorkspaceEvents } from './workspace-events-do.ts';
+// Retained until the CF container migration deletes it: wrangler still binds WORKSPACE_EVENTS.
+export class WorkspaceEvents {}
 
 export interface Env {
   Sandbox: DurableObjectNamespace<Sandbox>;
@@ -109,14 +102,6 @@ export interface Env {
   // carries no `DurableObjectBranded` marker. Nothing calls it by RPC — the only traffic
   // is `stub.fetch` with the WebSocket upgrade — so the plain stub type is exactly right.
   CANVAS_SYNC: DurableObjectNamespace;
-  // One Durable Object per WORKSPACE (#383), the fan-out point for "something in this
-  // workspace's inbox changed". Addressed via `idFromName(workspaceEventsName(workspaceId))`
-  // — see worker/workspace-events.ts. Plain-class stub type for the same reason as
-  // CANVAS_SYNC above. Declared here as present (it is, in both the deployed and the
-  // generated local-dev config); the helpers still tolerate its absence, because unit
-  // tests drive these handlers with a bare env and a missing hub must cost a late badge
-  // rather than a failed write.
-  WORKSPACE_EVENTS: DurableObjectNamespace;
   // Workers static-assets binding for the Notebook SPA build (web-poc/dist, PRD #49
   // slice #58). Served under /notebook AFTER the edge session gate — it's app content,
   // so an unauthenticated hit gets the login, never the SPA.
@@ -161,20 +146,9 @@ export interface Env {
   FREDRIN_KEY?: string;
   // One per extra Fredrin project (named `fredrin-cedarpad` connection); same fallback rules.
   FREDRIN_CEDARPAD_KEY?: string;
-  // Web push (#87). The edge only ever hands out the PUBLIC half — the browser needs it as
-  // `applicationServerKey` to subscribe. The private key now stays HERE too: delivery moved to
-  // the edge with ADR-0018 (worker/push-notify.ts), so no VAPID key reaches a container at all
-  // and the container asks for a ping by name over the platform RPC. Unset ⇒ /api/push/key answers `''` and the
-  // shell's opt-in toggle stays hidden, so push is simply off (the local-dev default).
-  VAPID_PUBLIC_KEY?: string;
-  VAPID_PRIVATE_KEY?: string;
-  VAPID_SUBJECT?: string;
-  // The single-tenant owner of everything the bridge files under a user id (Inbox
-  // Conversations via `ask_human`, the dev-agent's promoted items): must be this
-  // deployment's Better Auth user.id, NOT an email or display name — the Inbox query
-  // filters by exactly that column. Unset ⇒ the bridge falls back to the literal string
-  // `'default'`, which never matches a real authenticated user, so `ask_human` items
-  // silently never appear in the Inbox. Revisit when #98 (multi-user) lands — a single
+  // The deployment's single Better Auth user.id (NOT an email or display name): who Records
+  // and skills written by the container are attributed to (server/components.ts
+  // `recordAuthor`). Unset ⇒ unattributed. Revisit when #98 (multi-user) lands — a single
   // static id can't represent "whichever of N users is calling."
   CANVAS_USER?: string;
   // The www worker's waitlist D1, also bound here for the admin view (ADR-0014).
@@ -271,7 +245,7 @@ export default {
     // same trust root the guest cookie is signed with), so an unauthenticated request cannot
     // invoke either operation.
     if (url.pathname === PLATFORM_RPC_PATH) {
-      return handlePlatformRpc(request, env, platformRpcDeps(env, createDbForWorker(env as unknown as Bindings)));
+      return handlePlatformRpc(request, env, platformRpcDeps(createDbForWorker(env as unknown as Bindings)));
     }
 
     const session = await authenticate(request, env);
@@ -462,12 +436,6 @@ export default {
     if (url.pathname === '/') return asset('/');
     if (url.pathname.startsWith('/assets/')) return asset(url.pathname);
 
-    // The push service worker (#87). Served from the ROOT path on purpose: a service worker's
-    // default scope is its own directory, and it must control `/` to focus an existing shell
-    // tab on notification click. It sits behind the gate like the shell itself — the browser
-    // sends cookies on a same-origin SW fetch, and it's only ever registered post-login.
-    if (url.pathname === '/sw.js') return asset('/sw.js');
-
     // Notebook is a Shell stage now (ADR-0007, PRD #103 slice #107), not its own SPA
     // surface — the bare URL bounces to the shell with the stage selected, so a bookmark
     // or link to `/notebook` still lands on Notebook, just inside the one chrome. Its
@@ -560,9 +528,7 @@ export default {
     }
     const canvasApiMatch = /^\/api\/canvases\/([^/]+)$/.exec(url.pathname);
     if (canvasApiMatch) {
-      return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user, canvasApiMatch[1], (ws) =>
-        notifyInboxChanged(env.WORKSPACE_EVENTS, ws),
-      );
+      return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user, canvasApiMatch[1]);
     }
 
     // Huddles (ADR-0017): join mints a canvas-scoped LiveKit room token at the edge
@@ -603,25 +569,9 @@ export default {
       );
     }
 
-    // Edge Inbox API (ADR-0007, PRD #50 slice #62), user-scoped. Served HERE against the
-    // platform D1 + R2: list/detail/close/reopen never wake a container (history reads
-    // from the R2 transcript while the runner sleeps); only reply forwards into the
-    // container (#61).
-    const inboxApiMatch = /^\/api\/inbox(?:\/([^/]+)(?:\/(reply|close|reopen|assign|visibility))?)?$/.exec(url.pathname);
-    if (inboxApiMatch) {
-      return handleInboxApi(request, env, user, inboxApiMatch[1], inboxApiMatch[2]);
-    }
-
-    // Web push device registry (#87) — the opt-in behind the Inbox's `notify` seam. Edge-only
-    // (no container woken); the bridge reads the rows back when it needs to ping.
-    const pushApiMatch = /^\/api\/push\/([^/]+)$/.exec(url.pathname);
-    if (pushApiMatch) {
-      return handlePushApi(request, env, user, pushApiMatch[1]);
-    }
-
     // External MCP owner consent (ADR-0013 train 2, #176): connect/disconnect a registry
     // server's per-workspace bearer token. Edge-only (no container woken) — the token is read
-    // back out only when a chat send is proxied (below / worker/inbox-bridge.ts).
+    // back out only when a chat send is proxied (below).
     const mcpTokenApiMatch = /^\/api\/workspaces\/([^/]+)\/mcp\/([^/]+)\/token$/.exec(url.pathname);
     if (mcpTokenApiMatch) {
       return handleMcpTokenApi(request, env, user, mcpTokenApiMatch[1] as string, mcpTokenApiMatch[2] as string);
@@ -640,26 +590,9 @@ export default {
       );
     }
 
-    // Edge chat proxy (ADR-0009, PRD #119 slice #122): a Shell-mounted <ChatView> targets
-    // `/inbox/:convId/bridge/*` so its live stream + send + interrupt + transcript + alive
-    // reach the Conversation's OWNING runner bridge. BELOW the gate above (dispatch order is
-    // security-load-bearing) — an unauthenticated request got `renderLogin()` already and can
-    // never reach a bridge. `handleInboxBridge` ownership-checks the Conversation against
-    // `user`, resolves `conv.workspaceId → coords`, strips this prefix, and proxies the raw
-    // sub-path (`/api/...`, captured query-free) unrewritten via `serveWorkspace`. The Inbox
-    // LIST (`/api/inbox`, above) stays edge-only and never wakes a runner.
-    const inboxBridgeMatch = /^\/inbox\/([^/]+)\/bridge(\/.*)?$/.exec(url.pathname);
-    if (inboxBridgeMatch) {
-      // First capture group is `[^/]+` (one or more chars) — always defined when the match succeeds.
-      return handleInboxBridge(request, env, user, inboxBridgeMatch[1]!, inboxBridgeMatch[2] ?? '/');
-    }
-
-    // The Inbox is a Shell stage now (#108) — no standalone page. The legacy edge route
-    // redirects to the stage URL so old bookmarks/links land inside the one chrome. Behind
-    // the gate above, so an unauthenticated hit still gets the login first.
-    if (url.pathname === '/inbox') {
-      return new Response(null, { status: 302, headers: { location: '/?stage=inbox' } });
-    }
+    // The Inbox is retired; an old bookmark or link lands on the canvas instead. Behind the
+    // gate above, so an unauthenticated hit still gets the login first.
+    if (url.pathname === '/inbox') return new Response(null, { status: 302, headers: { location: '/' } });
 
     // Ownership check shared by the two canvas routes below: the workspace must be owned
     // (the legacy `default` id needs no row) AND the canvas must belong to it, else the
@@ -797,9 +730,8 @@ export default {
       return new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
 
-    // ADR-0013 train 2 (#176): the same-origin chat send path (the pad's <ChatView>, which is
-    // not inbox-adopted) gets the workspace's connected external-MCP tokens exactly like the
-    // Inbox proxy does (worker/inbox-bridge.ts) — same header, same "no tokens ⇒ untouched".
+    // ADR-0013 train 2 (#176): the chat send path (the pad's <ChatView>) gets the workspace's
+    // connected external-MCP tokens — "no tokens ⇒ untouched".
     const isChatSend = request.method === 'POST' && IS_CHAT_SEND.test(url.pathname);
     // The canvas SSE subscribe — the one request whose IDENTITY the bridge has to remember,
     // because `select_page` addresses a frame at one subscriber later (server/screenshot-channel.ts).
@@ -819,9 +751,6 @@ export default {
     // AFTER the strip above, so the client's own copy is always the one that loses.
     if (isChatSend || isCanvasStream) proxied.headers.set(CANVAS_VIEWER_HEADER, user.id);
     if (isChatSend) {
-      // Shared-inbox assignment: a pad send is a human act — stamp its initiator so the
-      // bridge assigns the born Conversation to them (overwrites any client-sent value).
-      proxied.headers.set(INBOX_ASSIGN_HEADER, user.id);
       proxied = await withMcpTokensHeader(proxied, env, workspaceId);
     }
 
