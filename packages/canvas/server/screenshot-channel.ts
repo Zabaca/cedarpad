@@ -82,7 +82,9 @@ export function createScreenshotChannel(canvasId: string): ScreenshotChannel {
     return sent;
   };
 
-  function requestScreenshot(timeoutMs = 7000, pageId?: string): Promise<string | null> {
+  // 20s, not 7: a page heavy with pasted images can take seconds to render and upload even
+  // downscaled, and a reply that lands after the deadline is thrown away.
+  function requestScreenshot(timeoutMs = 20_000, pageId?: string): Promise<string | null> {
     if (clients.size === 0) return Promise.resolve(null);
     const id = `shot${(shotSeq += 1)}`;
     // Every subscriber: a screenshot is a question about the CANVAS, not about a person,

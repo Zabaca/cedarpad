@@ -79,6 +79,18 @@ export function respondToSelectPage(data: string, setPage: (pageId: string) => v
   if (hasPage(pageId)) setPage(pageId);
 }
 
+/** Longest edge of the PNG, in pixels. A page full of pasted screenshots rendered at full
+ *  size came back as 8–13 MB and missed the bridge's deadline in transit; a model downsizes
+ *  past roughly this anyway, so anything larger is bytes nobody sees. */
+export const SCREENSHOT_MAX_EDGE = 2000;
+
+/** The export scale that fits `bounds` inside SCREENSHOT_MAX_EDGE — never above 1, so a
+ *  small page is not blown up. */
+export function screenshotScale(bounds: { w: number; h: number } | null): number {
+  const edge = bounds ? Math.max(bounds.w, bounds.h) : 0;
+  return edge > SCREENSHOT_MAX_EDGE ? SCREENSHOT_MAX_EDGE / edge : 1;
+}
+
 /** Render a whole page as a PNG data URL — the named one, else the current one — or null
  *  when there is nothing on it. Exporting by id never moves this viewer's own view. */
 async function renderCanvasPng(editor: Editor, pageId?: string): Promise<string | null> {
@@ -88,7 +100,9 @@ async function renderCanvasPng(editor: Editor, pageId?: string): Promise<string 
     ...(pageId ? editor.getPageShapeIds(pageId as Parameters<Editor['getPageShapeIds']>[0]) : editor.getCurrentPageShapeIds()),
   ];
   if (ids.length === 0) return null;
-  const { url } = await editor.toImageDataUrl(ids, { format: 'png', background: true, padding: 24 });
+  // pixelRatio 1: tldraw's bitmap default is 2, which doubles both edges for no reader.
+  const scale = screenshotScale(editor.getShapesPageBounds(ids));
+  const { url } = await editor.toImageDataUrl(ids, { format: 'png', background: true, padding: 24, scale, pixelRatio: 1 });
   return url;
 }
 
