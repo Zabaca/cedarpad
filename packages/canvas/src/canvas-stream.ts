@@ -37,19 +37,21 @@ const API = '/api';
  */
 export async function respondToScreenshot(
   data: string,
-  render: () => Promise<string | null>,
+  render: (pageId?: string) => Promise<string | null>,
   reply: (id: string, url: string | null) => void,
 ): Promise<void> {
   let id: string;
+  let pageId: string | undefined;
   try {
-    const parsed = JSON.parse(data) as { id?: unknown };
+    const parsed = JSON.parse(data) as { id?: unknown; pageId?: unknown };
     if (typeof parsed.id !== 'string') return;
     id = parsed.id;
+    if (typeof parsed.pageId === 'string') pageId = parsed.pageId;
   } catch {
     return;
   }
   try {
-    reply(id, await render());
+    reply(id, await render(pageId));
   } catch {
     reply(id, null);
   }
@@ -77,9 +79,14 @@ export function respondToSelectPage(data: string, setPage: (pageId: string) => v
   if (hasPage(pageId)) setPage(pageId);
 }
 
-/** Render the whole current page as a PNG data URL, or null when there is nothing on it. */
-async function renderCanvasPng(editor: Editor): Promise<string | null> {
-  const ids = [...editor.getCurrentPageShapeIds()];
+/** Render a whole page as a PNG data URL — the named one, else the current one — or null
+ *  when there is nothing on it. Exporting by id never moves this viewer's own view. */
+async function renderCanvasPng(editor: Editor, pageId?: string): Promise<string | null> {
+  // A page this client has not synced yet renders as nothing, like select_page's leg.
+  if (pageId && !editor.getPages().some((p) => p.id === pageId)) return null;
+  const ids = [
+    ...(pageId ? editor.getPageShapeIds(pageId as Parameters<Editor['getPageShapeIds']>[0]) : editor.getCurrentPageShapeIds()),
+  ];
   if (ids.length === 0) return null;
   const { url } = await editor.toImageDataUrl(ids, { format: 'png', background: true, padding: 24 });
   return url;
@@ -98,7 +105,7 @@ export function wireCanvasStream(editor: Editor): () => void {
   const stream = createRecoveringStream(() => {
     const es = new EventSource(withCanvasParam(`${API}/canvas/stream`));
     es.addEventListener('screenshot', (e) => {
-      void respondToScreenshot((e as MessageEvent).data as string, () => renderCanvasPng(editor), postScreenshot);
+      void respondToScreenshot((e as MessageEvent).data as string, (pageId) => renderCanvasPng(editor, pageId), postScreenshot);
     });
     es.addEventListener('page', (e) => {
       respondToSelectPage(

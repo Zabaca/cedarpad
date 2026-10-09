@@ -29,11 +29,13 @@ import {
   ReadCanvasPageInput,
   ReadComponentInput,
   ReadConversationInput,
+  ReadImageInput,
   ReadTranscriptInput,
   RunDevAgentInput,
   SendMessageInput,
   UpdateShapesInput,
   UploadSkillInput,
+  ViewCanvasInput,
   WriteComponentInput,
   WriteDataInput,
   buildMcpTools,
@@ -222,10 +224,37 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       'read_canvas',
       {
         description:
-          "Read a canvas's shapes — id, type, geometry, text, and component data — plus `pages`, the canvas's pages in order. Omit canvas_id for the workspace's default canvas. A canvas can have MORE THAN ONE PAGE and this reads all of them by default; pass `page` (an id from `pages`) to read just one. Do that whenever the canvas is large — an unfiltered read of a busy canvas can exceed the response limit.",
+          "Read a canvas's shapes — id, type, geometry, text, and component data — plus `pages`, the canvas's pages in order. Omit canvas_id for the workspace's default canvas. A canvas can have MORE THAN ONE PAGE and this reads all of them by default; pass `page` (an id from `pages`) to read just one. Do that whenever the canvas is large — an unfiltered read of a busy canvas can exceed the response limit. An image shape's `src` is an asset URL that needs a browser login; call read_image with the shape id to see it.",
         inputSchema: ReadCanvasPageInput.shape,
       },
       async (input) => text(await tools.readCanvas(input)),
+    );
+    server.registerTool(
+      'read_image',
+      {
+        description:
+          'Look at an image shape on a canvas (a screenshot or photo someone pasted or dropped) at full resolution. Pass the image shape id from read_canvas. Better than view_canvas for reading a specific screenshot, since view_canvas renders a whole page small.',
+        inputSchema: ReadImageInput.shape,
+      },
+      async (input) => {
+        const img = await tools.readImage(input);
+        return { content: [{ type: 'image' as const, data: img.data, mimeType: img.mimeType }] };
+      },
+    );
+    server.registerTool(
+      'view_canvas',
+      {
+        description:
+          "Look at a PNG of a canvas page — for layout, spacing, and how shapes relate visually. An open browser tab on the canvas renders it, so it only works while someone has the canvas open; otherwise use read_canvas. Pass `page` (a name or an id from read_canvas's `pages`) to pick the page; without it you get whatever page the answering tab is on. CAVEAT: this is a tldraw export that redraws shapes cleanly, not a capture of anyone's screen, so a component can look fine here and still be broken for a human.",
+        inputSchema: ViewCanvasInput.shape,
+      },
+      async (input) => {
+        const img = await tools.viewCanvas(input);
+        if (!img) {
+          return text({ error: 'No browser tab answered: nobody has this canvas open, or the page is empty. Use read_canvas instead.' });
+        }
+        return { content: [{ type: 'image' as const, data: img.data, mimeType: img.mimeType }] };
+      },
     );
     server.registerTool(
       'select_page',

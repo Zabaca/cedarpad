@@ -271,6 +271,8 @@ export const BRIDGE_ROUTES = {
   componentsPlace: '/api/components/place',
   componentsCall: '/api/components/call',
   selectPage: '/api/canvas/select-page',
+  canvasImage: '/api/canvas/image',
+  canvasView: '/api/canvas/view',
 } as const;
 
 /** Move a viewer's OPEN EDITOR to a page. Not a canvas mutation: nothing about the
@@ -280,3 +282,16 @@ export const BRIDGE_ROUTES = {
  *  sees a page NAME. */
 export const SelectPageBody = z.object({ pageId: z.string().min(1) });
 export type SelectPageBody = z.infer<typeof SelectPageBody>;
+
+/** One image shape's pixels (`GET /api/canvas/image?id=`): base64, no `data:` prefix — what
+ *  an MCP `image` content block carries. */
+export const CanvasImageResult = z.object({ data: z.string(), mimeType: z.string() });
+export type CanvasImageResult = z.infer<typeof CanvasImageResult>;
+
+/** Ask an open browser for a PNG of the canvas (`POST /api/canvas/view`). `pageId` is
+ *  already resolved, as for `SelectPageBody`; absent means whatever page the answering
+ *  tab is on. A null `url` is "nobody answered", not an error. */
+export const ViewCanvasBody = z.object({ pageId: z.string().min(1).optional() });
+export type ViewCanvasBody = z.infer<typeof ViewCanvasBody>;
+export const ViewCanvasResult = z.object({ url: z.string().nullable() });
+export type ViewCanvasResult = z.infer<typeof ViewCanvasResult>;

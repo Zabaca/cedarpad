@@ -10,7 +10,9 @@ import {
   EditComponentBody,
   PlaceComponentBody,
   CallComponentBody,
+  CanvasImageResult,
   UpdateShapesBody,
+  ViewCanvasResult,
   WriteComponentBody,
   WriteDataBody,
 } from '../shared/bridge-wire.ts';
@@ -78,6 +80,12 @@ export const ListComponentsInput = ReadCanvasInput;
 /** `page` takes a NAME as the human says it, or a `page:` id — `resolvePageRef` accepts
  *  both, so the caller never has to know which one it is holding. */
 export const SelectPageInput = ReadCanvasInput.extend({ page: z.string().min(1) });
+export const ReadImageInput = ReadCanvasInput.extend({ id: z.string().min(1) });
+/** Optional here: without it the PNG is whatever page the answering tab is on. Name or id,
+ *  as for `SelectPageInput`. */
+export const ViewCanvasInput = ReadCanvasInput.extend({ page: z.string().min(1).optional() });
+
+const DATA_URL = /^data:(image\/[a-z+]+);base64,(.+)$/s;
 /** Addressing one module in one canvas — where read/write/edit all start. Not exported: it is
  *  shared structure, not a boundary anything parses against. */
 const ComponentRef = ReadCanvasInput.extend({ module: ComponentName });
@@ -395,6 +403,38 @@ export function buildMcpTools(deps: McpToolDeps) {
         body: { pageId },
       })) as { asked: number };
       return { page_id: pageId, asked: res.asked };
+    },
+
+    /** One image shape's pixels — what the in-canvas agent's `read_image` returns. An image's
+     *  `src` in read_canvas is an asset URL behind a browser login, so this is the only way
+     *  an outside agent sees a pasted screenshot. */
+    async readImage(input: z.infer<typeof ReadImageInput>): Promise<CanvasImageResult> {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      const path = `${BRIDGE_ROUTES.canvasImage}?id=${encodeURIComponent(input.id)}`;
+      return CanvasImageResult.parse(await bridgeJson(ws.id, path, { headers }));
+    },
+
+    /**
+     * A PNG of a canvas page, rendered by an open browser tab — anyone's, since a picture of
+     * the canvas is a question about the canvas, not about a person. Null when no tab is open
+     * on it (or the page is empty): there is no headless renderer behind this.
+     */
+    async viewCanvas(input: z.infer<typeof ViewCanvasInput>): Promise<CanvasImageResult | null> {
+      const ws = await requireWorkspace(input.workspace_id);
+      const headers = await canvasHeader(ws.id, input.canvas_id);
+      let pageId: string | undefined;
+      if (input.page) {
+        const state = (await bridgeJson(ws.id, BRIDGE_ROUTES.canvas, { headers })) as { pages?: CanvasPage[] };
+        pageId = resolvePageRef(state.pages ?? [], input.page);
+      }
+      const { url } = ViewCanvasResult.parse(
+        await bridgeJson(ws.id, BRIDGE_ROUTES.canvasView, { method: 'POST', headers, body: pageId ? { pageId } : {} }),
+      );
+      if (!url) return null;
+      const m = DATA_URL.exec(url);
+      if (!m) throw new Error('canvas screenshot came back in an unexpected format');
+      return { data: m[2] as string, mimeType: m[1] as string };
     },
 
     // The component library over the wire: the same list/read/write the in-canvas agent

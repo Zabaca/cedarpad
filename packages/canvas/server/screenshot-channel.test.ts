@@ -96,6 +96,15 @@ describe('screenshot stays canvas-wide', () => {
     expect(guest.frames[0]).toContain('event: screenshot');
   });
 
+  test('a named page rides the frame, so whichever tab answers renders the same page', () => {
+    const ch = createScreenshotChannel('c1');
+    const alice = sub('user_alice');
+    ch.clients.add(alice);
+
+    void ch.requestScreenshot(10, 'page:two');
+    expect(alice.frames[0]).toContain('"pageId":"page:two"');
+  });
+
   test('resolves null when nobody is connected', async () => {
     expect(await createScreenshotChannel('c1').requestScreenshot(10)).toBeNull();
   });

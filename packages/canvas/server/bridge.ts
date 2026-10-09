@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 import type { CanvasState } from '../src/shapes.ts';
-import { bumpAllComponents, createShapesOp, nextComponentRev, placeComponentOp, updateShapesOp } from '../src/canvas-ops.ts';
+import { bumpAllComponents, createShapesOp, nextComponentRev, placeComponentOp, readImageOp, updateShapesOp } from '../src/canvas-ops.ts';
 import type { OpResult } from '../src/canvas-ops.ts';
 import { shapesOnPage } from '../src/current-page.ts';
 import { canvasAssetFetcher, canvasRoomOpener } from './canvas-room.ts';
@@ -46,8 +46,11 @@ import {
   LIVEKIT_URL_HEADER,
   PlaceComponentBody,
   CallComponentBody,
+  type CanvasImageResult,
   SelectPageBody,
   UpdateShapesBody,
+  ViewCanvasBody,
+  type ViewCanvasResult,
   WriteComponentBody,
   WriteDataBody,
   decodeForwardedConversation,
@@ -916,6 +919,29 @@ export async function handleRequest(req: Request): Promise<Response> {
         .get(canvasIdFrom(req, url))
         .selectPage(parsed.data.pageId, req.headers.get(CANVAS_VIEWER_HEADER));
       return json({ asked });
+    }
+    // MCP's read_image (the in-canvas agent's tool, over the wire): the same `readImageOp`
+    // and the same per-canvas asset fetcher, so the container credential stays bound to
+    // the canvas this request names.
+    if (path === BRIDGE_ROUTES.canvasImage && req.method === 'GET') {
+      const id = url.searchParams.get('id');
+      if (!id) return json({ error: 'id is required' }, 400);
+      const canvasId = canvasIdFrom(req, url);
+      try {
+        const r = await readImageOp(await openCanvasRoom(canvasId), id, canvasAssetFetcherFor(canvasId));
+        if (!('image' in r)) return json({ error: r.text }, 404);
+        return json(r.image satisfies CanvasImageResult);
+      } catch (e) {
+        return json({ error: (e as Error).message }, 502);
+      }
+    }
+    // MCP's view_canvas: the same browser round-trip as the in-canvas agent's. `url: null`
+    // means no tab answered, which the tool reports rather than treats as a failure.
+    if (path === BRIDGE_ROUTES.canvasView && req.method === 'POST') {
+      const parsed = ViewCanvasBody.safeParse(await readBody(req));
+      if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
+      const shot = await screenshotChannels.get(canvasIdFrom(req, url)).requestScreenshot(undefined, parsed.data.pageId);
+      return json({ url: shot } satisfies ViewCanvasResult);
     }
     if (path === BRIDGE_ROUTES.deleteShapes && req.method === 'POST') {
       const parsed = DeleteShapesBody.safeParse(await readBody(req));
