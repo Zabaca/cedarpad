@@ -43,6 +43,15 @@ export const GUEST_CAPS_HEADER = 'x-guest-caps';
  * viewer targets nobody, so the failure mode is "nothing moved", never "everyone moved".
  */
 export const CANVAS_VIEWER_HEADER = 'x-canvas-viewer';
+/**
+ * WHO A WRITE IS BY — the Better Auth `user.id` a Record or skill write is attributed to
+ * (ADR-0022 decision 4). ATTRIBUTION ONLY, never permission: the edge has already decided
+ * whether the write is allowed. Stamped by the edge on every member's non-GET request, and on
+ * the MCP proxy's synthetic ones (the OAuth token's user); a client-sent copy is always
+ * stripped first. ABSENT means the author is unknown — a guest, the voice agent — and the write
+ * is recorded with no author rather than a fixed one.
+ */
+export const CANVAS_AUTHOR_HEADER = 'x-canvas-author';
 /** A send with no subscriber by design (the e2e suite), bypassing the subscribe-before-send guard. */
 export const HEADLESS_SEND_HEADER = 'x-headless-send';
 /** Huddles (ADR-0017): the canvas whose voice room the agent worker should join. */

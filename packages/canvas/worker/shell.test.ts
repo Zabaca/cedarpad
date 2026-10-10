@@ -7,7 +7,7 @@ import * as schema from '../web-poc/lib/db/schema.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { createWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { d1RecordStore } from './record-store.ts';
-import { handleCanvasesApi, handleRecordPurgeApi, renderLogin } from './shell.ts';
+import { FIRST_CANVAS_NAME, handleCanvasesApi, handleRecordPurgeApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 
 // In-memory DB built from the real migrations (mirrors canvases.test.ts / workspaces.test.ts).
 const MIGRATIONS_DIR = fileURLToPath(new URL('../web-poc/lib/db/migrations', import.meta.url));
@@ -40,6 +40,41 @@ beforeAll(async () => {
   await db.insert(schema.user).values({ id: USER.id, name: USER.id, email: `${USER.id}@example.com` });
   // #179: `default` has a real owned row (prod: the seed script); access is owner-OR-member.
   await db.insert(schema.workspaces).values({ id: 'default', name: 'Default', ownerUserId: USER.id });
+});
+
+// Workspace creation is admin-only (every workspace boots its own container), and a new
+// workspace opens onto its own first canvas — never the row-less `default` canvas, which
+// belongs to the `default` workspace alone.
+describe('handleWorkspacesApi — admin-only creation, with a first canvas', () => {
+  const ADMIN = { id: 'admin_1' };
+  const post = (name: string) =>
+    new Request('https://x/api/workspaces', { method: 'POST', body: JSON.stringify({ name }) });
+
+  beforeAll(async () => {
+    await db.insert(schema.user).values({ id: ADMIN.id, name: ADMIN.id, email: `${ADMIN.id}@example.com`, role: 'admin' });
+  });
+
+  test('a non-admin cannot create a workspace (403), and is told so on the list', async () => {
+    const res = await handleWorkspacesApi(post('Nope'), database, USER);
+    expect(res.status).toBe(403);
+    const list = await readJson(await handleWorkspacesApi(new Request('https://x/api/workspaces'), database, USER));
+    expect(list.canCreate).toBe(false);
+    expect(list.workspaces.map((w: { name: string }) => w.name)).not.toContain('Nope');
+  });
+
+  test('an admin creates a workspace that owns its first canvas', async () => {
+    const res = await handleWorkspacesApi(post('Acme'), database, ADMIN);
+    expect(res.status).toBe(201);
+    const body = await readJson(res);
+    expect(body.name).toBe('Acme');
+    const canvases = await canvasRegistry.list(database, body.id);
+    expect(canvases.map((c) => ({ id: c.id, name: c.name, createdBy: c.createdBy }))).toEqual([
+      { id: body.canvasId, name: FIRST_CANVAS_NAME, createdBy: ADMIN.id },
+    ]);
+    const list = await readJson(await handleWorkspacesApi(new Request('https://x/api/workspaces'), database, ADMIN));
+    expect(list.canCreate).toBe(true);
+    expect(list.workspaces.map((w: { id: string }) => w.id)).toContain(body.id);
+  });
 });
 
 // The Canvas app's registry API (ADR-0007, #54): GET/POST/PATCH/DELETE scoped to the

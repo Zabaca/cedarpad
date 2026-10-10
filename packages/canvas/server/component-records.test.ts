@@ -18,7 +18,7 @@ import {
   materializeDataFile,
   promoteComponent,
   readComponent,
-  recordAuthor,
+  componentRecordsOver,
   restoreComponent,
   writeComponent,
   writeDataFile,
@@ -340,19 +340,41 @@ describe('edit_component applies against the stored source', () => {
 });
 
 describe('the author a container stamps on a Record', () => {
-  // Attribution is only worth having if it is TRUE. `CANVAS_USER` is this deployment's single
-  // Better Auth user.id (worker/index.ts: "a single static id can't represent whichever of N
-  // users is calling"), and when it is unset the bridge's other call sites fall back to the
-  // literal string 'default' — which, as that same doc comment says, never matches a real
-  // authenticated user. Writing it into `created_by` would be a fake author: a history that
-  // LOOKS attributed and is not, which is worse than one that admits it does not know.
-  test('a configured CANVAS_USER is the author', () => {
-    expect(recordAuthor({ CANVAS_USER: 'user_james' })).toBe('user_james');
+  // Attribution is only worth having if it is TRUE. A container serves every member of its
+  // workspace, so the author is whoever started the write, bound per request — never one fixed
+  // id, which would credit every member's edit to the same person. Unknown (a guest, the voice
+  // agent) is null: a history that admits it does not know beats one that LOOKS attributed.
+  const recordingRpc = () => {
+    const seen: Array<{ op: string; userId: string | null }> = [];
+    const note = (op: string) => async (input: { userId: string | null }) => {
+      seen.push({ op, userId: input.userId });
+      return { rev: 1 };
+    };
+    const rpc = {
+      componentWrite: note('write'),
+      componentRestore: note('restore'),
+      componentPromote: note('promote'),
+      componentAdopt: note('adopt'),
+      dataWrite: note('writeData'),
+    } as never;
+    return { rpc, seen };
+  };
+
+  test('every write carries the author the store was bound to', async () => {
+    const { rpc, seen } = recordingRpc();
+    const records = componentRecordsOver(rpc, WS, 'user_jae');
+    await records.write('own', CANVAS, 'Card', 'x');
+    await records.restore('own', CANVAS, 'Card', 1);
+    await records.promote(CANVAS, 'Card');
+    await records.adopt(CANVAS, 'Card');
+    await records.writeData(CANVAS, 'd.json', '{}');
+    expect(seen.map((s) => s.userId)).toEqual(['user_jae', 'user_jae', 'user_jae', 'user_jae', 'user_jae']);
   });
 
-  test('no CANVAS_USER ⇒ no author, rather than a string that is not one', () => {
-    expect(recordAuthor({})).toBeNull();
-    expect(recordAuthor({ CANVAS_USER: '' })).toBeNull();
+  test('no known author ⇒ null, rather than a string that is not one', async () => {
+    const { rpc, seen } = recordingRpc();
+    await componentRecordsOver(rpc, WS, null).write('own', CANVAS, 'Card', 'x');
+    expect(seen).toEqual([{ op: 'write', userId: null }]);
   });
 });
 

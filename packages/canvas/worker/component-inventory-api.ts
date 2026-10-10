@@ -16,14 +16,16 @@ import { d1RecordStore } from './record-store.ts';
 import { CONTAINER_PRINCIPAL } from '../shared/canvas-mutation.ts';
 import { SYNC_USER_HEADER } from './sync-api.ts';
 import { syncRoomName } from './sync-room.ts';
-import { DEFAULT_CANVAS_ID } from './shell-routing.ts';
+import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 
 export const INVENTORY_PATH = '/api/workspace-components';
 
 const TIERS: readonly InventoryTier[] = ['own', 'shared', 'base', 'unresolved'];
 
 /**
- * The canvases to scan: the registry's, plus the legacy `default` one.
+ * The canvases to scan: the registry's, plus — in the `default` workspace only — the legacy
+ * `default` one. Its room is keyed by the canvas id alone, so adding it for any other
+ * workspace would scan (and let a delete mutate) the `default` workspace's canvas.
  *
  * `default` predates the canvas registry and has no row in it (#179 — production's was
  * seeded by hand), which is why `Shell.tsx` synthesizes it into the picker and
@@ -32,8 +34,12 @@ const TIERS: readonly InventoryTier[] = ['own', 'shared', 'base', 'unresolved'];
  * own-tier Components go unlisted, and a delete reports success while leaving every card
  * on it behind.
  */
-export function canvasesToScan(rows: ReadonlyArray<{ id: string; name: string }>): Array<{ id: string; name: string }> {
-  return rows.some((c) => c.id === DEFAULT_CANVAS_ID) ? [...rows] : [{ id: DEFAULT_CANVAS_ID, name: 'Default' }, ...rows];
+export function canvasesToScan(
+  workspaceId: string,
+  rows: ReadonlyArray<{ id: string; name: string }>,
+): Array<{ id: string; name: string }> {
+  if (workspaceId !== DEFAULT_WORKSPACE_ID || rows.some((c) => c.id === DEFAULT_CANVAS_ID)) return [...rows];
+  return [{ id: DEFAULT_CANVAS_ID, name: 'Default' }, ...rows];
 }
 
 /**
@@ -77,7 +83,7 @@ export async function handleComponentInventory(request: Request, env: Env, db: D
   if (!(await getWorkspace(db, workspaceId, user.id))) {
     return Response.json({ error: 'workspace not found' }, { status: 404 });
   }
-  const canvases = canvasesToScan((await canvasRegistry.list(db, workspaceId)).map((c) => ({ id: c.id, name: c.name })));
+  const canvases = canvasesToScan(workspaceId, (await canvasRegistry.list(db, workspaceId)).map((c) => ({ id: c.id, name: c.name })));
   const deps = {
     records: d1RecordStore(db),
     workspaceId,

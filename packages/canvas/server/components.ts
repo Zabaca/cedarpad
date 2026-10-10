@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 import { assertDataFileName, assertDataFileSource, COMPONENT_NAME_RE } from '../shared/bridge-wire.ts';
 import { leadingComment } from '../shared/component-description.ts';
 import type { ComponentCatalogEntry, ComponentTier, ComponentVersion } from '../shared/platform-rpc.ts';
+import type { PlatformRpc } from './platform-rpc-client.ts';
 import { loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
 
 const DEFAULT_CANVAS_ID = 'default';
@@ -94,31 +95,15 @@ export interface ComponentRecords {
 }
 
 /**
- * Who a Record written by THIS container is attributed to (ADR-0022 decision 4). `CANVAS_USER`
- * is the deployment's single Better Auth `user.id` — see the `Env.CANVAS_USER` doc comment,
- * which is explicit that "a single static id can't represent whichever of N users is calling"
- * and that its unset fallback, the literal `'default'`, never matches a real authenticated
- * user.
- *
- * So: unset ⇒ **null**, not `'default'`. A version row is the permanent answer to "who
- * changed this", and a placeholder there is a history that LOOKS attributed and is not. `updated_by`/`created_by` are nullable for exactly this state.
+ * The Record store, attributing every write to `author` (ADR-0022 decision 4): the user who
+ * started it — a chat turn's initiator, or the edge-stamped `x-canvas-author` on a direct write.
+ * A container serves every member of its workspace, so no fixed id can stand in. Unknown (a
+ * guest, the voice agent, a headless run) ⇒ **null**: a version row is the permanent answer to
+ * "who changed this", and a placeholder there is a history that LOOKS attributed and is not.
+ * `userId` is ATTRIBUTION — the edge decides permission itself.
  */
-export const recordAuthor = (env: Record<string, string | undefined>): string | null => env.CANVAS_USER || null;
-
-/**
- * The env-wired store, or **null when there is no edge in front of this process** — local
- * dev without the Worker, and the unit suite. That is an explicit state, not a fallback: with
- * no store the filesystem is all there is, exactly as it was before this ADR.
- */
-function containerRecords(): ComponentRecords | null {
-  const env = loadWebPocEnv();
-  const rpc = platformRpcFromEnv(env);
-  if (!rpc) return null;
-  // The container's identity, as every other container-side write already derives it
-  // (worker/container-env.ts). `userId` is ATTRIBUTION — the edge decides permission itself.
-  // 'default' is the legacy/prod workspace id (worker/shell-routing.ts DEFAULT_WORKSPACE_ID).
-  const workspaceId = env.CANVAS_WORKSPACE || 'default';
-  const userId = recordAuthor(env);
+export function componentRecordsOver(rpc: PlatformRpc, workspaceId: string, author: string | null): ComponentRecords {
+  const userId = author;
   return {
     write: async (tier, canvasId, module, source) =>
       void (await rpc.componentWrite({ workspaceId, canvasId, tier, userId, name: module, source })),
@@ -134,8 +119,24 @@ function containerRecords(): ComponentRecords | null {
   };
 }
 
-/** The store this process talks to, resolved once from env. Null = no edge in front of it. */
-export const componentRecordStore = containerRecords();
+/** This container's platform-RPC door, resolved once from env: null when there is no edge in
+ *  front of this process (local dev without the Worker, the unit suite) — an explicit state,
+ *  not a fallback: with no store the filesystem is all there is. */
+const recordsDoor = (() => {
+  const env = loadWebPocEnv();
+  const rpc = platformRpcFromEnv(env);
+  // 'default' is the legacy/prod workspace id (worker/shell-routing.ts DEFAULT_WORKSPACE_ID).
+  return rpc ? { rpc, workspaceId: env.CANVAS_WORKSPACE || 'default' } : null;
+})();
+
+/** The env-wired store whose writes are attributed to `author`; null with no edge in front. */
+export function componentRecordsFor(author: string | null): ComponentRecords | null {
+  return recordsDoor ? componentRecordsOver(recordsDoor.rpc, recordsDoor.workspaceId, author) : null;
+}
+
+/** The store reads and materialization go through. Null = no edge in front of this process.
+ *  Its writes would be unattributed, so a writer passes `componentRecordsFor(author)` instead. */
+export const componentRecordStore = componentRecordsFor(null);
 
 function namesIn(dir: string): string[] {
   if (!existsSync(dir)) return [];

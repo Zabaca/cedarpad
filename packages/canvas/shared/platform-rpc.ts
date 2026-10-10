@@ -261,8 +261,9 @@ export type ComponentRestoreOutput = z.infer<typeof ComponentRestoreOutput>;
  */
 export const SkillWriteInput = z.object({
   workspaceId: z.string().min(1),
-  /** Attribution (`updated_by`), not authorization — the edge derives permission itself. */
-  userId: z.string().min(1),
+  /** Attribution (`updated_by`), not authorization — the edge derives permission itself.
+   *  Null when the writer is unknown, like `ComponentWriteInput.userId`. */
+  userId: z.string().min(1).nullable(),
   skill: SkillName,
   files: UploadSkillInput.shape.files,
 });

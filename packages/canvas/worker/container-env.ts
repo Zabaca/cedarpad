@@ -39,9 +39,6 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
   // the same slice removed. Better Auth is an edge route.) What remains below is
   // the platform RPC's bearer root, which is a credential for talking to US, not to a database.
   BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET ?? '',
-  // Who Records and skills written by the container are attributed to (server/components.ts
-  // `recordAuthor`). Without it every write is unattributed. See the Env.CANVAS_USER doc comment.
-  CANVAS_USER: env.CANVAS_USER ?? '',
   // Single source of truth for the runtime cwd (#133): the bridge runs + resumes product
   // sessions with `cwd: CANVAS_CWD`, matching START's cd — one derivation, no drift that
   // could orphan a session's JSONL by project-dir name.

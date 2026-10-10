@@ -212,6 +212,51 @@ describe('runTurnAsync: the agent draws into the room (#310)', () => {
 
     expect(broadcasts.find((e) => e.kind === 'done' && e.error)).toMatchObject({ error: 'room unreachable' });
   });
+
+  // Canvas ids are global and the container's room credential reaches any room, so outside the
+  // `default` workspace (defaultCanvasId null) a turn that names no canvas must fail rather than
+  // draw into the `default` workspace's room.
+  test('no canvas named and no default canvas ⇒ the turn fails and opens no room', async () => {
+    const broadcasts: ChatEvent[] = [];
+    const opened: string[] = [];
+    const { deps } = recordingDeps({
+      defaultCanvasId: null,
+      openCanvasRoom: async (id: string) => {
+        opened.push(id);
+        return fakeRoomStore();
+      },
+      broadcast: (_chatId, ev) => broadcasts.push(ev),
+    });
+
+    await runTurnAsync(input({ canvasId: undefined }), deps);
+
+    expect(opened).toEqual([]);
+    expect(broadcasts.find((e) => e.kind === 'done' && e.error)).toMatchObject({
+      error: expect.stringContaining('names no canvas'),
+    });
+  });
+});
+
+describe('runTurnAsync: the turn is attributed to whoever started it', () => {
+  // The Records a turn's tools land name its author (ADR-0022 decision 4); runChat binds the
+  // canvas tools' stores to it. A guest send has none, and nothing stands in for it.
+  const lastArg = async (over: Partial<TurnInput>) => {
+    let seen: unknown = 'unset';
+    const runChat = (async function* (...args: unknown[]): AsyncGenerator<ChatEvent> {
+      seen = args[args.length - 1];
+      yield { kind: 'done', sessionId: 'sess_1', costUsd: 0 } satisfies ChatEvent;
+    }) as unknown as TurnDeps['runChat'];
+    await runTurnAsync(input(over), recordingDeps({ runChat }).deps);
+    return seen;
+  };
+
+  test('the send’s author reaches runChat', async () => {
+    expect(await lastArg({ author: 'u_jae' })).toBe('u_jae');
+  });
+
+  test('no author ⇒ null, never a fixed user', async () => {
+    expect(await lastArg({})).toBeNull();
+  });
 });
 
 describe('runTurnAsync: the error path', () => {

@@ -1,12 +1,10 @@
 import { z } from 'zod';
-import type { Bindings } from '../web-poc/worker/context.ts';
 import type { Database } from '../web-poc/lib/db/index.ts';
-import { createDbForWorker } from '../web-poc/worker/runtime.ts';
 import { createWorkspace, getWorkspace, listWorkspaces, setCanvasOrder } from '../web-poc/lib/db/queries/workspaces.ts';
 import { parseCanvasOrder } from '../shell/src/canvas-order.ts';
 import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
+import { isAdmin } from './admin.ts';
 import type { GateUser } from './auth-gate.ts';
-import type { Env } from './index.ts';
 import { deleteCanvasRecords } from './record-reclaim.ts';
 import { d1RecordStore } from './record-store.ts';
 import { DEFAULT_WORKSPACE_ID, readWorkspaceCookie } from './shell-routing.ts';
@@ -17,35 +15,43 @@ import { canvasHiddenFrom, mayFlipCanvas } from './visibility.ts';
 // listing/creating a workspace never wakes a container. The PURE routing/selection
 // decisions live in `shell-routing.ts`.
 
-const db = (env: Env) => createDbForWorker(env as unknown as Bindings);
-
 // Single contract for the registry API payloads (CLAUDE.md §7): both the launcher's
 // inline client and this handler speak these shapes.
 const CreateWorkspaceInput = z.object({ name: z.string().trim().min(1).max(100) });
 const WorkspaceView = z.object({ id: z.string(), name: z.string() });
 export type WorkspaceView = z.infer<typeof WorkspaceView>;
+/** The name a new workspace's first canvas starts with. */
+export const FIRST_CANVAS_NAME = 'Untitled';
 
 /**
  * The Shell's workspace registry API (owner-OR-member — #179):
- *   GET  /api/workspaces           → { workspaces: WorkspaceView[] }
- *   POST /api/workspaces {name}     → the created WorkspaceView
+ *   GET  /api/workspaces           → { workspaces: WorkspaceView[], canCreate }
+ *   POST /api/workspaces {name}     → { id, name, canvasId } (201) — admins only (403)
  * The legacy `default` workspace has a real seeded row since #179 and appears only
  * for its owner/members (presented first when accessible) — no hardcoded entry.
+ *
+ * Creation is admin-only: every workspace boots its own container, so who may start one is a
+ * platform decision, not a member's. `canCreate` rides on the list the picker already fetches,
+ * so the affordance costs no second request. A new workspace gets its first canvas here: the
+ * row-less `default` canvas belongs to the `default` workspace alone, so without one a fresh
+ * workspace would open onto nothing.
  */
-export async function handleWorkspacesApi(request: Request, env: Env, user: GateUser): Promise<Response> {
+export async function handleWorkspacesApi(request: Request, database: Database, user: GateUser): Promise<Response> {
   if (request.method === 'GET') {
-    const rows = await listWorkspaces(db(env), user.id);
+    const rows = await listWorkspaces(database, user.id);
     const workspaces: WorkspaceView[] = [
       ...rows.filter((w) => w.id === DEFAULT_WORKSPACE_ID),
       ...rows.filter((w) => w.id !== DEFAULT_WORKSPACE_ID),
     ].map((w) => ({ id: w.id, name: w.name }));
-    return Response.json({ workspaces });
+    return Response.json({ workspaces, canCreate: await isAdmin(database, user.id) });
   }
   if (request.method === 'POST') {
+    if (!(await isAdmin(database, user.id))) return Response.json({ error: 'admin only' }, { status: 403 });
     const parsed = CreateWorkspaceInput.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return Response.json({ error: 'invalid name' }, { status: 400 });
-    const ws = await createWorkspace(db(env), { name: parsed.data.name, ownerUserId: user.id });
-    return Response.json({ id: ws.id, name: ws.name }, { status: 201 });
+    const ws = await createWorkspace(database, { name: parsed.data.name, ownerUserId: user.id });
+    const canvas = await canvasRegistry.create(database, { workspaceId: ws.id, name: FIRST_CANVAS_NAME, createdBy: user.id });
+    return Response.json({ id: ws.id, name: ws.name, canvasId: canvas.id }, { status: 201 });
   }
   return new Response('method not allowed', { status: 405 });
 }

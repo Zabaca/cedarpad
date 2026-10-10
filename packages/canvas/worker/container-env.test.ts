@@ -3,20 +3,15 @@ import { describe, expect, test } from 'bun:test';
 import { containerEnv } from './container-env.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
-// Regression: the container attributes every Record it writes to `CANVAS_USER`
-// (server/components.ts `recordAuthor`) — if this Worker-side env var isn't forwarded into
-// the container's process env, every version row is silently unattributed.
-describe('containerEnv — CANVAS_USER forwarding', () => {
+// A container serves every member of its workspace, so it is handed no user identity: a
+// write's author arrives per request (x-canvas-author), never as one fixed env var.
+describe('containerEnv — the workspace, not a user', () => {
   const coords: SandboxCoords = { sandboxId: 'canvas', r2Prefix: 'workspaces/default/', canvasWorkspace: 'default' };
 
-  test('forwards CANVAS_USER from the Worker env into the container env', () => {
+  test('carries the workspace coord and no CANVAS_USER, even if the Worker env still has one', () => {
     const env = { CANVAS_USER: 'user_abc123' } as never;
-    expect(containerEnv(env, coords).CANVAS_USER).toBe('user_abc123');
-  });
-
-  test('falls back to an empty string when unset, matching the other optional fields', () => {
-    const env = {} as never;
-    expect(containerEnv(env, coords).CANVAS_USER).toBe('');
+    expect(containerEnv(env, coords).CANVAS_WORKSPACE).toBe('default');
+    expect(Object.keys(containerEnv(env, coords))).not.toContain('CANVAS_USER');
   });
 });
 
@@ -25,14 +20,13 @@ describe('containerEnv — a fixed field list', () => {
 
   test('containerEnv reads only its fixed fields — nothing else in the Worker env can ride along', () => {
     expect(containerEnv.length).toBe(2);
-    const env = { CANVAS_USER: 'user_abc123' } as never;
+    const env = { PLATFORM_DB: 'x' } as never;
     const result = containerEnv(env, coords);
     // containerEnv only reads the fixed field list below, whatever else the Env holds.
     expect(Object.keys(result).sort()).toEqual(
       [
         'BETTER_AUTH_SECRET',
         'CANVAS_CWD',
-        'CANVAS_USER',
         'CANVAS_WORKSPACE',
         'CLAUDE_CODE_OAUTH_TOKEN',
         'PLATFORM_RPC_ORIGIN',
@@ -51,7 +45,6 @@ describe('containerEnv — a fixed field list', () => {
     const env = {
       PLATFORM_DB: 'fake-d1-binding',
       VOYAGE_API_KEY: 'voyage_fake_key',
-      CANVAS_USER: 'u',
     } as never;
 
     const result = containerEnv(env, coords);
@@ -63,7 +56,7 @@ describe('containerEnv — a fixed field list', () => {
   });
 
   test('an Env carrying connector-secret-shaped fields (slack, stripe) does not surface them', () => {
-    const env = { CANVAS_USER: 'u', slack: 'xoxb-fake-token', stripe: 'sk_fake_key' } as never;
+    const env = { slack: 'xoxb-fake-token', stripe: 'sk_fake_key' } as never;
     const result = containerEnv(env, coords);
     expect(Object.values(result)).not.toContain('xoxb-fake-token');
     expect(Object.values(result)).not.toContain('sk_fake_key');

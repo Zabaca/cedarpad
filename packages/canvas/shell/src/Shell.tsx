@@ -34,8 +34,10 @@ import { createStageMemory } from './stage-memory';
 // APIs, so this is a move, not a rewrite. The one behavioural change: the workspace popover
 // lists the owner's real workspaces from `GET /api/workspaces` instead of a hardcoded name.
 
-/** The legacy prod canvas — no registry row, but always openable. Mirrors worker DEFAULT_CANVAS_ID. */
+/** The legacy prod canvas — no registry row, openable only in the `default` workspace it
+ *  belongs to. Mirrors worker DEFAULT_CANVAS_ID / DEFAULT_WORKSPACE_ID. */
 const DEFAULT_CANVAS_ID = 'default';
+const DEFAULT_WORKSPACE_ID = 'default';
 
 // Sticky collapse state for the two stage nav panels (full-width content on demand).
 const PICKER_COLLAPSED_KEY = 'shell:canvasPickerCollapsed';
@@ -302,6 +304,8 @@ function Rail({
 // lazily: the closed rail costs nothing.
 function WorkspacePopover({ activeWorkspace, onOpenSettings }: { activeWorkspace: string; onOpenSettings: () => void }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
+  // Workspace creation is admin-only; the server answers `canCreate` alongside the list.
+  const [canCreate, setCanCreate] = useState(false);
   // #179 owner-only invite. The server decides "owner": the pending-invitations GET is
   // 200 for the owner only (403 member / 404 stranger) — non-200 hides the affordance.
   const [canInvite, setCanInvite] = useState(false);
@@ -311,8 +315,9 @@ function WorkspacePopover({ activeWorkspace, onOpenSettings }: { activeWorkspace
     void (async () => {
       const r = await fetch('/api/workspaces', { credentials: 'same-origin' }).catch(() => null);
       if (!r?.ok) return;
-      const d = (await r.json()) as { workspaces: WorkspaceEntry[] };
+      const d = (await r.json()) as { workspaces: WorkspaceEntry[]; canCreate?: boolean };
       setWorkspaces(d.workspaces);
+      setCanCreate(d.canCreate === true);
     })();
   }, []);
 
@@ -323,6 +328,23 @@ function WorkspacePopover({ activeWorkspace, onOpenSettings }: { activeWorkspace
       setCanInvite(r?.ok ?? false);
     })();
   }, [activeWorkspace, invitationsUrl]);
+
+  const createWorkspace = async () => {
+    const name = window.prompt('Name the new workspace:');
+    if (!name?.trim()) return;
+    const r = await fetch('/api/workspaces', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: name.trim() }),
+    }).catch(() => null);
+    if (!r?.ok) {
+      window.alert('Could not create the workspace.');
+      return;
+    }
+    const d = (await r.json()) as { id: string };
+    window.location.href = `/w/${encodeURIComponent(d.id)}`;
+  };
 
   const invite = async () => {
     const email = window.prompt('Invite to this workspace by email — the link works only for that address:');
@@ -371,6 +393,12 @@ function WorkspacePopover({ activeWorkspace, onOpenSettings }: { activeWorkspace
           </div>
         );
       })}
+      {canCreate && (
+        <div className="lp-ws-row lp-ws-create" role="menuitem" onClick={() => void createWorkspace()}>
+          <span className="lp-ws-glyph">+</span>
+          <span className="lp-ws-name">New workspace…</span>
+        </div>
+      )}
       {canInvite && (
         <div className="lp-ws-row lp-ws-invite" role="menuitem" onClick={() => void invite()}>
           <span className="lp-ws-glyph">+</span>
@@ -502,14 +530,16 @@ function CanvasStage({ registry }: { registry: Registry }) {
     window.history.replaceState(null, '', window.location.pathname + qs);
   }, [selected]);
 
-  // The list always offers the legacy Default canvas (no registry row) so you can return to it.
+  // The `default` workspace's list offers its legacy Default canvas (no registry row) so you
+  // can return to it. Canvas ids are global, so offering it anywhere else would open the
+  // `default` workspace's canvas from inside another workspace.
   // Locked rows (ADR-0016 — someone else's private canvas, owner-only metadata) are never
   // pickable; they surface in Settings' manage list instead.
   // The order is applied HERE, after Default is synthesized in — that is the whole reason
   // it is an id array rather than a sort column: `default` has no registry row, so the
   // server could not place it, but the client can because by this point it is just an id.
   const canvasList: CanvasEntry[] = applyCanvasOrder(canvasOrder, [
-    { id: DEFAULT_CANVAS_ID, name: 'Default' },
+    ...(wsId === DEFAULT_WORKSPACE_ID ? [{ id: DEFAULT_CANVAS_ID, name: 'Default' }] : []),
     ...canvases.filter((c) => !c.locked),
   ]);
 
@@ -542,10 +572,11 @@ function CanvasStage({ registry }: { registry: Registry }) {
   // selection just because the async fetch hasn't landed yet.
   useEffect(() => {
     if (!loaded) return;
-    if (selected && selected !== DEFAULT_CANVAS_ID && !canvases.some((c) => c.id === selected)) {
+    const exists = selected === DEFAULT_CANVAS_ID ? wsId === DEFAULT_WORKSPACE_ID : canvases.some((c) => c.id === selected);
+    if (selected && !exists) {
       setSelected(null);
     }
-  }, [loaded, canvases, selected]);
+  }, [loaded, canvases, selected, wsId]);
 
   const createCanvas = async () => {
     const r = await fetch('/api/canvases', {
