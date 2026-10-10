@@ -2,7 +2,7 @@
 //
 // One workspace's compute can live on hardware we own (an incus guest on
 // ryzen-9, reached through a Cloudflare Tunnel at ws.cedarpad.com) while every
-// other workspace stays on the Sandbox DO. The workspace's DATA does not move:
+// other workspace runs on its CanvasContainer. The workspace's DATA does not move:
 // canvas state is in CanvasSyncRoom, platform rows are in D1, artifacts are in
 // R2 (ADR-0022 — content is records, not files). Only the process that serves
 // the pad and runs the agent changes address.
@@ -30,31 +30,10 @@ import { sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
 /**
- * Paths that must be answered by the Cloudflare container even when the
- * workspace is self-hosted.
+ * Warm-vs-cold for a request that went through a Cloudflare TUNNEL, which fails
+ * differently from a container proxy.
  *
- * `/api/buildrev` reports the CONTAINER IMAGE's build stamp, and `deploy.sh`
- * polls it to confirm a rollout is serving the new SHA. A self-hosted guest runs
- * from a git checkout with no baked stamp, so it answers `dev` — and on
- * 2026-08-14 that made the deploy poll count 60 attempts against a value that
- * could never match, failing a deploy whose Worker had in fact shipped fine.
- *
- * The rule this encodes is not "special-case the deploy script": it is that a
- * question ABOUT the container has to be answered BY the container. Moving a
- * workspace's compute changes where the pad is served from, not what the
- * container image is.
- *
- * Pure; exported for tests.
- */
-export function staysOnContainer(pathname: string): boolean {
-  return pathname === '/api/buildrev';
-}
-
-/**
- * Warm-vs-cold for a request that went through a Cloudflare TUNNEL, which is a
- * different transport from the Sandbox preview proxy and fails differently.
- *
- * `decideWarm` (sandbox-resolver.ts) encodes the sandbox proxy's not-ready
+ * The retired Sandbox path's `decideWarm` encoded its preview proxy's not-ready
  * signals: a 410, or a body carrying `INVALID_TOKEN` / `port not exposed`.
  * cloudflared emits none of those. When the guest's origin is not listening it
  * answers with Cloudflare's own **502** page, which matched nothing in
@@ -104,7 +83,7 @@ export interface SelfHostedEnv {
  * Failing OPEN here is the deliberate choice, and it is the opposite of what a
  * parser normally should do. This map is the only thing that moves a workspace
  * off Cloudflare; if it is unreadable, the honest interpretation is "no
- * workspace is self-hosted", which routes everything back to the Sandbox DO —
+ * workspace is self-hosted", which routes everything back to its CanvasContainer —
  * the configuration that has always worked. Throwing would take every
  * workspace down, including the ones this feature never touched, over a typo in
  * a var that concerns one of them.
@@ -140,7 +119,7 @@ export function parseWorkspaceMap(raw: string | undefined): Record<string, strin
 }
 
 /**
- * The self-hosted target for this workspace, or null to use the Sandbox DO.
+ * The self-hosted target for this workspace, or null to use its CanvasContainer.
  *
  * Returns null when ANY of the three credentials is missing, even though the
  * map names an origin. A half-configured target is the dangerous state: the

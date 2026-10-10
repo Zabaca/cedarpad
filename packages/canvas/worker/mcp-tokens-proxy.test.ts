@@ -21,13 +21,13 @@ beforeEach(() => {
 describe('withMcpTokensHeader', () => {
   test('a connected workspace gets the encoded x-mcp-tokens header', async () => {
     tokens = { ledgerbot: 'tok_a' };
-    const req = new Request('https://poc.cedarpad.com/api/chat/c1/send', { method: 'POST' });
+    const req = new Request('https://app.cedarpad.com/api/chat/c1/send', { method: 'POST' });
     const out = await withMcpTokensHeader(req, {} as never, 'ws_1');
     expect(out.headers.get('x-mcp-tokens')).toBe(JSON.stringify({ ledgerbot: 'tok_a' }));
   });
 
   test('an unconnected workspace’s request passes through untouched (the SAME request, no header)', async () => {
-    const req = new Request('https://poc.cedarpad.com/api/chat/c1/send', { method: 'POST' });
+    const req = new Request('https://app.cedarpad.com/api/chat/c1/send', { method: 'POST' });
     const out = await withMcpTokensHeader(req, {} as never, 'ws_1');
     expect(out).toBe(req);
     expect(out.headers.get('x-mcp-tokens')).toBeNull();

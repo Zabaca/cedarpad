@@ -9,7 +9,7 @@ const base = {
   routes: [{ pattern: 'app.cedarpad.com', custom_domain: true }],
   triggers: { crons: ['0 9 * * *'] },
   assets: { directory: './shell/dist', binding: 'ASSETS', run_worker_first: true },
-  containers: [{ class_name: 'Sandbox', image: './Dockerfile' }],
+  containers: [{ class_name: 'CanvasContainer', scheduling_policy: 'durable_object', images: { canvas: { dockerfile: './Dockerfile' } } }],
   d1_databases: [
     { binding: 'WAITLIST', database_name: 'cedarpad-waitlist', database_id: 'w-1' },
     { binding: 'PLATFORM_DB', database_name: 'cedarpad-platform', database_id: 'remote-1' },

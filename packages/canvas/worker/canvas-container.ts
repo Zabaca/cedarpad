@@ -1,20 +1,17 @@
 // The workspace's dev stack (vite + bridge) on Cloudflare's `durable_object` container
 // scheduling policy: this Durable Object drives `ctx.container` itself.
 //
-// Why a new class rather than the Sandbox with a new base: `@cloudflare/sandbox`'s Sandbox
-// extends `@cloudflare/containers`' `Container`, which cannot run under this policy and is
-// maintained only through 2026-12-31. A container application's policy is fixed when it is
-// created, so this is a new namespace with its own application, routed to only when
-// `CANVAS_CONTAINER=durable` (canvas-container-lifecycle.ts `containerChoice`). What the
-// policy removes is the deploy machinery: there are no container rollouts, so no 408 on the
-// application PATCH and no two-stage settle. A new image reaches a running container because
+// It replaced the `@cloudflare/sandbox` Sandbox DO, whose base (`@cloudflare/containers`'
+// `Container`) cannot run under this policy and is maintained only through 2026-12-31. What
+// the policy removes is the deploy machinery: there are no container rollouts, so no 408 on
+// the application PATCH and no two-stage settle. A new image reaches a running container because
 // its boot fingerprint no longer matches (`reconcile`, below).
 //
 // The lifecycle follows zbc's walgit (packages/walgit/worker/durable-container.ts):
 //   - START: `start({ image, env })`, single-flighted on a `BootLock` held with
 //     `ctx.waitUntil`, so the ~40 requests a page load fires at a cold container share one
 //     boot and a canceled request cannot take the boot down (incident 2026-08-13,
-//     canvas-boot.ts). `start()` returns before anything listens, so readiness is asked of
+//     boot-lock.ts). `start()` returns before anything listens, so readiness is asked of
 //     the port: READY_PATH through vite proves vite AND the bridge.
 //   - PROXY: HTTP (SSE unbuffered) and WebSocket to vite on :4510, every request counted in
 //     flight until its last byte leaves.
@@ -29,7 +26,7 @@
 // CanvasSyncRoom: it is reached only through `stub.fetch`, never by RPC, and the import would
 // make every bun test that loads the Worker entrypoint fail to resolve `cloudflare:workers`.
 
-import { BootLock } from './canvas-boot.ts';
+import { BootLock } from './boot-lock.ts';
 import {
   COORDS_HEADER,
   CONTAINER_INSTANCE,

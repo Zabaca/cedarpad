@@ -4,7 +4,6 @@ import {
   DEFAULT_WORKSPACE,
   LEGACY_R2_PREFIX,
   LEGACY_SANDBOX_ID,
-  decideWarm,
   localBridgeOrigin,
   resolve,
   sseRetryResponse,
@@ -31,42 +30,6 @@ describe('resolve', () => {
 
   test('legacy constants match the default workspace resolution', () => {
     expect(resolve(DEFAULT_WORKSPACE)).toEqual({ sandboxId: LEGACY_SANDBOX_ID, r2Prefix: LEGACY_R2_PREFIX, canvasWorkspace: 'default' });
-  });
-});
-
-describe('decideWarm — warm-vs-cold path selection (matches today)', () => {
-  // Real app responses are served as-is; only the sandbox proxy's not-ready
-  // signals fall through to a cold start.
-  const serve = (status: number, body = '') => expect(decideWarm(status, () => body)).toBe('serve');
-  const cold = (status: number, body = '') => expect(decideWarm(status, () => body)).toBe('cold-start');
-
-  test('2xx/3xx app responses are served', () => {
-    serve(200);
-    serve(302);
-  });
-
-  test('a real 4xx/5xx app response (e.g. a failed login) is served, not re-proxied', () => {
-    serve(401, 'invalid credentials');
-    serve(404, 'not found');
-    serve(500, 'app crashed');
-  });
-
-  test('410 (container stopped/gone) triggers a cold start', () => {
-    cold(410);
-  });
-
-  test('sandbox not-ready error bodies trigger a cold start', () => {
-    cold(404, '{"code":"INVALID_TOKEN"}');
-    cold(502, 'port not exposed');
-  });
-
-  test('body is only read for 4xx/5xx (never for a 2xx/3xx fast path)', () => {
-    let read = 0;
-    decideWarm(200, () => {
-      read++;
-      return '';
-    });
-    expect(read).toBe(0);
   });
 });
 

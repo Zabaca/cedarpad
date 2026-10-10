@@ -17,7 +17,7 @@ The Worker **verifies the Access assertion itself** (`worker/access-jwt.ts`, por
 games): RS256 against the team's published keys, `iss`, `aud`, `exp`, `nbf`. The team domain
 and audience tag reach the Worker as secrets from the access instance's outputs. Missing
 config, a missing assertion or any verification failure is a refusal. This matters because
-the same Worker also answers on `app.`/`poc.cedarpad.com` and (preview) `workers.dev`, where
+the same Worker also answers on `app.cedarpad.com` and (preview) `workers.dev`, where
 Access is not in front of it.
 
 The page (`worker/admin-page.ts`) is server-rendered and read-only: users (last seen from
@@ -43,7 +43,7 @@ public host. This one is a deliberate exception, for the reason above.
 
 - The route `admin.cedarpad.com` is declared at the **top level** of `wrangler.jsonc` only.
   `env.preview` keeps `routes: []`; a preview deploy that inherited routes once moved
-  `app.`/`poc.` onto the preview Worker.
+  production's domains onto the preview Worker.
 - Applying `production canvas` now applies `admin-access-token` and `admin-access` first
   (imports). Minting the token needs `CLOUDFLARE_ROOT_TOKEN` in
   `production/secrets.yaml`.

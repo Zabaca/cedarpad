@@ -5,20 +5,20 @@
   "compatibility_date": "2025-11-01",
   "compatibility_flags": ["nodejs_compat"],
   // Custom domains: wrangler provisions the proxied DNS records + TLS certs and binds
-  // both hosts to this worker (the cedarpad.com zone must be in this account). The
+  // these hosts to this worker (the cedarpad.com zone must be in this account). The
   // exact-match records take precedence over the zone's *.cedarpad.com wildcard.
-  // app.cedarpad.com is CANONICAL; the worker 301s poc.cedarpad.com → app (cutover
-  // 2026-07-17 — old share links and bookmarks keep working via the redirect).
+  // app.cedarpad.com is CANONICAL. The pre-2026-07-17 host poc.cedarpad.com was dropped on
+  // 2026-10-09; removing it here does not detach an existing custom domain, so that is
+  // deleted through the Workers domains API after the deploy.
   "routes": [
     { "pattern": "app.cedarpad.com", "custom_domain": true },
-    { "pattern": "poc.cedarpad.com", "custom_domain": true },
     // The admin host (ADR-0026), behind Cloudflare Access (infra production/admin-access.ts).
     // Top level ONLY: env.preview declares `routes: []` and must keep it.
     { "pattern": "admin.cedarpad.com", "custom_domain": true }
   ],
   // Workers Logs: stream the Worker's console + request logs via `wrangler tail`
   // or the dashboard (replaces the ad-hoc /__diag route). Container stdout is
-  // separate (sandbox getProcessLogs / CF container logs).
+  // separate (Cloudflare's container logs).
   "observability": { "enabled": true },
   // No scheduled work: the daily jobs/repo-refresh cron went with them. An empty list (not an
   // absent key) is what makes `wrangler deploy` clear the trigger it registered before.
@@ -58,49 +58,24 @@
   },
   "containers": [
     {
-      "class_name": "Sandbox",
-      "image": "./Dockerfile",
-      // The Dockerfile bakes the whole workspace (canvas + web-poc), so the build
-      // context is the repo root (two levels up from this package), not the package.
-      "image_build_context": "../..",
-      // standard-1 is the proven instance type for this account; bump if the
-      // vite + bridge + agent stack OOMs on cold boot.
-      "instance_type": "standard-1",
-      "max_instances": 3
-    },
-    {
-      // The retired warehouse (ADR-0017, superseded). Nothing dispatches into it any more;
-      // the class, its image and its binding stay only until the Cloudflare container
-      // migration deletes the class, because deleting one is its own deploy-time migration.
-      "class_name": "Warehouse",
-      "image": "./Dockerfile.warehouse",
-      "image_build_context": "../..",
-      "instance_type": "standard-4",
-      "max_instances": 3
-    },
-    {
       // The workspace container on the `durable_object` scheduling policy
-      // (worker/canvas-container.ts): the DO starts it with `ctx.container.start`, so there
-      // are no rollouts. Routed to only when CANVAS_CONTAINER=durable. The policy is fixed
-      // when the application is created, hence a new class rather than a change to Sandbox.
-      // Instance type is chosen per start in code, not here.
+      // (worker/canvas-container.ts): one per workspace, started by its DO with
+      // `ctx.container.start`, so there are no rollouts — a new image reaches a running
+      // container through the DO's boot fingerprint. The Dockerfile bakes the whole
+      // workspace, so the build context is the repo root. Instance type is chosen per start
+      // in code, not here.
       "class_name": "CanvasContainer",
       "scheduling_policy": "durable_object",
-      "images": { "canvas": { "dockerfile": "./Dockerfile.durable", "build_context": "../.." } }
+      "images": { "canvas": { "dockerfile": "./Dockerfile", "build_context": "../.." } }
     }
   ],
   "durable_objects": {
     "bindings": [
-      { "class_name": "Sandbox", "name": "Sandbox" },
-      { "class_name": "Warehouse", "name": "Warehouse" },
       { "class_name": "CanvasContainer", "name": "CanvasContainer" },
       // One instance per canvas, hosting that canvas's tldraw sync room (ADR-0019, #288).
-      // Unlike Sandbox/Warehouse this is NOT a container class — it is a plain SQLite-backed
+      // Unlike CanvasContainer this is NOT a container class — it is a plain SQLite-backed
       // DO, and its SQLite tables ARE the room's persistence.
-      { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" },
-      // The retired Inbox's events hub (#383). Nothing uses it; retained (an empty class in
-      // worker/index.ts) until the CF container migration deletes it with a migration tag.
-      { "class_name": "WorkspaceEvents", "name": "WORKSPACE_EVENTS" }
+      { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" }
     ]
   },
   // Native R2 binding: the edge Worker (workerd) reads canvas assets and canvas-state.json
@@ -155,12 +130,17 @@
     // current default backend for a new class, and declaring the KV one would pin a
     // deprecated storage engine to a class that will never use either.
     { "tag": "v4", "new_sqlite_classes": ["WorkspaceEvents"] },
-    { "tag": "v5", "new_sqlite_classes": ["CanvasContainer"] }
+    { "tag": "v5", "new_sqlite_classes": ["CanvasContainer"] },
+    // The Sandbox (replaced by CanvasContainer), the retired warehouse and the retired Inbox's
+    // events hub. Deleting a class deletes its Durable Objects' storage; none of the three
+    // held anything the platform still reads. Their container applications are NOT deleted
+    // by this — `wrangler containers delete` does that, by hand, after the deploy.
+    { "tag": "v6", "deleted_classes": ["Sandbox", "Warehouse", "WorkspaceEvents"] }
   ],
   // Preview environment (zbc: `apply preview canvas` -> `wrangler deploy --env
   // preview`). A SEPARATE worker `agent-canvas-preview` in the same account, on a
   // free *.workers.dev URL (no custom domain), so it never touches production's
-  // poc.cedarpad.com. wrangler named environments do NOT inherit bindings/vars/
+  // app.cedarpad.com. wrangler named environments do NOT inherit bindings/vars/
   // routes/containers — only main + compatibility_* — so the container, DO, and
   // migrations are redeclared here verbatim.
   "env": {
@@ -168,7 +148,7 @@
       "name": "agent-canvas-preview",
       // No custom domain: serve on the account's <name>.<subdomain>.workers.dev. `routes` MUST
       // be declared empty: a named env inherits the top-level `routes`, and on 2026-10-09 a
-      // preview deploy moved app.cedarpad.com and poc.cedarpad.com onto this Worker until the
+      // preview deploy moved production's custom domains onto this Worker until the
       // production Worker was redeployed.
       "workers_dev": true,
       "routes": [],
@@ -178,16 +158,13 @@
       "vars": {
         "BETTER_AUTH_URL": "https://agent-canvas-preview.james-99a.workers.dev",
         "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev",
-        "AUTH_DISABLE_SIGNUP": "true",
         // Preview shares production's platform D1 (secrets.yaml is a copy). D1 admits one
         // writer, with an external write mid-request corrupting concurrent readers (#276) —
         // this sharing is pre-existing debt (it also shared Turso before #268), not new. Give
         // preview its own D1 database before using it for anything real (see canvas.ts).
-        //
-        // The test bed for the durable_object container (worker/canvas-container.ts): with no
-        // SELF_HOSTED_WORKSPACES here, preview's workspaces run on Cloudflare, and this sends
-        // them to CanvasContainer instead of the Sandbox. Production leaves it unset.
-        "CANVAS_CONTAINER": "durable"
+        // With no SELF_HOSTED_WORKSPACES here, every preview workspace runs on its
+        // CanvasContainer.
+        "AUTH_DISABLE_SIGNUP": "true"
       },
       "assets": {
         "directory": "./shell/dist",
@@ -196,40 +173,18 @@
       },
       "containers": [
         {
-          "class_name": "Sandbox",
-          "image": "./Dockerfile",
-          "image_build_context": "../..",
-          "instance_type": "standard-1",
-          "max_instances": 3
-        },
-        {
-          // Mirrors the production block above (#236) — wrangler named environments
-          // don't inherit `containers`/`durable_objects`/`migrations`, so this is
-          // redeclared verbatim here, same as Sandbox already is.
-          "class_name": "Warehouse",
-          "image": "./Dockerfile.warehouse",
-          "image_build_context": "../..",
-          "instance_type": "standard-4",
-          "max_instances": 3
-        },
-        {
           "class_name": "CanvasContainer",
           "scheduling_policy": "durable_object",
-          "images": { "canvas": { "dockerfile": "./Dockerfile.durable", "build_context": "../.." } }
+          "images": { "canvas": { "dockerfile": "./Dockerfile", "build_context": "../.." } }
         }
       ],
       "durable_objects": {
         "bindings": [
-          { "class_name": "Sandbox", "name": "Sandbox" },
-          { "class_name": "Warehouse", "name": "Warehouse" },
           { "class_name": "CanvasContainer", "name": "CanvasContainer" },
           // Redeclared verbatim from the top level (#288) — named envs inherit no
           // durable_objects. Preview gets its OWN room instances: DO storage is per-worker,
           // not shared like Turso/R2/D1 are.
-          { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" },
-          // Redeclared verbatim from the top level, same reason (retained until the CF
-          // container migration deletes it).
-          { "class_name": "WorkspaceEvents", "name": "WORKSPACE_EVENTS" }
+          { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" }
         ]
       },
       // Preview shares production's mart bucket too, matching Turso/waitlist D1 sharing.
@@ -255,7 +210,8 @@
         { "tag": "v2", "new_sqlite_classes": ["Warehouse"] },
         { "tag": "v3", "new_sqlite_classes": ["CanvasSyncRoom"] },
         { "tag": "v4", "new_sqlite_classes": ["WorkspaceEvents"] },
-        { "tag": "v5", "new_sqlite_classes": ["CanvasContainer"] }
+        { "tag": "v5", "new_sqlite_classes": ["CanvasContainer"] },
+        { "tag": "v6", "deleted_classes": ["Sandbox", "Warehouse", "WorkspaceEvents"] }
       ]
     }
   }

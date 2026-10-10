@@ -14,24 +14,23 @@ export const IMAGE_NAME = 'canvas';
 export const COORDS_HEADER = 'x-canvas-container-coords';
 
 /** Vite. It serves the pad and proxies `/api/*` to the bridge on :4511, so one port is the
- *  whole container as far as the edge is concerned — the same port the Sandbox proxied to. */
+ *  whole container as far as the edge is concerned. */
 export const CONTAINER_PORT = 4510;
 
 /** A bridge route answered through vite, so one probe proves BOTH processes are up. */
 export const READY_PATH = '/api/health';
 
-/** The instance the Sandbox ran on. The first thing to measure against, not a conclusion. */
+/** The instance size. Measured on preview 2026-10-09: ~4s to a serving stack from idle. */
 export const CONTAINER_INSTANCE = 'standard-1';
 
 /** How long a start may take before it is given up. Deliberately generous: a cold vite boot
- *  took 30–120s on the Sandbox (canvas-boot.ts PORT_TIMEOUT_MS), and how long it takes HERE
- *  is the thing being measured — a short timeout would destroy a healthy, slow boot. */
+ *  took 30–120s on the retired Sandbox, and the first boot of a new image on a host is ~30s
+ *  here — a short timeout would destroy a healthy, slow boot. */
 export const READY_TIMEOUT_MS = 180_000;
 export const READY_POLL_MS = 500;
 export const READY_PROBE_TIMEOUT_MS = 5_000;
 
-/** Idle time, after the last request FINISHED, before the container is stopped. The
- *  Sandbox's `sleepAfter`. */
+/** Idle time, after the last request FINISHED, before the container is stopped. */
 export const SLEEP_AFTER_MS = 5 * 60_000;
 
 /** How long a SIGTERM'd stack gets to exit before it is destroyed. */
@@ -95,11 +94,4 @@ export function bootFingerprint(image: string, env: Record<string, string>): str
     h = Math.imul(h, 0x01000193);
   }
   return (h >>> 0).toString(16).padStart(8, '0');
-}
-
-/** Which container class a workspace's requests go to. `CANVAS_CONTAINER=durable` selects
- *  `CanvasContainer`; anything else keeps the Sandbox, so an unset or mistyped var can only
- *  ever mean "the path that has been running". */
-export function containerChoice(env: { CANVAS_CONTAINER?: string }): 'durable' | 'sandbox' {
-  return (env.CANVAS_CONTAINER ?? '').trim() === 'durable' ? 'durable' : 'sandbox';
 }

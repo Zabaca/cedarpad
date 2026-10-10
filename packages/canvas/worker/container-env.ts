@@ -14,12 +14,10 @@ import type { SandboxCoords } from './sandbox-resolver.ts';
 // this TS constant authoritative at runtime.
 export const CANVAS_CONTAINER_CWD = '/app/agent-canvas/packages/canvas';
 
-// Pure — no @cloudflare/sandbox dependency, unlike sandbox-runtime.ts (which imports
-// this). That split matters for testability: sandbox-runtime.ts needs `cloudflare:workers`
-// (only present in the real Workers runtime), so a plain `bun test` importing it must
-// stub the whole module — and other test files already do that wholesale (worker/index.test.ts
-// mocks `./sandbox-runtime.ts` entirely), which would silently swallow this function too if
-// it lived there. Living in its own dependency-free file means it needs no mocking at all.
+// Pure, and in its own file rather than in sandbox-runtime.ts (which imports this): other
+// test files stub that module wholesale (worker/index.test.ts mocks `./sandbox-runtime.ts`
+// entirely), which would silently swallow this function too if it lived there. Living in
+// its own dependency-free file means it needs no mocking at all.
 
 // Container env injected at process spawn (PRD: ANTHROPIC_API_KEY intentionally
 // absent so it can't override the OAuth token).

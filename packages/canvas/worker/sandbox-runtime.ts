@@ -1,73 +1,16 @@
-import { getSandbox } from '@cloudflare/sandbox';
 import type { Env } from './index.ts';
-import { CANVAS_CONTAINER_CWD, containerEnv } from './container-env.ts';
-import type { CanvasBootSpec } from './canvas-boot.ts';
-import { COORDS_HEADER, containerChoice } from './canvas-container-lifecycle.ts';
-import { singleFlight } from './single-flight.ts';
-import { selfHostedTarget, serveSelfHosted, staysOnContainer } from './self-hosted.ts';
-import { type SandboxCoords, decideWarm, localBridgeOrigin, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
+import { containerEnv } from './container-env.ts';
+import { COORDS_HEADER } from './canvas-container-lifecycle.ts';
+import { selfHostedTarget, serveSelfHosted } from './self-hosted.ts';
+import { type SandboxCoords, localBridgeOrigin, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 
-// The Sandbox resolver's runtime half: the wake/expose/proxy orchestration that used
-// to be inline in the Worker's fetch handler keyed by the constant `'canvas'`. The
-// proven warm-proxy-first / cold-start-on-miss path is preserved verbatim — only its
-// input (the sandbox id) is parameterized via the resolved coordinates. The pure
-// decision logic lives in `sandbox-resolver.ts`; this module owns everything that
-// touches `@cloudflare/sandbox`.
+// The workspace runtime: where a resolved workspace's requests are served from. In order, a
+// loopback bridge (E2E only), a self-hosted VM, or the workspace's `CanvasContainer` DO on
+// Cloudflare's `durable_object` container policy. The pure routing decisions live in
+// `sandbox-resolver.ts` and `self-hosted.ts`; the container lifecycle lives in the DO.
 
-const VITE_PORT = 4510;
-const PREVIEW_TOKEN = 'canvasproxy';
-// The image is the whole workspace at /app/agent-canvas (root context); the canvas
-// package — and its scripts/bridge/vite, plus the in-tree web-poc at
-// packages/canvas/web-poc — live under packages/canvas.
-const START = `bash -lc "cd ${CANVAS_CONTAINER_CWD} && exec bun run scripts/container-start.ts"`;
-
-// keepAlive + sleepAfter persist in the DO's storage across deploys; if keepAlive is
-// ever stuck `true`, the container NEVER auto-sleeps and sleepAfter is ignored entirely
-// (per @cloudflare/sandbox). Passing them to getSandbox re-applies the config via
-// configure() on every entry, forcing keepAlive OFF and re-asserting sleepAfter — cheap
-// hygiene so a stray keepAlive can't silently pin the container forever.
-const SLEEP_AFTER = '5m';
-
-/** The DO stub for a resolved workspace's container. */
-export const sandboxFor = (env: Env, sandboxId: string) =>
-  getSandbox(env.Sandbox, sandboxId, { normalizeId: true, keepAlive: false, sleepAfter: SLEEP_AFTER });
-
-type SandboxStub = ReturnType<typeof getSandbox>;
-
-/** Everything the container's boot needs, resolved here (the Worker holds the secrets)
- *  and handed to the DO as one plain object. The `.env` file goes into the canvas package
- *  — the bridge's cwd — so bun auto-loads it for the bridge and every child, including
- *  web-poc's mounted app (auth secrets). */
-const bootSpec = (env: Env, coords: SandboxCoords): CanvasBootSpec => ({
-  processId: 'canvas',
-  start: START,
-  port: VITE_PORT,
-  previewToken: PREVIEW_TOKEN,
-  envFilePath: `${CANVAS_CONTAINER_CWD}/.env`,
-  envVars: containerEnv(env, coords),
-});
-
-// Concurrent cold requests for the same container share ONE boot (#138). Module-scoped so it
-// collapses the per-page-load stampede (~40 requests) within an isolate; keyed by sandbox id so
-// one workspace's boot never blocks another's. Cleared when the boot settles (see singleFlight).
-const inflightBoot = new Map<string, Promise<void>>();
-
-// Forward a request into the container's vite dev server (which proxies /api -> the
-// bridge) and stream the response back. The one round-trip that's actually needed.
-function proxy(sandbox: SandboxStub, request: Request, sandboxId: string): Promise<Response> {
-  const headers = new Headers(request.headers);
-  headers.set('x-sandbox-preview-proxy', '1');
-  headers.set('x-sandbox-preview-port', String(VITE_PORT));
-  headers.set('x-sandbox-preview-token', PREVIEW_TOKEN);
-  headers.set('x-sandbox-preview-sandbox-id', sandboxId);
-  return sandbox.fetch(new Request(request, { headers }));
-}
-
-// Warm-proxy-first / cold-start-on-miss orchestration for a resolved workspace.
-// Preserved verbatim from the Worker's fetch handler — only keyed by `coords.sandboxId`
-// instead of the constant `'canvas'`.
+/** Serve a resolved workspace's request from wherever its compute lives. */
 export async function serveWorkspace(request: Request, env: Env, coords: SandboxCoords): Promise<Response> {
-  const { sandboxId } = coords;
   const url = new URL(request.url);
   // E2E ONLY (#276): no container exists locally, so the workspace IS the bridge process on a
   // loopback port. Reached only AFTER the gate and the ownership check upstream, so it bypasses
@@ -82,84 +25,24 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
   // shim above: it changes the transport into the workspace and nothing about who
   // is allowed to reach it. Returns null unless the workspace is mapped AND all
   // three credentials are present, so a partial rollout serves from the container.
-  // `staysOnContainer` keeps container-describing routes (/api/buildrev) on the
-  // container even for a self-hosted workspace — see its docstring.
-  const selfHosted = staysOnContainer(url.pathname) ? null : selfHostedTarget(env, coords.canvasWorkspace);
+  const selfHosted = selfHostedTarget(env, coords.canvasWorkspace);
   if (selfHosted) return serveSelfHosted(request, selfHosted, containerEnv(env, coords), coords);
-  if (containerChoice(env) === 'durable') return serveCanvasContainer(request, env, coords);
-  const sandbox = sandboxFor(env, sandboxId);
-  // Warm fast path: the container's been up since a prior request, so the port
-  // is still exposed — just proxy (1 round-trip). The handshake (setEnvVars,
-  // getProcess, waitForPort, exposePort) only matters on a cold start, and
-  // running it on every request added ~4 round-trips (~1s) to every module
-  // fetch and every canvas drag. So skip it here and pay it only on a miss.
-  // Clone up front so the cold-path retry has an UNCONSUMED body: the warm proxy
-  // below does `new Request(request)`, which marks request's body used, so retrying
-  // the same object throws "Cannot reconstruct a Request with a used body" for any
-  // POST/PUT (e.g. a login) that falls through to the cold path. (#preview)
-  // `Request.clone()`'s ambient type carries the CfProperties<Cf> generic in a shape
-  // TS won't re-widen to the bare `Request` that `proxy()` expects — same runtime
-  // object, just re-asserted to the type `request` itself already had.
-  const retryReq = request.clone() as Request;
-  try {
-    const res = await proxy(sandbox, request, sandboxId);
-    // Treating every app 4xx/5xx as not-ready re-proxied each one and turned
-    // failed POSTs into used-body 500s. (#preview) The body is only peeked for a
-    // non-410 4xx/5xx — the 2xx/3xx fast path never touches it.
-    if (res.status < 400) return res;
-    if (res.status !== 410) {
-      const peek = await res.clone().text().catch(() => '');
-      if (decideWarm(res.status, () => peek) === 'serve') return res;
-    }
-  } catch {
-    /* container unreachable — fall through to the cold path */
-  }
-  // Cold path: bring the stack up, (re)expose the port, retry once (with the clone).
-  // Reaching here means the warm proxy reported the container isn't ready — it had
-  // slept or been recycled. This log is the observer-effect-free PROOF of a sleep→wake
-  // cycle: watch for it under `wrangler tail` after an idle window.
-  console.log(`[cold] boot — container asleep/gone, cold-starting ${sandboxId} for ${url.pathname}`);
-  // A stream (EventSource) request must NEVER see a non-SSE error out of the cold
-  // path — that closes the client permanently (no auto-reconnect) and the tab's
-  // canvas sync/presence is dead until a manual refresh. Errors on this path are
-  // transient by construction (the container is booting), so hand streams a
-  // retryable empty event stream instead. Warm-path app responses are untouched.
-  const streamReq = wantsEventStream(request.headers.get('accept'));
-  try {
-    // The boot runs INSIDE the DO (`Sandbox.ensureCanvasStack`, worker/index.ts), which is
-    // where the authoritative lock lives: one DO per sandbox id ⇒ one boot per container
-    // across every isolate, and a boot that survives the cancellation of the request that
-    // asked for it (incident 2026-08-13; canvas-boot.ts has the full account).
-    //
-    // This local single-flight stays in front of it as a cheap collapse, not as the
-    // correctness mechanism: a page load fires ~40 requests at a sleeping container (#138),
-    // and there is no reason to send 40 RPCs to learn the same answer. It is module-scoped,
-    // so it only ever covered THIS isolate — which is exactly why the real lock had to move.
-    await singleFlight(inflightBoot, sandboxId, () => sandbox.ensureCanvasStack(bootSpec(env, coords)));
-    const res = await proxy(sandbox, retryReq, sandboxId);
-    return streamReq && res.status >= 400 ? sseRetryResponse() : res;
-  } catch (e: unknown) {
-    if (streamReq) return sseRetryResponse();
-    return new Response('canvas error:\n' + String((e as Error)?.stack ?? e), { status: 500 });
-  }
+  return serveCanvasContainer(request, env, coords);
 }
 
 /** The workspace's `CanvasContainer` DO (worker/canvas-container.ts), one per sandbox id. */
-const canvasContainerFor = (env: Env, sandboxId: string) => {
-  const ns = env.CanvasContainer;
-  if (!ns) throw new Error('CANVAS_CONTAINER=durable but no CanvasContainer binding');
-  return ns.get(ns.idFromName(sandboxId));
-};
+export const canvasContainerFor = (env: Env, sandboxId: string) =>
+  env.CanvasContainer.get(env.CanvasContainer.idFromName(sandboxId));
 
 // What a deploy does to a DO a request is in the middle of: the request fails, and the next
 // one reaches the new code. Safe to send again only when it has no body.
 const RESET_BY_DEPLOY = 'reset because its code was updated';
 
 /**
- * The container path under the `durable_object` policy. Everything the Sandbox path does
- * around the boot — warm probe, single-flight, lock, retry — lives in the DO now, which is
- * the one place there is exactly one of per container. What stays here is the edge's job:
- * telling the DO which workspace it is, and never handing an EventSource a non-SSE error.
+ * The container path. Everything around the boot — single-flight, lock, readiness, idle
+ * stop — lives in the DO, which is the one place there is exactly one of per container.
+ * What stays here is the edge's job: telling the DO which workspace it is, and never
+ * handing an EventSource a non-SSE error.
  */
 export async function serveCanvasContainer(request: Request, env: Env, coords: SandboxCoords): Promise<Response> {
   const stub = canvasContainerFor(env, coords.sandboxId);

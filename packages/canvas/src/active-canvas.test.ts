@@ -15,7 +15,7 @@ import {
 
 const setPath = (pathname: string) => {
   (globalThis as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL(
-    `https://poc.cedarpad.com${pathname}`,
+    `https://app.cedarpad.com${pathname}`,
   );
 };
 

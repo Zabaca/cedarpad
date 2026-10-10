@@ -4,12 +4,11 @@ import adminAccess from './admin-access'
 
 /**
  * canvas — tldraw canvas + Claude agent (imported from the ceo repo). A Worker
- * gates access (edge Better Auth — ADR-0007) and proxies into a
- * Durable-Object-owned Container running the vite + bridge dev stack. Branded
- * entry host poc.cedarpad.com, declared as a `custom_domain` in the package's
- * wrangler.jsonc (wrangler provisions the DNS record + cert on deploy). Canvas
- * state, the code overlay, and Claude session transcripts persist to R2 bucket
- * `agent-canvas` and restore on boot.
+ * gates access (edge Better Auth — ADR-0007) and proxies into each workspace's
+ * CanvasContainer (a Durable Object on the `durable_object` container policy) running
+ * the vite + bridge dev stack. Entry host app.cedarpad.com, declared as a
+ * `custom_domain` in the package's wrangler.jsonc (wrangler provisions the DNS record +
+ * cert on deploy).
  *
  * The worker NAME stays `agent-canvas` so deploying from here updates the same
  * Cloudflare worker in place (same account 99a1…4372b that owns the cedarpad.com
@@ -35,12 +34,13 @@ import adminAccess from './admin-access'
  *
  * then paste the printed database_id into wrangler.jsonc (top level AND the preview env —
  * named environments inherit nothing). Schema migrations are applied by
- * `scripts/deploy.sh` before each rollout. D1 is the platform data layer's store; the
+ * `scripts/deploy.sh` before each deploy. D1 is the platform data layer's store; the
  * Turso rollback path was retired in #268.
  *
- * No build step: the worker is bundled by wrangler and the container is built from
- * the package's Dockerfile (Docker must be running locally at apply time, on a
- * Workers Paid plan with Containers enabled).
+ * Build: the Shell SPA (`bun run build` → shell/dist, the `assets` directory) runs before
+ * the deploy; wrangler bundles the Worker and builds the container image from the
+ * package's Dockerfile (Docker must be running locally at apply time, on a Workers Paid
+ * plan with Containers enabled).
  */
 export default cloudflareModule.instance({
   // zbc instance id (matches the package + filename). The deployed Cloudflare WORKER
@@ -98,8 +98,9 @@ export default cloudflareModule.instance({
       { name: 'ACCESS_TEAM_DOMAIN', from: 'admin-access', output: 'teamDomain' },
       { name: 'ACCESS_AUD', from: 'admin-access', output: 'aud' },
     ],
-    // Single always-warm DO-bound container; the gradual default never drains it,
-    // so a redeployed image would silently never take effect. Roll immediately.
-    immediateContainerRollout: true,
+    // The Shell SPA build wrangler's `assets` binding uploads. No container rollout flag:
+    // under the `durable_object` policy there are no rollouts — a running container takes
+    // a new image on its next request, through the DO's boot fingerprint.
+    build: { command: 'bun run build' },
   },
 })

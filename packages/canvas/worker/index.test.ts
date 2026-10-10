@@ -11,7 +11,7 @@ import type { SandboxCoords } from './sandbox-resolver.ts';
 // the only paths served ahead of the edge auth gate, and every container-proxying route —
 // now including the Render Pad at `/w/:ws/canvas/:id/pad` (#105) — sits behind it, so an
 // unauthenticated request can never cold-boot a container. We exercise the real handler
-// with only its INTEGRATION seams stubbed: the sandbox proxy, the Better Auth session
+// with only its INTEGRATION seams stubbed: the container proxy, the Better Auth session
 // lookup, and the two D1 ownership lookups. The pure decisions (`decideGate`,
 // `decideCanvasRoute`, `parsePadRoute`) run for real.
 
@@ -27,10 +27,6 @@ let servedAuthorHeaders: Array<string | null> = [];
 let assets: string[] = [];
 let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
 
-mock.module('@cloudflare/sandbox', () => ({
-  Sandbox: class {},
-  getSandbox: () => ({}),
-}));
 mock.module('./sandbox-runtime.ts', () => ({
   serveWorkspace: (req: Request, _env: unknown, coords: SandboxCoords) => {
     served.push(coords);
@@ -42,7 +38,6 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedAuthorHeaders.push(req.headers.get('x-canvas-author'));
     return new Response('pad-html');
   },
-  sandboxFor: () => ({}),
   serveCanvasContainer: () => new Response('container'),
 }));
 mock.module('./auth-gate.ts', () => ({
@@ -122,8 +117,8 @@ const { resolve, DEFAULT_WORKSPACE } = await import('./sandbox-resolver.ts');
 // verbatim, so the browser followed it to `/`, which asked for `/index.html` again, forever).
 const env = {
   BETTER_AUTH_SECRET: 'test-secret-at-least-32-characters-long!!',
-  BETTER_AUTH_URL: 'https://poc.cedarpad.com',
-  WEB_ORIGIN: 'https://poc.cedarpad.com',
+  BETTER_AUTH_URL: 'https://app.cedarpad.com',
+  WEB_ORIGIN: 'https://app.cedarpad.com',
   ASSETS: {
     fetch: (req: Request) => {
       const path = new URL(req.url).pathname;
@@ -133,7 +128,7 @@ const env = {
     },
   },
 } as unknown as Parameters<typeof worker.fetch>[1];
-const GET = (path: string) => worker.fetch(new Request(`https://poc.cedarpad.com${path}`), env);
+const GET = (path: string) => worker.fetch(new Request(`https://app.cedarpad.com${path}`), env);
 
 // #177 dispatch order: OAuth discovery is public at the origin root, and /mcp self-gates
 // on its bearer — an unauthenticated request gets the OAuth 401 challenge, never the login
@@ -150,7 +145,7 @@ describe('inbound MCP dispatch (#177)', () => {
   test('UNAUTHENTICATED /mcp answers the OAuth bearer challenge (401 + WWW-Authenticate), never login, never a container', async () => {
     session = null;
     const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/mcp', {
+      new Request('https://app.cedarpad.com/mcp', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1 }),
@@ -189,7 +184,7 @@ describe('invitations dispatch (#179)', () => {
   test('/api/workspaces/:id/invitations dispatches to the owner-only API behind the gate, never proxied', async () => {
     workspaceRecord = { id: 'ws_abc' }; // a visible record that does NOT carry the caller as owner
     const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/workspaces/ws_abc/invitations', {
+      new Request('https://app.cedarpad.com/api/workspaces/ws_abc/invitations', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ email: 'a@b.co' }),
@@ -207,7 +202,7 @@ describe('record purge dispatch (#364)', () => {
   test('/api/workspaces/:id/records/purge dispatches to the owner-only purge, never proxied', async () => {
     workspaceRecord = { id: 'ws_abc' }; // visible to the caller, but NOT owned by them
     const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/workspaces/ws_abc/records/purge', { method: 'POST' }),
+      new Request('https://app.cedarpad.com/api/workspaces/ws_abc/records/purge', { method: 'POST' }),
       env,
     );
     expect(res.status).toBe(403); // routed + owner-checked, not 404/405/login
@@ -221,7 +216,7 @@ describe('share-links dispatch (#220)', () => {
   test('/api/canvases/:id/share-links dispatches to the edge API (unknown canvas ⇒ its 404), never proxied', async () => {
     canvasRecord = null;
     const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/canvases/cv_ghost/share-links', { method: 'POST' }),
+      new Request('https://app.cedarpad.com/api/canvases/cv_ghost/share-links', { method: 'POST' }),
       env,
     );
     expect(res.status).toBe(404); // the handler's own JSON 404 — routed, not fallthrough-proxied
@@ -263,7 +258,7 @@ describe('guest session gate (#220)', () => {
   });
   const guestFetch = (path: string, init?: RequestInit) =>
     worker.fetch(
-      new Request(`https://poc.cedarpad.com${path}`, {
+      new Request(`https://app.cedarpad.com${path}`, {
         ...init,
         headers: { ...(init?.headers as Record<string, string>), cookie },
       }),
@@ -360,7 +355,7 @@ describe('guest session gate (#220)', () => {
     shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
     served = [];
     const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/w/ws_g/canvas/cv_g/pad', {
+      new Request('https://app.cedarpad.com/w/ws_g/canvas/cv_g/pad', {
         headers: { cookie: `${cookie}x` },
       }),
       env,
@@ -395,7 +390,7 @@ describe('GET / — the Shell SPA, served from ASSETS without waking the contain
 
   test('a workspace selection does not change that — `/` is the shell, not the container', async () => {
     const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/', { headers: { cookie: 'cs_workspace=ws_abc' } }),
+      new Request('https://app.cedarpad.com/', { headers: { cookie: 'cs_workspace=ws_abc' } }),
       env,
     );
 
@@ -440,7 +435,7 @@ describe('GET / — the Shell SPA, served from ASSETS without waking the contain
     workspaceRecord = { id: 'default' };
     served = [];
     const res = await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/components', { headers: { cookie: 'cs_workspace=default' } }),
+      new Request('https://app.cedarpad.com/api/components', { headers: { cookie: 'cs_workspace=default' } }),
       env,
     );
 
@@ -593,7 +588,7 @@ describe('dispatch order regressions', () => {
 
 // ADR-0013 train 2 (#176): the same-origin chat send (the pad's <ChatView>) falls through to
 // this bottom proxy — it must attach the workspace's connected external-MCP tokens.
-const POST = (path: string) => worker.fetch(new Request(`https://poc.cedarpad.com${path}`, { method: 'POST' }), env);
+const POST = (path: string) => worker.fetch(new Request(`https://app.cedarpad.com${path}`, { method: 'POST' }), env);
 
 describe('the same-origin chat send attaches the workspace’s connected MCP tokens (ADR-0013 train 2)', () => {
   test('a connected token attaches x-mcp-tokens to the proxied send', async () => {
@@ -619,7 +614,7 @@ describe('the same-origin chat send attaches the workspace’s connected MCP tok
 // always loses — a member must not be able to aim an agent at a colleague's view.
 describe('the edge owns x-canvas-viewer', () => {
   const SEND = (headers: Record<string, string>) =>
-    worker.fetch(new Request('https://poc.cedarpad.com/api/chat/chat_1/send', { method: 'POST', headers }), env);
+    worker.fetch(new Request('https://app.cedarpad.com/api/chat/chat_1/send', { method: 'POST', headers }), env);
 
   test('a CLIENT-SENT viewer never reaches the container; the edge stamps the gated user instead', async () => {
     servedViewerHeaders = [];
@@ -630,7 +625,7 @@ describe('the edge owns x-canvas-viewer', () => {
   test('a non-send request carries no viewer at all, even when the client supplies one', async () => {
     servedViewerHeaders = [];
     await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/chat/chat_1/transcript', { headers: { 'x-canvas-viewer': 'u_victim' } }),
+      new Request('https://app.cedarpad.com/api/chat/chat_1/transcript', { headers: { 'x-canvas-viewer': 'u_victim' } }),
       env,
     );
     expect(servedViewerHeaders).toEqual([null]);
@@ -643,7 +638,7 @@ describe('the edge owns x-canvas-author', () => {
   test('a member write carries the gated user as author, whatever the client claimed', async () => {
     servedAuthorHeaders = [];
     await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/components/Card', { method: 'PUT', headers: { 'x-canvas-author': 'u_victim' } }),
+      new Request('https://app.cedarpad.com/api/components/Card', { method: 'PUT', headers: { 'x-canvas-author': 'u_victim' } }),
       env,
     );
     expect(servedAuthorHeaders).toEqual(['u_1']);
@@ -652,23 +647,22 @@ describe('the edge owns x-canvas-author', () => {
   test('a read carries no author, even when the client supplies one', async () => {
     servedAuthorHeaders = [];
     await worker.fetch(
-      new Request('https://poc.cedarpad.com/api/chat/chat_1/transcript', { headers: { 'x-canvas-author': 'u_victim' } }),
+      new Request('https://app.cedarpad.com/api/chat/chat_1/transcript', { headers: { 'x-canvas-author': 'u_victim' } }),
       env,
     );
     expect(servedAuthorHeaders).toEqual([null]);
   });
 });
 
-// Domain cutover: poc.cedarpad.com 301s to the canonical origin (WEB_ORIGIN), path+query
-// intact. Dynamic import — a static one would hoist above the mock.module calls and load
-// the real @cloudflare/sandbox.
+// A non-canonical host 301s to the canonical origin (WEB_ORIGIN), path+query intact. Dynamic
+// import — a static one would hoist above the mock.module calls and load the real seams.
 const { canonicalRedirect } = await import('./index.ts');
 
 describe('canonicalRedirect', () => {
   const CANON = 'https://app.cedarpad.com';
 
-  test('legacy host redirects to the same path+query on the canonical origin', () => {
-    const r = canonicalRedirect(new URL('https://poc.cedarpad.com/share/sl_1?x=1'), CANON);
+  test('a non-canonical host redirects to the same path+query on the canonical origin', () => {
+    const r = canonicalRedirect(new URL('https://other.cedarpad.com/share/sl_1?x=1'), CANON);
     expect(r?.status).toBe(301);
     expect(r?.headers.get('location')).toBe('https://app.cedarpad.com/share/sl_1?x=1');
   });
@@ -677,6 +671,6 @@ describe('canonicalRedirect', () => {
     expect(canonicalRedirect(new URL('https://app.cedarpad.com/x'), CANON)).toBeNull();
     expect(canonicalRedirect(new URL('https://agent-canvas-preview.james-99a.workers.dev/x'), CANON)).toBeNull();
     expect(canonicalRedirect(new URL('http://localhost:8787/x'), CANON)).toBeNull();
-    expect(canonicalRedirect(new URL('https://poc.cedarpad.com/x'), undefined)).toBeNull();
+    expect(canonicalRedirect(new URL('https://other.cedarpad.com/x'), undefined)).toBeNull();
   });
 });

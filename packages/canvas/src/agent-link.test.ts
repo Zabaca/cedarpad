@@ -56,7 +56,7 @@ function harness(id: string) {
 }
 
 const setPath = (pathname: string) =>
-  (globalThis as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL(`https://poc.cedarpad.com${pathname}`);
+  (globalThis as unknown as { happyDOM: { setURL(u: string): void } }).happyDOM.setURL(`https://app.cedarpad.com${pathname}`);
 
 // Another test file may have left the shared EventSource open; openStream reuses it.
 beforeEach(() => __closeSharedStreamForTests());

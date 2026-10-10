@@ -9,8 +9,8 @@
 ## Domains (ADR-0014)
 
 **`cedarpad.com`** = the marketing site (`packages/www`, waitlist; signup is
-invitation-only). **`app.cedarpad.com`** = the product (the canvas app worker; graduated
-from `poc.cedarpad.com`, which 301s). **`admin.cedarpad.com`** = the operator surface
+invitation-only). **`app.cedarpad.com`** = the product (the canvas app worker; the
+pre-2026-07-17 `poc.cedarpad.com` was dropped on 2026-10-09). **`admin.cedarpad.com`** = the operator surface
 (ADR-0026): read-only users / workspaces / containers / share links / MCP tokens, behind
 Cloudflare Access (one address) and an Access assertion the Worker verifies itself; no
 transcript viewing. The role-gated waitlist view stays in the app's Settings. Admin UI says
@@ -181,8 +181,11 @@ it is the durability substrate, **not** a read path for display.
 **Runners** (where sessions execute). **Every runner runs the interactive bridge** (the SDK
 chat multiplexer), so every Session is a *chat* — a reply always **resumes the Session as a
 chat turn on its owning runner's bridge**.
-- **Product runtime**: the workspace container (canvas chats). Sleeps aggressively (5m) to
-  bound cost.
+- **Product runtime**: the workspace container (canvas chats) — one `CanvasContainer` DO per
+  workspace on Cloudflare's `durable_object` container policy (no rollouts: a new image
+  reaches a container on its next request), or a self-hosted VM when the workspace is
+  mapped in `SELF_HOSTED_WORKSPACES`. Stops 5m after its last request finishes to bound
+  cost.
 - **Dev-agent** — _retired 2026-10-09_ (ADR-0010/0011 superseded). The canvas never changes
   code: there is no git-token turn, no worktree, no `open_pr`, no Jobs and no cron.
 
@@ -190,5 +193,5 @@ chat turn on its owning runner's bridge**.
 
 ADR-0017 is superseded. There is no Warehouse, Mart, Connector or Materialize Job, and no
 live data source of any kind: a component renders its static `data`, and one that still
-names a mart (or a Notebook query) renders that data. The `Warehouse` container class stays bound
-in `wrangler.jsonc` only until the Cloudflare container migration deletes it.
+names a mart (or a Notebook query) renders that data. The `Warehouse` container class was
+deleted (wrangler migration v6) with the move to the `durable_object` container policy.

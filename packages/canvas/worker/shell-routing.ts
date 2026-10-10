@@ -1,7 +1,7 @@
 import { DEFAULT_WORKSPACE, type ResolvableWorkspace } from './sandbox-resolver.ts';
 
 // The edge Shell's PURE routing/selection decisions (ADR-0007, #46), kept free of any
-// DB or `@cloudflare/sandbox` import so they're unit-testable off a live runtime. The
+// DB or `cloudflare:workers` import so they're unit-testable off a live runtime. The
 // D1 lookup and the Shell HTML / registry API (which DO touch the DB) live in
 // `shell.ts`; those consume the decisions made here.
 

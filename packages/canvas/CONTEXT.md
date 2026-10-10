@@ -5,9 +5,11 @@ by hand; you also chat with an agent that draws on the same canvas and reads wha
 is there. The agent is driven by the **Claude Agent SDK** with a set of custom
 canvas tools. It runs **locally** today (the agent needs an API/subscription
 credential that can't live in the browser, and the component path needs the vite
-dev server as its compiler), so this is not a Vercel deploy. A Cloudflare-container
-deploy that preserves the dev stack is **designed** in [ADR 0001](./docs/decisions/0001-cloudflare-container-deploy.md)
-(not yet built).
+dev server as its compiler), so this is not a Vercel deploy. It deploys to Cloudflare as
+one `CanvasContainer` Durable Object per workspace (`worker/canvas-container.ts`, the
+`durable_object` container policy) running the same dev stack — the shape
+[ADR 0001](./docs/decisions/0001-cloudflare-container-deploy.md) designed, minus the
+rollouts — or to a self-hosted VM for a workspace mapped in `SELF_HOSTED_WORKSPACES`.
 
 ## Workspace, canvas, chat — the containment hierarchy
 
@@ -53,8 +55,8 @@ per-browser `localStorage`. _Avoid_: putting any of this on the `chat` shape.
 **Conversation / Inbox / Workspace events hub** — _retired 2026-10-09_: there is no
 edge-side index of chat sessions, no assignment, no inbox badge and no events hub. A chat is
 its card on a canvas. The `conversations` table and `workspaces.inbox_read_at` were dropped
-in migration 0037; the `WorkspaceEvents` Durable Object class stays bound in
-`wrangler.jsonc` until the Cloudflare container migration deletes it.
+in migration 0037; the `WorkspaceEvents` Durable Object class was deleted (wrangler
+migration v6).
 
 **Open PR** — _retired 2026-10-09_ with the dev agent: nothing opens or merges PRs.
 

@@ -9,7 +9,7 @@
   "compatibility_flags": ["nodejs_compat"],
   // Custom domain on the apex: wrangler provisions the proxied DNS record + TLS cert
   // and binds cedarpad.com to this worker (the zone lives in this account — same
-  // pattern as canvas's poc.cedarpad.com). An existing apex DNS record conflicts;
+  // pattern as canvas's app.cedarpad.com). An existing apex DNS record conflicts;
   // remove it before the first deploy.
   // www is also bound so it resolves (it 522'd otherwise); middleware.ts 301s it to
   // the canonical apex, mirroring poc→app on the app side.
