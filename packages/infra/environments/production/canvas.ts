@@ -1,5 +1,6 @@
 import { cloudflareModule } from '../../../../vendor/zbc/modules/cloudflare'
 import canvasEmail from './canvas-email'
+import adminAccess from './admin-access'
 
 /**
  * canvas — tldraw canvas + Claude agent (imported from the ceo repo). A Worker
@@ -53,7 +54,12 @@ export default cloudflareModule.instance({
   // login after a rollout sends a magic link, and a send from a domain that is not yet
   // enabled is a login outage rather than a degraded feature. The import makes zbc
   // apply canvas-email first instead of leaving the order to whoever runs the deploy.
-  imports: [canvasEmail],
+  //
+  // admin-access is imported for its outputs: the Worker verifies every admin.cedarpad.com
+  // request's Access assertion against that application's team domain and audience tag
+  // (ADR-0026, worker/access-jwt.ts), so both arrive as secrets below rather than being
+  // hand-copied.
+  imports: [canvasEmail, adminAccess],
   config: {
     workdir: 'packages/canvas',
     accountId: '99a19e584439be0568f33aad0477372b',
@@ -86,6 +92,11 @@ export default cloudflareModule.instance({
       'FREDRIN_KEY',
       // One FREDRIN_<LABEL>_KEY per extra Fredrin project → the `fredrin-<label>` connection.
       'FREDRIN_CEDARPAD_KEY',
+      // The admin host's Access application (ADR-0026). Not secret in themselves, but pushed
+      // as secrets (games' railmid.ts does the same) so they persist across deploys that do
+      // not go through zbc: either missing makes admin.cedarpad.com refuse everything.
+      { name: 'ACCESS_TEAM_DOMAIN', from: 'admin-access', output: 'teamDomain' },
+      { name: 'ACCESS_AUD', from: 'admin-access', output: 'aud' },
     ],
     // Single always-warm DO-bound container; the gradual default never drains it,
     // so a redeployed image would silently never take effect. Roll immediately.
