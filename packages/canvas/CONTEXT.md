@@ -797,6 +797,30 @@ and reconnect/resume are the sync protocol's job now, not ours. What remains our
   so it survives panel collapse — hiding the panel mid-huddle leaves a floating card. A
   status overlay shows cedar's live state (listening/thinking/speaking), peers, and captions.
 
+## Analytics (PostHog)
+
+Three places report, all to one PostHog project (US cloud), and each only from production:
+
+- **Marketing site** (`packages/www`, `src/lib/analytics.ts` → `Layout.astro`): pageviews,
+  autocapture and session replay, on `cedarpad.com` / `www.cedarpad.com` only. One event of
+  its own, `waitlist_signup`, with the form's placement and never the address.
+- **App shell** (`shell/src/analytics.ts`): loads only on `app.cedarpad.com` — never on
+  `admin.`, the preview Worker, localhost or a test run. Identifies a member by **user id**,
+  with email and name as person properties; `reset()` on sign-out. A `$pageview` per stage
+  and per canvas opened (`capture_pageview` is off: the canvas stage rewrites its URL with
+  `replaceState`). Session replay with inputs masked. Guest sessions are not identified.
+- **Edge usage events** (`worker/analytics.ts`): `chat_message_sent`, `canvas_created`,
+  `workspace_created`, `component_written` (app writes and the MCP write tools),
+  `mcp_tool_called`, `guest_link_opened`. Sent with `ctx.waitUntil`, never awaited, never
+  throwing; only when the production-only `POSTHOG_KEY` var is set. These count use where
+  ad blockers can't drop it and where the pad iframe hides it from the browser.
+
+**The no-content rule.** An event says who and where — user id, workspace id, canvas id, a
+module or tool name — never what: no chat text, component source, data contents or tokens.
+`captureBody` drops any property outside that vocabulary at runtime. Browser events go
+through zabaca's PostHog proxy (`m.zabaca.com`); edge events go straight to
+`us.i.posthog.com`.
+
 ## Deliberately deferred
 
 - **Interactive components — DONE for controls.** The content has

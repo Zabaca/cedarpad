@@ -28,6 +28,7 @@ import {
 } from './mcp-tools.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import type { Env } from './index.ts';
+import { MCP_WRITE_TOOLS, track } from './analytics.ts';
 import { CANVAS_AUTHOR_HEADER, CANVAS_ID_HEADER, DATA_MAX_BYTES, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
 
 // The inbound MCP server (ADR-0013 train 3, #177): cedarpad's ONLY programmatic surface.
@@ -47,7 +48,7 @@ export function handleOAuthDiscovery(request: Request, env: Env, pathname: strin
 }
 
 /** POST/GET/DELETE /mcp — bearer-authed (never the session cookie), self-gating. */
-export function handleMcp(request: Request, env: Env): Promise<Response> {
+export function handleMcp(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   return withMcpAuth(edgeAuth(env), async (req, session) => {
     // Every issued token carries the human who consented; a token without one (e.g. a
     // client-credentials grant we never enable) acts as no one.
@@ -87,6 +88,22 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
     });
 
     const server = new McpServer({ name: 'cedarpad', version: '1.0.0' });
+    // Usage events (worker/analytics.ts): every tool call counts once, by name, and the three
+    // that write a component or data file count as a write too. Arguments never ride along
+    // beyond the workspace/canvas they address and the module named.
+    const register = server.registerTool.bind(server);
+    server.registerTool = ((name: string, config: unknown, cb: (...args: unknown[]) => unknown) =>
+      register(name, config as never, ((...args: unknown[]) => {
+        const input = (args[0] ?? {}) as { workspace_id?: unknown; canvas_id?: unknown; module?: unknown; name?: unknown };
+        const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+        const where = { workspace_id: str(input.workspace_id), canvas_id: str(input.canvas_id) };
+        track(env, ctx, { event: 'mcp_tool_called', distinctId: session.userId as string, properties: { ...where, tool: name } });
+        if (MCP_WRITE_TOOLS.has(name)) {
+          const module = str(input.module) ?? str(input.name); // a component's module, or a data file's name
+          track(env, ctx, { event: 'component_written', distinctId: session.userId as string, properties: { ...where, module, source: 'mcp' } });
+        }
+        return cb(...args);
+      }) as never)) as typeof server.registerTool;
     server.registerTool(
       'list_workspaces',
       { description: "List the workspaces this connection's user owns or is a member of." },

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ChatView } from '../../shared/ChatView';
 import { setCanvasOverride } from '../../shared/chat-store';
+import { analyticsEnabled, identifyUser, resetAnalytics, startAnalytics, trackPageview } from './analytics';
 import { DOCK_CHAT, parseDockMessage } from '../../shared/dock-messages';
 import {
   DOCK_MEMORY_KEY,
@@ -182,6 +183,22 @@ function MemberShell() {
   // rail's workspace popover needs to mark the current row.
   const registry = useCanvasRegistry();
 
+  // Analytics (shell/src/analytics.ts): only on app.cedarpad.com, so tests, dev and preview
+  // never ask Better Auth who is signed in just to tell PostHog.
+  useEffect(() => {
+    if (!analyticsEnabled(window.location.hostname)) return;
+    void startAnalytics();
+    fetch('/api/auth/get-session', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? (r.json() as Promise<{ user?: { id: string; email?: string; name?: string } } | null>) : null))
+      .then((s) => s?.user && identifyUser(s.user))
+      .catch(() => undefined);
+  }, []);
+  // A pageview per stage; the canvas stage counts its own, one per canvas opened. Both wait
+  // for the workspace id, so a view isn't counted twice while it loads.
+  useEffect(() => {
+    if (stage !== 'canvas' && registry.workspaceId) trackPageview({ stage, workspace_id: registry.workspaceId });
+  }, [stage, registry.workspaceId]);
+
   return (
     <div className="shell">
       <Rail stage={stage} onSelectStage={selectStage} activeWorkspace={registry.workspaceId} />
@@ -229,6 +246,7 @@ function Rail({
       window.alert('Could not sign out — try again.');
       return;
     }
+    resetAnalytics();
     window.location.href = '/';
   };
 
@@ -529,6 +547,9 @@ function CanvasStage({ registry }: { registry: Registry }) {
     const qs = urlWithCanvas(window.location.search, selected);
     window.history.replaceState(null, '', window.location.pathname + qs);
   }, [selected]);
+  useEffect(() => {
+    if (wsId) trackPageview({ stage: 'canvas', canvas_id: selected, workspace_id: wsId });
+  }, [selected, wsId]);
 
   // The `default` workspace's list offers its legacy Default canvas (no registry row) so you
   // can return to it. Canvas ids are global, so offering it anywhere else would open the

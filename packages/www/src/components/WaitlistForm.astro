@@ -9,7 +9,7 @@ interface Props {
 const { id } = Astro.props
 ---
 
-<div class="waitlist" data-waitlist>
+<div class="waitlist" data-waitlist data-placement={id}>
   <form method="POST" action="/api/waitlist" novalidate>
     <label class="sr-only" for={`${id}-email`}>Email</label>
     <input
@@ -176,6 +176,10 @@ const { id } = Astro.props
       form.removeAttribute('aria-busy')
 
       if (outcome === 'joined') {
+        // Counted by where on the page it was sent from — never the address itself. A no-op
+        // where PostHog isn't loaded (src/lib/analytics.ts).
+        const ph = (window as { posthog?: { capture(event: string, props?: object): void } }).posthog
+        ph?.capture('waitlist_signup', { placement: root.dataset.placement })
         // Success replaces the form — it's done; don't leave a dead input around.
         // Move focus with it, or it silently drops to <body>.
         form.hidden = true
