@@ -30,6 +30,7 @@ import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
 import { IS_CHAT_SEND, effectiveMcpTokens, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
+import { proxiedRequestEvent, track } from './analytics.ts';
 import {
   DEFAULT_CANVAS_ID,
   DEFAULT_WORKSPACE_ID,
@@ -127,6 +128,9 @@ export interface Env {
   // admin.cedarpad.com refuses everything (503).
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  // PostHog project key for edge usage events (worker/analytics.ts). Production-only var;
+  // unset (preview, local dev, tests) ⇒ nothing is sent.
+  POSTHOG_KEY?: string;
 }
 
 /** A request on a non-canonical host 301s to the same path+query on the canonical origin
@@ -145,7 +149,7 @@ export function canonicalRedirect(url: URL, webOrigin: string | undefined): Resp
 }
 
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
 
@@ -186,7 +190,7 @@ export default {
       return handleOAuthDiscovery(request, env, url.pathname);
     }
     if (url.pathname === '/mcp') {
-      return handleMcp(request, env);
+      return handleMcp(request, env, ctx);
     }
 
     // The platform RPC (ADR-0018): the container calling back for the two writes that
@@ -253,12 +257,17 @@ export default {
     // and 302s into the app; the gate below learns to accept that cookie (slice 4).
     const shareMatch = /^\/share\/([^/]+)$/.exec(url.pathname);
     if (shareMatch) {
-      return handleShareAccept(
+      const accepted = await handleShareAccept(
         request,
         createDbForWorker(env as unknown as Bindings),
         env.BETTER_AUTH_SECRET ?? '',
         shareMatch[1] as string,
       );
+      // A guest is a link, not somebody: keyed by the link id, with no person profile.
+      if (accepted.status === 302) {
+        track(env, ctx, { event: 'guest_link_opened', distinctId: `share:${shareMatch[1]}`, anonymous: true });
+      }
+      return accepted;
     }
 
     /** Serve `path` out of the static-assets build (shell/dist), preserving method/headers. */
@@ -391,7 +400,12 @@ export default {
 
     // Registry API the launcher calls (owner-OR-member list, admin-only create).
     if (url.pathname === '/api/workspaces') {
-      return handleWorkspacesApi(request, createDbForWorker(env as unknown as Bindings), user);
+      const res = await handleWorkspacesApi(request, createDbForWorker(env as unknown as Bindings), user);
+      if (request.method === 'POST' && res.status === 201) {
+        const made = (await res.clone().json()) as { id: string };
+        track(env, ctx, { event: 'workspace_created', distinctId: user.id, properties: { workspace_id: made.id } });
+      }
+      return res;
     }
 
     // Workspace invitations (#179): owner-only issuance/list/revoke, served at the edge.
@@ -444,7 +458,12 @@ export default {
     // Canvas registry API (Canvas app index), scoped to the active workspace via the
     // cs_workspace cookie. Served at the edge like /api/workspaces — no container woken.
     if (url.pathname === '/api/canvases') {
-      return handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user);
+      const res = await handleCanvasesApi(request, createDbForWorker(env as unknown as Bindings), user);
+      if (request.method === 'POST' && res.status === 201) {
+        const made = (await res.clone().json()) as { id: string };
+        track(env, ctx, { event: 'canvas_created', distinctId: user.id, properties: { canvas_id: made.id } });
+      }
+      return res;
     }
     const canvasApiMatch = /^\/api\/canvases\/([^/]+)$/.exec(url.pathname);
     if (canvasApiMatch) {
@@ -662,6 +681,11 @@ export default {
       proxied = await withMcpTokensHeader(proxied, env, workspaceId);
     }
 
-    return serveWorkspace(proxied, env, coords);
+    const res = await serveWorkspace(proxied, env, coords);
+    const usage = res.ok ? proxiedRequestEvent(request.method, url.pathname, request.headers.get(CANVAS_ID_HEADER)) : null;
+    if (usage) {
+      track(env, ctx, { event: usage.event, distinctId: user.id, properties: { workspace_id: workspaceId, ...usage.properties } });
+    }
+    return res;
   },
 };
