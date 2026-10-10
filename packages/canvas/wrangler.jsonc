@@ -44,11 +44,7 @@
     "WEB_ORIGIN": "https://app.cedarpad.com",
     // Prod is James-only: Better Auth signup is disabled at the edge (dev leaves it
     // open — the var is unset in .dev.vars). See web-poc/worker/auth.ts. (PRD #49 #15)
-    "AUTH_DISABLE_SIGNUP": "true",
-    // The single-tenant owner every `ask_human`/Inbox Conversation gets filed under —
-    // must be this deployment's Better Auth user.id (the platform D1 `user` table), not an
-    // email. Single-tenant-only: revisit when #98 (multi-user) lands.
-    "CANVAS_USER": "2hfe21p0OsrHWQBPgfKhwSH9ZYUK9ajw"
+    "AUTH_DISABLE_SIGNUP": "true"
   },
   // The Shell SPA build (PRD #103). `bun run build` emits shell/dist — the Shell at `/`
   // and its `/assets/*` — and the edge Worker serves it through env.ASSETS after the edge
@@ -183,12 +179,11 @@
         "BETTER_AUTH_URL": "https://agent-canvas-preview.james-99a.workers.dev",
         "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev",
         "AUTH_DISABLE_SIGNUP": "true",
-        // Preview shares production's platform D1 (secrets.yaml is a copy) — same one user
-        // row. D1 admits one writer, with an external write mid-request corrupting
-        // concurrent readers (#276) — this sharing is pre-existing debt (it also shared
-        // Turso before #268), not new. Give preview its own D1 database before using it
-        // for anything real (see canvas.ts).
-        "CANVAS_USER": "2hfe21p0OsrHWQBPgfKhwSH9ZYUK9ajw",
+        // Preview shares production's platform D1 (secrets.yaml is a copy). D1 admits one
+        // writer, with an external write mid-request corrupting concurrent readers (#276) —
+        // this sharing is pre-existing debt (it also shared Turso before #268), not new. Give
+        // preview its own D1 database before using it for anything real (see canvas.ts).
+        //
         // The test bed for the durable_object container (worker/canvas-container.ts): with no
         // SELF_HOSTED_WORKSPACES here, preview's workspaces run on Cloudflare, and this sends
         // them to CanvasContainer instead of the Sandbox. Production leaves it unset.

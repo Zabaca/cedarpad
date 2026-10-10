@@ -17,6 +17,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
+import type { PlatformRpc } from './platform-rpc-client.ts';
 import { loadWebPocEnv, platformRpcFromEnv } from './platform-rpc-env.ts';
 
 // A chat turn's skills come from exactly two areas, each a local plugin the SDK is handed
@@ -72,22 +73,30 @@ export interface SkillRecords {
  * without the Worker, and the unit suite. An explicit state, not a fallback: with no store the
  * filesystem is all there is, exactly as it was before this ADR.
  */
-function containerSkills(): SkillRecords | null {
+const skillsDoor = (() => {
   const env = loadWebPocEnv();
   const rpc = platformRpcFromEnv(env);
-  if (!rpc) return null;
-  // `userId` is ATTRIBUTION — the edge decides permission itself. 'default' is the legacy/prod
-  // workspace id (worker/shell-routing.ts DEFAULT_WORKSPACE_ID).
-  const workspaceId = env.CANVAS_WORKSPACE || 'default';
-  const userId = env.CANVAS_USER || 'default';
+  // 'default' is the legacy/prod workspace id (worker/shell-routing.ts DEFAULT_WORKSPACE_ID).
+  return rpc ? { rpc, workspaceId: env.CANVAS_WORKSPACE || 'default' } : null;
+})();
+
+/** The skill store, attributing writes to `author` — who started the write, or null when that
+ *  is unknown (the same rule as `componentRecordsOver`). `userId` is ATTRIBUTION — the edge
+ *  decides permission itself. */
+export function skillRecordsOver(rpc: PlatformRpc, workspaceId: string, author: string | null): SkillRecords {
   return {
-    write: async (skill, files) => void (await rpc.skillWrite({ workspaceId, userId, skill, files })),
+    write: async (skill, files) => void (await rpc.skillWrite({ workspaceId, userId: author, skill, files })),
     tree: () => rpc.skillList({ workspaceId }),
   };
 }
 
-/** The store this process talks to, resolved once from env. Null = no edge in front of it. */
-export const skillRecordStore = containerSkills();
+/** The env-wired skill store whose writes are attributed to `author`; null with no edge. */
+export function skillRecordsFor(author: string | null): SkillRecords | null {
+  return skillsDoor ? skillRecordsOver(skillsDoor.rpc, skillsDoor.workspaceId, author) : null;
+}
+
+/** The store materialization reads through. Null = no edge in front of this process. */
+export const skillRecordStore = skillRecordsFor(null);
 
 /** Where one skill file renders to, refusing anything that would land outside its skill dir.
  *  The contract's path rules (shared/skills-wire.ts) already rejected these; this is the last

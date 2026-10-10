@@ -12,7 +12,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { readFileSync, rmSync } from 'node:fs';
 
 import { type CanvasImage, parseCanvasImages, runChat } from './agent.ts';
-import { chatHub, handleRequest, onSessionStart, setCanvasRoomOpener, setChatTurnDispatcher } from './bridge.ts';
+import { chatHub, handleRequest, onSessionStart, setAuthoredStores, setCanvasRoomOpener, setChatTurnDispatcher } from './bridge.ts';
 import { createStore } from '../src/store.ts';
 import type { RemoteCanvasStore } from '../src/remote-store.ts';
 
@@ -650,6 +650,101 @@ describe('sendToChat (agent cross-chat messaging)', () => {
       expect(res.ok).toBe(false);
     } finally {
       chatHub.aborters.delete('shape:busy');
+      restore();
+    }
+  });
+});
+
+// Attribution (ADR-0022 decision 4): a container serves every member of its workspace, so a
+// write's author is the edge-stamped x-canvas-author on THAT request — never a fixed id. Each
+// writer route binds its Record store to it; absent (a guest, the voice agent) ⇒ null.
+describe('writer routes attribute to the edge-stamped author', () => {
+  const MOD = `ZzAuthored${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+  const SKILL = `zz-authored-${crypto.randomUUID().slice(0, 8)}`;
+  const componentsRoot = new URL('../src/canvas-default/components/', import.meta.url).pathname;
+  const skillsRoot = new URL('../workspace-skills/skills/', import.meta.url).pathname;
+  let authors: Array<string | null> = [];
+  let restore: () => void = () => {};
+
+  beforeEach(() => {
+    authors = [];
+    // Null stores: the writes land on disk only (no edge in a unit test); what is under test is
+    // which author each route binds its store to.
+    restore = setAuthoredStores({
+      components: (author) => {
+        authors.push(author);
+        return null;
+      },
+      skills: (author) => {
+        authors.push(author);
+        return null;
+      },
+    });
+  });
+  afterEach(() => restore());
+  afterAll(() => {
+    rmSync(`${componentsRoot}${MOD}.tsx`, { force: true });
+    rmSync(`${componentsRoot}${MOD}.json`, { force: true });
+    rmSync(`${skillsRoot}${SKILL}`, { recursive: true, force: true });
+  });
+
+  const write = (method: string, path: string, body: unknown, author?: string) =>
+    handleRequest(
+      new Request(`http://localhost${path}`, {
+        method,
+        headers: { 'content-type': 'application/json', ...(author ? { 'x-canvas-author': author } : {}) },
+        body: JSON.stringify(body),
+      }),
+    );
+
+  test('component PUT and PATCH, data PUT and skill PUT each bind to the author', async () => {
+    expect((await write('PUT', `/api/components/${MOD}`, { source: 'export const v = 1;' }, 'u_jae')).status).toBe(200);
+    expect(
+      (await write('PATCH', `/api/components/${MOD}`, { old_string: 'v = 1', new_string: 'v = 2' }, 'u_kim')).status,
+    ).toBe(200);
+    expect((await write('PUT', `/api/components/data/${MOD}.json`, { source: '{}' }, 'u_lee')).status).toBe(200);
+    expect(
+      (await write('PUT', `/api/skills/${SKILL}`, { files: [{ path: 'SKILL.md', content: '---\nname: t\n---\nb' }] }, 'u_ray')).status,
+    ).toBe(200);
+    expect(authors).toEqual(['u_jae', 'u_kim', 'u_lee', 'u_ray']);
+  });
+
+  test('no author header ⇒ the write is unattributed, never a fixed user', async () => {
+    expect((await write('PUT', `/api/components/${MOD}`, { source: 'export const v = 3;' })).status).toBe(200);
+    expect(authors).toEqual([null]);
+  });
+});
+
+describe('a turn is attributed to whoever started it', () => {
+  test('a chat send carries x-canvas-author into the dispatched turn', async () => {
+    const seen: Array<string | undefined> = [];
+    chatHub.subscribe(fakeSubscriber());
+    const restore = setChatTurnDispatcher((...args) => {
+      seen.push(args[11]);
+    });
+    try {
+      const req = new Request('http://localhost/api/chat/chat_authored/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-canvas-author': 'u_jae' },
+        body: JSON.stringify({ message: 'hi' }),
+      });
+      expect((await handleRequest(req)).status).toBe(202);
+      expect(seen).toEqual(['u_jae']);
+    } finally {
+      restore();
+      chatHub.resetForTests();
+    }
+  });
+
+  test('a turn one chat starts in another keeps the original author', () => {
+    const seen: Array<string | undefined> = [];
+    const restore = setChatTurnDispatcher((...args) => {
+      seen.push(args[11]);
+    });
+    try {
+      expect(sendToChat('shape:other', 'hello', 'cv_route', 'u_jae')).toEqual({ ok: true });
+      expect(seen).toEqual(['u_jae']);
+    } finally {
       restore();
     }
   });

@@ -12,7 +12,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { Shell } from './Shell';
 
 const WORKSPACES = { workspaces: [{ id: 'default', name: 'Default' }, { id: 'ws_abc', name: 'Zabaca' }] };
-const CANVASES = { workspaceId: 'ws_abc', canvases: [{ id: 'cv_1', name: 'Roadmap' }] };
+// ws_abc is not the `default` workspace, so its list carries no synthetic Default row.
+const CANVASES = { workspaceId: 'ws_abc', canvases: [{ id: 'cv_0', name: 'Untitled' }, { id: 'cv_1', name: 'Roadmap' }] };
+/** What /api/canvases answers; a test may swap it (then remount) to scope a different workspace. */
+let canvasesBody: { workspaceId: string; canvases: Array<{ id: string; name: string }> } = CANVASES;
 
 const realFetch = globalThis.fetch;
 let calls: string[] = [];
@@ -43,7 +46,7 @@ function stubEdge() {
       return new Response(null, { status: 204 });
     }
     if (url === '/api/workspaces') return Response.json(WORKSPACES);
-    if (url === '/api/canvases') return Response.json(CANVASES);
+    if (url === '/api/canvases') return Response.json(canvasesBody);
     // Better Auth's session check. The Shell itself already sits behind the edge auth gate,
     // so under the Shell this always resolves.
     if (url.endsWith('/api/auth/get-session')) {
@@ -88,6 +91,7 @@ const byTitle = (title: string) => container.querySelector(`[title="${title}"]`)
 
 beforeEach(async () => {
   calls = [];
+  canvasesBody = CANVASES;
   stubEdge();
   // Give the document a real origin so pushState (relative URL) resolves under happy-dom,
   // whose default document is about:blank (origin null).
@@ -123,10 +127,10 @@ describe('the rail switches stages and reflects the choice in the URL', () => {
 
 // The canvas selector: the same edge-API-only list the container's LeftPanel used to own.
 describe('the canvas stage', () => {
-  test('lists the workspace’s canvases from /api/canvases, with the legacy Default first', () => {
+  test('lists the workspace’s canvases from /api/canvases — no legacy Default outside `default`', () => {
     expect(calls).toContain('GET /api/canvases');
     const names = [...container.querySelectorAll('.page-name')].map((n) => n.textContent);
-    expect(names).toEqual(['Default', 'Roadmap']);
+    expect(names).toEqual(['Untitled', 'Roadmap']);
   });
 
   test('nothing is mounted until a canvas is picked — browsing the shell must not wake the container', () => {
@@ -143,10 +147,26 @@ describe('the canvas stage', () => {
     expect(frame?.getAttribute('sandbox')).toBeNull();
   });
 
-  test('the legacy Default canvas resolves to the default pad URL', async () => {
-    await click([...container.querySelectorAll('.page-row')][0] ?? null);
+  test('the `default` workspace offers its legacy Default canvas first, at the default pad URL', async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    canvasesBody = { workspaceId: 'default', canvases: [{ id: 'cv_1', name: 'Roadmap' }] };
+    await mountShell();
 
-    expect(container.querySelector('iframe')?.getAttribute('src')).toBe('/w/ws_abc/canvas/default/pad');
+    const names = [...container.querySelectorAll('.page-name')].map((n) => n.textContent);
+    expect(names).toEqual(['Default', 'Roadmap']);
+    await click([...container.querySelectorAll('.page-row')][0] ?? null);
+    expect(container.querySelector('iframe')?.getAttribute('src')).toBe('/w/default/canvas/default/pad');
+  });
+
+  test('a ?canvas=default URL outside the `default` workspace is dropped, never opened', async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    window.history.replaceState(null, '', '/?canvas=default');
+    await mountShell();
+
+    await waitFor(() => window.location.search === '');
+    expect(container.querySelector('iframe')).toBeNull();
   });
 });
 
@@ -200,6 +220,36 @@ describe('the workspace popover is backed by /api/workspaces', () => {
     expect(rows.map((r) => r.querySelector('.lp-ws-name')?.textContent)).toEqual(['Default', 'Zabaca', 'Workspace settings…']);
     // /api/canvases reported ws_abc as the active scope.
     expect(rows[1]?.className).toContain('active');
+  });
+});
+
+// Workspace creation is admin-only: the list answers `canCreate`, and only then does the
+// popover offer "New workspace…", which POSTs and lands on the new workspace.
+describe('the workspace popover creates workspaces (admin-only)', () => {
+  test('a non-admin (canCreate false) gets no New workspace row', async () => {
+    await click(container.querySelector('.lp-z'));
+    expect(container.querySelector('.lp-ws-create')).toBeNull();
+  });
+
+  test('an admin names it, it is POSTed, and the shell navigates to it', async () => {
+    (globalThis as { prompt?: () => string | null }).prompt = () => 'Acme';
+    const stubbed = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url === '/api/workspaces' && init?.method === 'POST') {
+        calls.push(`POST ${url} ${String(init.body)}`);
+        return Response.json({ id: 'ws_new', name: 'Acme', canvasId: 'cv_first' }, { status: 201 });
+      }
+      if (url === '/api/workspaces') return Response.json({ ...WORKSPACES, canCreate: true });
+      return stubbed(input as never, init);
+    }) as typeof fetch;
+
+    await click(container.querySelector('.lp-z'));
+    await waitFor(() => container.querySelector('.lp-ws-create') !== null);
+    await click(container.querySelector('.lp-ws-create'));
+
+    expect(calls).toContain('POST /api/workspaces {"name":"Acme"}');
+    expect(window.location.pathname).toBe('/w/ws_new');
   });
 });
 
@@ -399,7 +449,7 @@ describe('the docked chat panel on the canvas stage', () => {
     await post({ type: 'cedarpad:dock-chat', chatId: 'shape:c1', title: 'Fix login' });
 
     // Another canvas has its own (empty) slot…
-    await click([...container.querySelectorAll('.page-row')][0] ?? null); // Default
+    await click([...container.querySelectorAll('.page-row')][0] ?? null); // Untitled
     expect(container.querySelector('.canvas-dock')).toBeNull();
     // …and coming back restores this one's.
     await click([...container.querySelectorAll('.page-row')][1] ?? null); // Roadmap

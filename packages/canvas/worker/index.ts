@@ -46,6 +46,7 @@ import {
 } from './shell-routing.ts';
 import {
   BRIDGE_ROUTES,
+  CANVAS_AUTHOR_HEADER,
   CANVAS_ID_HEADER,
   CANVAS_VIEWER_HEADER,
   GUEST_CANVAS_HEADER,
@@ -153,11 +154,6 @@ export interface Env {
   FREDRIN_KEY?: string;
   // One per extra Fredrin project (named `fredrin-cedarpad` connection); same fallback rules.
   FREDRIN_CEDARPAD_KEY?: string;
-  // The deployment's single Better Auth user.id (NOT an email or display name): who Records
-  // and skills written by the container are attributed to (server/components.ts
-  // `recordAuthor`). Unset ⇒ unattributed. Revisit when #98 (multi-user) lands — a single
-  // static id can't represent "whichever of N users is calling."
-  CANVAS_USER?: string;
   // The www worker's waitlist D1, also bound here for the admin view (ADR-0014).
   // Unset in local dev ⇒ /api/admin/waitlist answers 503.
   WAITLIST?: D1Database;
@@ -391,6 +387,8 @@ export default {
             // DELETED rather than left alone — this path returns before the strip block below,
             // and a guest must not be able to name a member as the target of a page switch.
             guestProxied.headers.delete(CANVAS_VIEWER_HEADER);
+            // Nor an author: a guest's writes are recorded with none, never a forged member's.
+            guestProxied.headers.delete(CANVAS_AUTHOR_HEADER);
             return serveWorkspace(guestProxied, env, coordsForWorkspace(guest.workspaceId));
           }
         }
@@ -432,8 +430,10 @@ export default {
     // null here so the full chrome renders. (The guest branch above answers the scope.)
     if (url.pathname === '/api/guest-session') return Response.json(null);
 
-    // Registry API the launcher calls (owner-OR-member list, owner create).
-    if (url.pathname === '/api/workspaces') return handleWorkspacesApi(request, env, user);
+    // Registry API the launcher calls (owner-OR-member list, admin-only create).
+    if (url.pathname === '/api/workspaces') {
+      return handleWorkspacesApi(request, createDbForWorker(env as unknown as Bindings), user);
+    }
 
     // Workspace invitations (#179): owner-only issuance/list/revoke, served at the edge.
     const invitationsMatch = /^\/api\/workspaces\/([^/]+)\/invitations(?:\/([^/]+))?$/.exec(url.pathname);
@@ -704,9 +704,11 @@ export default {
     // The edge-owned headers below are answers the edge alone writes, so a client-sent copy of
     // any of them must never survive into the container — on ANY request, not only a send.
     // Cloning is skipped entirely when the client sent none (the overwhelmingly common case).
-    const forged = [CANVAS_VIEWER_HEADER];
+    const forged = [CANVAS_VIEWER_HEADER, CANVAS_AUTHOR_HEADER];
+    // A write's author (CANVAS_AUTHOR_HEADER): attribution for the Record it may land.
+    const isWrite = request.method !== 'GET' && request.method !== 'HEAD';
     let proxied = request;
-    if (isChatSend || isCanvasStream || forged.some((h) => request.headers.has(h))) {
+    if (isChatSend || isCanvasStream || isWrite || forged.some((h) => request.headers.has(h))) {
       proxied = new Request(request);
       for (const h of forged) proxied.headers.delete(h);
     }
@@ -715,6 +717,7 @@ export default {
     // identity to a browser, and a send carries the asker's into the turn it starts. Written
     // AFTER the strip above, so the client's own copy is always the one that loses.
     if (isChatSend || isCanvasStream) proxied.headers.set(CANVAS_VIEWER_HEADER, user.id);
+    if (isWrite) proxied.headers.set(CANVAS_AUTHOR_HEADER, user.id);
     if (isChatSend) {
       proxied = await withMcpTokensHeader(proxied, env, workspaceId);
     }

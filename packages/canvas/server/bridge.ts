@@ -24,6 +24,7 @@ import { isLocalhostEdge, loadWebPocEnv } from './platform-rpc-env.ts';
 import { LOCAL_DEV_PLATFORM_SECRET } from '../shared/platform-rpc.ts';
 import {
   BRIDGE_ROUTES,
+  CANVAS_AUTHOR_HEADER,
   CANVAS_ID_HEADER,
   CANVAS_VIEWER_HEADER,
   CreateShapesBody,
@@ -53,12 +54,12 @@ import { TranscriptStore } from './transcript-store.ts';
 import { type CanvasImage, type ChatEvent, createCanvasTools, parseCanvasImages, runChat } from './agent.ts';
 import { MCP_TOKENS_HEADER, McpSelectionSchema, applyMcpSelection, decodeMcpTokens, mcpDisallowedTools } from './mcp-registry.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
-import { editComponent, isShared, listComponentDetails, readComponent, writeComponent, writeDataFile } from './components.ts';
+import { componentRecordsFor, editComponent, isShared, listComponentDetails, readComponent, writeComponent, writeDataFile } from './components.ts';
 import { readGuestCapabilities, type GuestCapabilities } from '../shared/guest-capabilities.ts';
 import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
-import { materializeSkills, writeSkill } from './skills.ts';
+import { materializeSkills, skillRecordsFor, writeSkill } from './skills.ts';
 import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
 import { createHuddleSupervisor } from './huddle-supervisor.ts';
 
@@ -102,7 +103,11 @@ const webPocEnv = loadWebPocEnv();
 // content: the tarballs went with their sinks in #366 and Components, data files and skills
 // are Records in D1. What is left here is chat meta and per-session transcripts.
 const WORKSPACE = process.env.CANVAS_WORKSPACE ?? 'default';
-const DEFAULT_CANVAS_ID = process.env.CANVAS_ID ?? 'default';
+// The canvas a request that names none falls back to: the legacy row-less `default` canvas,
+// and ONLY in the `default` workspace. Canvas ids are global and the container's room
+// credential reaches any room, so in any other workspace a missing id must fail, never land
+// quietly in the `default` workspace's room.
+const DEFAULT_CANVAS_ID: string | null = process.env.CANVAS_ID ?? (WORKSPACE === 'default' ? 'default' : null);
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
 // Capture the raw backend too: the transcript backup/restore keys blobs by sessionId
 // (transcript-store), so it needs the low-level get/put seam, not BlobStore's canvas API.
@@ -114,9 +119,30 @@ const blobStore = new BlobStore(blobBackend);
 // SSE broadcast are gone; a canvas's document lives in its room. The browser still selects
 // a canvas via the `x-canvas-id` header (or `?canvas=`); absent → the default.
 const screenshotChannels = createScreenshotChannels();
-function canvasIdFrom(req: Request, url: URL): string {
-  return req.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas') ?? DEFAULT_CANVAS_ID;
+/** A request that names no canvas, in a workspace with no fallback canvas (400). */
+export class NoCanvasError extends Error {
+  constructor() {
+    super(`no canvas named (x-canvas-id or ?canvas=) — workspace "${WORKSPACE}" has no default canvas`);
+  }
 }
+function canvasIdFrom(req: Request, url: URL): string {
+  const canvasId = req.headers.get(CANVAS_ID_HEADER) ?? url.searchParams.get('canvas') ?? DEFAULT_CANVAS_ID;
+  if (!canvasId) throw new NoCanvasError();
+  return canvasId;
+}
+
+// Who a write is by (CANVAS_AUTHOR_HEADER, edge-stamped): each writer route binds its Record
+// store to that user, so the version row names who made the change. Absent ⇒ null — a guest or
+// the voice agent — never a fixed id. Indirected so a test can watch the author arrive.
+let authoredStores = { components: componentRecordsFor, skills: skillRecordsFor };
+export function setAuthoredStores(next: typeof authoredStores): () => void {
+  const prev = authoredStores;
+  authoredStores = next;
+  return () => {
+    authoredStores = prev;
+  };
+}
+const authorOf = (req: Request): string | null => req.headers.get(CANVAS_AUTHOR_HEADER);
 
 /**
  * The bridge's view of a guest (#320): the capabilities the EDGE decided, from the one
@@ -309,14 +335,14 @@ function chatStream(guestCanvas?: string): Response {
         } catch {
           clearInterval(ping);
           chatHub.unsubscribe(controller);
-          console.log(`[clients] chat ping dead-controller -> chat=${chatHub.subscriberCount()} canvas(default)=${screenshotChannels.get(DEFAULT_CANVAS_ID).clients.size}`);
+          console.log(`[clients] chat ping dead-controller -> chat=${chatHub.subscriberCount()} canvas(default)=${DEFAULT_CANVAS_ID ? screenshotChannels.get(DEFAULT_CANVAS_ID).clients.size : 0}`);
         }
       }, 15000);
     },
     cancel() {
       clearInterval(ping);
       chatHub.unsubscribe(self);
-      console.log(`[clients] chat stream cancel -> chat=${chatHub.subscriberCount()} canvas(default)=${screenshotChannels.get(DEFAULT_CANVAS_ID).clients.size}`);
+      console.log(`[clients] chat stream cancel -> chat=${chatHub.subscriberCount()} canvas(default)=${DEFAULT_CANVAS_ID ? screenshotChannels.get(DEFAULT_CANVAS_ID).clients.size : 0}`);
     },
   });
   return new Response(stream, {
@@ -412,13 +438,13 @@ const turnDeps: TurnDeps = {
  * concerns (subscriber gate, guest gates: an agent-initiated send is member-context by
  * construction). One turn per chat still holds: an in-flight target refuses delivery.
  * Exported for tests (paired with setChatTurnDispatcher). */
-export function sendToChat(targetChatId: string, message: string, canvasId?: string): { ok: true } | { ok: false; error: string } {
+export function sendToChat(targetChatId: string, message: string, canvasId?: string, author?: string | null): { ok: true } | { ok: false; error: string } {
   if (chatHub.busy(targetChatId)) return { ok: false, error: 'that chat has a turn in flight — try again after it settles' };
   const meta = chatMeta.get(targetChatId);
   const effort = meta.effort && meta.effort !== 'default' ? meta.effort : undefined;
   // The SENDER's canvas routes the turn (the target card was validated against that store);
   // the recycled-away hub canvas binding is the fallback, not the source of truth.
-  dispatchChatTurn(targetChatId, message, meta.sessionId, [], meta.model, false, effort, canvasId ?? chatHub.canvasOf(targetChatId));
+  dispatchChatTurn(targetChatId, message, meta.sessionId, [], meta.model, false, effort, canvasId ?? chatHub.canvasOf(targetChatId), undefined, undefined, undefined, author ?? undefined);
   return { ok: true };
 }
 
@@ -506,8 +532,8 @@ export function setTurnRunChat(fn: TurnDeps['runChat']): () => void {
  * The turn runs against the session for `requestCanvasId` (the request's active canvas, #79)
  * so the agent reads/draws on the canvas the human is on; absent ⇒ the default store.
  * The lifecycle itself lives in `server/turn.ts`. */
-function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, mcpTokens?: Record<string, string>, mcpDisallowed?: string[], viewer?: string): void {
-  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, mcpTokens, mcpDisallowedTools: mcpDisallowed, viewer }, turnDeps);
+function runChatTurn(chatId: string, message: string, sessionId: string | null, images: CanvasImage[], model?: string, forkSession?: boolean, effort?: string, requestCanvasId?: string, mcpTokens?: Record<string, string>, mcpDisallowed?: string[], viewer?: string, author?: string): void {
+  runTurn({ chatId, message, sessionId, images, model, forkSession, effort, canvasId: requestCanvasId, mcpTokens, mcpDisallowedTools: mcpDisallowed, viewer, author }, turnDeps);
 }
 
 // Test seam: the turn dispatcher is indirected so a test can substitute a spy and
@@ -754,7 +780,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const module = typeof body.module === 'string' ? body.module : '';
       return inRoom(canvasId, async (store) => ({
         ok: true,
-        reloaded: await promoteToShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store))),
+        reloaded: await promoteToShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store)), authoredStores.components(authorOf(req))),
       }));
     }
     if (path === '/api/components/adopt' && req.method === 'POST') {
@@ -763,7 +789,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const module = typeof body.module === 'string' ? body.module : '';
       return inRoom(canvasId, async (store) => ({
         ok: true,
-        reloaded: await adoptFromShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store))),
+        reloaded: await adoptFromShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store)), authoredStores.components(authorOf(req))),
       }));
     }
 
@@ -818,7 +844,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       // The file lands (and persists) first; the hot-reload bump then goes to the ROOM, so an
       // unreachable room costs the reload, never the authored source.
       try {
-        await writeDataFile(name, parsed.data.source, canvasId);
+        await writeDataFile(name, parsed.data.source, canvasId, authoredStores.components(authorOf(req)));
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
@@ -845,7 +871,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const parsed = WriteComponentBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
       try {
-        await writeComponent(module, parsed.data.source, canvasId);
+        await writeComponent(module, parsed.data.source, canvasId, authoredStores.components(authorOf(req)));
       } catch (e) {
         return json({ error: (e as Error).message }, 400);
       }
@@ -867,7 +893,14 @@ export async function handleRequest(req: Request): Promise<Response> {
       const parsed = EditComponentBody.safeParse(await readBody(req));
       if (!parsed.success) return json({ error: wireError(parsed.error) }, 400);
       try {
-        await editComponent(module, parsed.data.old_string, parsed.data.new_string, canvasId, parsed.data.replace_all);
+        await editComponent(
+          module,
+          parsed.data.old_string,
+          parsed.data.new_string,
+          canvasId,
+          parsed.data.replace_all,
+          authoredStores.components(authorOf(req)),
+        );
       } catch (e) {
         // A missing or ambiguous anchor is the caller's mistake and its message says what to
         // do next, so it travels as a 400 rather than being flattened into a 500.
@@ -895,7 +928,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       if (!name.success || !body.success) return json({ error: 'invalid skill upload' }, 400);
       // The belt-and-braces resolve check that used to sit here moved into `writeSkill`, which
       // is where a path becomes a filesystem location — materialization needs the same guard.
-      await writeSkill(name.data, body.data.files);
+      await writeSkill(name.data, body.data.files, authoredStores.skills(authorOf(req)));
       return json({ ok: true, skill: name.data, files: body.data.files.length });
     }
     const chatRoute = /^\/api\/chat\/([^/]+)\/send$/.exec(path);
@@ -969,6 +1002,9 @@ export async function handleRequest(req: Request): Promise<Response> {
         // subscriber against. Explicit rather than incidental — it must stay undefined
         // even if the edge later learns to stamp something for guests.
         guestCanvas ? undefined : viewer,
+        // Who this turn is by, for the Records it lands. A guest send has no author: the edge
+        // strips the header for guests, and this keeps it so even if that ever changed.
+        guestCanvas ? undefined : (authorOf(req) ?? undefined),
       );
       return json({ ok: true }, 202);
     }
@@ -1102,6 +1138,11 @@ if (import.meta.main) {
     idleTimeout: 0, // SSE streams must not be reaped
     maxRequestBodySize: 2 * 1024 * 1024 * 1024, // 2GB: avatar-capture clips can be large
     fetch: handleRequest,
+    error: (e) => {
+      if (e instanceof NoCanvasError) return Response.json({ error: e.message }, { status: 400 });
+      console.error('[bridge] unhandled', e);
+      return new Response('Internal Server Error', { status: 500 });
+    },
   });
   console.log(`[bridge] canvas + agent on http://localhost:${server.port}`);
 }

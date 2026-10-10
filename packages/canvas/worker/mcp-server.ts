@@ -28,7 +28,7 @@ import {
 } from './mcp-tools.ts';
 import { serveWorkspace } from './sandbox-runtime.ts';
 import type { Env } from './index.ts';
-import { CANVAS_ID_HEADER, DATA_MAX_BYTES, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
+import { CANVAS_AUTHOR_HEADER, CANVAS_ID_HEADER, DATA_MAX_BYTES, HEADLESS_SEND_HEADER } from '../shared/bridge-wire.ts';
 
 // The inbound MCP server (ADR-0013 train 3, #177): cedarpad's ONLY programmatic surface.
 // Edge-hosted, stateless per request (workers isolate), OAuth on Better Auth — the bearer
@@ -62,7 +62,8 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
       proxySkill: (workspaceId, name, input) => {
         const target = new Request(`${new URL(req.url).origin}/api/skills/${encodeURIComponent(name)}`, {
           method: 'PUT',
-          headers: { 'content-type': 'application/json' },
+          // The OAuth token's user wrote this skill — attribution only (CANVAS_AUTHOR_HEADER).
+          headers: { 'content-type': 'application/json', [CANVAS_AUTHOR_HEADER]: session.userId },
           body: JSON.stringify(input),
         });
         return serveWorkspace(target, env, coordsForWorkspace(workspaceId));
@@ -75,6 +76,9 @@ export function handleMcp(request: Request, env: Env): Promise<Response> {
           headers: {
             ...(init?.body !== undefined ? { 'content-type': 'application/json' } : {}),
             ...(init?.headers ?? {}),
+            // Edge-built, so the edge's own word: the OAuth token's user is the author of any
+            // Record this call lands (attribution only — CANVAS_AUTHOR_HEADER).
+            [CANVAS_AUTHOR_HEADER]: session.userId,
           },
           ...(init?.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
         });

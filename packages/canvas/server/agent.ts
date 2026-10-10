@@ -27,7 +27,7 @@ import {
   setComponentDataOp,
   updateShapesOp,
 } from '../src/canvas-ops.ts';
-import { componentHistory, editComponent, isShared, listComponents, readComponent, restoreComponent, writeComponent, writeDataFile } from './components.ts';
+import { componentHistory, componentRecordsFor, editComponent, isShared, listComponents, readComponent, restoreComponent, writeComponent, writeDataFile } from './components.ts';
 import { adoptFromShared, promoteToShared } from './component-share-ops.ts';
 import { callComponent } from './component-commands.ts';
 import { type TurnAccum, classifySdkMessage } from './classify.ts';
@@ -35,7 +35,7 @@ import { type McpRegistryEntry, MCP_REGISTRY, resolveMcpEntry } from './mcp-regi
 import type { TurnCanvasStore } from './turn-canvas-store.ts';
 import type { ChatEvent } from '../shared/chat-wire.ts';
 import type { ComponentVersion } from '../shared/platform-rpc.ts';
-import { chatSkillSources, writeSkill } from './skills.ts';
+import { chatSkillSources, skillRecordsFor, writeSkill } from './skills.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
 
 const MODEL = process.env.CANVAS_MODEL ?? 'haiku';
@@ -95,7 +95,7 @@ export type BumpShared = (module: string) => number;
  * Posts a message into ANOTHER chat card's thread and kicks its turn, fire-and-forget (the
  * reply streams into that card; the sender polls read_canvas/read_connected). Present ⇒ the
  * agent gets a `send_message` tool; absent (tests, non-bridge contexts) ⇒ omitted. */
-export type SendToChat = (targetChatId: string, message: string, canvasId?: string) => { ok: true } | { ok: false; error: string };
+export type SendToChat = (targetChatId: string, message: string, canvasId?: string, author?: string | null) => { ok: true } | { ok: false; error: string };
 
 /**
  * The `select_page` tool body (bridge binds it — it holds the canvas's SSE subscribers).
@@ -239,7 +239,7 @@ const isTurnStore = (s: CanvasStore): s is TurnCanvasStore => typeof (s as TurnC
  * tools are what most need it: the next `read_canvas` then answers from a mirror taken after the
  * previous tool call, which is how a human's mid-turn edit becomes visible to the agent.
  */
-export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
+export function createCanvasTools(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage, author: string | null = null) {
   const settle = <T extends { handler: (args: never, extra: never) => Promise<{ isError?: boolean }> }>(def: T): T => {
     if (!isTurnStore(store)) return def;
     const inner = def.handler;
@@ -260,18 +260,24 @@ export function createCanvasTools(store: CanvasStore, captureView?: CaptureView,
       },
     };
   };
-  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, sendToChat, fetchAsset, selectPage).map(settle);
+  return createCanvasToolDefs(store, captureView, originChatId, canvasId, bumpShared, sendToChat, fetchAsset, selectPage, author).map(settle);
 }
 
-export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
+export function createCanvasMcpServer(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage, author: string | null = null) {
   return createSdkMcpServer({
     name: 'canvas',
     version: '0.1.0',
-    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, sendToChat, fetchAsset, selectPage),
+    tools: createCanvasTools(store, captureView, originChatId, canvasId, bumpShared, sendToChat, fetchAsset, selectPage, author),
   });
 }
 
-function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage) {
+// `author`: who started this turn, so every Record its tools land names them (ADR-0022
+// decision 4). Null when the turn has no identifiable initiator (a guest send).
+function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, originChatId?: string, canvasId: string = 'default', bumpShared?: BumpShared, sendToChat?: SendToChat, fetchAsset?: FetchAsset, selectPage?: SelectPage, author: string | null = null) {
+  const records = componentRecordsFor(author);
+  const skills = skillRecordsFor(author);
+  // A turn this one starts in another chat card is still this author's doing.
+  const sendAsAuthor: SendToChat | undefined = sendToChat && ((t, m, c) => sendToChat(t, m, c, author));
   // After authoring a module: reload every placed instance so the open canvas re-imports it.
   // A SHARED module additionally reloads sibling canvases that placed it (workspace-wide
   // propagation); an own module reloads only this canvas (behavior-preserving).
@@ -400,7 +406,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         },
         async ({ module, version }) => {
           try {
-            const rev = await restoreComponent(module, version, canvasId);
+            const rev = await restoreComponent(module, version, canvasId, records);
             reloadAfterAuthor(module);
             return result({ text: formatComponentRestore(module, version, rev) });
           } catch (e) {
@@ -420,7 +426,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         },
         async ({ module, source }) => {
           try {
-            await writeComponent(module, source, canvasId);
+            await writeComponent(module, source, canvasId, records);
             const reloaded = await reloadAfterAuthor(module);
             return result({ text: `Wrote ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s)/canvas(es))` : ''}.` });
           } catch (e) {
@@ -439,7 +445,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         },
         async ({ module, old_string, new_string, replace_all }) => {
           try {
-            await editComponent(module, old_string, new_string, canvasId, replace_all);
+            await editComponent(module, old_string, new_string, canvasId, replace_all, records);
             const reloaded = await reloadAfterAuthor(module);
             return result({ text: `Edited ${module}.tsx${reloaded ? ` (reloaded ${reloaded} placed instance(s)/canvas(es))` : ''}.` });
           } catch (e) {
@@ -456,7 +462,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         },
         async ({ name, source }) => {
           try {
-            await writeDataFile(name, source, canvasId);
+            await writeDataFile(name, source, canvasId, records);
             // Blunt bump (same as write_component): we can't cheaply know which modules
             // import this file, so reload every placed instance on this canvas.
             const reloaded = bumpAllComponents(store, nextComponentRev(store));
@@ -475,7 +481,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
             .array(z.object({ path: z.string().describe('Relative path, e.g. "SKILL.md" or "templates/report.md".'), content: z.string() }))
             .describe('The files, including SKILL.md.'),
         },
-        async ({ name, files }) => result(await writeSkillOp(name, files)),
+        async ({ name, files }) => result(await writeSkillOp(name, files, (skill, f) => writeSkill(skill, f, skills))),
       ),
       tool(
         'promote_component',
@@ -483,7 +489,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         { module: z.string().describe('Component name to promote (no extension).') },
         async ({ module }) => {
           try {
-            const canvases = await promoteToShared(canvasId, module, () => (bumpShared ? bumpShared(module) : bumpAllComponents(store, nextComponentRev(store)) && 1));
+            const canvases = await promoteToShared(canvasId, module, () => (bumpShared ? bumpShared(module) : bumpAllComponents(store, nextComponentRev(store)) && 1), records);
             return result({ text: `Promoted ${module}.tsx to the shared library${canvases ? ` (reloaded ${canvases} canvas(es) that placed it)` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
@@ -496,7 +502,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
         { module: z.string().describe('Shared component name to copy into this canvas (no extension).') },
         async ({ module }) => {
           try {
-            const reloaded = await adoptFromShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store)));
+            const reloaded = await adoptFromShared(canvasId, module, () => bumpAllComponents(store, nextComponentRev(store)), records);
             return result({ text: `Copied shared ${module}.tsx into this canvas${reloaded ? ` (reloaded ${reloaded} placed instance(s))` : ''}.` });
           } catch (e) {
             return result({ text: `Error: ${(e as Error).message}`, isError: true });
@@ -554,7 +560,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
       // + the turn dispatcher). Mirrors the edge MCP's send_message, scoped to chat cards on
       // THIS canvas. Fire-and-forget; the origin chat is stamped into the delivered message so
       // the receiving thread knows who is speaking.
-      ...(sendToChat
+      ...(sendAsAuthor
         ? [
             tool(
               'send_message',
@@ -563,7 +569,7 @@ function createCanvasToolDefs(store: CanvasStore, captureView?: CaptureView, ori
                 chat_id: z.string().describe("The target chat card's shape id (see read_canvas / read_connected)."),
                 message: z.string().min(1).describe('The message to post into that chat.'),
               },
-              async ({ chat_id, message }) => result({ text: sendMessageOp(store, sendToChat, { chat_id, message }, originChatId, canvasId) }),
+              async ({ chat_id, message }) => result({ text: sendMessageOp(store, sendAsAuthor, { chat_id, message }, originChatId, canvasId) }),
             ),
           ]
         : []),
@@ -700,10 +706,13 @@ export async function* runChat(
   // closed over the turn's initiator). Present ⇒ the agent gets `select_page` and can move the
   // person it is talking to. Absent ⇒ omitted — never a broadcast fallback.
   selectPage?: SelectPage,
+  // Who started this turn (the edge-stamped author of the send), for the Records its tools
+  // land. Null when unknown — a guest send.
+  author: string | null = null,
 ): AsyncGenerator<ChatEvent> {
   // acc tracks the (possibly newly-assigned) sessionId across the turn.
   let acc: TurnAccum = { sessionId, costUsd: 0 };
-  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, sendToChat, fetchAsset, selectPage);
+  const canvas = createCanvasMcpServer(store, captureView, originChatId, canvasId, bumpShared, sendToChat, fetchAsset, selectPage, author);
 
   const fullOptions = {
     systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: CANVAS_APPEND },

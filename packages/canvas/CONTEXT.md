@@ -249,14 +249,15 @@ a soft-deleted Component is the same one operation, not a second verb to discove
 that does not exist is a 404 and writes nothing; the restore is attributed to whoever
 performed it, not to the author of the text it brought back.
 
-_Attribution today is the container's identity, not the turn's human._ A Record write is
-stamped with `CANVAS_USER` — this deployment's single Better Auth `user.id` — so it answers
-"which workspace container" and cannot yet distinguish two members of a workspace (the
-`Env.CANVAS_USER` doc comment says the same thing: "a single static id can't represent
-whichever of N users is calling"). Unset ⇒ **null**, never a `'default'` placeholder: a
-version row is the permanent answer to "who changed this", and a name no user query will
-ever match is a history that *looks* attributed and is not. Per-turn attribution needs an
-edge-attested initiator threaded to the authoring tools; it is not built. The **backfill** (#365) writes with **no** author for the
+_Attribution is per request: the human who started the write._ The edge stamps
+`x-canvas-author` (the gated `user.id`) on every member write and on the MCP proxy's
+synthetic calls (the OAuth token's user), and strips any client-sent copy. A direct write
+binds its Record store to that author; a chat send carries it into the turn, whose authoring
+tools write as it — and a turn one chat card starts in another keeps it. Unknown — a guest,
+the voice agent — is **null**, never a fixed id or a `'default'` placeholder: a version row is
+the permanent answer to "who changed this", and a name no user query will ever match is a
+history that *looks* attributed and is not. The container is handed no user identity at all.
+The **backfill** (#365) writes with **no** author for the
 same reason: a migration is not a person, and a synthetic id in a column typed as a user id
 would be exactly the history that looks attributed and is not. Its provenance is the version
 row itself — v1, stamped at the time the backfill ran.

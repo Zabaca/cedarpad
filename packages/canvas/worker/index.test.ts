@@ -23,6 +23,7 @@ let servedReqs: Array<{ path: string; method: string }> = [];
 let servedMcpTokenHeaders: Array<string | null> = [];
 let servedGuestCanvasHeaders: Array<string | null> = [];
 let servedViewerHeaders: Array<string | null> = [];
+let servedAuthorHeaders: Array<string | null> = [];
 let assets: string[] = [];
 let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
 
@@ -38,6 +39,7 @@ mock.module('./sandbox-runtime.ts', () => ({
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
     servedGuestCanvasHeaders.push(req.headers.get('x-guest-canvas'));
     servedViewerHeaders.push(req.headers.get('x-canvas-viewer'));
+    servedAuthorHeaders.push(req.headers.get('x-canvas-author'));
     return new Response('pad-html');
   },
   sandboxFor: () => ({}),
@@ -289,6 +291,15 @@ describe('guest session gate (#220)', () => {
     servedViewerHeaders = [];
     await guestFetch('/w/ws_g/canvas/cv_g/pad', { headers: { 'x-canvas-viewer': 'u_member' } });
     expect(servedViewerHeaders).toEqual([null]);
+  });
+
+  // Nor an author: a guest's writes are recorded with none, never credited to a member.
+  test('a guest cannot forge x-canvas-author: the edge deletes it on the way in', async () => {
+    session = null;
+    shareLinkRow = { id: 'sl_live', canvasId: 'cv_g' };
+    servedAuthorHeaders = [];
+    await guestFetch('/w/ws_g/canvas/cv_g/pad', { headers: { 'x-canvas-author': 'u_member' } });
+    expect(servedAuthorHeaders).toEqual([null]);
   });
 
   test('the Shell SPA serves in guest mode; canvas API proxies only when addressed to the guest canvas', async () => {
@@ -623,6 +634,28 @@ describe('the edge owns x-canvas-viewer', () => {
       env,
     );
     expect(servedViewerHeaders).toEqual([null]);
+  });
+});
+
+// x-canvas-author is who a write is BY (attribution for the Record it lands). The edge is its
+// only writer: stamped on every member write, and a client-sent value always loses.
+describe('the edge owns x-canvas-author', () => {
+  test('a member write carries the gated user as author, whatever the client claimed', async () => {
+    servedAuthorHeaders = [];
+    await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/components/Card', { method: 'PUT', headers: { 'x-canvas-author': 'u_victim' } }),
+      env,
+    );
+    expect(servedAuthorHeaders).toEqual(['u_1']);
+  });
+
+  test('a read carries no author, even when the client supplies one', async () => {
+    servedAuthorHeaders = [];
+    await worker.fetch(
+      new Request('https://poc.cedarpad.com/api/chat/chat_1/transcript', { headers: { 'x-canvas-author': 'u_victim' } }),
+      env,
+    );
+    expect(servedAuthorHeaders).toEqual([null]);
   });
 });
 

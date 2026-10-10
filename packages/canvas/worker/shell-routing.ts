@@ -117,9 +117,12 @@ export function decideCanvasRoute(
   canvasRecord: { workspaceId: string } | null,
 ): CanvasRouteDecision {
   if (!workspaceRecord) return { decision: 'not-found' };
-  // The legacy `default` canvas has no registry row (like the default workspace); it is
-  // always selectable within a servable workspace so the index can switch back to it.
-  if (canvasId === DEFAULT_CANVAS_ID) return { decision: 'select', workspaceId, canvasId };
+  // The legacy `default` canvas has no registry row; it belongs to the `default` workspace
+  // and is selectable only there. Canvas ids are global (the sync room is keyed by the id
+  // alone), so selecting it in any other workspace would open the default workspace's room.
+  if (canvasId === DEFAULT_CANVAS_ID) {
+    return workspaceId === DEFAULT_WORKSPACE_ID ? { decision: 'select', workspaceId, canvasId } : { decision: 'not-found' };
+  }
   if (canvasRecord && canvasRecord.workspaceId === workspaceId) {
     return { decision: 'select', workspaceId, canvasId };
   }

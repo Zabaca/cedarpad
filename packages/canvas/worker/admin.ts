@@ -13,6 +13,12 @@ export interface WaitlistDb {
   prepare(sql: string): { all(): Promise<{ results: unknown[] }> };
 }
 
+/** Whether this user holds the Better Auth admin role (assigned by data update only). */
+export async function isAdmin(database: Database, userId: string): Promise<boolean> {
+  const [row] = await database.select({ role: user.role }).from(user).where(eq(user.id, userId)).limit(1);
+  return row?.role === 'admin';
+}
+
 /**
  * /api/admin/waitlist
  *   GET → { entries: [{ email, createdAt }] } newest first — role=admin only (403).
@@ -24,8 +30,7 @@ export async function handleAdminApi(
   gateUser: GateUser,
   waitlist: WaitlistDb | undefined,
 ): Promise<Response> {
-  const [row] = await database.select({ role: user.role }).from(user).where(eq(user.id, gateUser.id)).limit(1);
-  if (row?.role !== 'admin') return Response.json({ error: 'admin only' }, { status: 403 });
+  if (!(await isAdmin(database, gateUser.id))) return Response.json({ error: 'admin only' }, { status: 403 });
 
   if (request.method !== 'GET') return new Response('method not allowed', { status: 405 });
   if (!waitlist) return Response.json({ error: 'waitlist database not bound' }, { status: 503 });

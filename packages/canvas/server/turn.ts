@@ -25,7 +25,7 @@ export interface TurnInput {
   forkSession?: boolean;
   effort?: string;
   /** The EXPLICITLY addressed canvas (the pad's x-canvas-id / ?canvas). Absent ⇒ the turn
-   * routes to `deps.defaultCanvasId`. */
+   * routes to `deps.defaultCanvasId`, which only the `default` workspace has. */
   canvasId?: string;
   /** ADR-0013 train 2 (#176): the workspace's connected external-MCP tokens, decoded from the
    * proxied `x-mcp-tokens` header. */
@@ -39,6 +39,9 @@ export interface TurnInput {
    * and must never gate a capability (see CANVAS_VIEWER_HEADER). Absent on a guest send or a
    * headless send ⇒ `select_page` is not offered at all. */
   viewer?: string;
+  /** WHO THIS TURN IS BY, from the edge-stamped x-canvas-author — the Records its tools land
+   *  are attributed to them. ATTRIBUTION ONLY. Absent (a guest send) ⇒ unattributed writes. */
+  author?: string | null;
 }
 
 /** The stable collaborators a turn sequences. bridge.ts binds each to its singleton; every one
@@ -58,7 +61,8 @@ export interface TurnDeps {
    *  there is no in-process store to fall back to: this is where canvas state lives. */
   openCanvasRoom: (canvasId: string) => Promise<RemoteCanvasStore>;
   /** Where an UNADDRESSED turn routes (the bridge's default canvas id). */
-  defaultCanvasId: string;
+  /** Null outside the `default` workspace: a turn there must name its canvas. */
+  defaultCanvasId: string | null;
   /** Render the workspace's skill tree from its Records (ADR-0022, #361). Called FIRST, before
    *  anything else in the turn: the agent SDK discovers skills by SCANNING `workspace-skills/skills/`
    *  while `runChat` builds the turn's options, so unlike a Component — which vite requests
@@ -103,7 +107,7 @@ export interface TurnDeps {
  * first await) so a concurrent /send sees the in-flight turn.
  */
 export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<void> {
-  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, mcpTokens, mcpDisallowedTools, viewer } = input;
+  const { chatId, message, sessionId, images, model, forkSession, effort, canvasId, mcpTokens, mcpDisallowedTools, viewer, author } = input;
   const ac = new AbortController();
   deps.aborters.set(chatId, ac);
   let finalSessionId = sessionId;
@@ -116,6 +120,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
     // The request's active canvas (#79): the agent's reads, writes, tools, and screenshot
     // round-trip all use THIS store, so shapes land on the human's canvas and broadcast there.
     const activeCanvasId = canvasId ?? deps.defaultCanvasId;
+    if (!activeCanvasId) throw new Error('this turn names no canvas, and this workspace has no default canvas');
     // #310: the agent draws into the ROOM. Opening REJECTS rather than degrading — a turn
     // that cannot reach the room has nowhere else to draw (#297 deleted the in-process
     // store), and reporting success over an unchanged canvas is the bug this closes.
@@ -150,6 +155,7 @@ export async function runTurnAsync(input: TurnInput, deps: TurnDeps): Promise<vo
       // send, headless send) ⇒ no tool: the capability disappears rather than degrading into
       // "move everybody".
       viewer ? (pageId: string) => deps.selectPage(activeCanvasId)(pageId, viewer) : undefined,
+      author ?? null,
     )) {
       if (ev.kind === 'done' && ev.sessionId) finalSessionId = ev.sessionId;
       if (ev.kind === 'init') {

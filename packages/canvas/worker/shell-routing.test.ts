@@ -87,14 +87,17 @@ describe('decideCanvasRoute — owned ws + canvas-in-ws ⇒ select, else 404 (ne
     expect(decideCanvasRoute('ws_a', 'cv_x', { id: 'ws_a' }, null)).toEqual({ decision: 'not-found' });
   });
 
-  test("the legacy 'default' canvas needs no row (switch-back), within a servable workspace", () => {
-    expect(decideCanvasRoute('ws_a', 'default', { id: 'ws_a' }, null)).toEqual({
+  test("the legacy 'default' canvas needs no row, but only inside the 'default' workspace", () => {
+    expect(decideCanvasRoute('default', 'default', { id: 'default' }, null)).toEqual({
       decision: 'select',
-      workspaceId: 'ws_a',
+      workspaceId: 'default',
       canvasId: 'default',
     });
-    // …but still 404 if the workspace itself isn't servable.
-    expect(decideCanvasRoute('ws_a', 'default', null, null)).toEqual({ decision: 'not-found' });
+    // …still 404 if the workspace itself isn't servable…
+    expect(decideCanvasRoute('default', 'default', null, null)).toEqual({ decision: 'not-found' });
+    // …and never from another workspace: the id is global, so this would be the default
+    // workspace's room opened from inside ws_a.
+    expect(decideCanvasRoute('ws_a', 'default', { id: 'ws_a' }, null)).toEqual({ decision: 'not-found' });
   });
 
   test('canvas that belongs to a DIFFERENT workspace ⇒ 404 (never cross-workspace)', () => {
