@@ -179,20 +179,19 @@ Date is today, UTC: `date -u +%F`. Then set the same version in the **root** `pa
 ## 5–6. Deploy and verify
 
 ```bash
-bash packages/canvas/scripts/deploy.sh     # run in the BACKGROUND — 10–15 min
+bash packages/canvas/scripts/deploy.sh     # run in the BACKGROUND — the image build takes minutes
 ```
 
-It stamps both `server/build-rev.txt` and `server/version.txt`, migrates D1, builds and pushes
-both container images, waits out the two rollout settle stages, and polls `/api/buildrev` until
-it serves **both** the new SHA and the new version. Success prints `✅ LIVE: v0.2.0 (abc1234)`.
+It stamps both `server/build-rev.txt` and `server/version.txt`, migrates D1, and runs
+`bun run apply production canvas` (Shell build, Worker + container image, secrets). There are no
+container rollouts to wait for (ADR-0027: each workspace's `CanvasContainer` takes a new image on
+its next request). When `default` runs on Cloudflare it then polls `/api/buildrev` until it serves
+**both** the new SHA and the new version (`✅ LIVE: v0.2.0 (abc1234)`); while `default` is
+self-hosted it says so and stops — the Guest step below is what proves the VM.
 
 **If it fails, do not bump the version again.** Fix forward and re-run — the same version number
-is reused, and nothing was tagged. Two traps the script's own comments record:
-
-- **Never re-run a deploy while a rollout is still progressing.** A re-run *replaces* the healthy
-  in-flight rollout. If it says `PROGRESSING`, wait; that is not a failure.
-- A `STALE` stored image is the 2026-07-28 incident (serving instances correct, stored config
-  stale → every later cold boot wedges). Investigate by hand; do not blindly re-run.
+is reused, and nothing was tagged. A re-run is always safe: there is no in-flight rollout for it
+to replace.
 
 ## 5–6 (the Guest). Converge the workspace and read its stamps back
 

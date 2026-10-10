@@ -1,5 +1,3 @@
-import { Sandbox as BaseSandbox } from '@cloudflare/sandbox';
-import { BootLock, bootCanvasStack, type CanvasBootSpec } from './canvas-boot.ts';
 import { getWorkspace } from '../web-poc/lib/db/queries/workspaces.ts';
 import { get as getCanvas } from '../web-poc/lib/db/queries/canvases.ts';
 import type { Bindings } from '../web-poc/worker/context.ts';
@@ -14,8 +12,7 @@ import { handleMembersApi } from './members.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { DEFAULT_WORKSPACE, coordsForWorkspace, resolve, type SandboxCoords } from './sandbox-resolver.ts';
 import { handleAdminHost, isAdminHost } from './admin-page.ts';
-import { sandboxFor, serveCanvasContainer, serveWorkspace } from './sandbox-runtime.ts';
-import { containerChoice } from './canvas-container-lifecycle.ts';
+import { serveCanvasContainer, serveWorkspace } from './sandbox-runtime.ts';
 import { handleCanvasesApi, handleRecordPurgeApi, handleWorkspacesApi, renderLogin } from './shell.ts';
 import { PLATFORM_RPC_PATH } from '../shared/platform-rpc.ts';
 import { handlePlatformRpc, platformRpcDeps } from './platform-rpc.ts';
@@ -53,58 +50,21 @@ import {
   GUEST_CAPS_HEADER,
 } from '../shared/bridge-wire.ts';
 
-// One container = one workspace = one canvas (v1). The Worker is the proxy into the
-// in-container vite dev server, which serves the app and forwards /api/* to the bridge.
-// Edge Better Auth (ADR-0007, #45) is the SOLE gate — the legacy `cs_gate` shared-secret
-// cookie was removed in the #47 cutover. Same preview-proxy path the
-// SSE spike proved streams unbuffered, so the canvas SSE stream works as-is.
-export class Sandbox extends BaseSandbox {
-  // Sleep after idle (state survives in R2). The client idle gate (src/idle.ts) closes
-  // both SSE streams after ~2m of no user activity (pointer/keyboard), so an open-but-idle
-  // tab no longer pins the container via the 15s ping — this 5m window is the remaining
-  // sleep delay once the streams go quiet (total idle-to-sleep ~7m).
-  // Fallback only: the bridge self-exits on idle (server/bridge.ts) since the sandbox
-  // won't idle-sleep while an SSE forward is pinned. sleepAfter still covers the
-  // never-had-a-client case.
-  sleepAfter = '5m';
-
-  // The cold-boot lock lives HERE, on the DO, because the DO is the only thing in the
-  // system there is exactly ONE of per container (incident 2026-08-13 — see
-  // canvas-boot.ts for the full account). Two consequences, both load-bearing:
-  // concurrent cold requests from ANY isolate collapse onto one boot, and `ctx.waitUntil`
-  // keeps that boot alive when the request that triggered it is canceled — which is what
-  // the previous per-isolate, per-request arrangement could not do.
-  #boot = new BootLock({ hold: (p) => this.ctx.waitUntil(p) });
-
-  /** Bring the workspace's dev stack up and publish its port. Called over RPC by
-   *  `serveWorkspace`'s cold path; runs entirely inside this DO. */
-  ensureCanvasStack(spec: CanvasBootSpec): Promise<void> {
-    return this.#boot.run(() => bootCanvasStack(this, spec));
-  }
-}
-
-// The retired warehouse's container class. Still exported only because wrangler.jsonc binds
-// it; deleting a container class waits for the Cloudflare container migration.
-export class Warehouse extends BaseSandbox {}
-
-// The workspace container on the `durable_object` scheduling policy. Re-exported here because
-// wrangler resolves Durable Object classes off the entrypoint module's exports.
+// The workspace container (one per workspace, on the `durable_object` scheduling policy) — the
+// Worker is the proxy into its vite dev server, which serves the app and forwards /api/* to the
+// bridge. Re-exported here because wrangler resolves Durable Object classes off the entrypoint
+// module's exports.
 export { CanvasContainer } from './canvas-container.ts';
 
 // The canvas sync room class (ADR-0019, #288). Re-exported here because wrangler resolves
 // Durable Object classes off the entrypoint module's exports.
 export { CanvasSyncRoom } from './canvas-sync-do.ts';
 
-// Retained until the CF container migration deletes it: wrangler still binds WORKSPACE_EVENTS.
-export class WorkspaceEvents {}
-
 export interface Env {
-  Sandbox: DurableObjectNamespace<Sandbox>;
   // The workspace's container under the `durable_object` scheduling policy
-  // (worker/canvas-container.ts), used instead of the Sandbox when CANVAS_CONTAINER=durable.
-  // Unparameterised for the reason CANVAS_SYNC is: a plain class, reached only by stub.fetch.
-  CanvasContainer?: DurableObjectNamespace;
-  CANVAS_CONTAINER?: string;
+  // (worker/canvas-container.ts). Unparameterised for the reason CANVAS_SYNC is: a plain
+  // class, reached only by stub.fetch.
+  CanvasContainer: DurableObjectNamespace;
   // One Durable Object per canvas, hosting that canvas's tldraw sync room (ADR-0019).
   // Addressed ONLY via `idFromName(syncRoomName(canvasId))` — see worker/sync-api.ts.
   // Unparameterised on purpose: `CanvasSyncRoom` is a plain class rather than a
@@ -141,7 +101,7 @@ export interface Env {
   LOCAL_BRIDGE_ORIGIN?: string;
   // Workspaces served from our own hardware instead of a Cloudflare Container
   // (worker/self-hosted.ts). JSON map of workspace id -> https origin; absent or
-  // malformed means every workspace stays on the Sandbox DO.
+  // malformed means every workspace runs on its CanvasContainer.
   SELF_HOSTED_WORKSPACES?: string;
   // Bearer the guest's supervisor demands on /__boot, and the Cloudflare Access
   // service token that lets this Worker reach the guest's hostname at all.
@@ -169,8 +129,8 @@ export interface Env {
   ACCESS_AUD?: string;
 }
 
-/** Domain cutover: a request on a non-canonical host (poc.cedarpad.com) 301s to the same
- * path+query on the canonical origin (WEB_ORIGIN). Same-host / unset / unparseable origin
+/** A request on a non-canonical host 301s to the same path+query on the canonical origin
+ * (WEB_ORIGIN), so only one host ever holds a session. Same-host / unset / unparseable origin
  * ⇒ null (dev + preview + tests serve wherever they are). Exported for tests. */
 export function canonicalRedirect(url: URL, webOrigin: string | undefined): Response | null {
   if (!webOrigin) return null;
@@ -193,19 +153,18 @@ export default {
     // canonical redirect and the session gate: it reads no Better Auth session at all.
     if (isAdminHost(url)) return handleAdminHost(request, env);
 
-    // Domain cutover (2026-07-17): app.cedarpad.com is canonical; the legacy
-    // poc.cedarpad.com host 301s to the same path+query so old share links and
-    // bookmarks keep working. WEB_ORIGIN holds the canonical origin.
+    // app.cedarpad.com is canonical (WEB_ORIGIN); any other host that reaches this Worker
+    // 301s to the same path+query there.
     const canonical = canonicalRedirect(url, env.WEB_ORIGIN);
     if (canonical) return canonical;
 
-    // Public build stamp (#74). deploy.sh polls this post-deploy to confirm the SERVED
-    // container image's SHA, and it carries no Better Auth session — so it's routed HERE,
-    // ahead of the edge gate, straight to the default workspace container (the bridge's
-    // /api/buildrev returns ONLY the SHA, never /api/status's health/client counts).
-    // isPublicPath also lists it, but the gate below denies any null-user request, so the
-    // stamp must be served before the gate to actually reach the container. This is the
-    // one unauthenticated path that can cold-boot a container; bounded by max_instances.
+    // Public build stamp (#74): the SHA the default workspace's stack is running, answered by
+    // wherever that stack lives — the self-hosted VM when `default` is mapped there, its
+    // CanvasContainer otherwise (the bridge's /api/buildrev returns ONLY the SHA, never
+    // /api/status's health/client counts). It carries no Better Auth session, so it's routed
+    // HERE, ahead of the edge gate. This is the one unauthenticated path that can cold-boot a
+    // container, which is why it is not pinned to Cloudflare when `default` is self-hosted:
+    // an anonymous poll would otherwise keep a second, unused container awake.
     if (url.pathname === '/api/buildrev') {
       return serveWorkspace(request, env, resolve(DEFAULT_WORKSPACE));
     }
@@ -402,7 +361,7 @@ export default {
 
     // The Shell SPA (ADR-0007, PRD #103) — the ONE chrome, served HERE from the static-assets
     // build behind the gate above. THE INVARIANT: `/` must reach env.ASSETS without ever
-    // calling serveWorkspace/sandboxFor, so browsing the shell never wakes (or bills) a
+    // calling serveWorkspace, so browsing the shell never wakes (or bills) a
     // container. Mounting the pad iframe (/w/:ws/canvas/:id/pad, below) is the only thing
     // that does. `/assets/*` is vite's default output prefix and cannot collide with the
     // container's dev-server paths (`/src/*`, `/@vite/*`, `/node_modules/*`), which still
@@ -669,30 +628,11 @@ export default {
       return handleComponentInventory(request, env, createDbForWorker(env as unknown as Bindings), user, named || workspaceId);
     }
 
-    // Force the container to recycle so a freshly deployed image takes effect (CF
-    // keeps the in-use instance on the old image until it idle-sleeps). The next
-    // request cold-boots the new image; canvas-state restores from R2.
-    // Under the durable_object policy the DO answers both debug routes itself.
-    if ((url.pathname === '/__recycle' || url.pathname === '/__bootlog') && containerChoice(env) === 'durable') {
+    // Container debug routes, gated like everything else here: `/__recycle` destroys the
+    // workspace's container (the next request boots fresh) and `/__bootlog` reports its last
+    // boot. The CanvasContainer DO answers both itself, without booting anything.
+    if (url.pathname === '/__recycle' || url.pathname === '/__bootlog') {
       return serveCanvasContainer(request, env, coords);
-    }
-    if (url.pathname === '/__recycle') {
-      const sandbox = sandboxFor(env, coords.sandboxId);
-      const r = await sandbox.stop().then(() => 'stopped').catch((e) => String(e));
-      return Response.json({ recycle: r });
-    }
-
-    // Container stdout (the [boot] phase lines + vite/bridge startup) is NOT in
-    // Workers Observability yet (CF gap), so surface getProcessLogs directly. Gated.
-    if (url.pathname === '/__bootlog') {
-      const sandbox = sandboxFor(env, coords.sandboxId);
-      const r: unknown = await sandbox.getProcessLogs('canvas').catch((e) => ({ error: String(e) }));
-      const body =
-        typeof r === 'string'
-          ? r
-          : [(r as { stdout?: string }).stdout, (r as { stderr?: string }).stderr].filter(Boolean).join('\n') ||
-            JSON.stringify(r, null, 2);
-      return new Response(body, { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     }
 
     // ADR-0013 train 2 (#176): the chat send path (the pad's <ChatView>) gets the workspace's

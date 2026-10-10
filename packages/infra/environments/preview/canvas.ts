@@ -8,7 +8,7 @@ import { cloudflareModule } from '../../../../vendor/zbc/modules/cloudflare'
  * Isolation is via a wrangler named environment: `wranglerEnv: 'preview'` makes
  * the module run `wrangler deploy --env preview`, which selects the `env.preview`
  * block in `packages/canvas/wrangler.jsonc` — worker `agent-canvas-preview` on a
- * free `*.workers.dev` URL (no custom domain, so production's poc.cedarpad.com is
+ * free `*.workers.dev` URL (no custom domain, so production's app.cedarpad.com is
  * untouched). Same Cloudflare account as production (accountId below); the worker
  * NAME is what keeps them apart.
  *
@@ -18,7 +18,7 @@ import { cloudflareModule } from '../../../../vendor/zbc/modules/cloudflare'
  * preview shares production's R2 bucket (`agent-canvas`) and platform D1.
  * ⚠️  This means preview and production read/write the SAME persisted canvas state
  * and the SAME web-poc data — a preview edit can mutate what production serves at
- * poc.cedarpad.com. Give preview its own R2 bucket + D1 database before using it for
+ * app.cedarpad.com. Give preview its own R2 bucket + D1 database before using it for
  * anything real. As with production, Docker must be running locally at apply time
  * (the worker is container-backed) on a Workers Paid plan with Containers enabled.
  *
@@ -48,8 +48,7 @@ export default cloudflareModule.instance({
       'R2_SECRET_ACCESS_KEY',
       'BETTER_AUTH_SECRET',
     ],
-    // Single always-warm DO-bound container; roll immediately so a redeployed
-    // image takes effect (see production canvas.ts).
-    immediateContainerRollout: true,
+    // The Shell SPA build (see production canvas.ts).
+    build: { command: 'bun run build' },
   },
 })

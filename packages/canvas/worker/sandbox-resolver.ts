@@ -1,10 +1,8 @@
 import { r2Prefix as deriveR2Prefix, sandboxId as deriveSandboxId } from '../web-poc/lib/db/queries/workspaces.ts';
 
-// The Sandbox resolver (ADR-0007). The PURE core: a mapping from a workspace to its
-// runtime coordinates, plus the warm-vs-cold path decision. Kept free of any
-// `@cloudflare/sandbox` / `cloudflare:workers` import so it's unit-testable off the
-// edge runtime. The wake/expose/proxy orchestration that consumes these lives in
-// `sandbox-runtime.ts`.
+// The workspace resolver (ADR-0007). The PURE core: a mapping from a workspace to its
+// runtime coordinates. Kept free of any `cloudflare:workers` import so it's unit-testable
+// off the edge runtime. The routing that consumes these lives in `sandbox-runtime.ts`.
 
 export interface SandboxCoords {
   sandboxId: string;
@@ -22,7 +20,7 @@ export interface ResolvableWorkspace {
   legacy?: boolean;
 }
 
-// Legacy coordinates. On `main` (deployed to poc.cedarpad.com) the single container
+// Legacy coordinates. Before workspaces existed, the single container
 // is `SANDBOX_ID = 'canvas'` and its canvas state persists to R2 under
 // `workspaces/default/` (the bridge runs with `CANVAS_WORKSPACE = 'default'`). The
 // default workspace MUST resolve here so deploying this slice is behavior-preserving;
@@ -50,23 +48,6 @@ export function resolve(workspace: ResolvableWorkspace): SandboxCoords {
 export const coordsForWorkspace = (workspaceId: string): SandboxCoords =>
   resolve(workspaceId === DEFAULT_WORKSPACE.id ? DEFAULT_WORKSPACE : { id: workspaceId });
 
-export type WarmDecision = 'serve' | 'cold-start';
-
-// Pure warm-vs-cold path selection, extracted from the fetch handler so it's
-// unit-testable without a live sandbox. Return REAL app responses as-is — any status
-// vite or the bridge produced, including 401/403/404/5xx (a failed login is a legit
-// 401, not a cold start). Only the SANDBOX PROXY's not-ready signals fall through to
-// the cold start:
-//   - 410: container stopped/gone (returning it left the site stuck 410).
-//   - 404/5xx whose body is the sandbox {"code":"INVALID_TOKEN"} / "port not exposed"
-//     error — a never-warmed or recycled container.
-// `peekBody` is lazy so the fast 2xx/3xx path never reads the body.
-export function decideWarm(status: number, peekBody: () => string): WarmDecision {
-  if (status === 410) return 'cold-start';
-  if (status < 400) return 'serve';
-  return /INVALID_TOKEN|port not exposed/.test(peekBody()) ? 'cold-start' : 'serve';
-}
-
 // An EventSource auto-reconnects only after a NETWORK-level drop; any non-200 or
 // non-`text/event-stream` response — the only kind the worker can produce when a cold
 // boot fails — closes it PERMANENTLY, killing the tab's canvas sync/presence until a
@@ -83,7 +64,7 @@ export function wantsEventStream(accept: string | null): boolean {
  * LOCAL DEV ONLY (#276): the origin to proxy a workspace request to INSTEAD of its container.
  *
  * Local dev has no container — `server/dev-worker-config.ts` drops `containers` from the
- * generated config, so a Sandbox DO proxy throws *"Containers have not been enabled for this
+ * generated config, so a container DO proxy throws *"Containers have not been enabled for this
  * Durable Object class"* — but it does have the dev stack, running as plain processes on
  * ports. Returns null (⇒ the real container path) unless BOTH belts hold:
  * `LOCAL_CONTAINER_SHIM` is on, and the target is loopback. Neither var exists in

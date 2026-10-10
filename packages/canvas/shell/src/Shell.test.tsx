@@ -95,7 +95,7 @@ beforeEach(async () => {
   stubEdge();
   // Give the document a real origin so pushState (relative URL) resolves under happy-dom,
   // whose default document is about:blank (origin null).
-  (window as unknown as { happyDOM?: { setURL: (u: string) => void } }).happyDOM?.setURL('https://poc.cedarpad.com/');
+  (window as unknown as { happyDOM?: { setURL: (u: string) => void } }).happyDOM?.setURL('https://app.cedarpad.com/');
   window.history.replaceState(null, '', '/');
   await mountShell();
 });
@@ -183,7 +183,7 @@ describe('the selected canvas persists in the URL', () => {
     await act(async () => root.unmount());
     container.remove();
     (window as unknown as { happyDOM?: { setURL: (u: string) => void } }).happyDOM?.setURL(
-      'https://poc.cedarpad.com/?canvas=cv_1',
+      'https://app.cedarpad.com/?canvas=cv_1',
     );
     window.history.replaceState(null, '', '/?canvas=cv_1');
     await mountShell();
@@ -195,7 +195,7 @@ describe('the selected canvas persists in the URL', () => {
     await act(async () => root.unmount());
     container.remove();
     (window as unknown as { happyDOM?: { setURL: (u: string) => void } }).happyDOM?.setURL(
-      'https://poc.cedarpad.com/?canvas=cv_gone',
+      'https://app.cedarpad.com/?canvas=cv_gone',
     );
     window.history.replaceState(null, '', '/?canvas=cv_gone');
     await mountShell();
@@ -380,7 +380,7 @@ describe('the docked chat panel on the canvas stage', () => {
   });
 
   /** The pad's dock gesture, as the Shell receives it: a same-origin window message. */
-  const post = async (data: unknown, origin = 'https://poc.cedarpad.com') => {
+  const post = async (data: unknown, origin = 'https://app.cedarpad.com') => {
     await act(async () => {
       window.dispatchEvent(new MessageEvent('message', { data, origin }));
       await new Promise((r) => setTimeout(r, 0));

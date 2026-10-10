@@ -36,7 +36,7 @@ const deps = (): AdminDeps => ({
   fetch: jwksPort([signer]).fetch,
   now: () => NOW,
   overview: async () => overview,
-  containerStatus: async (id) => statuses[id] ?? { kind: 'sandbox' },
+  containerStatus: async (id) => statuses[id] ?? { kind: 'unknown', why: 'not in the fixture' },
 });
 
 const req = async (path = '/', init: RequestInit & { jwt?: string | null } = {}) => {

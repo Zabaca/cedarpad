@@ -198,10 +198,8 @@ container stand-in below — see the warning there before you reach for it.
 **This is not a shim and is not e2e-gated.** Local dev runs no container at all, so it is
 on for every local run — `bun run dev` included.
 
-`server/dev-worker-config.ts` drops `containers` from the generated local config, so
-proxying into the Sandbox DO throws:
-
-> Error: Containers have not been enabled for this Durable Object class.
+`server/dev-worker-config.ts` drops `containers` from the generated local config, so the
+workspace's `CanvasContainer` DO has no container to start (`ctx.container` is absent).
 
 The dev stack is right there as plain processes on ports, so the generated config carries
 `LOCAL_CONTAINER_SHIM=1` + `LOCAL_BRIDGE_ORIGIN`, and `serveWorkspace` proxies to that

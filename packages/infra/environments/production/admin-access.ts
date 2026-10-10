@@ -13,7 +13,7 @@ import accessToken from './admin-access-token'
 //
 // ── The Worker verifies the assertion too ────────────────────────────────
 // Access protects only the hostnames it sits in front of, and the agent-canvas
-// Worker is ALSO reachable at app./poc.cedarpad.com and (preview) workers.dev. So
+// Worker is ALSO reachable at app.cedarpad.com and (preview) workers.dev. So
 // worker/access-jwt.ts checks the `Cf-Access-Jwt-Assertion` on every admin request
 // against this team's keys and this application's `aud`, and refuses when either
 // is missing. Both reach the Worker as secrets through canvas.ts, so nobody

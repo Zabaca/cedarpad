@@ -23,7 +23,7 @@ import {
   verifyAssertion,
 } from './access-jwt.ts';
 import { BOOTLOG_PATH } from './canvas-container.ts';
-import { COORDS_HEADER, containerChoice } from './canvas-container-lifecycle.ts';
+import { COORDS_HEADER } from './canvas-container-lifecycle.ts';
 import type { Env } from './index.ts';
 import { coordsForWorkspace } from './sandbox-resolver.ts';
 import { parseWorkspaceMap } from './self-hosted.ts';
@@ -36,7 +36,6 @@ export const isAdminHost = (url: URL): boolean => url.hostname === ADMIN_HOST;
 /** Where a workspace's compute is, and what it last said about itself. */
 export type ContainerStatus =
   | { kind: 'vm'; origin: string }
-  | { kind: 'sandbox' }
   | { kind: 'durable'; running: boolean; lastBoot: { at: string; ms: number; outcome: string; detail?: string } | null }
   | { kind: 'unknown'; why: string };
 
@@ -59,14 +58,12 @@ export function defaultAdminDeps(env: Env): AdminDeps {
   };
 }
 
-/** VM if self-hosted; else the CanvasContainer's own boot log, or "sandbox" on the legacy path. */
+/** VM if self-hosted; else the CanvasContainer's own boot log. */
 export async function containerStatusOf(env: Env, workspaceId: string): Promise<ContainerStatus> {
   const coords = coordsForWorkspace(workspaceId);
   const origin = parseWorkspaceMap(env.SELF_HOSTED_WORKSPACES)[coords.canvasWorkspace];
   if (origin) return { kind: 'vm', origin };
-  if (containerChoice(env) !== 'durable') return { kind: 'sandbox' };
   const ns = env.CanvasContainer;
-  if (!ns) return { kind: 'unknown', why: 'no CanvasContainer binding' };
   try {
     const req = new Request(`https://${ADMIN_HOST}${BOOTLOG_PATH}`, { headers: { [COORDS_HEADER]: JSON.stringify(coords) } });
     const res = await ns.get(ns.idFromName(coords.sandboxId)).fetch(req, { signal: AbortSignal.timeout(BOOTLOG_TIMEOUT_MS) });
@@ -137,8 +134,6 @@ function statusText(s: ContainerStatus | undefined): string {
   switch (s.kind) {
     case 'vm':
       return `VM · ${s.origin}`;
-    case 'sandbox':
-      return 'sandbox (status n/a)';
     case 'unknown':
       return `unknown · ${s.why}`;
     case 'durable': {

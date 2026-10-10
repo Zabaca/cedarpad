@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   bootFingerprint,
-  containerChoice,
   idleVerdict,
   inactivityTimeoutMs,
   mayRetry,
@@ -75,14 +74,5 @@ describe('bootFingerprint', () => {
 
   test('never contains the values it hashes', () => {
     expect(bootFingerprint('img', { SECRET: 'sk-very-secret' })).not.toContain('secret');
-  });
-});
-
-describe('containerChoice', () => {
-  test('only an exact `durable` selects the new class', () => {
-    expect(containerChoice({ CANVAS_CONTAINER: 'durable' })).toBe('durable');
-    expect(containerChoice({ CANVAS_CONTAINER: ' durable ' })).toBe('durable');
-    expect(containerChoice({})).toBe('sandbox');
-    expect(containerChoice({ CANVAS_CONTAINER: 'durable_object' })).toBe('sandbox');
   });
 });

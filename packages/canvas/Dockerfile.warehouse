@@ -1,4 +1,0 @@
-# The retired warehouse's container image (ADR-0017, superseded). wrangler.jsonc still binds
-# the Warehouse container class, and a bound class needs an image, so this is the bare base —
-# nothing dispatches into it. Goes with the class at the Cloudflare container migration.
-FROM docker.io/cloudflare/sandbox:0.12.1

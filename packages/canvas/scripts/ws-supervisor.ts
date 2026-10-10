@@ -1,5 +1,5 @@
 // The self-hosted workspace supervisor: the small control plane that stands in for
-// the Cloudflare Sandbox DO when a workspace runs on our own hardware.
+// the workspace's CanvasContainer DO when a workspace runs on our own hardware.
 //
 // It exists for exactly one reason — the guest must hold NO cedarpad credential at
 // rest. On Cloudflare the Worker is the sole holder and injects the environment at
@@ -37,12 +37,12 @@
 
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-// The SAME lock the edge uses, not a second implementation of it. canvas-boot.ts is
+// The SAME lock the edge uses, not a second implementation of it. boot-lock.ts is
 // deliberately free of any `cloudflare:workers` import so it runs off the edge
 // runtime, and it already carries the three properties the 2026-08-13 livelock paid
 // for: concurrent callers await one boot, a boot outlives the caller that asked for
-// it, and a failed boot is not retried immediately. canvas-boot.test.ts holds that shape.
-import { BootLock } from '../worker/canvas-boot.ts';
+// it, and a failed boot is not retried immediately. boot-lock.test.ts holds that shape.
+import { BootLock } from '../worker/boot-lock.ts';
 
 const PORT = Number(process.env.WS_SUPERVISOR_PORT ?? 4599);
 const VITE_PORT = Number(process.env.WS_VITE_PORT ?? 4510);
@@ -57,10 +57,10 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-// A cold boot can take a while: vite pre-bundles tldraw, which is large. The
-// container pays 120s for the same step (worker/canvas-boot.ts PORT_TIMEOUT_MS) and
-// that number was itself raised from 40s after short timeouts killed healthy-but-slow
-// boots and left an orphaned bridge holding the port. Here node_modules and the
+// A cold boot can take a while: vite pre-bundles tldraw, which is large. The retired
+// Sandbox path waited 120s for the same step, a number itself raised from 40s after
+// short timeouts killed healthy-but-slow boots and left an orphaned bridge holding the
+// port. Here node_modules and the
 // `.vite` cache are persistent, so only the FIRST boot is slow — but the first boot
 // is the one that must not be killed.
 const BOOT_TIMEOUT_MS = 120_000;
@@ -97,7 +97,7 @@ async function waitForPort(timeoutMs: number): Promise<boolean> {
 }
 
 /** Write the pushed environment to the file bun auto-loads, then start the stack.
- *  A FILE, not process env, and for the same reason canvas-boot.ts writes one:
+ *  A FILE, not process env, for the reason the retired Sandbox path wrote one:
  *  setEnvVars proved racy across recycles and the bridge intermittently came up with
  *  no R2 credentials and silently fell back to local disk. Written only before a
  *  fresh start, never under a running bridge. */
@@ -144,7 +144,7 @@ Bun.serve({
       if (req.headers.get('authorization') !== `Bearer ${TOKEN}`) return json({ error: 'unauthorized' }, 401);
 
       // Already serving — the Worker re-pushes on every cold path, and re-writing
-      // .env under a live bridge is exactly what canvas-boot.ts warns against.
+      // .env under a live bridge would restart it mid-session.
       if (running() && (await portUp())) return json({ ok: true, already: true });
 
       const env = (await req.json().catch(() => null)) as Record<string, string> | null;

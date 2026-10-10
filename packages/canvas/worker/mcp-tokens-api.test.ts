@@ -52,14 +52,14 @@ const user: GateUser = { id: 'u_1' } as GateUser;
 
 const put = (workspaceId: string, mcpName: string, body: unknown) =>
   handleMcpTokenApi(
-    new Request('https://poc.cedarpad.com/x', { method: 'PUT', body: JSON.stringify(body) }),
+    new Request('https://app.cedarpad.com/x', { method: 'PUT', body: JSON.stringify(body) }),
     {} as never,
     user,
     workspaceId,
     mcpName,
   );
 const del = (workspaceId: string, mcpName: string) =>
-  handleMcpTokenApi(new Request('https://poc.cedarpad.com/x', { method: 'DELETE' }), {} as never, user, workspaceId, mcpName);
+  handleMcpTokenApi(new Request('https://app.cedarpad.com/x', { method: 'DELETE' }), {} as never, user, workspaceId, mcpName);
 
 beforeEach(() => {
   workspaceRecord = null;

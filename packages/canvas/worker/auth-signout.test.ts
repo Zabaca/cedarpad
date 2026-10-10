@@ -44,7 +44,7 @@ mock.module('../web-poc/worker/runtime.ts', () => ({ createDbForWorker: () => da
 const { edgeAuth, handleAuth } = await import('./auth-gate.ts');
 const sessionFor = (cookie: string) => edgeAuth(env).api.getSession({ headers: new Headers({ cookie }) });
 
-const ORIGIN = 'https://poc.cedarpad.com';
+const ORIGIN = 'https://app.cedarpad.com';
 
 // Captures what the send seam would have put on the wire. Passwordless means the ONLY
 // way to mint a session is to verify an emailed link, so the test has to read the mail.
