@@ -10,10 +10,11 @@
 
 **`cedarpad.com`** = the marketing site (`packages/www`, waitlist; signup is
 invitation-only). **`app.cedarpad.com`** = the product (the canvas app worker; graduated
-from `poc.cedarpad.com`, which 301s). **`app.cedarpad.com/admin`** = the operator surface
-(Better Auth admin plugin + waitlist + read-only workspace/canvas/chat inventory, no
-transcript viewing). There is no `admin.` subdomain. Admin UI says "chats", never
-"sessions".
+from `poc.cedarpad.com`, which 301s). **`admin.cedarpad.com`** = the operator surface
+(ADR-0026): read-only users / workspaces / containers / share links / MCP tokens, behind
+Cloudflare Access (one address) and an Access assertion the Worker verifies itself; no
+transcript viewing. The role-gated waitlist view stays in the app's Settings. Admin UI says
+"chats", never "sessions".
 
 ## Runtime & frames
 

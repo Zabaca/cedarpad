@@ -11,7 +11,10 @@
   // 2026-07-17 — old share links and bookmarks keep working via the redirect).
   "routes": [
     { "pattern": "app.cedarpad.com", "custom_domain": true },
-    { "pattern": "poc.cedarpad.com", "custom_domain": true }
+    { "pattern": "poc.cedarpad.com", "custom_domain": true },
+    // The admin host (ADR-0026), behind Cloudflare Access (infra production/admin-access.ts).
+    // Top level ONLY: env.preview declares `routes: []` and must keep it.
+    { "pattern": "admin.cedarpad.com", "custom_domain": true }
   ],
   // Workers Logs: stream the Worker's console + request logs via `wrangler tail`
   // or the dashboard (replaces the ad-hoc /__diag route). Container stdout is

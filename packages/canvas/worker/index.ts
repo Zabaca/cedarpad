@@ -13,6 +13,7 @@ import { handleComponentInventory, INVENTORY_PATH } from './component-inventory-
 import { handleMembersApi } from './members.ts';
 import { handleMcp, handleOAuthDiscovery } from './mcp-server.ts';
 import { DEFAULT_WORKSPACE, coordsForWorkspace, resolve, type SandboxCoords } from './sandbox-resolver.ts';
+import { handleAdminHost, isAdminHost } from './admin-page.ts';
 import { sandboxFor, serveCanvasContainer, serveWorkspace } from './sandbox-runtime.ts';
 import { containerChoice } from './canvas-container-lifecycle.ts';
 import { handleCanvasesApi, handleRecordPurgeApi, handleWorkspacesApi, renderLogin } from './shell.ts';
@@ -165,6 +166,11 @@ export interface Env {
   LIVEKIT_URL?: string;
   LIVEKIT_API_KEY?: string;
   LIVEKIT_API_SECRET?: string;
+  // The admin host's Cloudflare Access application (ADR-0026): its team domain and audience
+  // tag, pushed as secrets from the zbc `admin-access` instance's outputs. Either missing ⇒
+  // admin.cedarpad.com refuses everything (503).
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
 }
 
 /** Domain cutover: a request on a non-canonical host (poc.cedarpad.com) 301s to the same
@@ -186,6 +192,10 @@ export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/health') return new Response('ok');
+
+    // admin.cedarpad.com (ADR-0026) is its own surface behind Cloudflare Access, ahead of the
+    // canonical redirect and the session gate: it reads no Better Auth session at all.
+    if (isAdminHost(url)) return handleAdminHost(request, env);
 
     // Domain cutover (2026-07-17): app.cedarpad.com is canonical; the legacy
     // poc.cedarpad.com host 301s to the same path+query so old share links and

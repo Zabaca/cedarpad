@@ -165,6 +165,16 @@ describe('inbound MCP dispatch (#177)', () => {
 // session (the token is the credential) — it must serve the invite flow, never the
 // login page, and never touch a container. The owner-side invitations API stays
 // behind the gate and its owner-only check.
+describe('admin host dispatch (ADR-0026)', () => {
+  test('admin.cedarpad.com is answered ahead of the canonical redirect and the session gate, and fails closed', async () => {
+    // `env` declares no ACCESS_* pair: the admin host refuses with 503, never a 301 to the
+    // canonical app origin and never the login page.
+    const res = await worker.fetch(new Request('https://admin.cedarpad.com/'), env);
+    expect(res.status).toBe(503);
+    expect(res.headers.get('location')).toBeNull();
+  });
+});
+
 describe('invitations dispatch (#179)', () => {
   test('UNAUTHENTICATED /invite/<token> reaches the invite flow (unknown token ⇒ its own 404 page), never login, never a container', async () => {
     session = null;
