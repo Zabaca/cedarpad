@@ -5,7 +5,8 @@ import cedarpadWs from './ws'
 // The claude-mitm-proxy's CA (a public certificate). The proxy terminates TLS for
 // api.anthropic.com to swap the fleet placeholder for a real token, so the agent
 // has to trust the leaf it presents. Base64 because env values travel as `export`s.
-const PROXY_CA = readFileSync(new URL('./claude-proxy-ca.crt', import.meta.url)).toString('base64')
+// The file is the sandbox image's too (packages/canvas/sandbox/), so it lives with the canvas package.
+const PROXY_CA = readFileSync(new URL('../../../canvas/sandbox/claude-proxy-ca.crt', import.meta.url)).toString('base64')
 
 // The unit that runs the workspace supervisor inside cedarpad-ws.
 //
