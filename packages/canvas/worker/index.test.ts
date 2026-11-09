@@ -24,12 +24,14 @@ let servedMcpTokenHeaders: Array<string | null> = [];
 let servedGuestCanvasHeaders: Array<string | null> = [];
 let servedViewerHeaders: Array<string | null> = [];
 let servedAuthorHeaders: Array<string | null> = [];
+let servedPassive: boolean[] = [];
 let assets: string[] = [];
 let mcpTokensByWorkspace: Record<string, Record<string, string>> = {};
 
 mock.module('./sandbox-runtime.ts', () => ({
-  serveWorkspace: (req: Request, _env: unknown, coords: SandboxCoords) => {
+  serveWorkspace: (req: Request, _env: unknown, coords: SandboxCoords, opts?: { passive?: boolean }) => {
     served.push(coords);
+    servedPassive.push(opts?.passive === true);
     const u = new URL(req.url);
     servedReqs.push({ path: u.pathname + u.search, method: req.method });
     servedMcpTokenHeaders.push(req.headers.get('x-mcp-tokens'));
@@ -583,6 +585,19 @@ describe('dispatch order regressions', () => {
     const res = await GET('/api/buildrev');
     expect(res.status).toBe(200);
     expect(served).toEqual([resolve(DEFAULT_WORKSPACE)]);
+  });
+
+  // Anyone can poll it, so it must never wake a sleeping sandbox or boot its stack: an anonymous poll would
+  // otherwise keep the workspace awake for good. It is served passively; every other request is not.
+  test('/api/buildrev is served passively, a pad request is not', async () => {
+    servedPassive = [];
+    session = null;
+    await GET('/api/buildrev');
+    expect(servedPassive).toEqual([true]);
+    servedPassive = [];
+    session = { user: { id: 'u_1' } };
+    await GET('/api/chat/chat_1/transcript');
+    expect(servedPassive).toEqual([false]);
   });
 });
 

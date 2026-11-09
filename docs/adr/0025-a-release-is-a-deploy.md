@@ -2,8 +2,9 @@
 
 Status: **accepted** (grill session 2026-07-31). The verify step is amended by
 [ADR-0027](./0027-workspace-containers-run-on-the-durable-object-policy.md): while `default`
-is self-hosted, `/api/buildrev` reports the VM and `deploy:vm` is what proves it. Vocabulary: root
-[CONTEXT.md](../../CONTEXT.md) — **Workspace**, **App**; canvas
+is self-hosted, `/api/buildrev` reports where it runs (the VM, or the sbx sandbox) and `deploy:vm` or
+`deploy:sandbox` is what proves it. Vocabulary: root
+[CONTEXT.md](../../CONTEXT.md): **Workspace**, **App**; canvas
 [CONTEXT.md](../../packages/canvas/CONTEXT.md); www
 [CONTEXT.md](../../packages/www/CONTEXT.md).
 

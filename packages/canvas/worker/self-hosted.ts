@@ -36,6 +36,8 @@
 // treated as a stack that is down, because a sandbox flagged start-fresh starts
 // again from its image when the boot arrives.
 
+import { z } from 'zod';
+
 import { sseRetryResponse, urlOnOrigin, wantsEventStream } from './sandbox-resolver.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
@@ -123,43 +125,46 @@ export function parseWorkspaceMap(raw: string | undefined): Record<string, Works
   } catch {
     return {};
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+  const map = z.record(z.string(), z.unknown()).safeParse(parsed);
+  if (!map.success) return {};
   const out: Record<string, WorkspaceOrigins> = {};
-  for (const [workspace, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof value === 'string') {
-      const origin = httpsOrigin(value);
-      if (origin) out[workspace] = { origin, supervisorOrigin: origin, sandbox: false };
-    } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      // A sandbox: both addresses or neither. One alone could not boot the stack it serves.
-      const { stack, supervisor } = value as Record<string, unknown>;
-      const origin = httpsOrigin(stack);
-      const supervisorOrigin = httpsOrigin(supervisor);
-      if (origin && supervisorOrigin) out[workspace] = { origin, supervisorOrigin, sandbox: true };
-    }
+  for (const [workspace, value] of Object.entries(map.data)) {
+    // One bad entry is dropped on its own; the others stand.
+    const entry = WorkspaceEntry.safeParse(value);
+    if (entry.success) out[workspace] = entry.data;
   }
   return out;
 }
 
-/** One workspace's entry in the map; the fields of a `SelfHostedTarget` that the map decides. */
-export interface WorkspaceOrigins {
-  origin: string;
-  supervisorOrigin: string;
-  sandbox: boolean;
-}
-
 /**
- * A bare `https:` origin, or null. Normalised to the origin, because a stray path would silently prefix every
+ * A bare `https:` origin. Normalised to the origin, because a stray path would silently prefix every
  * request and produce 404s that look like the guest is broken.
  */
-function httpsOrigin(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
+const HttpsOrigin = z.string().transform((value, ctx) => {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' ? url.origin : null;
+    if (url.protocol === 'https:') return url.origin;
   } catch {
-    return null;
+    /* falls through to the issue */
   }
-}
+  ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'not an https origin' });
+  return z.NEVER;
+});
+
+/**
+ * One workspace's entry in `SELF_HOSTED_WORKSPACES` (a single contract, CLAUDE.md section 7): a plain origin, the VM,
+ * which serves the stack and the supervisor both; or `{ stack, supervisor }`, a sandbox, whose two addresses are both
+ * required (one alone could not boot the stack it serves).
+ */
+const WorkspaceEntry = z.union([
+  HttpsOrigin.transform((origin) => ({ origin, supervisorOrigin: origin, sandbox: false })),
+  z
+    .object({ stack: HttpsOrigin, supervisor: HttpsOrigin })
+    .transform(({ stack, supervisor }) => ({ origin: stack, supervisorOrigin: supervisor, sandbox: true })),
+]);
+
+/** One workspace's entry in the map; the fields of a `SelfHostedTarget` that the map decides. */
+export type WorkspaceOrigins = z.infer<typeof WorkspaceEntry>;
 
 /**
  * The self-hosted target for this workspace, or null to use its CanvasContainer.
@@ -184,13 +189,14 @@ export function selfHostedTarget(env: SelfHostedEnv, canvasWorkspace: string): S
  * Build the guest-bound request: same path, same method, same body, plus Access. To a sandbox it also carries the
  * always-wake header: the Worker has already decided the caller may reach the workspace, so sbx must not judge the
  * request itself (it answers "asleep" to a bot's User-Agent or a HEAD). Set, not appended, so a caller's own value
- * does not survive.
+ * does not survive. `wake` is '0' for a request that must only look (the public build stamp): sbx then answers
+ * "asleep" instead of waking the sandbox, and does not count the request as use.
  */
-export function guestRequest(request: Request, origin: string, target: SelfHostedTarget): Request {
+export function guestRequest(request: Request, origin: string, target: SelfHostedTarget, wake: '1' | '0' = '1'): Request {
   const headers = new Headers(request.headers);
   headers.set('CF-Access-Client-Id', target.accessClientId);
   headers.set('CF-Access-Client-Secret', target.accessClientSecret);
-  if (target.sandbox) headers.set(WAKE_HEADER, '1');
+  if (target.sandbox) headers.set(WAKE_HEADER, wake);
   return new Request(urlOnOrigin(request.url, origin), new Request(request, { headers }));
 }
 
@@ -208,14 +214,25 @@ export async function serveSelfHosted(
   target: SelfHostedTarget,
   containerEnvVars: Record<string, string>,
   coords: SandboxCoords,
+  opts: { passive?: boolean } = {},
 ): Promise<Response> {
+  // Passive: the request only looks. On a sandbox that is the public build stamp, which anyone can poll, so it must not
+  // wake a sleeping sandbox or boot a stopped stack (an anonymous poll would keep the workspace awake for good): it is
+  // answered if the stack is up, and with a 503 otherwise. The VM has no wake to ask for and is served as before.
+  const passive = opts.passive === true && target.sandbox;
   const retryReq = request.clone() as Request;
   const streamReq = wantsEventStream(request.headers.get('accept'));
   try {
-    const res = await fetch(guestRequest(request, target.origin, target));
+    const res = await fetch(guestRequest(request, target.origin, target, passive ? '0' : '1'));
     if (decideGuestWarm(res.status, target.sandbox) === 'serve') return res;
   } catch {
     /* guest unreachable — fall through and try to boot it */
+  }
+  if (passive) {
+    return new Response(JSON.stringify({ error: 'the workspace is asleep or its stack is not running' }), {
+      status: 503,
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'retry-after': '60' },
+    });
   }
 
   console.log(`[self-hosted] boot: pushing env to ${target.supervisorOrigin} for ${coords.canvasWorkspace}`);

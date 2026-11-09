@@ -9,8 +9,16 @@ import { type SandboxCoords, localBridgeOrigin, sseRetryResponse, urlOnOrigin, w
 // Cloudflare's `durable_object` container policy. The pure routing decisions live in
 // `sandbox-resolver.ts` and `self-hosted.ts`; the container lifecycle lives in the DO.
 
-/** Serve a resolved workspace's request from wherever its compute lives. */
-export async function serveWorkspace(request: Request, env: Env, coords: SandboxCoords): Promise<Response> {
+/**
+ * Serve a resolved workspace's request from wherever its compute lives. `passive` is for a request anyone can make (the
+ * public build stamp): a sleeping sandbox is not woken for it and a stopped stack is not booted (worker/self-hosted.ts).
+ */
+export async function serveWorkspace(
+  request: Request,
+  env: Env,
+  coords: SandboxCoords,
+  opts: { passive?: boolean } = {},
+): Promise<Response> {
   // E2E ONLY (#276): no container exists locally, so the workspace IS the bridge process on a
   // loopback port. Reached only AFTER the gate and the ownership check upstream, so it bypasses
   // nothing that guards a request — it only replaces the transport into the container.
@@ -24,7 +32,7 @@ export async function serveWorkspace(request: Request, env: Env, coords: Sandbox
   // is allowed to reach it. Returns null unless the workspace is mapped AND all
   // three credentials are present, so a partial rollout serves from the container.
   const selfHosted = selfHostedTarget(env, coords.canvasWorkspace);
-  if (selfHosted) return serveSelfHosted(request, selfHosted, containerEnv(env, coords), coords);
+  if (selfHosted) return serveSelfHosted(request, selfHosted, containerEnv(env, coords), coords, opts);
   return serveCanvasContainer(request, env, coords);
 }
 

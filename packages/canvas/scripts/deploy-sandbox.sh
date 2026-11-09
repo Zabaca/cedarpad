@@ -27,7 +27,7 @@
 #   SANDBOX_DEPLOY_NAME        a sandbox name other than the declared one
 #   SANDBOX_DEPLOY_IMAGE_NAME  an image repository other than the declared one (so a test image is its own to delete)
 #   SANDBOX_DEPLOY_REF         a git ref to build instead of origin/main (the stamp inside is then that ref's)
-#   WS_SUPERVISOR_TOKEN        the supervisor's bearer, instead of reading it from sops
+#   SANDBOX_DEPLOY_SUPERVISOR_TOKEN  the supervisor's bearer, instead of reading it from sops (a TEST value: it is stored)
 #   SBX                        the sbx command (default: sbx on PATH, else Home's checkout)
 #
 # The supervisor's bearer is stored once, at the create. A replace keeps it; rotating it means deleting the sandbox
@@ -65,19 +65,23 @@ WANT=$(git -C "$REPO_ROOT" rev-parse --short "$REF^{commit}") || fail "no such c
 VERSION=$(git -C "$REPO_ROOT" show "$REF:package.json" | jq -er .version) || fail "could not read the version from $REF:package.json"
 echo "-> deploying $REF ($WANT, v$VERSION) to sandbox $NAME"
 
-# Sandbox exists? `list` fails loudly on an API error, where `get` would read an error as "no such sandbox".
-if "$SBX" list --json | jq -e --arg n "$NAME" 'any(.[]; .name == $n)' >/dev/null; then
-  EXISTS=1
-else
-  EXISTS=0
-fi
+# Does the sandbox exist? The list is captured on its own first, so that a failed `sbx list` stops the deploy (set -e)
+# instead of reading as an empty list, which would look like "no such sandbox" and go on to a create.
+LIST=$("$SBX" list --json) || fail "sbx list failed: cannot tell whether $NAME exists"
+SANDBOX=$(jq -c --arg n "$NAME" '[.[] | select(.name == $n)] | first // empty' <<<"$LIST") || fail "could not read sbx's list"
+if [ -n "$SANDBOX" ]; then EXISTS=1; else EXISTS=0; fi
 
-# A replace keeps the list of ports reachable by prefix that the create set, and a sandbox made without one cannot get
-# one later. So an existing sandbox that is not open on the supervisor's port alone is refused here, before anything is
-# built or replaced: delete it and deploy again (a create sets the list). Parsed, since `sbx get` prints indented JSON.
-ports_ok() { "$SBX" get "$NAME" | jq -e --argjson p "$SUPERVISOR_PORT" '.ports == [$p]' >/dev/null; }
-if [ "$EXISTS" = 1 ] && ! ports_ok; then
-  fail "$NAME exists but its prefixed ports are not [$SUPERVISOR_PORT] (sbx get $NAME); a replace cannot change them: delete it and deploy again"
+# Is a sandbox the one this script makes? A replace changes only the image and keeps everything else a create set (the
+# size, the port, the route, the start-fresh flag, and the list of ports reachable by prefix, which a sandbox made
+# without one cannot get later). So an existing sandbox that differs in any of them is refused here, before anything is
+# built or replaced: it was not made by this script. Parsed, since `sbx get` prints indented JSON.
+shape_ok() {
+  jq -e --argjson stack "$STACK_PORT" --argjson sup "$SUPERVISOR_PORT" --arg route "$ROUTE" \
+    '.custom == true and .start_fresh == true and .port == $stack and ((.routes // []) | index($route) != null) and .ports == [$sup]' \
+    >/dev/null <<<"$1"
+}
+if [ "$EXISTS" = 1 ] && ! shape_ok "$SANDBOX"; then
+  fail "$NAME exists but is not as this script makes it (an image of its own, start fresh, port $STACK_PORT, route $ROUTE, prefixed ports [$SUPERVISOR_PORT]; see sbx get $NAME): delete it and deploy again"
 fi
 
 if [ "$DRY_RUN" = 1 ]; then
@@ -87,13 +91,20 @@ if [ "$DRY_RUN" = 1 ]; then
   exit 0
 fi
 
-# The bearer: from the environment (a test value), else cedarpad's production secrets, the same value the Worker holds.
-# Exported, because `sbx create --env KEY` takes the value from the environment and so it is on no command line.
-if [ "$EXISTS" = 0 ] && [ -z "${WS_SUPERVISOR_TOKEN:-}" ]; then
-  WS_SUPERVISOR_TOKEN=$(sops -d --extract '["WS_SUPERVISOR_TOKEN"]' "$REPO_ROOT/packages/infra/environments/production/secrets.yaml") \
-    || fail "could not read WS_SUPERVISOR_TOKEN from production/secrets.yaml (sops, this Mac's age key)"
+# The bearer, for a create only (a replace keeps the stored one): from SANDBOX_DEPLOY_SUPERVISOR_TOKEN (a test value),
+# else cedarpad's production secrets, the same value the Worker holds. A WS_SUPERVISOR_TOKEN that happens to be in this
+# shell is never used, so a stray real value cannot become the stored bearer by accident. Exported, because
+# `sbx create --env KEY` takes the value from the environment and so it is on no command line.
+unset WS_SUPERVISOR_TOKEN
+if [ "$EXISTS" = 0 ]; then
+  if [ -n "${SANDBOX_DEPLOY_SUPERVISOR_TOKEN:-}" ]; then
+    WS_SUPERVISOR_TOKEN=$SANDBOX_DEPLOY_SUPERVISOR_TOKEN
+  else
+    WS_SUPERVISOR_TOKEN=$(sops -d --extract '["WS_SUPERVISOR_TOKEN"]' "$REPO_ROOT/packages/infra/environments/production/secrets.yaml") \
+      || fail "could not read WS_SUPERVISOR_TOKEN from production/secrets.yaml (sops, this Mac's age key)"
+  fi
+  export WS_SUPERVISOR_TOKEN
 fi
-export WS_SUPERVISOR_TOKEN
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -125,8 +136,8 @@ else
     --cmd "cd $CANVAS_CWD && exec bun run scripts/ws-supervisor.ts"
 fi
 
-# And after the create or replace: the sandbox says it is open on the supervisor's port alone.
-ports_ok || fail "$NAME's prefixed ports are not [$SUPERVISOR_PORT] (sbx get $NAME)"
+# And after the create or replace: the sandbox is as declared (the same check as before the replace).
+shape_ok "$("$SBX" get "$NAME")" || fail "$NAME is not as declared after the deploy (see sbx get $NAME)"
 
 echo "-> allow-list: $EGRESS_ALLOW"
 # shellcheck disable=SC2086  # a space-separated list of hosts

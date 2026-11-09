@@ -387,4 +387,52 @@ describe('serveSelfHosted on a sandbox', () => {
     );
     expect(res.headers.get('content-type')).toContain('text/event-stream');
   });
+
+  // The public /api/buildrev: anyone can poll it, so on a sandbox it asks sbx NOT to wake it (X-Sbx-Wake: 0) and never
+  // boots the stack. A sleeping sandbox or a down stack answers 503 and stays as it was.
+  describe('passively (the public build stamp)', () => {
+    const passive = (path = '/api/buildrev') =>
+      serveSelfHosted(new Request(`https://app.cedarpad.com${path}`), SBX_TARGET, { R2_BUCKET: 'b' }, COORDS, { passive: true });
+
+    test('a running stack answers, and the request asks not to wake', async () => {
+      const seen = harness(() => new Response('{"buildRev":"abc1234"}'));
+      const res = await passive();
+      expect(res.status).toBe(200);
+      expect(seen).toEqual([{ url: `${SBX_STACK}/api/buildrev`, wake: '0', access: 'cid.access' }]);
+    });
+
+    test.each([
+      ['asleep: sbx refuses to wake for it', 503],
+      ['the stack is down', 502],
+      ['lost', 410],
+    ])('%s: a 503, no boot, nothing woken', async (_why, status) => {
+      const seen = harness(() => new Response('x', { status }));
+      const res = await passive();
+      expect(res.status).toBe(503);
+      expect(seen.map((s) => s.url)).toEqual([`${SBX_STACK}/api/buildrev`]);
+      expect(seen[0]!.wake).toBe('0');
+    });
+
+    test('an unreachable sandbox is a 503 too, with no boot', async () => {
+      const seen = harness(() => new TypeError('connection refused'));
+      expect((await passive()).status).toBe(503);
+      expect(seen).toHaveLength(1);
+    });
+
+    test('a real app error passes through', async () => {
+      harness(() => new Response('boom', { status: 500 }));
+      expect((await passive()).status).toBe(500);
+    });
+
+    // The VM is on its tunnel and has no wake to ask for: unchanged.
+    test('behind the VM it is the same as before', async () => {
+      const seen: string[] = [];
+      globalThis.fetch = mock(async (input: Request | string) => {
+        seen.push(typeof input === 'string' ? input : input.url);
+        return new Response('ok');
+      }) as unknown as typeof fetch;
+      await serveSelfHosted(new Request('https://app.cedarpad.com/api/buildrev'), TARGET, {}, COORDS, { passive: true });
+      expect(seen).toEqual(['https://ws.cedarpad.com/api/buildrev']);
+    });
+  });
 });
