@@ -10,7 +10,8 @@
 #      app step write them (ADR-0025). The build pulls the image onto both workers and pins it.
 #   2. Create the sandbox if it does not exist: its size, main port, the route, "start fresh when lost", the supervisor
 #      as its start command and the supervisor's bearer as its stored environment (read from sops, never typed or
-#      printed). If it exists, replace its image: same name, address, environment, command and allow-list; the pod
+#      printed), and the supervisor's port as the only one reachable by prefix (--open-port; needs an sbx from
+#      Home's slice 5 fix round on). If it exists, replace its image: same name, address, environment, command and allow-list; the pod
 #      starts fresh from the new image, so the stack is down and the Worker's next request boots it on the new code.
 #   3. Set its allow-list additions.
 #   4. Fail unless the supervisor answers, the pre-bundle is there and the stamps inside are origin/main's.
@@ -43,7 +44,7 @@ esac
 fail() { echo "FAILED: $*" >&2; exit 1; }
 
 REPO_ROOT=$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)
-# shellcheck source=../sandbox/workspace.env
+# shellcheck source=/dev/null
 source "$REPO_ROOT/packages/canvas/sandbox/workspace.env"
 NAME=${SANDBOX_DEPLOY_NAME:-$SANDBOX_NAME}
 IMAGE_REPO=${SANDBOX_DEPLOY_IMAGE_NAME:-$IMAGE_NAME}
@@ -105,14 +106,21 @@ if [ "$EXISTS" = 1 ]; then
   "$SBX" replace "$NAME" --image "$IMAGE"
 else
   echo "-> creating $NAME"
+  # --open-port: the ports reachable at <port>-<name>. sbx's router would otherwise reach any port of the sandbox
+  # by prefix (the bridge's, sandboxd's neighbours); with a list it refuses every other. Only the supervisor's.
   "$SBX" create "$NAME" --image "$IMAGE" \
     --mem-request "$MEM_REQUEST" --mem-limit "$MEM_LIMIT" --cpu-request "$CPU_REQUEST" --cpu-limit "$CPU_LIMIT" \
-    --port "$STACK_PORT" --start-fresh --route "$ROUTE" \
+    --port "$STACK_PORT" --open-port "$SUPERVISOR_PORT" --start-fresh --route "$ROUTE" \
     --env WS_SUPERVISOR_TOKEN \
     --env "WS_CANVAS_CWD=$CANVAS_CWD" --env "WS_SUPERVISOR_PORT=$SUPERVISOR_PORT" --env "WS_VITE_PORT=$STACK_PORT" \
     --env "NODE_EXTRA_CA_CERTS=$CA_CERT" \
     --cmd "cd $CANVAS_CWD && exec bun run scripts/ws-supervisor.ts"
 fi
+
+# Whatever its age, the sandbox must reach only the supervisor by prefix. A replace keeps the list a create set, so a
+# sandbox made before the list existed fails here: delete it and run this again.
+"$SBX" get "$NAME" | jq -e --argjson p "$SUPERVISOR_PORT" '.ports == [$p]' >/dev/null \
+  || fail "$NAME's prefixed ports are not [$SUPERVISOR_PORT] (sbx get $NAME): delete it and deploy again"
 
 echo "-> allow-list: $EGRESS_ALLOW"
 # shellcheck disable=SC2086  # a space-separated list of hosts
