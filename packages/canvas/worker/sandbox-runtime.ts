@@ -2,7 +2,7 @@ import type { Env } from './index.ts';
 import { containerEnv } from './container-env.ts';
 import { COORDS_HEADER } from './canvas-container-lifecycle.ts';
 import { selfHostedTarget, serveSelfHosted } from './self-hosted.ts';
-import { type SandboxCoords, localBridgeOrigin, sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
+import { type SandboxCoords, localBridgeOrigin, sseRetryResponse, urlOnOrigin, wantsEventStream } from './sandbox-resolver.ts';
 
 // The workspace runtime: where a resolved workspace's requests are served from. In order, a
 // loopback bridge (E2E only), a self-hosted VM, or the workspace's `CanvasContainer` DO on
@@ -11,14 +11,12 @@ import { type SandboxCoords, localBridgeOrigin, sseRetryResponse, wantsEventStre
 
 /** Serve a resolved workspace's request from wherever its compute lives. */
 export async function serveWorkspace(request: Request, env: Env, coords: SandboxCoords): Promise<Response> {
-  const url = new URL(request.url);
   // E2E ONLY (#276): no container exists locally, so the workspace IS the bridge process on a
   // loopback port. Reached only AFTER the gate and the ownership check upstream, so it bypasses
   // nothing that guards a request — it only replaces the transport into the container.
   const localBridge = localBridgeOrigin(env);
   if (localBridge) {
-    const target = new URL(url.pathname + url.search, localBridge);
-    return fetch(new Request(target, request));
+    return fetch(new Request(urlOnOrigin(request.url, localBridge), request));
   }
   // A workspace whose compute lives on our own hardware (worker/self-hosted.ts).
   // Placed AFTER the gate and the ownership check upstream, exactly like the E2E

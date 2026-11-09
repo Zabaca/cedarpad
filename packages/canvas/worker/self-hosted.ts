@@ -26,7 +26,7 @@
 // here. That is why the Access policy carries no email rule: a human who could
 // satisfy Access directly would bypass the ownership check.
 
-import { sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
+import { sseRetryResponse, urlOnOrigin, wantsEventStream } from './sandbox-resolver.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
 /**
@@ -139,11 +139,10 @@ export function selfHostedTarget(env: SelfHostedEnv, canvasWorkspace: string): S
 
 /** Build the guest-bound request: same path, same method, same body, plus Access. */
 export function guestRequest(request: Request, origin: string, target: SelfHostedTarget): Request {
-  const url = new URL(request.url);
   const headers = new Headers(request.headers);
   headers.set('CF-Access-Client-Id', target.accessClientId);
   headers.set('CF-Access-Client-Secret', target.accessClientSecret);
-  return new Request(new URL(url.pathname + url.search, origin), new Request(request, { headers }));
+  return new Request(urlOnOrigin(request.url, origin), new Request(request, { headers }));
 }
 
 /**

@@ -90,6 +90,16 @@ describe('guestRequest', () => {
     expect(req.headers.get('CF-Access-Client-Id')).toBe('cid.access');
     expect(req.headers.get('CF-Access-Client-Secret')).toBe('csecret');
   });
+
+  // The Access service token rides every one of these requests: the path must never be able to pick the host.
+  test.each([['//attacker.example/x'], ['/\\attacker.example/x'], ['/%2F%2Fattacker.example/x'], ['/%5Cattacker.example/x']])(
+    'a request for %s is sent to the target, not to another host',
+    (path) => {
+      const req = guestRequest(new Request(`https://app.cedarpad.com${path}`), 'https://ws.cedarpad.com', TARGET);
+      expect(new URL(req.url).origin).toBe('https://ws.cedarpad.com');
+      expect(req.headers.get('CF-Access-Client-Id')).toBe('cid.access');
+    },
+  );
 });
 
 const realFetch = globalThis.fetch;

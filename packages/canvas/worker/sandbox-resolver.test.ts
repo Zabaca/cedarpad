@@ -7,6 +7,7 @@ import {
   localBridgeOrigin,
   resolve,
   sseRetryResponse,
+  urlOnOrigin,
   wantsEventStream,
 } from './sandbox-resolver.ts';
 
@@ -79,5 +80,46 @@ describe('localBridgeOrigin — the e2e stand-in for a container (#276)', () => 
       expect(localBridgeOrigin({ LOCAL_CONTAINER_SHIM: '1', LOCAL_BRIDGE_ORIGIN: origin })).toBeNull();
     }
     expect(localBridgeOrigin({ LOCAL_CONTAINER_SHIM: '1' })).toBeNull();
+  });
+});
+
+// A request's path is the caller's, and `new URL(path, origin)` reads a path that starts with `//` (or `/\`, which the URL
+// parser turns into `//`) as a scheme-relative reference: another host. A signed-in user opening
+// `https://app.cedarpad.com//attacker.example/x` would have had the Worker send the Access service token and their cookies
+// to attacker.example. `urlOnOrigin` keeps the origin and puts the path after it, whatever the path looks like.
+describe('urlOnOrigin: the caller\'s path never changes the host', () => {
+  const ORIGIN = 'https://ws.cedarpad.com';
+  test('keeps path and query', () => {
+    expect(urlOnOrigin('https://app.cedarpad.com/w/default/pad?x=1&y=2', ORIGIN).href).toBe(`${ORIGIN}/w/default/pad?x=1&y=2`);
+  });
+
+  test.each([
+    ['//attacker.example/x'],
+    ['///attacker.example/x'],
+    ['/\\attacker.example/x'],
+    ['/\\/attacker.example/x'],
+    ['/%2F%2Fattacker.example/x'],
+    ['/%2f%2fattacker.example/x'],
+    ['/%5Cattacker.example/x'],
+    ['/%5C%5Cattacker.example/x'],
+    ['//attacker.example@ws.cedarpad.com/x'],
+    ['//user:pass@attacker.example/x'],
+    ['/.//attacker.example/x'],
+    ['/..//attacker.example/x'],
+    ['//attacker.example?x=1'],
+  ])('%s stays on the origin', (path) => {
+    const out = urlOnOrigin(`https://app.cedarpad.com${path}`, ORIGIN);
+    expect(out.origin).toBe(ORIGIN);
+    expect(out.host).toBe('ws.cedarpad.com');
+    expect(out.username).toBe('');
+    expect(out.href.startsWith(`${ORIGIN}/`)).toBe(true);
+  });
+
+  test('a double slash is kept as a path, not dropped', () => {
+    expect(urlOnOrigin('https://app.cedarpad.com//api/buildrev', ORIGIN).pathname).toBe('//api/buildrev');
+  });
+
+  test('works for the loopback bridge origin too', () => {
+    expect(urlOnOrigin('https://app.cedarpad.com//attacker.example/x', 'http://127.0.0.1:4511').host).toBe('127.0.0.1:4511');
   });
 });
