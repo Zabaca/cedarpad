@@ -36,7 +36,7 @@
 // treated as a stack that is down, because a sandbox flagged start-fresh starts
 // again from its image when the boot arrives.
 
-import { sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
+import { sseRetryResponse, urlOnOrigin, wantsEventStream } from './sandbox-resolver.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
 /**
@@ -187,12 +187,11 @@ export function selfHostedTarget(env: SelfHostedEnv, canvasWorkspace: string): S
  * does not survive.
  */
 export function guestRequest(request: Request, origin: string, target: SelfHostedTarget): Request {
-  const url = new URL(request.url);
   const headers = new Headers(request.headers);
   headers.set('CF-Access-Client-Id', target.accessClientId);
   headers.set('CF-Access-Client-Secret', target.accessClientSecret);
   if (target.sandbox) headers.set(WAKE_HEADER, '1');
-  return new Request(new URL(url.pathname + url.search, origin), new Request(request, { headers }));
+  return new Request(urlOnOrigin(request.url, origin), new Request(request, { headers }));
 }
 
 /**

@@ -87,6 +87,25 @@ export function localBridgeOrigin(env: { LOCAL_CONTAINER_SHIM?: string; LOCAL_BR
   return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ? origin : null;
 }
 
+/**
+ * The caller's request URL, moved onto `origin`: the same path and query on a different host.
+ *
+ * The path is the caller's, so it must never be able to choose the host. `new URL(path + search, origin)` does let it:
+ * a path that starts with `//` (or `/\\`, which the URL parser reads as `//`) is a scheme-relative reference, so
+ * `https://app.cedarpad.com//attacker.example/x` became `https://attacker.example/x`, and a proxy that put its Access
+ * service token and the caller's cookies on the request sent them there. Here the origin is parsed first and only its
+ * `pathname` and `search` are set, which can change neither the host nor the credentials. A result on another origin
+ * is refused all the same: it cannot happen, and a proxy must not rely on that.
+ */
+export function urlOnOrigin(requestUrl: string, origin: string): URL {
+  const from = new URL(requestUrl);
+  const to = new URL(origin);
+  to.pathname = from.pathname;
+  to.search = from.search;
+  if (to.origin !== new URL(origin).origin) throw new Error('refusing to forward a request to another origin');
+  return to;
+}
+
 /** The retryable stand-in for a stream response during a failed/incomplete cold boot. */
 export function sseRetryResponse(): Response {
   return new Response('retry: 2000\n\n', {
