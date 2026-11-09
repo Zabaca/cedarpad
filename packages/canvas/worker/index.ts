@@ -101,8 +101,9 @@ export interface Env {
   LOCAL_CONTAINER_SHIM?: string;
   LOCAL_BRIDGE_ORIGIN?: string;
   // Workspaces served from our own hardware instead of a Cloudflare Container
-  // (worker/self-hosted.ts). JSON map of workspace id -> https origin; absent or
-  // malformed means every workspace runs on its CanvasContainer.
+  // (worker/self-hosted.ts). JSON map of workspace id -> https origin (the VM) or
+  // { stack, supervisor } origins (a sandbox); absent or malformed means every
+  // workspace runs on its CanvasContainer.
   SELF_HOSTED_WORKSPACES?: string;
   // Bearer the guest's supervisor demands on /__boot, and the Cloudflare Access
   // service token that lets this Worker reach the guest's hostname at all.

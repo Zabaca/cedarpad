@@ -25,6 +25,16 @@
 // admits precisely one caller, and the authorization that matters still happens
 // here. That is why the Access policy carries no email rule: a human who could
 // satisfy Access directly would bypass the ownership check.
+//
+// ── Two kinds of target ───────────────────────────────────────────────────
+// The VM is reached through one tunnel hostname that routes `/__boot` to the
+// supervisor and everything else to vite, so its map entry is a plain origin.
+// A sandbox on the sandbox site (sbx) has one address per port instead: the
+// stack at `<name>.sbx.zabaca.com`, the supervisor at `4599-<name>.sbx.zabaca.com`.
+// Its entry names both, and it is the one that sleeps: every request the Worker
+// forwards to it asks sbx to wake it (`WAKE_HEADER`), and sbx's 410 ("lost") is
+// treated as a stack that is down, because a sandbox flagged start-fresh starts
+// again from its image when the boot arrives.
 
 import { sseRetryResponse, wantsEventStream } from './sandbox-resolver.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
@@ -53,15 +63,25 @@ import type { SandboxCoords } from './sandbox-resolver.ts';
  *
  * Pure; exported for tests.
  */
-export function decideGuestWarm(status: number): 'serve' | 'cold-start' {
+export function decideGuestWarm(status: number, sandbox = false): 'serve' | 'cold-start' {
   if (status < 400) return 'serve';
+  // sbx answers 410 for a sandbox whose pod is gone. For one that starts fresh when lost that is a stack that is
+  // down, like a 502; behind the VM's tunnel nothing answers 410, so there it is a real response.
+  if (sandbox && status === 410) return 'cold-start';
   return status === 502 || status === 503 || status === 504 ? 'cold-start' : 'serve';
 }
 
+/** sbx's request header that wakes a sleeping sandbox whatever the request looks like (a bot's User-Agent, a HEAD). */
+export const WAKE_HEADER = 'X-Sbx-Wake';
+
 /** Everything needed to reach one self-hosted workspace. */
 export interface SelfHostedTarget {
-  /** Origin of the guest's tunnel, e.g. `https://ws.cedarpad.com`. */
+  /** Origin of the stack (vite): the guest's tunnel, e.g. `https://ws.cedarpad.com`, or a sandbox's own address. */
   origin: string;
+  /** Origin of the supervisor's `/__boot`: the same as `origin` behind the VM's tunnel, its own address on a sandbox. */
+  supervisorOrigin: string;
+  /** A sandbox on sbx: it sleeps, so its requests ask to wake it and its 410 is a cold start. */
+  sandbox: boolean;
   /** Bearer the supervisor's `/__boot` demands (belt, inside Access's braces). */
   supervisorToken: string;
   accessClientId: string;
@@ -69,7 +89,10 @@ export interface SelfHostedTarget {
 }
 
 export interface SelfHostedEnv {
-  /** JSON map of canvasWorkspace id -> origin. Absent/empty ⇒ nothing is self-hosted. */
+  /**
+   * JSON map of canvasWorkspace id -> where its compute is. Absent/empty ⇒ nothing is self-hosted. A value is a plain
+   * origin (the VM: one address for the stack and the supervisor) or `{ "stack": origin, "supervisor": origin }` (a sandbox).
+   */
   SELF_HOSTED_WORKSPACES?: string;
   WS_SUPERVISOR_TOKEN?: string;
   CF_ACCESS_CLIENT_ID?: string;
@@ -92,7 +115,7 @@ export interface SelfHostedEnv {
  * and putting it on the wire in cleartext to save a scheme is not a trade.
  * Pure; exported for tests.
  */
-export function parseWorkspaceMap(raw: string | undefined): Record<string, string> {
+export function parseWorkspaceMap(raw: string | undefined): Record<string, WorkspaceOrigins> {
   if (!raw) return {};
   let parsed: unknown;
   try {
@@ -101,21 +124,41 @@ export function parseWorkspaceMap(raw: string | undefined): Record<string, strin
     return {};
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
-  const out: Record<string, string> = {};
-  for (const [workspace, origin] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof origin !== 'string') continue;
-    let url: URL;
-    try {
-      url = new URL(origin);
-    } catch {
-      continue;
+  const out: Record<string, WorkspaceOrigins> = {};
+  for (const [workspace, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof value === 'string') {
+      const origin = httpsOrigin(value);
+      if (origin) out[workspace] = { origin, supervisorOrigin: origin, sandbox: false };
+    } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      // A sandbox: both addresses or neither. One alone could not boot the stack it serves.
+      const { stack, supervisor } = value as Record<string, unknown>;
+      const origin = httpsOrigin(stack);
+      const supervisorOrigin = httpsOrigin(supervisor);
+      if (origin && supervisorOrigin) out[workspace] = { origin, supervisorOrigin, sandbox: true };
     }
-    if (url.protocol !== 'https:') continue;
-    // Normalised to a bare origin — a stray path would silently prefix every
-    // request and produce 404s that look like the guest is broken.
-    out[workspace] = url.origin;
   }
   return out;
+}
+
+/** One workspace's entry in the map; the fields of a `SelfHostedTarget` that the map decides. */
+export interface WorkspaceOrigins {
+  origin: string;
+  supervisorOrigin: string;
+  sandbox: boolean;
+}
+
+/**
+ * A bare `https:` origin, or null. Normalised to the origin, because a stray path would silently prefix every
+ * request and produce 404s that look like the guest is broken.
+ */
+function httpsOrigin(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.origin : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -128,21 +171,27 @@ export function parseWorkspaceMap(raw: string | undefined): Record<string, strin
  * behaviour. Config that is not complete is config that is not in effect.
  */
 export function selfHostedTarget(env: SelfHostedEnv, canvasWorkspace: string): SelfHostedTarget | null {
-  const origin = parseWorkspaceMap(env.SELF_HOSTED_WORKSPACES)[canvasWorkspace];
-  if (!origin) return null;
+  const origins = parseWorkspaceMap(env.SELF_HOSTED_WORKSPACES)[canvasWorkspace];
+  if (!origins) return null;
   const supervisorToken = env.WS_SUPERVISOR_TOKEN ?? '';
   const accessClientId = env.CF_ACCESS_CLIENT_ID ?? '';
   const accessClientSecret = env.CF_ACCESS_CLIENT_SECRET ?? '';
   if (!supervisorToken || !accessClientId || !accessClientSecret) return null;
-  return { origin, supervisorToken, accessClientId, accessClientSecret };
+  return { ...origins, supervisorToken, accessClientId, accessClientSecret };
 }
 
-/** Build the guest-bound request: same path, same method, same body, plus Access. */
+/**
+ * Build the guest-bound request: same path, same method, same body, plus Access. To a sandbox it also carries the
+ * always-wake header: the Worker has already decided the caller may reach the workspace, so sbx must not judge the
+ * request itself (it answers "asleep" to a bot's User-Agent or a HEAD). Set, not appended, so a caller's own value
+ * does not survive.
+ */
 export function guestRequest(request: Request, origin: string, target: SelfHostedTarget): Request {
   const url = new URL(request.url);
   const headers = new Headers(request.headers);
   headers.set('CF-Access-Client-Id', target.accessClientId);
   headers.set('CF-Access-Client-Secret', target.accessClientSecret);
+  if (target.sandbox) headers.set(WAKE_HEADER, '1');
   return new Request(new URL(url.pathname + url.search, origin), new Request(request, { headers }));
 }
 
@@ -165,24 +214,25 @@ export async function serveSelfHosted(
   const streamReq = wantsEventStream(request.headers.get('accept'));
   try {
     const res = await fetch(guestRequest(request, target.origin, target));
-    if (decideGuestWarm(res.status) === 'serve') return res;
+    if (decideGuestWarm(res.status, target.sandbox) === 'serve') return res;
   } catch {
     /* guest unreachable — fall through and try to boot it */
   }
 
-  console.log(`[self-hosted] boot — pushing env to ${target.origin} for ${coords.canvasWorkspace}`);
+  console.log(`[self-hosted] boot: pushing env to ${target.supervisorOrigin} for ${coords.canvasWorkspace}`);
   try {
     // The guest holds NO cedarpad credential at rest; it starts the stack only
     // when this push arrives. `/__boot` is idempotent (`already: true` when the
     // stack is already serving), so a warm miss caused by something other than
     // a stopped stack costs one cheap round trip rather than a restart.
-    const booted = await fetch(`${target.origin}/__boot`, {
+    const booted = await fetch(`${target.supervisorOrigin}/__boot`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${target.supervisorToken}`,
         'content-type': 'application/json',
         'CF-Access-Client-Id': target.accessClientId,
         'CF-Access-Client-Secret': target.accessClientSecret,
+        ...(target.sandbox ? { [WAKE_HEADER]: '1' } : {}),
       },
       body: JSON.stringify(containerEnvVars),
     });

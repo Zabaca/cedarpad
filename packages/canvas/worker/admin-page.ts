@@ -35,7 +35,7 @@ export const isAdminHost = (url: URL): boolean => url.hostname === ADMIN_HOST;
 
 /** Where a workspace's compute is, and what it last said about itself. */
 export type ContainerStatus =
-  | { kind: 'vm'; origin: string }
+  | { kind: 'vm' | 'sandbox'; origin: string }
   | { kind: 'durable'; running: boolean; lastBoot: { at: string; ms: number; outcome: string; detail?: string } | null }
   | { kind: 'unknown'; why: string };
 
@@ -58,11 +58,11 @@ export function defaultAdminDeps(env: Env): AdminDeps {
   };
 }
 
-/** VM if self-hosted; else the CanvasContainer's own boot log. */
+/** The VM or the sandbox if self-hosted; else the CanvasContainer's own boot log. */
 export async function containerStatusOf(env: Env, workspaceId: string): Promise<ContainerStatus> {
   const coords = coordsForWorkspace(workspaceId);
-  const origin = parseWorkspaceMap(env.SELF_HOSTED_WORKSPACES)[coords.canvasWorkspace];
-  if (origin) return { kind: 'vm', origin };
+  const hosted = parseWorkspaceMap(env.SELF_HOSTED_WORKSPACES)[coords.canvasWorkspace];
+  if (hosted) return { kind: hosted.sandbox ? 'sandbox' : 'vm', origin: hosted.origin };
   const ns = env.CanvasContainer;
   try {
     const req = new Request(`https://${ADMIN_HOST}${BOOTLOG_PATH}`, { headers: { [COORDS_HEADER]: JSON.stringify(coords) } });
@@ -134,6 +134,8 @@ function statusText(s: ContainerStatus | undefined): string {
   switch (s.kind) {
     case 'vm':
       return `VM · ${s.origin}`;
+    case 'sandbox':
+      return `sandbox · ${s.origin}`;
     case 'unknown':
       return `unknown · ${s.why}`;
     case 'durable': {
