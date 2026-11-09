@@ -183,9 +183,10 @@ chat multiplexer), so every Session is a *chat* — a reply always **resumes the
 chat turn on its owning runner's bridge**.
 - **Product runtime**: the workspace container (canvas chats) — one `CanvasContainer` DO per
   workspace on Cloudflare's `durable_object` container policy (no rollouts: a new image
-  reaches a container on its next request), or a self-hosted VM when the workspace is
-  mapped in `SELF_HOSTED_WORKSPACES`. Stops 5m after its last request finishes to bound
-  cost.
+  reaches a container on its next request), or a self-hosted VM, or a self-hosted sbx
+  sandbox that sleeps when idle (`packages/canvas/sandbox/`, `bun run deploy:sandbox`),
+  when the workspace is mapped in `SELF_HOSTED_WORKSPACES`. Stops 5m after its last
+  request finishes to bound cost.
 - **Dev-agent** — _retired 2026-10-09_ (ADR-0010/0011 superseded). The canvas never changes
   code: there is no git-token turn, no worktree, no `open_pr`, no Jobs and no cron.
 
