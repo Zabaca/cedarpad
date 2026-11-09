@@ -39,6 +39,50 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.5.0] - 2026-11-09
+
+### Added
+- **Outside agents can see the canvas.** Two new MCP tools: `read_image` returns what is in a pasted image, and `view_canvas` returns a picture of a page, or of just the shapes you name (a frame brings everything inside it). Someone needs to have the canvas open in a browser for `view_canvas` to answer. (#451) (#453)
+- **The canvas chat can picture specific shapes too.** Its `view_canvas` now takes a page or a list of shapes, so a note on a wide board comes back readable instead of as a speck in an overview. (#453)
+- **Components can declare their own commands.** A component can name typed actions (the Kanban card has add, move, edit and remove card), and an agent runs one with `call_component`. The action works on the card's live data, so an edit someone makes at the same moment survives, and bad input is refused instead of written.
+- **Chat can write a skill for its workspace,** usable from the next message.
+- **Several Fredrin connections in one workspace,** each with its own key and its own checkbox in the chat's MCP menu.
+- **Admins can create workspaces** from the workspace menu ("New workspace..."). Each new workspace opens on its own first canvas. (#464)
+
+### Changed
+- **Edits now name the person who made them,** whether made by hand, by a chat they started, or over MCP with their sign-in. (#464)
+- **Chat defaults to Haiku, which now runs Haiku 5.5.** Existing chats keep the model they were set to. (#460)
+- **A canvas chat changes things only through its canvas and MCP tools.** It no longer runs shell commands or reads files on the workspace's machine. (#454)
+- **Chat loads only cedarpad's own skills and your workspace's skills,** and comes with a guide to how components work.
+- **cedarpad.com and the app measure usage with PostHog,** including session replay with typed input masked. Usage events carry ids and tool names only, never chat text, component content or data. (#466)
+- **cedarpad.com no longer describes features that were retired.** (#459)
+
+### Fixed
+- **A component's message to chat reaches the right canvas,** waits its turn when the chat is busy instead of failing, and appears in the transcript. A component that set a value to undefined no longer crashes the tab. (#441)
+- **`view_canvas` answers on busy pages.** A page full of screenshots used to time out; the picture is now capped at 2000 pixels and the wait is longer. (#452)
+- **Each workspace keeps to its own canvases.** A workspace other than the default can no longer open, or change through the component list, the default workspace's board. (#464)
+
+### Removed
+- **cedarpad is now just the canvas.** Everything below is retired, and any board, link or integration that relied on it stops working.
+- **The Notebook** (Library, Knowledge Graph, API keys), the `/v1` API and the `notebook_*` MCP tools. `/notebook` now opens the canvas. (#457)
+- **The Inbox and web push notifications,** with the MCP tools `list_inbox`, `assign_conversation`, `read_conversation`, `send_message` (the Inbox one) and `read_transcript`. `/inbox` now opens the canvas. (#456)
+- **Jobs, the dev agent, BI and connected repositories:** scheduled jobs, pull requests from chat, marts and the `list_marts` tool, and the GitHub connection in Settings. A pasted GitHub link still places a card, now just a name and a link. (#455)
+- **Live data sources for components.** A card that read from a mart or the Notebook keeps showing its saved data. (#455) (#457)
+- **The desktop app.** (#454)
+- **poc.cedarpad.com.** Use app.cedarpad.com. (#465)
+- **The stored data of the retired features is deleted.** (#458)
+
+### Security
+- **Links that started with a double slash could send your sign-in to another site.** Fixed. (#468)
+
+### Internal
+- Workspaces on Cloudflare run on the `durable_object` container policy: one `CanvasContainer` per workspace, no image rollouts, and the old Sandbox, Warehouse and WorkspaceEvents classes deleted. (#461) (#465)
+- An operator page at admin.cedarpad.com, behind Cloudflare Access, lists users, workspaces and their containers. (#463)
+- The preview Worker no longer takes production's domains when it deploys. (#462)
+- `bun run deploy:vm` ships origin/main to the workspace VM alone, and no longer kills its own restart shell.
+- The canvas unit suite can never reach a real platform RPC (a run inside a bridge had written test skills into production).
+- `deploy.sh` retried the container update Cloudflare times out; superseded by the container change above.
+
 ## [0.4.1] — 2026-09-24
 
 ### Changed
