@@ -72,6 +72,14 @@ else
   EXISTS=0
 fi
 
+# A replace keeps the list of ports reachable by prefix that the create set, and a sandbox made without one cannot get
+# one later. So an existing sandbox that is not open on the supervisor's port alone is refused here, before anything is
+# built or replaced: delete it and deploy again (a create sets the list). Parsed, since `sbx get` prints indented JSON.
+ports_ok() { "$SBX" get "$NAME" | jq -e --argjson p "$SUPERVISOR_PORT" '.ports == [$p]' >/dev/null; }
+if [ "$EXISTS" = 1 ] && ! ports_ok; then
+  fail "$NAME exists but its prefixed ports are not [$SUPERVISOR_PORT] (sbx get $NAME); a replace cannot change them: delete it and deploy again"
+fi
+
 if [ "$DRY_RUN" = 1 ]; then
   echo "dry run: would build $IMAGE_REPO from $REF ($DOCKERFILE, IMAGE_KIND=sandbox, BUILD_REV=$WANT, BUILD_VERSION=$VERSION)"
   if [ "$EXISTS" = 1 ]; then echo "dry run: $NAME exists: would replace its image"; else echo "dry run: $NAME does not exist: would create it"; fi
@@ -117,10 +125,8 @@ else
     --cmd "cd $CANVAS_CWD && exec bun run scripts/ws-supervisor.ts"
 fi
 
-# Whatever its age, the sandbox must reach only the supervisor by prefix. A replace keeps the list a create set, so a
-# sandbox made before the list existed fails here: delete it and run this again.
-"$SBX" get "$NAME" | jq -e --argjson p "$SUPERVISOR_PORT" '.ports == [$p]' >/dev/null \
-  || fail "$NAME's prefixed ports are not [$SUPERVISOR_PORT] (sbx get $NAME): delete it and deploy again"
+# And after the create or replace: the sandbox says it is open on the supervisor's port alone.
+ports_ok || fail "$NAME's prefixed ports are not [$SUPERVISOR_PORT] (sbx get $NAME)"
 
 echo "-> allow-list: $EGRESS_ALLOW"
 # shellcheck disable=SC2086  # a space-separated list of hosts
