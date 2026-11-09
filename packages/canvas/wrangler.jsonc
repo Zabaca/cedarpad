@@ -43,7 +43,12 @@
     // Data does NOT move: canvas state stays in CanvasSyncRoom, rows in D1, artifacts
     // in R2 (ADR-0022). Only the process serving the pad changes address. Emptying
     // this map routes every workspace straight back to its container.
-    "SELF_HOSTED_WORKSPACES": "{\"default\":\"https://ws.cedarpad.com\"}",
+    //
+    // On 2026-11-09 (v0.5.1) `default` moved from the guest to a sandbox on the sandbox
+    // site (sbx), which sleeps when idle (scripts/deploy-sandbox.sh, sandbox/workspace.env):
+    // the stack and the supervisor are two addresses there. The guest is stopped and kept
+    // a week as the way back: start it and release `{"default":"https://ws.cedarpad.com"}`.
+    "SELF_HOSTED_WORKSPACES": "{\"default\":{\"stack\":\"https://cedarpad-default.sbx.zabaca.com\",\"supervisor\":\"https://4599-cedarpad-default.sbx.zabaca.com\"}}",
     "BETTER_AUTH_URL": "https://app.cedarpad.com",
     "WEB_ORIGIN": "https://app.cedarpad.com",
     // Prod is James-only: Better Auth signup is disabled at the edge (dev leaves it

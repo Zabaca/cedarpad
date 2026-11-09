@@ -39,6 +39,15 @@ from the site.
 
 <!-- Releases below, newest first. The /release skill prepends each one here. -->
 
+## [0.5.1] - 2026-11-09
+
+### Changed
+- **Your default workspace now sleeps when nobody is using it and wakes on your next visit.** The first page load after a quiet spell can take a few seconds longer; your canvases, chats and files are unchanged.
+
+### Internal
+- The default workspace runs in a sandbox on Zabaca's sandbox site instead of an always-on machine; the machine is stopped and kept for a week as the way back. (#467)
+- The edge Worker's Access secret was rotated after the fix in 0.5.0.
+
 ## [0.5.0] - 2026-11-09
 
 ### Added
