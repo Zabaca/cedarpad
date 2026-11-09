@@ -15,8 +15,10 @@ and stops it 5 minutes after the last request finishes. It is the only container
 the `@cloudflare/sandbox` `Sandbox` class, the retired `Warehouse` and the retired Inbox's
 `WorkspaceEvents` are deleted (wrangler migration `v6`).
 
-A workspace mapped in `SELF_HOSTED_WORKSPACES` still runs on our own hardware instead;
-the routing order is unchanged — the E2E loopback shim, then a self-hosted VM, then the
+A workspace mapped in `SELF_HOSTED_WORKSPACES` still runs on our own hardware instead (the VM
+as a plain origin, or an sbx sandbox as `{ stack, supervisor }` origins; a sandbox sleeps, so
+its requests ask sbx to wake it and the public build stamp does not);
+the routing order is unchanged: the E2E loopback shim, then a self-hosted VM or sandbox, then the
 workspace's `CanvasContainer`.
 
 ## Why
@@ -42,9 +44,10 @@ workspace's `CanvasContainer`.
   `verify-container-image.sh` and `verify-cold-boot.sh` are gone with the failure modes
   they guarded.
 - `/api/buildrev` follows the default workspace's compute: while `default` is self-hosted
-  it reports the VM, so `deploy.sh`'s buildRev poll is skipped there and `bun run deploy:vm`
-  is what proves the VM. An anonymous poll therefore never keeps a Cloudflare container
-  awake for a workspace that does not run on one.
+  it reports the VM or the sandbox, so `deploy.sh`'s buildRev poll is skipped there and
+  `bun run deploy:vm` or `bun run deploy:sandbox` is what proves it. An anonymous poll therefore
+  never keeps a Cloudflare container awake for a workspace that does not run on one, and on a
+  sandbox it is passive: it wakes nothing and boots nothing (a 503 while the sandbox sleeps).
 - `wrangler deploy` does not delete container applications or detach custom domains that
   leave the config: the old `-sandbox` / `-warehouse` applications are deleted with
   `wrangler containers delete`, and a dropped custom domain through the Workers domains

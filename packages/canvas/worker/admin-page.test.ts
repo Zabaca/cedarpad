@@ -3,7 +3,14 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import type { AdminOverview } from '../web-poc/lib/db/queries/admin-overview.ts';
 import { resetJwksCache } from './access-jwt.ts';
 import { AUD, NOW, TEAM, goodClaims, jwksPort, mint, sign } from './access-testkit.ts';
-import { type AdminDeps, type ContainerStatus, handleAdminHost, isAdminHost, renderAdminPage } from './admin-page.ts';
+import {
+  type AdminDeps,
+  type ContainerStatus,
+  containerStatusOf,
+  handleAdminHost,
+  isAdminHost,
+  renderAdminPage,
+} from './admin-page.ts';
 import type { Env } from './index.ts';
 
 // The admin host (ADR-0026). The gate fails closed, only `/` exists, and the page shows
@@ -97,5 +104,29 @@ describe('renderAdminPage', () => {
     expect(html).toContain('cloudflare · asleep · last boot ready 3.9s');
     expect(html).toContain('interact, chat');
     expect(html).toContain('fredrin');
+  });
+
+  test('names a sandbox as a sandbox', () => {
+    const sandbox: ContainerStatus = { kind: 'sandbox', origin: 'https://cedarpad-default.sbx.zabaca.com' };
+    const page = renderAdminPage(overview, new Map([['default', sandbox]]), { viewer: 'james@zabaca.com', now: NOW });
+    expect(page).toContain('sandbox · https://cedarpad-default.sbx.zabaca.com');
+    expect(page).not.toContain('VM ·');
+  });
+});
+
+// Where a self-hosted workspace runs: the VM (a plain origin in the map) or a sandbox (stack and supervisor apart).
+describe('containerStatusOf', () => {
+  const statusOf = (map: unknown) =>
+    containerStatusOf({ SELF_HOSTED_WORKSPACES: JSON.stringify(map) } as unknown as Env, 'default');
+
+  test('a plain origin is the VM', async () => {
+    expect(await statusOf({ default: 'https://ws.cedarpad.com' })).toEqual({ kind: 'vm', origin: 'https://ws.cedarpad.com' });
+  });
+
+  test('a stack and a supervisor is a sandbox, shown at the stack address', async () => {
+    const status = await statusOf({
+      default: { stack: 'https://cedarpad-default.sbx.zabaca.com', supervisor: 'https://4599-cedarpad-default.sbx.zabaca.com' },
+    });
+    expect(status).toEqual({ kind: 'sandbox', origin: 'https://cedarpad-default.sbx.zabaca.com' });
   });
 });

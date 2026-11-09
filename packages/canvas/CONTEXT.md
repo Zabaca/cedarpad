@@ -9,7 +9,7 @@ dev server as its compiler), so this is not a Vercel deploy. It deploys to Cloud
 one `CanvasContainer` Durable Object per workspace (`worker/canvas-container.ts`, the
 `durable_object` container policy) running the same dev stack — the shape
 [ADR 0001](./docs/decisions/0001-cloudflare-container-deploy.md) designed, minus the
-rollouts — or to a self-hosted VM for a workspace mapped in `SELF_HOSTED_WORKSPACES`.
+rollouts, or to a self-hosted VM or sbx sandbox for a workspace mapped in `SELF_HOSTED_WORKSPACES`.
 
 ## Workspace, canvas, chat — the containment hierarchy
 

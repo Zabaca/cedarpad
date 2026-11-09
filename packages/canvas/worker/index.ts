@@ -101,8 +101,9 @@ export interface Env {
   LOCAL_CONTAINER_SHIM?: string;
   LOCAL_BRIDGE_ORIGIN?: string;
   // Workspaces served from our own hardware instead of a Cloudflare Container
-  // (worker/self-hosted.ts). JSON map of workspace id -> https origin; absent or
-  // malformed means every workspace runs on its CanvasContainer.
+  // (worker/self-hosted.ts). JSON map of workspace id -> https origin (the VM) or
+  // { stack, supervisor } origins (a sandbox); absent or malformed means every
+  // workspace runs on its CanvasContainer.
   SELF_HOSTED_WORKSPACES?: string;
   // Bearer the guest's supervisor demands on /__boot, and the Cloudflare Access
   // service token that lets this Worker reach the guest's hostname at all.
@@ -169,8 +170,10 @@ export default {
     // HERE, ahead of the edge gate. This is the one unauthenticated path that can cold-boot a
     // container, which is why it is not pinned to Cloudflare when `default` is self-hosted:
     // an anonymous poll would otherwise keep a second, unused container awake.
+    // A sandbox is the one that sleeps, so there the poll is PASSIVE: it neither wakes the sandbox nor boots its
+    // stack (a 503 when they are down), where an anonymous poll would otherwise keep it awake for good.
     if (url.pathname === '/api/buildrev') {
-      return serveWorkspace(request, env, resolve(DEFAULT_WORKSPACE));
+      return serveWorkspace(request, env, resolve(DEFAULT_WORKSPACE), { passive: true });
     }
 
     // Edge auth (ADR-0007, slice #45) — the SOLE gate now that cs_gate is gone. Better
