@@ -1,0 +1,68 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cedarpad-www",
+  // Astro 6+/adapter v13+: the adapter's unified entrypoint. `astro build` writes a
+  // derived dist/server/wrangler.json plus .wrangler/deploy/config.json; run
+  // `wrangler deploy` from this dir WITHOUT -c so it follows that redirect.
+  "main": "@astrojs/cloudflare/entrypoints/server",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Custom domain on the apex: wrangler provisions the proxied DNS record + TLS cert
+  // and binds cedarpad.com to this worker (the zone lives in this account — same
+  // pattern as canvas's app.cedarpad.com). An existing apex DNS record conflicts;
+  // remove it before the first deploy.
+  // www is also bound so it resolves (it 522'd otherwise); middleware.ts 301s it to
+  // the canonical apex, mirroring poc→app on the app side.
+  "routes": [
+    { "pattern": "cedarpad.com", "custom_domain": true },
+    { "pattern": "www.cedarpad.com", "custom_domain": true }
+  ],
+  "observability": { "enabled": true },
+  // Static assets live in dist/client (astro build's layout). The derived deploy
+  // config rewrites this itself; it's declared here so `wrangler types` sees the
+  // ASSETS binding.
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./dist/client"
+  },
+  // The waitlist DB (ADR-0014): one table, email UNIQUE. The same database is later
+  // bound to the app worker so /admin can read the list.
+  // database_id: create once with `bunx wrangler d1 create cedarpad-waitlist` and
+  // paste the printed uuid here — wrangler deploy only BINDS an existing database.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cedarpad-waitlist",
+      "database_id": "eb4a65d7-6e26-4d98-b893-3b52f901726c",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Preview environment. The Astro adapter flattens wrangler config at BUILD time,
+  // so deploying preview requires building with CLOUDFLARE_ENV=preview (the infra
+  // preview instance does this) — a plain build + `wrangler deploy --env preview`
+  // silently deploys the production config. Named environments do not inherit
+  // BINDINGS (assets/D1 redeclared verbatim; preview shares the production waitlist
+  // DB, matching how canvas preview shares production's platform D1) — but they DO
+  // inherit routes, hence the explicit empty routes so preview never grabs the
+  // cedarpad.com apex.
+  "env": {
+    "preview": {
+      "name": "cedarpad-www-preview",
+      "workers_dev": true,
+      "routes": [],
+      "observability": { "enabled": true },
+      "assets": {
+        "binding": "ASSETS",
+        "directory": "./dist/client"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "cedarpad-waitlist",
+          "database_id": "eb4a65d7-6e26-4d98-b893-3b52f901726c",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
+}

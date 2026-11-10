@@ -1,0 +1,5 @@
+{
+  "enabledPlugins": {
+    "create-worktree-friendly@zabaca-agent-tools": true
+  }
+}

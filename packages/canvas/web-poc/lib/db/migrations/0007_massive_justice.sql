@@ -1,0 +1,1 @@
+ALTER TABLE `conversations` ADD `kind` text DEFAULT 'chat' NOT NULL;

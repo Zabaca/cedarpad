@@ -1,0 +1,906 @@
+---
+// Server-rendered (not prerendered) so middleware.ts actually runs per request —
+// Astro middleware never fires for prerendered pages, and the www→apex 301 lives
+// there. The page is static-shaped; the render is trivial.
+export const prerender = false
+
+import Logo from '../components/Logo.astro'
+import PadMock from '../components/PadMock.astro'
+import WaitlistForm from '../components/WaitlistForm.astro'
+import Layout from '../layouts/Layout.astro'
+---
+
+<Layout>
+  <div class="room">
+    <div class="wrap">
+      <nav aria-label="Main">
+        <Logo />
+        <div class="navlinks">
+          <a href="#agent">The agent</a>
+          <a href="#team">The team</a>
+          <a href="/why">Why</a>
+          <a href="#access">Access</a>
+        </div>
+      </nav>
+
+      <main id="main">
+        <div class="hero">
+          <div>
+            <p class="label wound">AI made building easy. Aligning your team is still hard.</p>
+            <h1>The pad where teams get aligned.</h1>
+            <p class="sub">
+              A shared canvas for your team — with a <b>visual agent</b> that renders what you
+              mean: live charts, working prototypes, real diagrams. Converge on the real thing,
+              not a description of it.
+            </p>
+            <WaitlistForm id="hero" />
+          </div>
+          <PadMock />
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <section id="agent">
+      <p class="label">The visual agent</p>
+      <h2>It doesn't answer in paragraphs.</h2>
+      <p class="lede">A colleague that thinks on the whiteboard — except what it draws runs.</p>
+
+      <div class="beat">
+        <div class="beat-copy">
+          <h3>Answers in artifacts</h3>
+          <p>
+            Ask, and working things appear on the board: research written as documents, mermaid
+            diagrams, charts, custom apps, clickable prototypes. It sees the
+            actual canvas — your sketches, arrows, screenshots — and answers in place.
+          </p>
+        </div>
+        <div class="beat-visual">
+          <div class="ask"><span class="dot"></span> "how do our plans compare?"</div>
+          <div class="chips">
+            <span class="chip">research.md</span>
+            <span class="chip c-blue">mermaid</span>
+            <span class="chip c-green">chart</span>
+          </div>
+          <div class="artifact">
+            <div class="t">PlanCompare.tsx · live</div>
+            <div class="bars"><i style="height:55%"></i><i class="hi" style="height:85%"></i><i style="height:40%"></i><i style="height:70%"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="beat flip">
+        <div class="beat-copy">
+          <h3>Iterates with the conversation</h3>
+          <p>
+            "Make it denser." "Try it without the sidebar." The mock changes as you talk. And when
+            a choice is fuzzy, it spreads the options as live variants, side by side — your team
+            points at the one they mean instead of arguing about adjectives.
+          </p>
+        </div>
+        <div class="beat-visual">
+          <div class="vrow">
+            <div class="vcard dim"><i class="l"></i><i class="box"></i><span>1 vote</span></div>
+            <div class="vcard won"><i class="l g-bg"></i><i class="box"></i><span class="g">✓ decided</span></div>
+            <div class="vcard dim"><i class="l"></i><i class="box"></i><span>0 votes</span></div>
+          </div>
+          <div class="cap">rev 1 → rev 2 → rev 3 · mid-conversation</div>
+        </div>
+      </div>
+
+      <div class="beat">
+        <div class="beat-copy">
+          <h3>Builds your vocabulary</h3>
+          <p>
+            Every component it makes becomes a reusable word — place last week's chart on today's
+            board, remix a teammate's prototype. The workspace understands you faster the longer
+            you use it. A fresh chat window starts from zero every time.
+          </p>
+        </div>
+        <div class="beat-visual">
+          <div class="chips wrap-chips">
+            <span class="chip">KpiCard</span>
+            <span class="chip">PricingMock</span>
+            <span class="chip">FlowMap</span>
+            <span class="chip c-accent">PlanCompare</span>
+            <span class="chip">Kanban</span>
+          </div>
+          <div class="lib"><b>library · 68 components</b> — shared by the whole workspace</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="team">
+      <p class="label">The team</p>
+      <h2>Multiplayer, on a canvas you already know.</h2>
+
+      <div class="beat">
+        <div class="beat-copy">
+          <h3>Zero learning curve</h3>
+          <p>
+            Underneath it all is a real whiteboard: notes, shapes, live cursors, follow a
+            teammate's view. The familiar part is familiar; the new part is who else is on the
+            board.
+          </p>
+        </div>
+        <div class="beat-visual">
+          <div class="board-row">
+            <div class="sticky">launch blockers?</div>
+            <div class="shot">▣ diagram</div>
+          </div>
+          <div class="cursors">
+            <span class="cur c-blue">▲ noor</span>
+            <span class="cur c-accent">▲ james</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="beat flip">
+        <div class="beat-copy">
+          <h3>Smart paste</h3>
+          <p>
+            What's different is what happens when you paste. Drop a spreadsheet and get a live
+            table. Paste JSON, markdown, a mermaid block, a page of HTML, a GitHub link — each
+            one lands as the right kind of working card, not a screenshot of one.
+          </p>
+        </div>
+        <div class="beat-visual">
+          {/* One paste gesture, three destinations: the clipboard and the card it becomes
+              cross-fade together on one loop, so the beat shows the ROUTING rather than a
+              single CSV case. Frames are stacked absolutely; reduced motion holds frame 1. */}
+          <div class="cyc">
+            <div class="clip-lbl"><span class="kbd">⌘V</span> clipboard</div>
+            <div class="cyc-clip">
+              <div>
+                <div class="clip">
+                  <span>plan,seats,mrr</span><span>Team,24,4800</span><span>Studio,9,2700</span>
+                </div>
+              </div>
+              <div>
+                <div class="clip">
+                  <span># Findings</span><span>Churn is up 4pts</span><span>## Pricing</span>
+                </div>
+              </div>
+              <div>
+                <div class="clip">
+                  <span>https://github.com/</span><span class="ind">acme/api</span>
+                </div>
+              </div>
+            </div>
+            <div class="cyc-arrow">↓</div>
+            <div class="cyc-stage">
+              <div>
+                <div class="mc mc-table">
+                  <div class="ti">q3-plans.csv</div>
+                  <table>
+                    <tr><th>plan</th><th class="n">seats</th><th class="n">mrr</th></tr>
+                    <tr><td>Team</td><td class="n">24</td><td class="n">$4,800</td></tr>
+                    <tr><td>Studio</td><td class="n">9</td><td class="n">$2,700</td></tr>
+                  </table>
+                  <div class="ft"><span>1,284 rows</span><span>live</span></div>
+                </div>
+              </div>
+              <div>
+                <div class="mc mc-md">
+                  <div class="bar"><span class="tog">≡</span> notes.md</div>
+                  <div class="split">
+                    <div class="toc">
+                      <div>Findings</div>
+                      <div class="i1">Churn</div>
+                      <div class="i1">Pricing</div>
+                    </div>
+                    <div class="body">
+                      <b>Findings</b>
+                      <i class="w1"></i><i class="w3"></i><i class="w2"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div class="mc mc-repo">
+                  <div class="hd">
+                    <span aria-hidden="true">🐙</span>
+                    <span class="nm">acme/api</span>
+                  </div>
+                  <div class="path">github.com/acme/api</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="beat">
+        <div class="beat-copy">
+          <h3>Everyone gets an agent</h3>
+          <p>
+            Each person pairs with their own visual agent — exploring, building, charting in
+            parallel. It all lands on one shared surface, so five people working at once converge
+            instead of scattering into five directions.
+          </p>
+        </div>
+        <div class="beat-visual">
+          <div class="sess"><span class="pip p-blue"></span> james + agent</div>
+          <div class="sess"><span class="pip p-green"></span> noor + agent</div>
+          <div class="one-board">one board · both changes, live</div>
+        </div>
+      </div>
+
+      <div class="beat flip">
+        <div class="beat-copy">
+          <h3>Talk it through, out loud</h3>
+          <p>
+            Start a huddle and the agent is in the room with you — listening to the whole
+            conversation, answering when it's addressed, building on the board while you keep
+            talking. Guests you've shared a link with can join by voice too. No recording, no
+            meeting, no agenda — it's live while you're live.
+          </p>
+        </div>
+        <div class="beat-visual">
+          <div class="hd-pill"><span class="hd-dot"></span> cedar · listening</div>
+          <div class="hd-peers">
+            <div class="hd-peer">james</div>
+            <div class="hd-peer">noor</div>
+            <div class="hd-peer">guest</div>
+          </div>
+          <div class="hd-cap"><b>noor:</b> …cedar, chart that against last quarter</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="access">
+      <p class="label">Access</p>
+      <h2>Seats open in batches.</h2>
+      <p class="lede">
+        Invite-only while we build toward this. We open seats deliberately, and we sit with every
+        team we let in. Leave an email; we'll tell you when a seat is yours.
+      </p>
+      <div class="cta-form">
+        <WaitlistForm id="access" />
+      </div>
+    </section>
+
+    <footer>
+      <div>cedarpad — the pad where teams get aligned.</div>
+      <div><a href="/changelog">Changelog</a> · © 2026 Zabaca</div>
+    </footer>
+  </div>
+</Layout>
+
+<style>
+  .room {
+    position: relative;
+    overflow: hidden;
+  }
+  .room::before {
+    content: '';
+    position: absolute;
+    top: -30%;
+    left: 50%;
+    width: 120vw;
+    height: 90vh;
+    transform: translateX(-50%);
+    background: radial-gradient(ellipse at center, oklch(0.28 0 0) 0%, transparent 65%);
+    pointer-events: none;
+  }
+  .room .wrap {
+    position: relative;
+  }
+  nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .navlinks {
+    display: flex;
+    gap: 22px;
+    font-size: 0.8125rem;
+  }
+  .navlinks a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .navlinks a:hover {
+    color: var(--text);
+  }
+  /* The hero eyebrow is the wound, not a category label: sentence case, accent. */
+  .label.wound {
+    text-transform: none;
+    letter-spacing: 0.01em;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    color: var(--accent);
+    font-family: inherit;
+  }
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 56px;
+    align-items: center;
+    padding: 76px 0 84px;
+  }
+  h1 {
+    font-size: clamp(2rem, 4vw, 3.1rem);
+    font-weight: 600;
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    margin: 14px 0 18px;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1.6;
+    max-width: 46ch;
+    margin: 0 0 28px;
+  }
+  .sub b {
+    color: var(--text);
+  }
+  section {
+    padding: 72px 0;
+    border-top: 1px solid var(--line);
+  }
+  h2 {
+    font-size: clamp(1.5rem, 2.4vw, 2rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 12px 0 14px;
+  }
+  .lede {
+    color: var(--muted);
+    max-width: 62ch;
+    font-size: 0.95rem;
+    margin: 0;
+  }
+  /* Beats: copy + a small board-flavored visual, alternating sides. */
+  .beat {
+    display: flex;
+    gap: 40px;
+    align-items: center;
+    margin-top: 44px;
+  }
+  .beat.flip {
+    flex-direction: row-reverse;
+  }
+  .beat-copy {
+    flex: 1;
+  }
+  .beat-copy h3 {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    margin: 0 0 7px;
+  }
+  .beat-copy p {
+    color: var(--muted);
+    font-size: 0.95rem;
+    line-height: 1.65;
+    margin: 0;
+    max-width: 56ch;
+  }
+  .beat-visual {
+    flex: 0 0 300px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+    background-image: radial-gradient(oklch(0.27 0 0) 1px, transparent 1px);
+    background-size: 14px 14px;
+    font-size: 0.72rem;
+  }
+  .ask {
+    font-family: var(--mono);
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .ask .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--accent);
+  }
+  .chips {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 9px;
+  }
+  .wrap-chips {
+    flex-wrap: wrap;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    background: var(--void);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    border-radius: 5px;
+    padding: 2px 7px;
+  }
+  .chip.c-blue { border-color: oklch(0.62 0.13 220); color: oklch(0.62 0.13 220); }
+  .chip.c-green { border-color: var(--success); color: var(--success); }
+  .chip.c-accent { border-color: var(--accent); color: var(--accent); }
+  .artifact {
+    background: var(--raised);
+    border: 1px solid var(--accent);
+    border-radius: 9px;
+    padding: 9px;
+  }
+  .artifact .t {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 30px;
+  }
+  .bars i {
+    flex: 1;
+    background: var(--line);
+    border-radius: 2px 2px 0 0;
+  }
+  .bars i.hi {
+    background: var(--accent);
+  }
+  .vrow {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 7px;
+  }
+  .vcard {
+    flex: 1;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 6px;
+  }
+  .vcard.dim { opacity: 0.55; }
+  .vcard.won { border: 2px solid var(--success); }
+  .vcard .l {
+    display: block;
+    width: 75%;
+    height: 4px;
+    background: var(--line);
+    border-radius: 2px;
+    margin-bottom: 5px;
+  }
+  .vcard .l.g-bg { background: var(--success); }
+  .vcard .box {
+    display: block;
+    height: 22px;
+    background: var(--void);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    margin-bottom: 4px;
+  }
+  .vcard span {
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    color: var(--muted);
+  }
+  .g { color: var(--success); }
+  .cap {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--muted);
+    text-align: center;
+  }
+  .lib {
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: var(--muted);
+    font-size: 0.72rem;
+  }
+  .lib b { color: var(--text); }
+  .board-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 9px;
+  }
+  .sticky {
+    flex: 1;
+    background: oklch(0.91 0.06 95);
+    color: oklch(0.3 0.02 60);
+    border-radius: 6px;
+    padding: 7px;
+    min-height: 40px;
+    font-size: 0.68rem;
+  }
+  .shot {
+    flex: 1;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px;
+    color: var(--muted);
+    font-size: 0.68rem;
+  }
+  .cursors {
+    display: flex;
+    justify-content: space-around;
+  }
+  .cur {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+  }
+  .c-blue { color: oklch(0.62 0.13 220); }
+  .c-accent { color: var(--accent); }
+  .sess {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 7px 9px;
+    margin-bottom: 6px;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text);
+  }
+  .pip {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--muted);
+  }
+  .pip.p-blue { background: oklch(0.62 0.13 220); }
+  .pip.p-green { background: var(--success); }
+  .one-board {
+    border: 1px solid var(--line);
+    background: var(--void);
+    border-radius: 7px;
+    padding: 7px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    color: var(--muted);
+  }
+  /* Huddle beat: mirrors the shipped status overlay — cedar's live state, peers, a caption. */
+  .hd-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    background: var(--void);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: 999px;
+    padding: 3px 9px;
+  }
+  .hd-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--accent);
+    animation: hd-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes hd-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.25;
+    }
+  }
+  .hd-peers {
+    display: flex;
+    gap: 5px;
+    margin: 8px 0 7px;
+  }
+  .hd-peer {
+    flex: 1;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 6px 7px;
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--muted);
+  }
+  .hd-cap {
+    border: 1px solid var(--line);
+    background: var(--void);
+    border-radius: 7px;
+    padding: 7px 9px;
+    font-size: 0.66rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .hd-cap b {
+    color: var(--text);
+    font-weight: 600;
+  }
+  /* Smart-paste cycler: three (clipboard, card) frames stacked absolutely, cross-faded on
+     one 9s loop so the pair always agrees. Fixed heights keep the beat-visual from jumping. */
+  .clip-lbl {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--mono);
+    font-size: 0.55rem;
+    color: var(--faint);
+    margin-bottom: 5px;
+  }
+  .kbd {
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    padding: 0 4px;
+    color: var(--muted);
+    background: var(--raised);
+  }
+  .clip {
+    background: var(--void);
+    border: 1px dashed var(--line-strong);
+    border-radius: 7px;
+    padding: 6px 8px;
+    font-family: var(--mono);
+    font-size: 0.55rem;
+    color: var(--faint);
+    line-height: 1.65;
+    overflow: hidden;
+  }
+  /* One line per span: Astro collapses literal newlines in the template, so `white-space: pre`
+     on the source text would render the blob as a single run. */
+  .clip span {
+    display: block;
+    white-space: nowrap;
+  }
+  .clip span.ind {
+    padding-left: 1ch;
+  }
+  .cyc-clip {
+    position: relative;
+    height: 46px;
+    margin-bottom: 4px;
+  }
+  .cyc-stage {
+    position: relative;
+    height: 118px;
+  }
+  .cyc-clip > div,
+  .cyc-stage > div {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    animation: cyc 9s infinite;
+  }
+  .cyc-clip > div:nth-child(2),
+  .cyc-stage > div:nth-child(2) {
+    animation-delay: 3s;
+  }
+  .cyc-clip > div:nth-child(3),
+  .cyc-stage > div:nth-child(3) {
+    animation-delay: 6s;
+  }
+  @keyframes cyc {
+    0% {
+      opacity: 0;
+    }
+    3% {
+      opacity: 1;
+    }
+    30% {
+      opacity: 1;
+    }
+    34% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  /* The loop is decoration: hold the first frame when motion is unwelcome. */
+  @media (prefers-reduced-motion: reduce) {
+    .cyc-clip > div,
+    .cyc-stage > div {
+      animation: none;
+    }
+    .cyc-clip > div:first-child,
+    .cyc-stage > div:first-child {
+      opacity: 1;
+    }
+    .hd-dot {
+      animation: none;
+    }
+  }
+  .cyc-arrow {
+    text-align: center;
+    color: var(--line-strong);
+    font-size: 0.75rem;
+    margin: 1px 0 4px;
+  }
+  /* Card miniatures. These deliberately copy the real components' chrome — the light
+     DataTable/GithubRepoCard surfaces and MarkdownCard's dark shell — so a reader
+     recognises them on the board later. Their colors are literal, not tokens. */
+  .mc {
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .mc-table {
+    background: #fff;
+    color: #111827;
+    border: 1px solid #e2e8f0;
+  }
+  .mc-table .ti {
+    padding: 6px 9px 3px;
+    font-weight: 700;
+    font-size: 0.7rem;
+  }
+  .mc-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.63rem;
+  }
+  .mc-table th {
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 3px 9px;
+  }
+  .mc-table td {
+    padding: 3px 9px;
+    color: #374151;
+    font-variant-numeric: tabular-nums;
+  }
+  .mc-table th.n,
+  .mc-table td.n {
+    text-align: right;
+  }
+  .mc-table tr + tr td {
+    border-top: 1px solid #f1f5f9;
+  }
+  .mc-table .ft {
+    border-top: 1px solid #e2e8f0;
+    padding: 4px 9px;
+    font-size: 0.57rem;
+    color: #6b7280;
+    display: flex;
+    justify-content: space-between;
+  }
+  .mc-md {
+    background: #11141a;
+    border: 1px solid #262a33;
+    color: #c9cdd6;
+  }
+  .mc-md .bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 9px;
+    border-bottom: 1px solid #262a33;
+    background: #0d1017;
+    font-size: 0.55rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .mc-md .tog {
+    width: 11px;
+    height: 11px;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    display: grid;
+    place-items: center;
+    font-size: 0.48rem;
+    line-height: 1;
+  }
+  .mc-md .split {
+    display: flex;
+  }
+  .mc-md .toc {
+    width: 78px;
+    flex: none;
+    border-right: 1px solid #262a33;
+    padding: 6px;
+    font-size: 0.55rem;
+    color: #7a7f8c;
+    line-height: 1.85;
+  }
+  .mc-md .toc .i1 {
+    padding-left: 7px;
+  }
+  .mc-md .body {
+    flex: 1;
+    padding: 6px 9px;
+    min-width: 0;
+  }
+  .mc-md .body b {
+    display: block;
+    color: #e6e9ee;
+    font-size: 0.64rem;
+    margin-bottom: 4px;
+  }
+  .mc-md .body i {
+    display: block;
+    height: 3px;
+    border-radius: 2px;
+    background: #262a33;
+    margin-bottom: 4px;
+  }
+  .mc-md .body i.w1 {
+    width: 94%;
+  }
+  .mc-md .body i.w2 {
+    width: 70%;
+  }
+  .mc-md .body i.w3 {
+    width: 85%;
+  }
+  .mc-repo {
+    background: #fff;
+    color: #111827;
+    border: 1px solid #e2e8f0;
+    padding: 9px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .mc-repo .hd {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .mc-repo .nm {
+    font-weight: 600;
+    font-size: 0.68rem;
+  }
+  .mc-repo .path {
+    font-family: var(--mono);
+    font-size: 0.57rem;
+    color: #374151;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 5px;
+    padding: 4px 6px;
+  }
+  .cta-form {
+    margin-top: 24px;
+  }
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 32px 0 48px;
+    color: var(--faint);
+    font-size: 0.8125rem;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  footer a {
+    color: var(--muted);
+  }
+  footer a:hover {
+    color: var(--text);
+  }
+  @media (max-width: 860px) {
+    .hero {
+      grid-template-columns: 1fr;
+      gap: 40px;
+      padding: 48px 0 56px;
+    }
+    .beat,
+    .beat.flip {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 18px;
+    }
+    .beat-visual {
+      flex: none;
+    }
+    .navlinks {
+      display: none;
+    }
+  }
+</style>

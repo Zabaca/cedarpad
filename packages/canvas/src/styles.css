@@ -1,0 +1,1682 @@
+:root {
+  /* warm graphite neutrals (hue 60) — see DESIGN.md */
+  --void: oklch(0.16 0 0);
+  --surface: oklch(0.21 0 0);
+  --raised: oklch(0.25 0 0);
+  --overlay: oklch(0.29 0 0);
+  --line: oklch(0.32 0 0);
+  --line-strong: oklch(0.41 0 0);
+  --text: oklch(0.93 0.008 75);
+  --muted: oklch(0.69 0.014 65);
+  --faint: oklch(0.6 0.014 60);
+  /* one cedar ember accent — means live / active (Cedar-Means-Live) */
+  --accent: oklch(0.68 0.145 45);
+  --accent-hi: oklch(0.75 0.14 45);
+  --on-accent: oklch(0.18 0.012 60);
+  /* status — never decorative */
+  --danger: oklch(0.62 0.18 25);
+  --success: oklch(0.65 0.12 150);
+  --warning: oklch(0.8 0.12 85);
+  /* elevation: tonal first, shadows only for things floating above the pad */
+  --shadow-float: 0 1px 2px oklch(0.1 0.01 60 / 0.5);
+  --shadow-lift: 0 8px 24px oklch(0.07 0.01 60 / 0.55);
+  --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+  --nav-w: 244px; /* docked left-nav width; the tldraw stage insets by this */
+
+  /* back-compat aliases: old names mapped onto the system so existing var() refs hold */
+  --bg: var(--void);
+  --panel: var(--surface);
+
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+/* The pad is a flex row: the tldraw stage + (members) the docked side panel that owns
+   all canvas controls. Chat lives in the canvas as `chat` shapes. */
+.app {
+  position: relative;
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  background: var(--bg);
+}
+
+/* The tldraw canvas fills whatever the side panel leaves (the rail moved to the edge
+   Shell, which iframes this pad). */
+.tl-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The chat starter: a command line, not a button. Bottom-center, just above tldraw's
+   toolbar (top-right is taken by tldraw's style panel on selection). At rest it is a
+   compact monospace bar; focused it widens and grows a scope tag + Run button. */
+.chat-starter {
+  position: absolute;
+  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: oklch(0.13 0 0);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lift);
+  font-family: var(--mono);
+  transition:
+    width 160ms ease,
+    border-color 160ms ease;
+}
+.chat-starter-rest {
+  width: 260px;
+  padding: 10px 16px;
+  cursor: text;
+  text-align: left;
+  color: var(--faint);
+}
+.chat-starter-rest:hover {
+  border-color: var(--line-strong);
+}
+.chat-starter-rest:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.chat-starter-focused {
+  width: min(680px, calc(100% - 96px));
+  padding: 12px 12px 12px 16px;
+  border-color: var(--accent);
+}
+.chat-starter-sigil {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: linear-gradient(150deg, var(--accent-hi), var(--accent));
+  color: var(--on-accent);
+}
+.chat-starter-caret {
+  flex: none;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+}
+.chat-starter-ph {
+  flex: 1;
+  font-size: 13.5px;
+}
+.chat-starter-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  resize: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  caret-color: var(--accent);
+}
+.chat-starter-input::placeholder {
+  color: var(--faint);
+}
+.chat-starter-scope {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.chat-starter-run {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.chat-starter-run:hover:not(:disabled) {
+  background: var(--accent-hi);
+}
+.chat-starter-run:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.chat-starter-run kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+/* Starter suggestions ride just above the focused bar. */
+.chat-starter-suggest {
+  position: absolute;
+  bottom: 128px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 400;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: min(680px, calc(100% - 96px));
+}
+.chat-starter-sug {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.chat-starter-sug:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+/* A chat card: fills its shape (w×h). Header is the drag handle; body interacts. */
+/* The chat card runs its own palette, and deliberately.
+ *
+ * The transcript is machine output rendered as a terminal — ⏺ ⎿ ❯ over a fixed-pitch
+ * column — and a terminal carries its own theme the way a code block carries its own syntax
+ * colours. These are the values the AgentChat mock was ported from (brainless, itself read
+ * off real Claude Code captures): Tokyo-Night text over a near-black, with cedar terracotta
+ * kept as the "live" accent so the card still reads as ours.
+ *
+ * They are declared as LOCAL overrides of the app tokens, so every rule below (and the MCP
+ * popover, the selects, the Send button) re-themes without a single rule knowing about it,
+ * and nothing leaks past `.chat-card`. DESIGN.md records this as the one sanctioned
+ * exception to the achromatic ramp.
+ */
+.chat-card {
+  --surface: #181818;
+  --void: #101010;
+  --raised: #3a3a3a;
+  --overlay: #222222;
+  --line: #2a2a2a;
+  --line-strong: #3a3a3a;
+  --text: #c0caf5;
+  --muted: #8b8fa3;
+  --faint: #565f89;
+  --accent: #cd694a;
+  --accent-hi: #e79475;
+  --on-accent: #181818;
+  --success: #4ea96f;
+  --warning: #e0af68;
+  --danger: #f7768e;
+  /* Paths, commands and module names — the one colour with no app-token equivalent. */
+  --link: #7dcfff;
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: var(--shadow-float), 0 0 0 1px var(--line);
+}
+
+.chat-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 1px solid var(--line);
+  cursor: grab;
+  user-select: none;
+  flex: none;
+}
+.chat-card-title {
+  margin-right: auto; /* single pusher: trailing status/ctx/model sit right via head's gap */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-card-status {
+  font-weight: 400;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--muted);
+}
+.chat-ctx {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.chat-model {
+  font: inherit;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 4px;
+  cursor: pointer;
+}
+.chat-fork {
+  font: inherit;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.chat-stop {
+  font: inherit;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--danger) 38%, transparent);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.chat-stop:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}
+/* Live status dot: agent is connected/working. Solid, no glow (No-Glow rule). */
+.chat-card-head .t-dot {
+  flex: none;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--success);
+}
+.chat-card-head .t-dot.busy {
+  color: var(--warning);
+  animation: t-pulse 1.4s ease-in-out infinite;
+}
+@keyframes t-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.chat-card-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* The transcript is machine output, so it is set in mono end to end (DESIGN.md: mono for
+     machine output, sans for human content). The turn glyphs — ⏺ ⎿ ❯ — only line up in a
+     fixed-pitch face; in sans they drift a fraction of a cell per row and the column reads
+     ragged. */
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+/* Background-jobs tray: live shell / subagent / monitor / workflow tasks, pinned at the
+   top of the body. A job leaves the tray when it settles (the transcript keeps the chip). */
+.job-tray {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--void);
+  max-height: 120px;
+  overflow-y: auto;
+}
+.job-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  min-width: 0;
+}
+.job-dot {
+  flex: none;
+  font-size: 10px;
+  color: var(--accent);
+  animation: jobpulse 1.2s ease-in-out infinite;
+}
+.job-row.pending .job-dot {
+  color: var(--muted);
+  animation: none;
+}
+.job-row.paused .job-dot {
+  color: var(--warning);
+  animation: none;
+}
+.job-type {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: var(--void);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.job-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-summary {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-style: italic;
+}
+@keyframes jobpulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Plan panel: the agent's TaskCreate/TaskUpdate todo list (a checklist, kept after it
+   completes — unlike the jobs tray). Pinned below the jobs tray. */
+.todo-tray {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 8px 12px;
+  list-style: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--void);
+  max-height: 140px;
+  overflow-y: auto;
+}
+.todo-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  min-width: 0;
+}
+.todo-elbow {
+  flex: none;
+  white-space: pre;
+  color: var(--faint);
+}
+.todo-box {
+  flex: none;
+  width: 2ch;
+  color: var(--muted);
+}
+.todo-row.in_progress .todo-box {
+  color: #d78787;
+}
+.todo-row.completed .todo-box {
+  color: #87d787;
+}
+.todo-row.in_progress .todo-subject {
+  font-weight: 600;
+}
+.todo-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.todo-row.completed .todo-subject {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.todo-row.in_progress .todo-subject {
+  color: var(--text);
+}
+
+.chat-empty {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.chat-empty em {
+  color: var(--text);
+  font-style: normal;
+  background: var(--void);
+  padding: 1px 6px;
+  border-radius: 5px;
+  display: inline-block;
+  margin: 2px 0;
+}
+
+/* A turn. No bubbles: the user's is a full-width tinted row behind a ❯, the agent's is
+   plain text on the surface — Claude Code's grammar, where the transcript reads as one
+   column rather than two facing columns. The 72ch measure cap is gone with them; a full
+   row IS the form here, and the mono size keeps the line length sane. */
+.bubble {
+  max-width: 100%;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.bubble.user {
+  display: flex;
+  gap: 1ch;
+  align-items: baseline;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--raised);
+  color: #ffffff;
+  white-space: pre-wrap;
+}
+.bubble-marker {
+  flex: none;
+  color: #4e4e4e;
+}
+.bubble-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.bubble.agent {
+  padding: 0 8px;
+  color: var(--text);
+  white-space: normal;
+}
+
+/* ---- Markdown renderer styles ------------------------------------------ */
+
+.md { font-size: inherit; line-height: 1.6; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child  { margin-bottom: 0; }
+
+.md-p  { margin: 0.7em 0; } /* paragraph gap > line gap, so boundaries read at a glance */
+.md-h  { margin: 0.6em 0 0.25em; font-weight: 700; line-height: 1.3; font-size: 1em; }
+
+.md-table-wrap { overflow-x: auto; margin: 0.5em 0; }
+.md-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92em;
+}
+.md-table th,
+.md-table td {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+.md-table th { background: var(--raised); font-weight: 600; }
+.md-table tr:nth-child(even) td { background: var(--raised); }
+
+.md-list { margin: 0.35em 0; padding-left: 1.4em; }
+.md-list li { margin: 0.15em 0; }
+
+.md-pre {
+  background: var(--void);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px 12px;
+  margin: 0.5em 0;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.88em;
+  line-height: 1.5;
+}
+.md-pre code { background: none; border: none; padding: 0; }
+
+.md-ic {
+  background: var(--raised);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-family: var(--mono);
+  font-size: 0.92em;
+}
+
+.md a { color: var(--accent); text-decoration: none; }
+.md a:hover { text-decoration: underline; }
+
+.md-hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 0.6em 0;
+}
+
+/* Claude Code's ⏺ call / ⎿ result pair, not a chip. The result indents under the call by
+   one hidden glyph, which is why the spacer exists rather than a padding value: the two
+   rows stay aligned at any font size. */
+.tool-chip {
+  padding: 0 8px;
+  color: var(--muted);
+  min-width: 0;
+}
+.tool-call,
+.tool-result {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.tool-glyph {
+  flex: none;
+  font-size: 10px;
+  color: var(--success);
+}
+.tool-glyph.spacer {
+  visibility: hidden;
+}
+.tool-elbow {
+  flex: none;
+  color: var(--faint);
+}
+.tool-label {
+  min-width: 0;
+  color: var(--text);
+  word-break: break-word;
+}
+/* `Read(app/settings/page.tsx)` — the mock's weights exactly: the tool name in the body
+   colour, the parens dim, the argument in the path/command cyan. */
+.tool-name {
+  color: var(--text);
+}
+.tool-paren {
+  color: var(--faint);
+}
+.tool-arg {
+  color: var(--link);
+}
+/* The call's full text, collapsed. `toolLabel` has one line to stay scannable in, so it
+   truncates; this is where the untruncated command lives. Capped and scrollable — a Write's
+   content or a big create_shapes batch must not push the transcript off screen. */
+.tool-detail summary {
+  cursor: pointer;
+  list-style: none;
+  outline: none;
+}
+.tool-detail summary::-webkit-details-marker {
+  display: none;
+}
+.tool-detail summary:focus-visible .tool-label {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+.tool-more {
+  flex: none;
+  color: var(--faint);
+  font-size: 9px;
+}
+.tool-detail[open] .tool-more {
+  transform: rotate(90deg);
+}
+.tool-detail-body {
+  margin: 3px 0 0 calc(10px + 8px);
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  border-left: 2px solid var(--line);
+  background: var(--void);
+  color: var(--muted);
+  font: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Subagent items nest under their Task chip: indented with a left rule. */
+.bubble.nested,
+.tool-chip.nested {
+  margin-left: 16px;
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+  max-width: calc(92% - 16px);
+}
+/* The Task chip itself (the subagent's parent): accent + a running pulse. */
+.tool-chip.subagent .tool-glyph {
+  color: var(--muted);
+}
+.tool-chip.subagent.running .tool-glyph,
+.tool-chip.subagent.running .tool-label {
+  color: var(--accent);
+}
+.tool-summary {
+  min-width: 0;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+/* The working line. The verb is the SERVER's status string, shimmered rather than
+   animated with dots: a highlight drifts across it via background-clip, so the word stays
+   real selectable text in the DOM and the live region announces it once. */
+.activity {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 0 8px;
+  color: var(--muted);
+}
+.activity-glyph {
+  flex: none;
+  width: 1ch;
+  display: inline-block;
+  color: var(--accent);
+}
+.activity-verb {
+  background-image: linear-gradient(100deg, var(--accent) 43%, var(--accent-hi) 50%, var(--accent) 57%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: chat-shine 2.8s linear infinite;
+}
+.activity-hint {
+  color: var(--faint);
+}
+@keyframes chat-shine {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-verb {
+    animation: none;
+    background-image: none;
+    color: var(--accent);
+    -webkit-text-fill-color: var(--accent);
+  }
+  .t-dot.busy {
+    animation: none;
+  }
+}
+
+/* Pasted-screenshot previews above the input. */
+.chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 0;
+}
+.chat-attachments .attachment {
+  position: relative;
+}
+.chat-attachments .attachment img {
+  height: 56px;
+  width: auto;
+  max-width: 120px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  display: block;
+}
+.chat-attachments .attachment button {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--void);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Pasted screenshots shown inside a sent message bubble. */
+.bubble-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.bubble-images img {
+  max-width: 100%;
+  max-height: 220px;
+  border-radius: 8px;
+  display: block;
+}
+
+/* Claude Code's composer: the prompt sits BETWEEN two rules, not inside a rounded box. */
+.chat-input {
+  display: flex;
+  gap: 1ch;
+  align-items: flex-start;
+  margin: 8px 12px 0;
+  padding: 2px 0;
+  border-top: 1px solid #808080;
+  border-bottom: 1px solid #808080;
+  flex: none;
+}
+.chat-input-marker {
+  flex: none;
+  padding-top: 4px;
+  font-family: var(--mono);
+  color: var(--text);
+}
+/* The mode line under the composer: which model and effort the NEXT turn will use, and
+   what the keys do. Reads the same two values the header selects set — one source. */
+.chat-mode {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  flex: none;
+  /* 6px off the composer's bottom rule. At 0 the mode line sat ON the rule and read as part
+     of the input rather than as the status under it. */
+  padding: 6px 12px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.chat-mode-model {
+  color: #ffd700;
+}
+.chat-mode-hint {
+  color: var(--faint);
+}
+/* Status that must be readable without colour or a glyph (job state, todo state). */
+.chat-card .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.chat-input textarea {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--text);
+  caret-color: var(--text);
+  padding: 4px 0;
+  font-size: 13px;
+  font-family: var(--mono);
+  outline: none;
+  resize: none;
+  overflow-y: hidden;
+  line-height: 1.5;
+  min-height: 22px;
+}
+
+.chat-input textarea::placeholder {
+  color: var(--faint);
+}
+
+/* Focus is a rule-colour change, not a ring: the composer IS two rules, so brightening
+   them is the terminal-native way to say "the cursor is here". */
+.chat-input:focus-within {
+  border-color: var(--muted);
+}
+
+/* Send is a chip, not a call-to-action. Enter already sends (the mode line says so), so
+   this is the pointer/touch affordance for a keyboard shortcut — a solid pill overstated
+   that, and straddled the composer's rules besides. `align-self: flex-start` pins it to the
+   first line, so a prompt that grows to several rows does not drag it down the box. */
+.chat-input button {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.4;
+  text-transform: lowercase;
+  padding: 1px 8px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  cursor: pointer;
+}
+.chat-input button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--accent-hi);
+}
+
+.chat-input button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+
+/* Component fullscreen (⛶): hover-revealed expand button on a component card, and the
+   overlay that renders the same component over the whole canvas viewport. */
+.component-expand {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.tl-html-container:hover .component-expand {
+  opacity: 1;
+}
+.component-expand:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.component-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.component-fullscreen-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.component-fullscreen-title {
+  font: 600 13px ui-sans-serif, system-ui;
+  color: var(--text);
+}
+.component-fullscreen-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+.component-fullscreen-close:hover {
+  color: var(--text);
+}
+/* Head row, then a body row holding the rail beside the component. */
+.component-fullscreen-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.component-fullscreen-rail {
+  flex: none;
+  width: 220px;
+  min-width: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+}
+.component-fullscreen-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface);
+}
+.component-fullscreen-rail-toggle,
+.component-fullscreen-prev,
+.component-fullscreen-next {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.component-fullscreen-rail-toggle:hover,
+.component-fullscreen-prev:hover,
+.component-fullscreen-next:hover {
+  color: var(--text);
+}
+
+/* Component-guest mode + the fullscreen Share panel (PRD #221). */
+.component-guest-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font: 13px ui-sans-serif, system-ui;
+  background: var(--bg);
+}
+.component-share-toggle {
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.component-share-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.component-fullscreen-head {
+  position: relative;
+}
+.component-share-panel {
+  position: absolute;
+  top: 100%;
+  right: 8px;
+  z-index: 10;
+  min-width: 340px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lift);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.component-share-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 11px var(--mono);
+  color: var(--muted);
+}
+.component-share-url {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.component-share-row button,
+.component-share-new {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.component-share-row button:hover,
+.component-share-new:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Built-in component palette: a pad-chrome panel over the canvas (right side). */
+.palette-fab {
+  position: absolute;
+  bottom: 76px;
+  right: 24px;
+  z-index: 400;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.palette-fab:hover {
+  background: var(--panel-hi, var(--panel));
+}
+.palette-fab:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.component-palette {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  overflow: hidden;
+  min-height: 0;
+  flex: 1;
+}
+.component-palette-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.component-palette-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+.component-palette-count {
+  color: var(--text-dim, var(--text));
+  opacity: 0.6;
+  font-size: 12px;
+}
+.component-palette-refresh,
+.component-palette-close {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  width: 26px;
+  height: 24px;
+  cursor: pointer;
+}
+.component-palette-refresh {
+  margin-left: auto;
+}
+.component-palette-filter {
+  margin: 10px 12px 0;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font: inherit;
+}
+.component-palette-error {
+  margin: 8px 12px 0;
+  color: #dc2626;
+  font-size: 12px;
+}
+.component-palette-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.component-palette-empty {
+  opacity: 0.6;
+  padding: 4px;
+}
+.component-palette-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+.component-palette-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.component-palette-add {
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.component-palette-add:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ---- Docked side panel: all canvas controls + palette + placed instances ---- */
+.side-panel {
+  flex: none;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  border-left: 1px solid var(--line);
+  z-index: 500;
+  /* The column scrolls as a whole: a long instance list was clipped dead under
+     overflow:hidden (sections grow past the viewport with no scrollbar). */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.side-panel-huddle {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.side-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.side-panel-title {
+  flex: 1;
+  font-weight: 700;
+  font-size: 14px;
+}
+.side-panel-collapse {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  width: 26px;
+  height: 24px;
+  cursor: pointer;
+}
+.side-panel-section {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--line);
+  /* Sections take their natural height and the PANEL column scrolls. The old
+     flex:1-per-open-section sizing fought the scrolling column and painted
+     sections on top of each other once the instance list got long. */
+  flex: none;
+}
+.side-panel-section > summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-weight: 700;
+  font-size: 13px;
+  user-select: none;
+}
+
+/* tldraw chrome, portaled into the panel: let it flow as blocks instead of the
+   absolute grid slots it ships with. */
+.side-panel-slot:empty {
+  display: none;
+}
+.side-panel-toolbar,
+.side-panel-style,
+.side-panel-nav {
+  border-bottom: 1px solid var(--line);
+}
+.side-panel-nav {
+  border-bottom: none;
+  border-top: 1px solid var(--line);
+  margin-top: auto;
+}
+/* Containment: tldraw ships absolute/fixed positioning on its chrome; a portaled
+   panel that keeps it escapes the 300px aside and invisibly covers the canvas,
+   swallowing every click (the "canvas won't select/draw" bug). !important because
+   tldraw's stylesheet loads after ours; relative slots catch anything absolute. */
+.side-panel-slot {
+  position: relative;
+}
+.side-panel-slot .tlui-toolbar,
+.side-panel-slot .tlui-style-panel,
+.side-panel-slot .tlui-navigation-panel,
+.side-panel-slot .tlui-menu-zone {
+  position: static !important;
+  inset: auto !important;
+  width: 100% !important;
+  max-width: none;
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+.side-panel-slot .tlui-toolbar__inner {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.side-panel-slot .tlui-style-panel {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.side-panel-menu {
+  flex: none;
+}
+
+/* The palette inside the panel: the <summary> is its title, the panel collapse is
+   its close — hide the component's own duplicates. */
+.side-panel .component-palette-close,
+.side-panel .component-palette-title {
+  display: none;
+}
+
+/* Placed component instances: click → select + zoom-to. */
+.instance-list {
+  /* Natural height — the panel column is the scroller now. */
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.instance-list-empty {
+  opacity: 0.6;
+  font-size: 13px;
+  padding: 2px 4px;
+}
+/* The row holds TWO controls (label + ⛶), so it is the bordered container and the
+   label is the button inside it — a button in a button would be invalid markup. */
+.instance-list-row {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.instance-list-row:hover,
+.instance-list-row:focus-within,
+.instance-list-row[data-active='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.instance-list-row[data-active='true'] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.instance-list-label {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 6px 9px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Revealed on hover or when anything in the row takes keyboard focus, so the route
+   into fullscreen works without a mouse. */
+.instance-list-expand {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 8px;
+  font-size: 12px;
+  opacity: 0;
+}
+.instance-list-row:hover .instance-list-expand,
+.instance-list-row:focus-within .instance-list-expand {
+  opacity: 0.75;
+}
+.instance-list-expand:hover,
+.instance-list-expand:focus-visible {
+  opacity: 1;
+}
+
+/* Panel refinements (user pass 2) */
+/* 4: menu/actions dropdowns paint above the later slots (they open inside the head
+   slot; without this the style slot's opaque background covered them). */
+.side-panel-head {
+  position: relative;
+  z-index: 10;
+}
+/* The Controls section wraps the tldraw toolbar + style slots, collapsible like
+   the other sections. */
+.side-panel-controls[open] {
+  flex: none;
+}
+/* 2: colors (148px) and the text/geometry toggle rows (112px) fit side by side. */
+.side-panel-slot .tlui-style-panel {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.side-panel-slot .tlui-style-panel__section {
+  width: auto !important;
+  min-width: 0;
+}
+.side-panel-slot .tlui-slider__container {
+  max-width: 148px;
+}
+/* 3: the opacity slider's track was invisible against the panel background. */
+.side-panel-slot .tlui-slider__track {
+  background: linear-gradient(var(--line-strong) 0 0) center / calc(100% - 12px) 3px no-repeat;
+  border-radius: 3px;
+}
+/* 4 (cont.): the menu/actions strip floats INSIDE the stage (top-right over the
+   canvas) so its dropdowns open within tldraw's clipped container. */
+.stage-menu {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 400;
+}
+.stage-menu .tlui-menu-zone {
+  position: static !important;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+/* ---- Component gallery modal (+ Component) ---- */
+.gallery-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 600;
+  background: oklch(0.1 0 0 / 0.55);
+  display: grid;
+  place-items: center;
+}
+.gallery {
+  width: min(860px, calc(100vw - 80px));
+  max-height: min(640px, calc(100vh - 80px));
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lift);
+  overflow: hidden;
+}
+.gallery-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+}
+.gallery-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+.gallery-close {
+  margin-left: auto;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  width: 26px;
+  height: 24px;
+  cursor: pointer;
+}
+.gallery-filter {
+  margin: 12px 16px 0;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font: inherit;
+}
+.gallery-error {
+  margin: 8px 16px 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+.gallery-grid {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+.gallery-empty {
+  opacity: 0.6;
+  font-size: 13px;
+}
+.gallery-card {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: inherit;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font: inherit;
+  min-height: 84px;
+}
+.gallery-card:hover {
+  border-color: var(--accent);
+}
+.gallery-card:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.gallery-card-name {
+  font-weight: 700;
+  font-size: 13.5px;
+}
+.gallery-card-tier {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.gallery-card-tier.tier-own {
+  color: var(--accent);
+}
+.gallery-card-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.side-panel-add {
+  margin: 4px 10px 8px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-weight: 600;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.side-panel-add:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.side-panel-actions {
+  display: flex;
+  gap: 6px;
+  margin: 4px 10px 8px;
+}
+.side-panel-actions .side-panel-add {
+  margin: 0;
+  flex: 1;
+}
+.side-panel-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Huddle (ADR-0017): the guest floating join button + the live-state tint shared
+   with the side-panel button. */
+.huddle-fab {
+  position: absolute;
+  bottom: 76px;
+  right: 24px;
+  z-index: 400;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--raised, #2c2a26);
+  color: inherit;
+  border: 1px solid var(--line, #4a4640);
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.huddle-button.huddle-live,
+.huddle-fab.huddle-live {
+  background: oklch(0.65 0.12 150);
+  color: oklch(0.16 0 0);
+  border-color: transparent;
+}
+
+/* Huddle status (in-panel/floating): cedar's state, peers, live captions. */
+.huddle-status {
+  width: 100%;
+  background: var(--surface, #232120);
+  border: 1px solid var(--line, #4a4640);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.huddle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.huddle-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #777;
+}
+.huddle-dot.st-listening { background: oklch(0.65 0.12 150); }
+.huddle-dot.st-thinking { background: oklch(0.75 0.14 85); animation: huddle-pulse 1s infinite alternate; }
+.huddle-dot.st-speaking { background: oklch(0.68 0.145 45); animation: huddle-pulse 0.5s infinite alternate; }
+.huddle-dot.st-off { background: #555; }
+@keyframes huddle-pulse { from { opacity: 1; } to { opacity: 0.4; } }
+.huddle-state { color: var(--muted, #999); }
+.huddle-speaking { color: oklch(0.68 0.145 45); font-weight: 600; }
+.huddle-peers { color: var(--muted, #999); }
+.huddle-caption {
+  border-top: 1px solid var(--line, #4a4640);
+  padding-top: 5px;
+  color: var(--muted, #bbb);
+  line-height: 1.4;
+  max-height: 60px;
+  overflow: hidden;
+}
+
+/* #320: the guest's arrival prompt — a modal over the canvas, because presence marking
+   is meaningless until the person behind the cursor has a name. */
+.guest-name-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+.guest-name-prompt form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--panel, #1d1b19);
+  border: 1px solid var(--line, #4a4640);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 280px;
+  box-shadow: var(--shadow-lift, 0 8px 24px rgba(0, 0, 0, 0.5));
+}
+.guest-name-prompt label {
+  font: 13px ui-sans-serif, system-ui;
+  color: var(--muted);
+}
+.guest-name-prompt input {
+  background: var(--bg);
+  color: inherit;
+  border: 1px solid var(--line, #4a4640);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: 14px ui-sans-serif, system-ui;
+}
+.guest-name-prompt button {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.huddle-float {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  z-index: 450;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--panel, #1d1b19);
+  border: 1px solid var(--line, #4a4640);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: var(--shadow-lift, 0 8px 24px rgba(0, 0, 0, 0.5));
+}

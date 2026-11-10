@@ -1,0 +1,115 @@
+// What survives on the canvas SSE stream after ADR-0019 moved the DOCUMENT onto tldraw
+// sync, and #293 moved PRESENCE onto sync's own channel: the agent's screenshot
+// round-trip. It is not carried by the sync protocol, so it may not vanish with
+// `sync.ts`. It is also the leg with logic worth pinning: the agent's `view_canvas` tool
+// blocks on a reply, so EVERY path — including "nothing on the canvas" and "rendering
+// threw" — must answer.
+
+import { describe, expect, test } from 'bun:test';
+
+import { SCREENSHOT_MAX_EDGE, SCREENSHOT_MAX_UPSCALE, respondToScreenshot, respondToSelectPage, screenshotScale } from './canvas-stream.ts';
+
+describe('respondToScreenshot', () => {
+  test('renders the canvas and replies with the data URL, tagged with the request id', async () => {
+    const replies: Array<{ id: string; url: string | null }> = [];
+    await respondToScreenshot(JSON.stringify({ id: 'req1' }), async () => 'data:image/png;base64,AAA', (id, url) => {
+      replies.push({ id, url });
+    });
+    expect(replies).toEqual([{ id: 'req1', url: 'data:image/png;base64,AAA' }]);
+  });
+
+  test('hands the frame\'s target to the renderer — a page, named shapes, or neither', async () => {
+    const asked: unknown[] = [];
+    const render = async (target: unknown) => (asked.push(target), 'data:image/png;base64,AAA');
+    await respondToScreenshot(JSON.stringify({ id: 'p1', pageId: 'page:two' }), render, () => {});
+    await respondToScreenshot(JSON.stringify({ id: 'p2', ids: ['shape:a', 'shape:b'] }), render, () => {});
+    await respondToScreenshot(JSON.stringify({ id: 'p3' }), render, () => {});
+    expect(asked).toEqual([{ pageId: 'page:two' }, { ids: ['shape:a', 'shape:b'] }, {}]);
+  });
+
+  // It has an id, so something is waiting on it: answer null now rather than let it time out.
+  test('an off-contract target still gets a reply, without rendering anything', async () => {
+    const replies: Array<{ id: string; url: string | null }> = [];
+    let rendered = false;
+    await respondToScreenshot(JSON.stringify({ id: 'bad', ids: 'shape:a' }), async () => ((rendered = true), 'x'), (id, url) =>
+      replies.push({ id, url }),
+    );
+    expect(replies).toEqual([{ id: 'bad', url: null }]);
+    expect(rendered).toBe(false);
+  });
+
+  // An empty canvas is a legitimate answer, not a hang: the renderer returns null and we
+  // still reply, so the agent's tool call completes with "nothing to show".
+  test('replies null when there is nothing to render', async () => {
+    const replies: Array<{ id: string; url: string | null }> = [];
+    await respondToScreenshot(JSON.stringify({ id: 'req2' }), async () => null, (id, url) => replies.push({ id, url }));
+    expect(replies).toEqual([{ id: 'req2', url: null }]);
+  });
+
+  test('a renderer that throws still produces a reply, so the agent never blocks forever', async () => {
+    const replies: Array<{ id: string; url: string | null }> = [];
+    await respondToScreenshot(
+      JSON.stringify({ id: 'req3' }),
+      async () => {
+        throw new Error('toImageDataUrl exploded');
+      },
+      (id, url) => replies.push({ id, url }),
+    );
+    expect(replies).toEqual([{ id: 'req3', url: null }]);
+  });
+
+  // A malformed frame has no id to reply to — replying would answer the WRONG request.
+  test('a frame with no usable id is dropped silently', async () => {
+    const replies: unknown[] = [];
+    await respondToScreenshot('not json', async () => 'x', () => replies.push(1));
+    await respondToScreenshot(JSON.stringify({ nope: true }), async () => 'x', () => replies.push(1));
+    expect(replies).toEqual([]);
+  });
+});
+
+// The second rider (`select_page`). Unlike the screenshot leg nothing blocks on this, so
+// the tests are about what it must NOT do: act on a frame it cannot trust, or on a page
+// this client has not synced yet.
+describe('respondToSelectPage', () => {
+  const has = (ids: string[]) => (id: string) => ids.includes(id);
+
+  test('switches to the page the bridge named', () => {
+    const moved: string[] = [];
+    respondToSelectPage(JSON.stringify({ pageId: 'page:two' }), (p) => moved.push(p), has(['page:page', 'page:two']));
+    expect(moved).toEqual(['page:two']);
+  });
+
+  // The frame and the tldraw store arrive over DIFFERENT transports (this SSE stream and
+  // the sync socket), so a page created moments ago can be named before this client has
+  // it. Calling setCurrentPage on an unknown id is what throws inside tldraw.
+  test('ignores a page this client has not synced yet rather than throwing', () => {
+    const moved: string[] = [];
+    expect(() => respondToSelectPage(JSON.stringify({ pageId: 'page:ghost' }), (p) => moved.push(p), has(['page:page']))).not.toThrow();
+    expect(moved).toEqual([]);
+  });
+
+  test('a malformed frame moves nothing', () => {
+    const moved: string[] = [];
+    respondToSelectPage('not json', (p) => moved.push(p), () => true);
+    respondToSelectPage(JSON.stringify({ nope: true }), (p) => moved.push(p), () => true);
+    expect(moved).toEqual([]);
+  });
+});
+
+// The size cap. A page of 24 pasted screenshots, exported at full size,
+// came back as 8–13 MB, landed after the bridge's deadline, and was too big for a model.
+describe('screenshotScale', () => {
+  test('shrinks a big page so its longest edge fits the cap', () => {
+    expect(screenshotScale({ w: 10_000, h: 4_000 })).toBe(SCREENSHOT_MAX_EDGE / 10_000);
+    expect(screenshotScale({ w: 3_000, h: 8_000 })).toBe(SCREENSHOT_MAX_EDGE / 8_000);
+  });
+
+  test('enlarges a small export so its text is readable, but no further than the upscale cap', () => {
+    expect(screenshotScale({ w: 1_600, h: 600 })).toBe(SCREENSHOT_MAX_EDGE / 1_600);
+    expect(screenshotScale({ w: 200, h: 150 })).toBe(SCREENSHOT_MAX_UPSCALE);
+  });
+
+  test('an unknown bound renders as-is', () => {
+    expect(screenshotScale(null)).toBe(1);
+  });
+});

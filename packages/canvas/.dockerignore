@@ -1,0 +1,8 @@
+node_modules
+.git
+.persist
+dist
+.wrangler
+# never bake env/secrets into the image; the Worker injects them at process spawn
+.env
+.dev.vars

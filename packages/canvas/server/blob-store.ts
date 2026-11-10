@@ -1,0 +1,206 @@
+// Blob store for canvas persistence. Two concerns, kept dumb: deterministic key
+// layout, and a swappable `BlobBackend`. The backend is the ONLY thing that
+// knows where bytes live — local disk for dev (no cloud), R2 in the container,
+// an in-memory Map in tests. No policy lives here. Glossary: workspace = container/fs;
+// canvas = board. (The canvas-state data-loss guard that used to sit above this in
+// `canvas-persistence.ts` went with the old sync plane — ADR-0019 / #297. The canvas key
+// and its READER stay: the retained blobs are the cutover's import source.)
+//
+// NOTHING HERE HOLDS WORKSPACE CONTENT any more (#366, ADR-0022). What is left is chat meta
+// and the retained canvas-state blobs — plus the raw backend, which `transcript-store.ts` uses
+// for its own per-session keys.
+
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import type { CanvasState } from '../src/shapes.ts';
+import {
+  refForBlobKey,
+  workspaceBlobPath,
+  workspaceBlobToken,
+} from '../shared/workspace-blob.ts';
+import type { ChatMeta } from './chat-meta.ts';
+
+/** workspace-scoped per-canvas board state. */
+export const canvasStateKey = (ws: string, canvas: string): string =>
+  `workspaces/${ws}/canvases/${canvas}/canvas-state.json`;
+
+// Workspace CONTENT used to live here as three tarballs — `shared-components.tar`,
+// `canvas-components.tar` and `skills.tar`. Components, their data files and Workspace skills
+// are Records in D1 now (ADR-0022), and #366 removed the keys with the sinks that wrote them:
+// each save was a full replace of one key, so an empty source tree could — and on 2026-07-29
+// did — delete a workspace's authored content in a single flush. The objects are still in the
+// bucket, frozen, as the pre-migration rollback; the only code that names them is the backfill's
+// read-only survey (`record-migration.ts`), which spells its own keys out for that reason.
+//
+// Session transcripts used to live here as `workspaces/<ws>/sessions.tar`. They are FILES, not
+// Records (CONTEXT.md → Record vs File), and since #356 each session is its own opaque object —
+// `transcript-store.ts` owns that key layout. The tar was a full replace of the whole
+// ~/.claude/projects tree on every turn: 49,111,040 bytes in production against ~650 KB of
+// appends, re-downloaded at every cold boot.
+
+/** workspace-scoped per-chat durable state (ADR 0004): the `chatId → ChatMeta` map,
+ * one JSON blob for the whole workspace. Replaces browser `localStorage` as the home for
+ * `{ sessionId, model, effort, forkNext }`. */
+export const chatMetaKey = (ws: string): string => `workspaces/${ws}/chat-meta.json`;
+
+/** Minimal blob seam. `get` returns null for an absent key (legitimately empty),
+ * and throws only on a real backend failure — the two are distinct. `list` returns full
+ * keys under `prefix` (empty array when nothing matches — an absent prefix is not an
+ * error). */
+export interface BlobBackend {
+  get(key: string): Promise<Uint8Array | null>;
+  put(key: string, data: Uint8Array): Promise<void>;
+  exists(key: string): Promise<boolean>;
+  list(prefix: string): Promise<string[]>;
+}
+
+/** In-memory backend for tests. */
+export const memBackend = (): BlobBackend => {
+  const map = new Map<string, Uint8Array>();
+  return {
+    get: async (key) => map.get(key) ?? null,
+    put: async (key, data) => void map.set(key, data),
+    exists: async (key) => map.has(key),
+    list: async (prefix) => [...map.keys()].filter((k) => k.startsWith(prefix)),
+  };
+};
+
+/** Local-filesystem backend for dev. Keys (with `/`) map to paths under `root`;
+ * Bun.write creates parent dirs. No network, no cloud. */
+export const fsBackend = (root: string): BlobBackend => ({
+  get: async (key) => {
+    const f = Bun.file(join(root, key));
+    return (await f.exists()) ? new Uint8Array(await f.arrayBuffer()) : null;
+  },
+  put: async (key, data) => void (await Bun.write(join(root, key), data)),
+  exists: (key) => Bun.file(join(root, key)).exists(),
+  // A prefix maps to a directory here; an absent one means "nothing stored yet", not a
+  // failure, so ENOENT is the empty listing (matching `get`'s null-for-absent contract).
+  list: async (prefix) => {
+    try {
+      const names = await readdir(join(root, prefix));
+      return names.map((n) => `${prefix}${n}`);
+    } catch {
+      return [];
+    }
+  },
+});
+
+/** R2 via Bun's S3-compatible client, for OPERATOR scripts that run with the bucket's credentials
+ * from sops (`scripts/migrate-*.ts`). A container never uses it: it holds no such credential. */
+export const s3Backend = (): BlobBackend => {
+  const client = new Bun.S3Client({
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    bucket: process.env.R2_BUCKET,
+    endpoint: process.env.R2_ENDPOINT,
+  });
+  return {
+    get: async (key) => {
+      const f = client.file(key);
+      if (!(await f.exists())) return null;
+      return new Uint8Array(await f.arrayBuffer());
+    },
+    put: async (key, data) => void (await client.file(key).write(data)),
+    exists: (key) => client.file(key).exists(),
+    // R2 is flat: `prefix` is a literal key prefix, not a directory. `contents` is absent
+    // (not empty) when nothing matches.
+    list: async (prefix) => {
+      const res = await client.list({ prefix });
+      return (res?.contents ?? []).map((o) => o.key);
+    },
+  };
+};
+
+/**
+ * The container's backend: the edge's workspace-blob door (shared/workspace-blob.ts), not R2.
+ * A container holds no bucket credential, so the only objects it can reach are its own chat meta
+ * and session transcripts, and every other key is refused here before a request is made.
+ *
+ * `get` is null for an absent object and THROWS for a real failure, as `BlobBackend` requires: a
+ * 404 is the only status that means "absent", so an unreachable or refusing edge can never read as
+ * an empty history (the 2026-07-29 shape).
+ */
+export function edgeBackend(config: {
+  origin: string;
+  workspaceKey: string;
+  workspaceId: string;
+  fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
+}): BlobBackend {
+  const origin = config.origin.replace(/\/$/, '');
+  const doFetch = config.fetchImpl ?? fetch;
+  const call = async (key: string, method: 'GET' | 'HEAD' | 'PUT', body?: Uint8Array): Promise<Response> => {
+    const ref = refForBlobKey(key, config.workspaceId);
+    if (!ref) throw new Error(`a workspace container may not use the blob "${key}"`);
+    return doFetch(`${origin}${workspaceBlobPath(ref)}`, {
+      method,
+      headers: { authorization: `Bearer ${await workspaceBlobToken(config.workspaceKey)}` },
+      ...(body ? { body: new Blob([body as BlobPart]) } : {}),
+    });
+  };
+  const failed = (what: string, res: Response) => new Error(`the workspace store refused ${what} (${res.status})`);
+  return {
+    get: async (key) => {
+      const res = await call(key, 'GET');
+      if (res.status === 404) return null;
+      if (!res.ok) throw failed(`a read of ${key}`, res);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+    put: async (key, data) => {
+      const res = await call(key, 'PUT', data);
+      if (!res.ok) throw failed(`a write of ${key}`, res);
+    },
+    exists: async (key) => {
+      const res = await call(key, 'HEAD');
+      if (res.status === 404) return false;
+      if (!res.ok) throw failed(`a probe of ${key}`, res);
+      return true;
+    },
+    // The door has no listing: a container asks for the objects it knows by name.
+    list: async () => {
+      throw new Error('a workspace container cannot list the bucket');
+    },
+  };
+}
+
+/** Pick the container's backend from env (the bridge's, which has derived the workspace key in local
+ *  dev: `loadWebPocEnv`): the edge door when the container was told to use it
+ *  (`WORKSPACE_BLOBS=edge`, which `worker/container-env.ts` sets), else local disk at `fsRoot`
+ *  (local dev and tests). Never R2 directly: that path, and the credentials for it, are gone. */
+export function selectBackend(fsRoot: string, env: Record<string, string | undefined> = process.env): BlobBackend {
+  if (env.WORKSPACE_BLOBS === 'edge') {
+    const origin = env.PLATFORM_RPC_ORIGIN;
+    const workspaceKey = env.WORKSPACE_KEY;
+    if (!origin || !workspaceKey) throw new Error('WORKSPACE_BLOBS=edge needs PLATFORM_RPC_ORIGIN and WORKSPACE_KEY');
+    return edgeBackend({ origin, workspaceKey, workspaceId: env.CANVAS_WORKSPACE || 'default' });
+  }
+  return fsBackend(fsRoot);
+}
+
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+export class BlobStore {
+  constructor(private readonly backend: BlobBackend) {}
+
+  /**
+   * READ-ONLY since ADR-0019 / #297. The canvas document lives in the room now, so nothing
+   * writes `canvas-state.json` any more — but the retained blobs are exactly what the
+   * production cutover imports (`scripts/migrate-canvas-rooms.ts`, #295) and what a
+   * rollback re-imports. The reader survives on purpose; only the writer was deleted.
+   */
+  async loadCanvasState(ws: string, canvas: string): Promise<CanvasState | null> {
+    const bytes = await this.backend.get(canvasStateKey(ws, canvas));
+    return bytes === null ? null : (JSON.parse(dec.decode(bytes)) as CanvasState);
+  }
+
+  async loadChatMeta(ws: string): Promise<Record<string, ChatMeta> | null> {
+    const bytes = await this.backend.get(chatMetaKey(ws));
+    return bytes === null ? null : (JSON.parse(dec.decode(bytes)) as Record<string, ChatMeta>);
+  }
+
+  async saveChatMeta(ws: string, map: Record<string, ChatMeta>): Promise<void> {
+    await this.backend.put(chatMetaKey(ws), enc.encode(JSON.stringify(map)));
+  }
+}

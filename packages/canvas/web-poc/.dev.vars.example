@@ -1,0 +1,12 @@
+# Copy to web-poc/.dev.vars (gitignored). The edge Worker reads these when local
+# dev runs it (ADR-0018) — wrangler gives `.dev.vars` precedence over `vars`. In
+# prod these are Worker secrets on the canvas worker, pushed by the zbc module
+# (from SOPS), never here.
+
+# Better Auth (required). Same-origin with the canvas app in dev (vite on :4510).
+BETTER_AUTH_SECRET="dev-secret-change-me-at-least-32-chars"
+BETTER_AUTH_URL="http://localhost:4510"
+
+# Production web origin trusted for Better Auth CSRF/Origin checks. Same-origin
+# in this model, so usually left blank.
+WEB_ORIGIN=""

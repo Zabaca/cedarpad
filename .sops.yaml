@@ -1,0 +1,18 @@
+# Add your age public keys below as recipients. Run `age-keygen` to generate
+# a keypair if you don't have one. The private key stays on your machine; the
+# public key goes here.
+#
+# CI: store the CI private key as a GitHub Actions secret (SOPS_AGE_KEY) and
+# add the matching public key to the recipients list below.
+#
+# After editing, run: sops updatekeys packages/infra/environments/<env>/secrets.yaml
+creation_rules:
+  # James's keys only. On 2026-11-09, ahead of open-sourcing, two
+  # recipients were removed and both files re-encrypted under a new data key
+  # (`sops updatekeys`, then `sops rotate -i`): age187xe7sc... (unattributed;
+  # earlier commits called it a prior CI key, then a teammate's) and
+  # age1d3kn9cr... (Khoa's), at James's word.
+  - age: >-
+      age1cq0k9s88fmx7kkaqqvuf290lelyt8gkeglwvsd2r3ezuqyla7aps7x4q2j,
+      age1mkwj9hhvaer3ks5rd0ujzvmzwq56vdwlzruy2pld4zm6r73jl40qg4p343,
+      age1dhslnakk54dn5vd7q7hjuemrchwxtka0ux8nkvm4psp9u3g9hsxsjzvsdz

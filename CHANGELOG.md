@@ -1,0 +1,379 @@
+# Changelog
+
+Every release of cedarpad, newest first.
+
+A release **is** a deploy ([ADR-0025](docs/adr/0025-a-release-is-a-deploy.md)): each version
+below was stamped into a container image, verified serving at `/api/buildrev`, and only then
+tagged. So `v0.2.0` names exactly one commit that provably ran in production.
+
+## How to write an entry
+
+This file is the single source of truth for two audiences, and the split is the format:
+
+- **`### Internal`** — refactors, CI, test coverage, docs. Recorded here, **never** shown on
+  cedarpad.com.
+- **Everything else** — written for the person *using* cedarpad, not for the person who wrote
+  the code. "Components no longer vanish after a restart", not "fix materialize sibling walk".
+
+```markdown
+## [0.2.0] — 2026-07-31
+
+### Added
+- **Ilograph diagrams** — architecture views with perspectives and drill-down. (#393)
+
+### Fixed
+- Components no longer fail to render after a container restart. (#390)
+
+### Internal
+- Cold-container e2e coverage; e2e moved to the self-hosted runner.
+```
+
+Section headings are `Added`, `Changed`, `Fixed`, `Removed`, `Security`, `Internal` — that
+set exactly. PR references stay here for traceability and are stripped from the public page,
+since the repo is private and the link would 404.
+
+The shape is a contract: `packages/www/src/lib/changelog.ts` parses this file at build time to
+render [cedarpad.com/changelog](https://cedarpad.com/changelog), and it **throws** rather than
+skipping, so a malformed entry fails the tests and the build instead of silently vanishing
+from the site.
+
+<!-- Releases below, newest first. The /release skill prepends each one here. -->
+
+## [0.5.2] - 2026-11-10
+
+### Security
+- **Each workspace's agent environment can now reach only that workspace.** Before, the credentials an environment used to talk to cedarpad could, in principle, be used to reach a different workspace's canvases, files and skills. They are now tied to the workspace they were issued for. We found no sign anyone used this. (#474)
+- **Agent environments no longer hold a key to file storage.** Chat history, session transcripts and canvas images are reached only through cedarpad's own service, which checks the workspace on every request. (#476)
+- **A guest is always marked, and always visible to members.** A person who opens a share link shows with a "(Guest)" mark that they cannot remove, and can no longer hide their cursor, borrow a member's identity or put text in the name tag. Members can see who is in the room before deciding whether to revoke a link. (#475) (#478)
+- **Everyone is signed in again.** We replaced the secret that signs sessions, so you will be asked to sign in once more after this update.
+
+### Changed
+- **Chat's Fredrin connections can reach Fredrin from the default workspace.**
+- **Cedarpad's source is published** under the Functional Source License (FSL-1.1-ALv2), with a README, security policy, contributing guide and third-party notices.
+
+### Internal
+- Tests and checks run on GitHub's own runners, with no secrets, and a test guards every workflow against privileged triggers. (#473)
+- The mcp-tokens proxy test restores the module it mocks, so test file order cannot leak into other tests. (#481)
+- Private system and repository names in comments, docs, fixtures and ADRs are described by role; an unused avatar-capture pipeline was removed. (#472) (#477) (#479)
+- The deploy files carry only Zabaca's own keys, and the unused GitHub App keys were dropped. (#470)
+- The default workspace's VM environment and scripts were removed, with ADR-0028 recording the move to a sandbox. (#469)
+- Docs: where issues live, and the contributor agreement's exemption for staff and contractors. Sandbox deploys now remove stale egress hosts and fail loudly if the listing fails. (#480)
+
+## [0.5.1] - 2026-11-09
+
+### Changed
+- **Your default workspace now sleeps when nobody is using it and wakes on your next visit.** The first page load after a quiet spell can take a few seconds longer; your canvases, chats and files are unchanged.
+
+### Internal
+- The default workspace runs in a sandbox on Zabaca's sandbox site instead of an always-on machine; the machine is stopped and kept for a week as the way back. (#467)
+- The edge Worker's Access secret was rotated after the fix in 0.5.0.
+
+## [0.5.0] - 2026-11-09
+
+### Added
+- **Outside agents can see the canvas.** Two new MCP tools: `read_image` returns what is in a pasted image, and `view_canvas` returns a picture of a page, or of just the shapes you name (a frame brings everything inside it). Someone needs to have the canvas open in a browser for `view_canvas` to answer. (#451) (#453)
+- **The canvas chat can picture specific shapes too.** Its `view_canvas` now takes a page or a list of shapes, so a note on a wide board comes back readable instead of as a speck in an overview. (#453)
+- **Components can declare their own commands.** A component can name typed actions (the Kanban card has add, move, edit and remove card), and an agent runs one with `call_component`. The action works on the card's live data, so an edit someone makes at the same moment survives, and bad input is refused instead of written.
+- **Chat can write a skill for its workspace,** usable from the next message.
+- **Several Fredrin connections in one workspace,** each with its own key and its own checkbox in the chat's MCP menu.
+- **Admins can create workspaces** from the workspace menu ("New workspace..."). Each new workspace opens on its own first canvas. (#464)
+
+### Changed
+- **Edits now name the person who made them,** whether made by hand, by a chat they started, or over MCP with their sign-in. (#464)
+- **Chat defaults to Haiku, which now runs Haiku 5.5.** Existing chats keep the model they were set to. (#460)
+- **A canvas chat changes things only through its canvas and MCP tools.** It no longer runs shell commands or reads files on the workspace's machine. (#454)
+- **Chat loads only cedarpad's own skills and your workspace's skills,** and comes with a guide to how components work.
+- **cedarpad.com and the app measure usage with PostHog,** including session replay with typed input masked. Usage events carry ids and tool names only, never chat text, component content or data. (#466)
+- **cedarpad.com no longer describes features that were retired.** (#459)
+
+### Fixed
+- **A component's message to chat reaches the right canvas,** waits its turn when the chat is busy instead of failing, and appears in the transcript. A component that set a value to undefined no longer crashes the tab. (#441)
+- **`view_canvas` answers on busy pages.** A page full of screenshots used to time out; the picture is now capped at 2000 pixels and the wait is longer. (#452)
+- **Each workspace keeps to its own canvases.** A workspace other than the default can no longer open, or change through the component list, the default workspace's board. (#464)
+
+### Removed
+- **cedarpad is now just the canvas.** Everything below is retired, and any board, link or integration that relied on it stops working.
+- **The Notebook** (Library, Knowledge Graph, API keys), the `/v1` API and the `notebook_*` MCP tools. `/notebook` now opens the canvas. (#457)
+- **The Inbox and web push notifications,** with the MCP tools `list_inbox`, `assign_conversation`, `read_conversation`, `send_message` (the Inbox one) and `read_transcript`. `/inbox` now opens the canvas. (#456)
+- **Jobs, the dev agent, BI and connected repositories:** scheduled jobs, pull requests from chat, marts and the `list_marts` tool, and the GitHub connection in Settings. A pasted GitHub link still places a card, now just a name and a link. (#455)
+- **Live data sources for components.** A card that read from a mart or the Notebook keeps showing its saved data. (#455) (#457)
+- **The desktop app.** (#454)
+- **poc.cedarpad.com.** Use app.cedarpad.com. (#465)
+- **The stored data of the retired features is deleted.** (#458)
+
+### Security
+- **Links that started with a double slash could send your sign-in to another site.** Fixed. (#468)
+
+### Internal
+- Workspaces on Cloudflare run on the `durable_object` container policy: one `CanvasContainer` per workspace, no image rollouts, and the old Sandbox, Warehouse and WorkspaceEvents classes deleted. (#461) (#465)
+- An operator page at admin.cedarpad.com, behind Cloudflare Access, lists users, workspaces and their containers. (#463)
+- The preview Worker no longer takes production's domains when it deploys. (#462)
+- `bun run deploy:vm` ships origin/main to the workspace VM alone, and no longer kills its own restart shell.
+- The canvas unit suite can never reach a real platform RPC (a run inside a bridge had written test skills into production).
+- `deploy.sh` retried the container update Cloudflare times out; superseded by the container change above.
+
+## [0.4.1] — 2026-09-24
+
+### Changed
+- **Choosing Opus in chat now runs Opus 5.5**, still with the full 1M-token context. It used to run Opus 4.8.
+- **The Components stage lists only built-in and shared Components** — the ones it exists to audit — instead of every card-scoped copy in the workspace. (#425)
+
+### Internal
+- The workspace agent reaches Claude through a proxy that uses a fleet placeholder credential.
+- One encrypted key added to the production secrets. (#434)
+- The release guide now says a version bump reflects what kind of change shipped, not how much.
+
+## [0.4.0] — 2026-08-27
+
+### Added
+- **Diagrams pan and zoom in fullscreen** — an Ilograph card opened fullscreen is an infinite canvas: drag to pan, scroll or pinch to zoom, and Fit to re-frame. Each perspective remembers where you were looking, and one you have not opened yet is centred for you. The view is yours alone — moving it does not move anyone else's. (#423)
+- **Pull a resource aside** to untangle a diagram while you read it. The arrangement stays in your tab and is remembered per perspective. (#423)
+- **Click a resource to see what it is part of** — everything upstream and downstream of it stays lit and the rest dims, so following a path is one click instead of tracing a line by eye. (#423)
+
+### Changed
+- **A perspective now draws only the resources it relates.** A model carries more than any single perspective wires up, and the surplus used to collect in a column of disconnected boxes down the left-hand side. (#423)
+- **Diagrams lay out with far fewer crossed lines.** On a busy perspective this took ten crossings to none. (#423)
+
+### Fixed
+- **Hovering a component no longer stops you zooming the board.** Ctrl+scroll and trackpad pinch now zoom wherever the pointer is; before, you had to find a gap between cards first. (#423)
+- **Diagram labels read over the lines and boxes they cross** instead of vanishing behind them. (#423)
+
+### Removed
+- **Ten built-in components** — AgentChat, CanvasArch, CedarPalette, CedarShell, CedarpadLogoTest, CedarpadLogos, CedarpadMerch, Dashboard, KpiCard and LandingV5. Any card already placed from one of these will no longer load. (#423)
+
+### Internal
+- A component playground at `/dev/playground.html` renders one component against fixture data — no canvas, no board, no login — so working on a card no longer means placing one first. Local dev only. (#423)
+- `ComponentHost` gains `unguarded`, telling a component whether a shape's event guard sits between it and the pointer; a card cannot host its own camera, and now says so rather than half-working. The platform manifest regenerates from 32 modules to 22, and the agent's component-writing prompt no longer cites deleted examples. (#423)
+- One encrypted key added to the production secrets.
+
+## [0.3.0] — 2026-08-26
+
+### Added
+- **Fullscreen browses the whole board** — a collapsible rail lists every component on the page and `‹ ›` step between them, wrapping at both ends. The canvas underneath follows along, so Escape lands you on whatever you read last, and deleting the component you are viewing advances to the next instead of dropping you out. A page holding a single component looks exactly as it did. (#415)
+- **Open any component fullscreen from the side panel** — each row of the "On this board" list gains a ⛶, revealed on hover and on keyboard focus. (#415)
+- **Edit a component over MCP without resending it** — `read_component` takes `offset`/`limit` and returns just that window with line numbers, and the new `edit_component` replaces the lines you just read. A one-line change no longer costs the whole module, and an impossible range is refused before anything is written. (#413)
+
+### Internal
+- **The release preflight can ask for the `gates` workflow again.** Pushes to main stopped
+  producing workflow runs after v0.2.6, so this release's two product commits had no `gates`
+  run for the preflight to read, and the workflow had no `workflow_dispatch` trigger to fall
+  back on. It has one now. The dead push trigger itself is unexplained and still open.
+
+## [0.2.6] — 2026-08-25
+
+### Internal
+- **The checks a release requires now run on every commit.** `e2e.yml` was the only workflow,
+  so the unit tests, typechecks and lint ran for the first time during a release — against
+  every commit since the last tag. Anything broken in that window surfaced at once, at the
+  moment someone was trying to ship, which is why releasing had become a multi-day activity.
+  `gates.yml` runs them per push and per PR instead.
+- **Two test files could not pass on their own.** Both leaned on global state another file
+  happened to leave behind: the shared SSE stream in the chat store, and an `EventSource` that
+  happy-dom does not provide. `Shell.test.tsx` run alone was 0 pass / 31 fail. Whether they
+  passed was a function of file ordering, which held on a developer's machine and nowhere else.
+- **The release no longer stops to have its changelog read.** The prose describes work that has
+  already merged and stays editable afterwards, so the gate bought review of wording at the
+  cost of a release that could not run unattended.
+- **The workspace Access policy is expressed against the general `cloudflare-access` module,**
+  with `sessionDuration` and `appLauncherVisible` stated explicitly — both were defaults that
+  moved, and the second found a defect in the module rather than avoiding one.
+- **`bun run apply` refuses when the two halves of the zbc version disagree,** and `vendor/zbc`
+  moved to `zbc-core-v0.12.0`.
+- **Two guards that did not guard what their names claimed,** and a comment in `ws-tunnel` that
+  described a supervisor restart as safe when it is not.
+
+## [0.2.5] — 2026-08-23
+
+### Internal
+- **The workspace Guest now converges to the commit being applied.** `ws-app`'s provision
+  digest was constant, so `zbc apply workspace` skipped the fetch-and-reset it declares: the
+  Guest sat on whichever commit it happened to fetch when that file was last edited, six
+  behind main by the time anyone looked. A release's "same commit" now holds for the Guest as
+  well as the container.
+- **The workspace supervisor's provision records itself.** Its readiness poll ended in
+  `exit 0`, which returned before the marker write appended after it could run — so it
+  re-provisioned on every apply from 14 to 22 August, restarting the live supervisor each time
+  and reporting success each time.
+- **zbc-core vendored at v0.10.8**, up from v0.10.4. Provision markers moved from
+  `/var/lib/foundry-provision` to `/var/lib/zbc-provision`, and `vm` no longer defaults its
+  `sshUser`. The `exit 0` trap above is fixed upstream in the same version, so no consumer can
+  reach it again.
+- The ws.cedarpad.com Guest is declared here and converged over the self-hosted host's incus remote, rather
+  than by the repository that owns the box.
+- The infra engine comes from `vendor/zbc`; `@cedarpad/infra` retires.
+- Khoa's age key, and the re-key that makes it work. (#409)
+
+## [0.2.4] — 2026-08-17
+
+### Fixed
+- **An outline is now shared by everyone on the canvas.** Edits to an Outliner card stayed in
+  the tab that made them — each person was quietly editing a private copy of the same card,
+  and publishing an edit could wipe out rows someone else had added since. Bullets, notes,
+  indents and completions now reach everyone. Which bullet you have zoomed into stays yours.
+
+### Internal
+- The explorer agent's description no longer truncates at its issue number — an unquoted `#`
+  in YAML was discarding over half of it before agent selection ever saw it.
+
+## [0.2.3] — 2026-08-13
+
+### Changed
+- **The default workspace now runs on hardware we own**, reached over a private tunnel
+  instead of a Cloudflare Container. The container's filesystem did not survive sleep, so
+  every cold start rebuilt its dependency bundle from scratch — and a page load that raced
+  that rebuild got a canvas referring to files that briefly did not exist. A long-lived guest
+  keeps its filesystem, so that way of failing to load is gone.
+
+### Fixed
+- A canvas that had gone to sleep now wakes on the first try. Reopening an idle canvas could
+  fail for minutes with `canvas error: ProcessExitedBeforeReadyError` instead of showing the
+  board. Waking was tied to the request that asked for it, so a browser giving up mid-load
+  canceled the wake — and each retry canceled the one before it. A canvas now wakes once, and
+  finishes waking even when the request that triggered it is gone.
+- A workspace that only needed waking no longer answers "Bad gateway". When its stack was not
+  yet listening, the error page went straight to the browser and stayed there, with no retry —
+  for exactly the case a single boot would have fixed.
+
+### Internal
+- A container whose dev stack dies now exits with the real cause instead of always reporting
+  code 0, and names which process died — so a failed boot says what happened rather than
+  "Process exited with code 0".
+- A workspace can be served from a self-hosted guest that holds no cedarpad credential at
+  rest: the guest starts nothing until the Worker pushes it the environment the Worker
+  already owns.
+- Deploy verification asks the container image for its build stamp rather than following a
+  self-hosted workspace to hardware that answers `dev` — which had been failing deploys whose
+  Worker had shipped correctly.
+
+## [0.2.2] — 2026-08-07
+
+### Fixed
+- Adding a component now puts it on the page you are looking at. On a canvas whose pages
+  had been reordered, cards added from any page landed on the first one instead.
+
+### Removed
+- **FlintGallery** — the chart showcase. Every chart type it demonstrated is documented in
+  the chart-authoring reference, and ChartCard renders them all.
+
+## [0.2.1] — 2026-08-07
+
+### Added
+- **Filter the Components page by tier** — chips for built-in, shared, canvas and
+  no-source, each with a count, so you can audit one tier without scrolling past the
+  others. A chip only appears for a tier that has components in it.
+- **State machines in components** — xstate is available to anything built on the
+  canvas, so a component with real states and transitions can model them directly
+  instead of juggling booleans.
+
+### Removed
+- **BarChart** — superseded by ChartCard, which renders Bar, Grouped Bar, Stacked Bar
+  and Histogram among 35 chart types, with axes, scales and legends derived from your
+  data. Any card still placed as a BarChart will show as having no source; place a
+  ChartCard instead.
+
+### Fixed
+- Chart slides no longer render their bar labels in near-invisible text.
+
+## [0.2.0] — 2026-08-07
+
+### Added
+- **Outliner** — a Workflowy-style outliner you can place on any canvas. Enter splits a
+  bullet, Tab and Shift+Tab indent and outdent, Shift+Enter adds a description, ⌘/Ctrl+Enter
+  marks an item done, and clicking a bullet zooms into it. Edits persist across reloads, and
+  an agent can write a whole outline in a single call.
+
+### Fixed
+- An outline that references a missing item no longer crashes the card — the stray row is
+  skipped.
+- An outline containing a loop no longer hangs the tab.
+
+### Internal
+- Outline edit semantics extracted to a pure module (`src/outline-tree.ts`), unit tested
+  without a DOM, keeping Fast Refresh on the component.
+- e2e: pin node on the self-hosted runner. wrangler cannot run under bun, node had gone
+  missing from the box, and every run since 2026-08-04 died at auth setup before testing
+  anything.
+- e2e: reap the dev stack a cancelled run strands — before the suite and after it.
+
+## [0.1.0] — 2026-08-04
+
+### Added
+- **Notebook search** — type in the Notebook and get ranked results with highlighted
+  excerpts instead of a filter over what is already on screen. (#396)
+- **Agents write the Notebook** — an agent can record an Observation and where it came
+  from, create a Problem, tie Observations to it, link Problems, and record a Solution.
+  Works from the in-canvas agent and from an outside agent over MCP. (#399)
+- **A canvas reads the Notebook live** — place a component against a Notebook query (open
+  problems, a problem's observations, recent observations) and it shows what is there now,
+  not a nightly snapshot. Members only. (#397)
+- **Solutions and Problem links** — record how a Problem was solved, and link one Problem
+  to another. (#395)
+- **The chart gallery** — browse every chart type on the pad with live data and the spec
+  that produced it, so you can see what an agent can build. (#393)
+- **An agent-terminal chat card** — a chat rendered in the grammar of Claude Code, Codex or
+  Grok, with three skins.
+
+### Changed
+- **The Notebook is a reading surface.** The capture box and modal are gone — agents write
+  it, you read it. (#398)
+- **Chat reads as a terminal.** Turns, tool calls, plans and approvals share one column, and
+  a tool call opens to show the full command it ran.
+- **The interface is a true neutral.** Surfaces lost their warm tint; the cedar ember is now
+  the only colour in the chrome.
+
+### Fixed
+- Charts fill the card they are placed in, at any zoom. Before, one drew at a fixed size and
+  left the rest of the card empty.
+
+### Security
+- Notebook graph reads are confined to your workspace. A problem-context or neighbourhood
+  read could previously return a record from another workspace, and a traversal could route
+  through one. (#395)
+
+### Internal
+- The local container stand-in was split off `E2E_MODE`, which had been forcing a choice
+  between a dead canvas stage and a stubbed agent in local dev. Chart sizing moved out of the
+  component module to stop breaking Fast Refresh. Release tooling: the publish check follows
+  its redirect; /changelog carries the site nav.
+
+## [0.0.1] — 2026-07-31
+
+The first release. Cedarpad has been live for months; this is the point it starts carrying a
+version, so this entry describes what it does today rather than the 406 commits it took.
+
+### Added
+- **The shared canvas** — a multiplayer surface where you and AI agents work on the same
+  artifacts. Multi-page, with the picker reorderable by drag; a reload returns you to the page
+  and camera you left. (#344) (#384)
+- **Live components** — agents write real React components onto the canvas instead of
+  describing them. Each canvas has its own; promote one and every canvas sees it. A gallery to
+  place them, a Components stage for the workspace-wide inventory, and preview on demand.
+- **The Notebook** — record an Observation and where it came from, and synthesize Observations
+  into a Problem. API-first, so agents can write to it while working with you. (#392) (#394)
+- **Ilograph diagrams** — architecture views with perspectives, drill-down, and a sequence
+  walkthrough. (#393)
+- **Passwordless sign-in** — a magic link by email; no password to set or forget. (#346)
+- **The Inbox** — conversations with agents, with an unread badge pushed to you rather than
+  polled for. (#383) (#385)
+- **Agents reach cedarpad over MCP** — an external agent can read and write your canvases with
+  the same reach the in-app agent has.
+- **Huddles** — talk over voice on a canvas. Join from the side panel, see who is in, and get
+  a live transcript as you go; guests on a share link can join too. (#222)
+- **The dev agent** — point an agent at a connected repo and it works in a branch and opens a
+  pull request. Run it from Jobs, or trigger it from an outside agent over MCP.
+- **Marts** — components read the workspace warehouse by name. A component names a mart, never
+  a URL, and a shared canvas exposes only the marts it actually uses.
+- **Shareable canvases** — invite a guest by link, see their presence, revoke it. (#320)
+- **Workspace settings** — members and invitations, private canvases, connected GitHub
+  repositories, and web push notifications.
+- **This changelog**, and the running version in Settings.
+
+### Fixed
+- Components no longer fail to render after the container restarts — one that imports another
+  now materializes together with it.
+
+### Internal
+- Everything shipped before this release. Structurally: workspace content became records in D1
+  (ADR-0022), the platform data layer moved from Turso to D1 (ADR-0018), canvas sync moved onto
+  tldraw sync (ADR-0019), and e2e moved to a self-hosted runner. (#388)
+

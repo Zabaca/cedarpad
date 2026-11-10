@@ -1,0 +1,74 @@
+name: e2e
+
+# The push trigger on main is NOT a duplicate of the pull_request run, so do not
+# remove it. Roughly 45% of commits on main here are pushed directly and never
+# open a PR (checked against the commits/pulls API over the last 60 commits), so
+# dropping this trigger would leave nearly half of main with no e2e coverage at
+# all.
+#
+# Runs on GitHub's own runners and uses no secret, so a fork's pull request can run
+# it safely. gates.yml's header says what keeps it that way.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A force-push supersedes the run it interrupts, so cancel the old one. Note this
+# also cancels an in-flight main run when pushes land close together. That costs
+# attribution, not coverage, because a run on main tests the tip and the tip already
+# contains the commit whose run was cancelled.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+    defaults:
+      run:
+        working-directory: packages/canvas
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # wrangler REQUIRES node and refuses to run under bun. `scripts/wrangler-local.ts`
+      # spawns `node_modules/.bin/wrangler`, whose shebang resolves `node` off PATH, so
+      # without node the shim falls through to bun, wrangler's inspector WebSocket dies
+      # with "Unexpected server response: 101", the edge Worker never binds its port and
+      # every spec fails at auth setup with ECONNREFUSED. The workflow pins node so the
+      # runtime wrangler needs is a property of the workflow, not of the runner.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        working-directory: .
+
+      # A hosted runner is a fresh machine every run, so the browser and its system
+      # libraries are installed each time.
+      - name: Install Playwright browser
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run e2e
+        run: bun run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: packages/canvas/playwright-report/
+          retention-days: 7

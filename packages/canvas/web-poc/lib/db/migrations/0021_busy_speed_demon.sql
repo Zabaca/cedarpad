@@ -1,0 +1,1 @@
+ALTER TABLE `share_links` ADD `guest_huddle` integer DEFAULT false NOT NULL;

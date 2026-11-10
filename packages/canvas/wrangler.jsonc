@@ -1,0 +1,228 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agent-canvas",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Custom domains: wrangler provisions the proxied DNS records + TLS certs and binds
+  // these hosts to this worker (the cedarpad.com zone must be in this account). The
+  // exact-match records take precedence over the zone's *.cedarpad.com wildcard.
+  // app.cedarpad.com is CANONICAL. The pre-2026-07-17 host poc.cedarpad.com was dropped on
+  // 2026-10-09; removing it here does not detach an existing custom domain, so that is
+  // deleted through the Workers domains API after the deploy.
+  "routes": [
+    { "pattern": "app.cedarpad.com", "custom_domain": true },
+    // The admin host (ADR-0026), behind Cloudflare Access (infra production/admin-access.ts).
+    // Top level ONLY: env.preview declares `routes: []` and must keep it.
+    { "pattern": "admin.cedarpad.com", "custom_domain": true }
+  ],
+  // Workers Logs: stream the Worker's console + request logs via `wrangler tail`
+  // or the dashboard (replaces the ad-hoc /__diag route). Container stdout is
+  // separate (Cloudflare's container logs).
+  "observability": { "enabled": true },
+  // No scheduled work: the daily jobs/repo-refresh cron went with them. An empty list (not an
+  // absent key) is what makes `wrangler deploy` clear the trigger it registered before.
+  "triggers": { "crons": [] },
+  // Non-secret env for the mounted web-poc's Better Auth (same origin as the app in
+  // prod). The secret (BETTER_AUTH_SECRET) is pushed via workerSecrets, not here.
+  "vars": {
+    // PostHog project key for edge usage events (worker/analytics.ts). A public client key,
+    // not a secret. Deliberately NOT set on the preview environment: preview shares production
+    // data but its traffic is testing, not usage.
+    "POSTHOG_KEY": "phc_zdrtBTi2f7hyq7D9odeyG5MKRnuVPy9sed5ajPHDHnJ9",
+    // Workspaces served from our own hardware instead of a Cloudflare Container
+    // (worker/self-hosted.ts). `default` moved to a self-hosted VM on
+    // 2026-08-14: the Cloudflare container rebuilds vite's dependency pre-bundle on
+    // every cold boot (its filesystem does not survive sleep), and that raced page
+    // loads into 404s on tldraw's chunks, a blank canvas with no retry. The VM's
+    // disk was persistent, so it pre-bundled once and never again.
+    //
+    // Deliberately NOT set on the preview environment below: that Worker would point
+    // at the same sandbox and two deploys would fight over one dev stack.
+    //
+    // Data does NOT move: canvas state stays in CanvasSyncRoom, rows in D1, artifacts
+    // in R2 (ADR-0022). Only the process serving the pad changes address. Emptying
+    // this map routes every workspace straight back to its container.
+    //
+    // On 2026-11-09 (v0.5.1) `default` moved from the VM to a sandbox on the sandbox
+    // site (sbx), which sleeps when idle (scripts/deploy-sandbox.sh, sandbox/workspace.env,
+    // ADR-0028): the stack and the supervisor are two addresses there. The VM no longer
+    // exists. Emptying this map routes `default` to the Cloudflare Container, whose agent
+    // cannot authenticate (its Claude secret is the placeholder only the model-route proxy swaps).
+    "SELF_HOSTED_WORKSPACES": "{\"default\":{\"stack\":\"https://cedarpad-default.sbx.zabaca.com\",\"supervisor\":\"https://4599-cedarpad-default.sbx.zabaca.com\"}}",
+    "BETTER_AUTH_URL": "https://app.cedarpad.com",
+    "WEB_ORIGIN": "https://app.cedarpad.com",
+    // Prod is James-only: Better Auth signup is disabled at the edge (dev leaves it
+    // open — the var is unset in .dev.vars). See web-poc/worker/auth.ts. (PRD #49 #15)
+    "AUTH_DISABLE_SIGNUP": "true"
+  },
+  // The Shell SPA build (PRD #103). `bun run build` emits shell/dist — the Shell at `/`
+  // and its `/assets/*` — and the edge Worker serves it through env.ASSETS after the edge
+  // session gate.
+  // `run_worker_first: true` means the Worker runs on every request (assets are never
+  // auto-served pre-auth) and pulls files through the ASSETS binding.
+  "assets": {
+    "directory": "./shell/dist",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "containers": [
+    {
+      // The workspace container on the `durable_object` scheduling policy
+      // (worker/canvas-container.ts): one per workspace, started by its DO with
+      // `ctx.container.start`, so there are no rollouts — a new image reaches a running
+      // container through the DO's boot fingerprint. The Dockerfile bakes the whole
+      // workspace, so the build context is the repo root. Instance type is chosen per start
+      // in code, not here.
+      "class_name": "CanvasContainer",
+      "scheduling_policy": "durable_object",
+      "images": { "canvas": { "dockerfile": "./Dockerfile", "build_context": "../.." } }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "CanvasContainer", "name": "CanvasContainer" },
+      // One instance per canvas, hosting that canvas's tldraw sync room (ADR-0019, #288).
+      // Unlike CanvasContainer this is NOT a container class — it is a plain SQLite-backed
+      // DO, and its SQLite tables ARE the room's persistence.
+      { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" }
+    ]
+  },
+  // Native R2 binding: the edge Worker (workerd) reads canvas assets and canvas-state.json
+  // straight off this, no container wake, and keeps each workspace container's chat meta and
+  // transcripts for it (worker/workspace-blobs-api.ts). Named for the retired marts (ADR-0017).
+  // The Worker holds no S3 credential and a container is handed none: the R2_* S3 keys in the
+  // sops files are for operator scripts only. The bucket is `agent-canvas` in production and in
+  // preview (the same bucket, checked against both environments' R2_BUCKET on 2026-11-10).
+  "r2_buckets": [{ "binding": "MART_BUCKET", "bucket_name": "agent-canvas" }],
+  // Cloudflare Email Sending: outbound magic links + invitations (no vendor key —
+  // the binding IS the credential). Sends as the APEX `cedarpad.com`, which MUST be
+  // enabled for Email Sending before this ships — see the FROM note in
+  // web-poc/worker/email.ts for that and the two DNS invariants it depends on.
+  // Reaching arbitrary recipients (an invitee who has never written to us) requires
+  // the Workers Paid plan, which the containers above already imply.
+  // Deliberately NOT declared on the preview env: preview shares production's
+  // platform D1, so a binding there would mail real people. web-poc/worker/email.ts
+  // degrades to a logging no-op wherever the binding is absent.
+  "send_email": [{ "name": "EMAIL" }],
+  // The www worker's waitlist D1, ALSO bound here so /admin gets a waitlist view
+  // (ADR-0014). Read-only from this worker; www owns the schema + migrations.
+  "d1_databases": [
+    {
+      "binding": "WAITLIST",
+      "database_name": "cedarpad-waitlist",
+      "database_id": "eb4a65d7-6e26-4d98-b893-3b52f901726c"
+    },
+    // The platform data layer (ADR-0018, #265). Created once with
+    // `wrangler d1 create cedarpad-platform`; schema applied with
+    // `wrangler d1 migrations apply PLATFORM_DB --remote` (deploy.sh does this now).
+    // Live since the cutover (#267); the Turso rollback path was retired in #268.
+    {
+      "binding": "PLATFORM_DB",
+      "database_name": "cedarpad-platform",
+      "database_id": "88690b7f-216c-4110-823e-9e50b346b974",
+      // Drizzle's ledger + SQL live with the schema, not in the wrangler default `migrations/`.
+      "migrations_dir": "web-poc/lib/db/migrations"
+    }
+  ],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Sandbox"] },
+    // Warehouse (#236) is a new DO class, not a change to Sandbox's storage — a
+    // separate migration tag, per wrangler's "one new_sqlite_classes entry per class
+    // introduced" convention (mirrors how Sandbox itself was introduced under v1).
+    { "tag": "v2", "new_sqlite_classes": ["Warehouse"] },
+    // CanvasSyncRoom (#288). new_SQLITE_classes is required, not optional here: the room's
+    // documents/tombstones/clock live in this DO's SQLite tables (sync-core's
+    // SQLiteSyncStorage), so a KV-backed class would have nowhere to put them.
+    { "tag": "v3", "new_sqlite_classes": ["CanvasSyncRoom"] },
+    // WorkspaceEvents (#383) — its own tag, per wrangler's one-entry-per-class-introduced
+    // convention. `new_sqlite_classes` even though the hub persists nothing: it is the
+    // current default backend for a new class, and declaring the KV one would pin a
+    // deprecated storage engine to a class that will never use either.
+    { "tag": "v4", "new_sqlite_classes": ["WorkspaceEvents"] },
+    { "tag": "v5", "new_sqlite_classes": ["CanvasContainer"] },
+    // The Sandbox (replaced by CanvasContainer), the retired warehouse and the retired Inbox's
+    // events hub. Deleting a class deletes its Durable Objects' storage; none of the three
+    // held anything the platform still reads. Their container applications are NOT deleted
+    // by this — `wrangler containers delete` does that, by hand, after the deploy.
+    { "tag": "v6", "deleted_classes": ["Sandbox", "Warehouse", "WorkspaceEvents"] }
+  ],
+  // Preview environment (zbc: `apply preview canvas` -> `wrangler deploy --env
+  // preview`). A SEPARATE worker `agent-canvas-preview` in the same account, on a
+  // free *.workers.dev URL (no custom domain), so it never touches production's
+  // app.cedarpad.com. wrangler named environments do NOT inherit bindings/vars/
+  // routes/containers — only main + compatibility_* — so the container, DO, and
+  // migrations are redeclared here verbatim.
+  "env": {
+    "preview": {
+      "name": "agent-canvas-preview",
+      // No custom domain: serve on the account's <name>.<subdomain>.workers.dev. `routes` MUST
+      // be declared empty: a named env inherits the top-level `routes`, and on 2026-10-09 a
+      // preview deploy moved production's custom domains onto this Worker until the
+      // production Worker was redeployed.
+      "workers_dev": true,
+      "routes": [],
+      "observability": { "enabled": true },
+      // Better Auth is origin-sensitive — these are the deployed preview origin
+      // (the account's workers.dev subdomain, from the first deploy).
+      "vars": {
+        "BETTER_AUTH_URL": "https://agent-canvas-preview.james-99a.workers.dev",
+        "WEB_ORIGIN": "https://agent-canvas-preview.james-99a.workers.dev",
+        // Preview shares production's platform D1 (secrets.yaml is a copy). D1 admits one
+        // writer, with an external write mid-request corrupting concurrent readers (#276) —
+        // this sharing is pre-existing debt (it also shared Turso before #268), not new. Give
+        // preview its own D1 database before using it for anything real (see canvas.ts).
+        // With no SELF_HOSTED_WORKSPACES here, every preview workspace runs on its
+        // CanvasContainer.
+        "AUTH_DISABLE_SIGNUP": "true"
+      },
+      "assets": {
+        "directory": "./shell/dist",
+        "binding": "ASSETS",
+        "run_worker_first": true
+      },
+      "containers": [
+        {
+          "class_name": "CanvasContainer",
+          "scheduling_policy": "durable_object",
+          "images": { "canvas": { "dockerfile": "./Dockerfile", "build_context": "../.." } }
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          { "class_name": "CanvasContainer", "name": "CanvasContainer" },
+          // Redeclared verbatim from the top level (#288) — named envs inherit no
+          // durable_objects. Preview gets its OWN room instances: DO storage is per-worker,
+          // not shared like Turso/R2/D1 are.
+          { "class_name": "CanvasSyncRoom", "name": "CANVAS_SYNC" }
+        ]
+      },
+      // Preview shares production's mart bucket too, matching Turso/waitlist D1 sharing.
+      "r2_buckets": [{ "binding": "MART_BUCKET", "bucket_name": "agent-canvas" }],
+      // Preview shares production's waitlist D1, matching Turso/R2 sharing.
+      "d1_databases": [
+        {
+          "binding": "WAITLIST",
+          "database_name": "cedarpad-waitlist",
+          "database_id": "eb4a65d7-6e26-4d98-b893-3b52f901726c"
+        },
+        // Redeclared verbatim from the top level (named envs inherit no bindings) — same
+        // database as production, matching how preview already shares Turso/R2/waitlist.
+        {
+          "binding": "PLATFORM_DB",
+          "database_name": "cedarpad-platform",
+          "database_id": "88690b7f-216c-4110-823e-9e50b346b974",
+          "migrations_dir": "web-poc/lib/db/migrations"
+        }
+      ],
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["Sandbox"] },
+        { "tag": "v2", "new_sqlite_classes": ["Warehouse"] },
+        { "tag": "v3", "new_sqlite_classes": ["CanvasSyncRoom"] },
+        { "tag": "v4", "new_sqlite_classes": ["WorkspaceEvents"] },
+        { "tag": "v5", "new_sqlite_classes": ["CanvasContainer"] },
+        { "tag": "v6", "deleted_classes": ["Sandbox", "Warehouse", "WorkspaceEvents"] }
+      ]
+    }
+  }
+}

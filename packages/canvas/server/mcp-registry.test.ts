@@ -1,0 +1,99 @@
+import { describe, expect, test } from 'bun:test';
+
+// The registry itself is read at module load (from process.env), so we exercise it via
+// fresh dynamic imports with the env var toggled around each import — the module-level
+// MCP_REGISTRY constant is what a missing env var must degrade, never throw.
+describe('MCP_REGISTRY: a missing token/env means "not connected", never a failure', () => {
+  test('fredrin is a permanent reviewed entry (literal URL, bearer)', async () => {
+    const { MCP_REGISTRY } = await import(`./mcp-registry.ts?fredrin=${Date.now()}`);
+    expect(MCP_REGISTRY.fredrin).toEqual({ url: 'https://www.fredrin.com/api/mcp', auth: 'bearer' });
+  });
+
+  test('LEDGERBOT_MCP_URL unset ⇒ no ledgerbot entry at all', async () => {
+    const prev = process.env.LEDGERBOT_MCP_URL;
+    delete process.env.LEDGERBOT_MCP_URL;
+    try {
+      const { MCP_REGISTRY } = await import(`./mcp-registry.ts?unset=${Date.now()}`);
+      expect(MCP_REGISTRY.ledgerbot).toBeUndefined();
+    } finally {
+      if (prev !== undefined) process.env.LEDGERBOT_MCP_URL = prev;
+    }
+  });
+
+  test('LEDGERBOT_MCP_URL set ⇒ a bearer entry pointing at it', async () => {
+    const prev = process.env.LEDGERBOT_MCP_URL;
+    process.env.LEDGERBOT_MCP_URL = 'https://ledgerbot.example/mcp';
+    try {
+      const { MCP_REGISTRY } = await import(`./mcp-registry.ts?set=${Date.now()}`);
+      expect(MCP_REGISTRY.ledgerbot).toEqual({ url: 'https://ledgerbot.example/mcp', auth: 'bearer' });
+    } finally {
+      if (prev === undefined) delete process.env.LEDGERBOT_MCP_URL;
+      else process.env.LEDGERBOT_MCP_URL = prev;
+    }
+  });
+});
+
+describe('resolveMcpEntry: several named connections of one registry entry', () => {
+  const registry = { fredrin: { url: 'https://fredrin.example/mcp', auth: 'bearer' as const } };
+
+  test('the bare registry name resolves to its entry', async () => {
+    const { resolveMcpEntry } = await import('./mcp-registry.ts');
+    expect(resolveMcpEntry('fredrin', registry)).toEqual(registry.fredrin);
+  });
+
+  test('`<entry>-<label>` resolves to the same reviewed entry — the URL never comes from the name', async () => {
+    const { resolveMcpEntry } = await import('./mcp-registry.ts');
+    expect(resolveMcpEntry('fredrin-cedarpad', registry)).toEqual(registry.fredrin);
+    expect(resolveMcpEntry('fredrin-acme-web', registry)).toEqual(registry.fredrin);
+  });
+
+  test('anything else is not a connection', async () => {
+    const { resolveMcpEntry } = await import('./mcp-registry.ts');
+    for (const name of ['nope', 'fredrin-', 'fredrinx', 'fredrin-Acme', 'fredrin_acme', 'nope-fredrin']) {
+      expect(resolveMcpEntry(name, registry)).toBeUndefined();
+    }
+  });
+});
+
+describe('encodeMcpTokens / decodeMcpTokens: the shared per-send header contract', () => {
+  test('round-trips a workspace’s connected tokens', async () => {
+    const { encodeMcpTokens, decodeMcpTokens } = await import('./mcp-registry.ts');
+    const tokens = { ledgerbot: 'tok_abc' };
+    expect(decodeMcpTokens(encodeMcpTokens(tokens))).toEqual(tokens);
+  });
+
+  test('a missing header decodes to no tokens (never throws)', async () => {
+    const { decodeMcpTokens } = await import('./mcp-registry.ts');
+    expect(decodeMcpTokens(null)).toEqual({});
+    expect(decodeMcpTokens(undefined)).toEqual({});
+  });
+
+  test('a malformed header (bad JSON, or JSON of the wrong shape) decodes to no tokens', async () => {
+    const { decodeMcpTokens } = await import('./mcp-registry.ts');
+    expect(decodeMcpTokens('not json')).toEqual({});
+    expect(decodeMcpTokens(JSON.stringify({ ledgerbot: 42 }))).toEqual({});
+    expect(decodeMcpTokens(JSON.stringify(['array', 'not', 'record']))).toEqual({});
+  });
+});
+
+describe('per-chat MCP selection (opt-out; default all-on)', () => {
+  test('applyMcpSelection drops disabled servers; absent selection touches nothing', async () => {
+    const { applyMcpSelection } = await import('./mcp-registry.ts');
+    const tokens = { fredrin: 'a', ledgerbot: 'b' };
+    expect(applyMcpSelection(tokens, undefined)).toEqual(tokens);
+    expect(applyMcpSelection(tokens, { disabledServers: [], disabledTools: {} })).toEqual(tokens);
+    expect(applyMcpSelection(tokens, { disabledServers: ['ledgerbot'], disabledTools: {} })).toEqual({ fredrin: 'a' });
+    expect(applyMcpSelection(tokens, { disabledServers: ['ghost'], disabledTools: {} })).toEqual(tokens);
+  });
+
+  test('mcpDisallowedTools names disabled tools of still-ENABLED servers only', async () => {
+    const { mcpDisallowedTools } = await import('./mcp-registry.ts');
+    expect(mcpDisallowedTools(undefined)).toEqual([]);
+    expect(
+      mcpDisallowedTools({
+        disabledServers: ['ledgerbot'],
+        disabledTools: { fredrin: ['deploy', 'delete_repo'], ledgerbot: ['pay'] },
+      }),
+    ).toEqual(['mcp__fredrin__deploy', 'mcp__fredrin__delete_repo']);
+  });
+});

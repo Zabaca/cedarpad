@@ -1,0 +1,96 @@
+// Run the bridge (canvas store + agent), the vite dev server, and the edge Worker
+// together. Bridge on :4511, web on :4510 (vite proxies /api -> bridge), edge Worker
+// on :4513.
+export {};
+
+import { spawnWrangler } from './wrangler-local.ts';
+
+// Bridge listen port comes from env (with-worktree-port.sh derives it per
+// worktree); unset falls back to 4511. We derive the vite /api proxy target from
+// the same port so the browser always proxies to the bridge this stack started.
+const BRIDGE_PORT = process.env.CANVAS_BRIDGE_PORT ?? '4511';
+const BRIDGE = process.env.CANVAS_BRIDGE ?? `http://localhost:${BRIDGE_PORT}`;
+
+// The edge Worker (ADR-0018, #263): it serves the platform data layer's routes — Better
+// Auth `/api/auth/*` among them — against miniflare's local D1,
+// exactly as it does in production. Port from env, +2 off the bridge (the +1 slot the
+// removed extension server held stays vacant so every worktree's ports keep their offsets).
+const EDGE_PORT = process.env.CANVAS_EDGE_PORT ?? String(Number(BRIDGE_PORT) + 2);
+const EDGE = process.env.CANVAS_EDGE ?? `http://localhost:${EDGE_PORT}`;
+
+// --watch only in LOCAL dev (restart the bridge when we edit its code). In the
+// container (IS_SANDBOX) the bridge code only changes via a redeploy, so --watch
+// buys nothing and a stray file touch restarting the live bridge mid-session just
+// risks dropping in-flight state. vite still HMRs the agent's components regardless.
+const bridgeArgs = process.env.IS_SANDBOX
+  ? ['bun', 'run', 'server/bridge.ts']
+  : ['bun', 'run', '--watch', 'server/bridge.ts'];
+// The edge Worker only runs in LOCAL dev: in the container (IS_SANDBOX) the real edge
+// is the deployed Worker in front of it.
+const edge = process.env.IS_SANDBOX
+  ? null
+  : await spawnWrangler(['dev', '--port', EDGE_PORT, '--inspector-port', String(Number(EDGE_PORT) + 1000)]);
+
+const bridge = Bun.spawn(bridgeArgs, {
+  stdio: ['inherit', 'inherit', 'inherit'],
+  // ADR-0018 / #266: the bridge has no database, so the edge Worker we just started IS its
+  // platform data layer — point its RPC at it. In the container (IS_SANDBOX) the real edge is
+  // the deployed Worker and `PLATFORM_RPC_ORIGIN` already arrives in the injected env.
+  env: edge ? { ...process.env, PLATFORM_RPC_ORIGIN: EDGE } : process.env,
+});
+// `bun run dev:web`, not `bunx vite`: the container base image ships `bun` but
+// not the `bunx` shim, so `bunx` ENOENTs and the dev stack dies on boot.
+const web = Bun.spawn(['bun', 'run', 'dev:web'], {
+  stdio: ['inherit', 'inherit', 'inherit'],
+  // Point vite's proxies at the bridge and edge ports this stack is using — and hand it the
+  // SAME `PLATFORM_RPC_ORIGIN` the bridge gets. Vite is the second process that talks to the
+  // Record store (ADR-0022): its materialize middleware answers a module miss by fetching the
+  // Record. Without this it has no store at all, so `componentRecordStore` is null, the
+  // middleware no-ops, and local dev silently cannot materialize anything — which is why a
+  // materialization bug could only ever be found in production.
+  env: { ...process.env, CANVAS_BRIDGE: BRIDGE, CANVAS_EDGE: EDGE, ...(edge ? { PLATFORM_RPC_ORIGIN: EDGE } : {}) },
+});
+
+// The Shell (rail, canvas picker) has NO dev server: the edge Worker serves it from
+// `shell/dist` through its ASSETS binding, exactly as production does. So the Shell at :4513
+// serves whatever was last BUILT — an edit to `shell/src/` or to anything shared with it
+// (`shared/ChatView.tsx`, `shared/chat.css`) needs a rebuild to show up:
+//
+//   bunx vite build --config shell/vite.config.ts
+//
+// This deliberately does NOT run that on a `--watch`. It was tried on 2026-08-04 and is a
+// trap: `shell/vite.config.ts` has its outDir INSIDE its own root, so the watcher rebuilds
+// its own output forever — and the pad's dev server, whose root is the whole package, full-
+// page-reloads the browser on every write. An infinite refresh loop, not a stale bundle.
+// Fixing it properly means excluding `shell/dist` from both watchers first.
+
+let shuttingDown = false;
+
+const killAll = () => {
+  shuttingDown = true;
+  bridge.kill();
+  web.kill();
+  edge?.kill();
+};
+process.on('SIGINT', () => {
+  killAll();
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  killAll();
+  process.exit(0);
+});
+
+// If either process dies, take the other down so the operator isn't left with a
+// half-running stack — and SAY WHICH ONE DIED, then exit non-zero (incident 2026-08-13).
+// Silence here is what made a failed container boot unreadable: the stack died, this
+// process exited 0, and the only thing the Worker could report was
+// `ProcessExitedBeforeReadyError: Process exited with code 0`. The child's own output is
+// already inherited onto this stdout, so this line is the index into it.
+const [which, code] = await Promise.race([
+  bridge.exited.then((c) => ['bridge', c] as const),
+  web.exited.then((c) => ['web', c] as const),
+]);
+console.error(`[dev] ${which} exited (${code}) — taking the stack down`);
+killAll();
+process.exit(code || 1);
