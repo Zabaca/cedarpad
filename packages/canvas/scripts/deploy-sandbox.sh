@@ -50,6 +50,9 @@ REPO_ROOT=$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)
 source "$REPO_ROOT/packages/canvas/sandbox/workspace.env"
 NAME=${SANDBOX_DEPLOY_NAME:-$SANDBOX_NAME}
 IMAGE_REPO=${SANDBOX_DEPLOY_IMAGE_NAME:-$IMAGE_NAME}
+# Set but empty is refused rather than read as unset: a release passes the commit it pushed, and a variable lost between two
+# shell calls would otherwise deploy whatever origin/main is by then while the stamp check still passed.
+if [ "${SANDBOX_DEPLOY_REF+set}" = set ] && [ -z "$SANDBOX_DEPLOY_REF" ]; then fail "SANDBOX_DEPLOY_REF is set but empty"; fi
 REF=${SANDBOX_DEPLOY_REF:-origin/main}
 
 HOME_SBX="$HOME/Library/Application Support/Varnick/Home/packages/sandboxes/sbx"
