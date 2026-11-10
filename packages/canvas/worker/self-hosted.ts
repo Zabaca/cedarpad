@@ -23,7 +23,7 @@
 // already run Better Auth and the workspace ownership check (shell-routing.ts),
 // exactly as it does for a container-backed workspace. The Worker then presents
 // a Cloudflare Access service token to reach the sandbox. So its two addresses
-// (each behind an Access application declared in Home) admit precisely one caller,
+// (each behind an Access application declared outside this repository) admit precisely one caller,
 // and the authorization that matters still happens here. That is why the Access
 // policy carries no email rule: a human who could satisfy Access directly would
 // bypass the ownership check.

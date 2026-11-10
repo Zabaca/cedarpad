@@ -23,7 +23,7 @@ export interface McpRegistryEntry {
 /** The approved remote MCP servers. A missing token/env for an entry means "not connected" —
  * never a failure — so an entry only appears here once it has somewhere to point.
  *
- * `ledgerbot` (zabaca/ceo, the ADR's first consumer): guarded by its own URL env var so an
+ * `ledgerbot` (the ADR's first consumer, a private service): guarded by its own URL env var so an
  * unconfigured deploy simply has no ledgerbot entry (not a broken one). */
 export const MCP_REGISTRY: Readonly<Record<string, McpRegistryEntry>> = {
   // fredrin (fredrin.com, the agentic development environment): public stable URL, so it's a

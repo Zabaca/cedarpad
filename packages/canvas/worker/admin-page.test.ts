@@ -21,7 +21,7 @@ const env = { ACCESS_TEAM_DOMAIN: TEAM, ACCESS_AUD: AUD } as unknown as Env;
 
 const overview: AdminOverview = {
   users: [
-    { id: 'u1', email: 'james@zabaca.com', name: '<b>James</b>', role: 'admin', banned: false, createdAt: new Date(0), lastSeen: new Date(NOW) },
+    { id: 'u1', email: 'owner@example.com', name: '<b>James</b>', role: 'admin', banned: false, createdAt: new Date(0), lastSeen: new Date(NOW) },
     { id: 'u2', email: 'm@example.com', name: 'Member', role: null, banned: true, createdAt: new Date(0), lastSeen: null },
   ],
   workspaces: [
@@ -87,7 +87,7 @@ describe('the admin host', () => {
 });
 
 describe('renderAdminPage', () => {
-  const html = renderAdminPage(overview, new Map(Object.entries(statuses)), { viewer: 'james@zabaca.com', now: NOW });
+  const html = renderAdminPage(overview, new Map(Object.entries(statuses)), { viewer: 'owner@example.com', now: NOW });
 
   test('escapes every value it interpolates', () => {
     expect(html).not.toContain('<b>James</b>');
@@ -97,7 +97,7 @@ describe('renderAdminPage', () => {
   });
 
   test('shows users, memberships, counts, container status, links and MCP servers', () => {
-    expect(html).toContain('james@zabaca.com');
+    expect(html).toContain('owner@example.com');
     expect(html).toContain('Default (owner)');
     expect(html).toContain('banned');
     expect(html).toContain('VM · https://ws.cedarpad.com');
@@ -108,7 +108,7 @@ describe('renderAdminPage', () => {
 
   test('names a sandbox as a sandbox', () => {
     const sandbox: ContainerStatus = { kind: 'sandbox', origin: 'https://cedarpad-default.sbx.zabaca.com' };
-    const page = renderAdminPage(overview, new Map([['default', sandbox]]), { viewer: 'james@zabaca.com', now: NOW });
+    const page = renderAdminPage(overview, new Map([['default', sandbox]]), { viewer: 'owner@example.com', now: NOW });
     expect(page).toContain('sandbox · https://cedarpad-default.sbx.zabaca.com');
     expect(page).not.toContain('VM ·');
   });

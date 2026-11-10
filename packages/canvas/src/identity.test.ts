@@ -17,13 +17,13 @@ describe('identity resolution', () => {
   test('a session user wins over the guest; name falls back to the email local-part', async () => {
     const u = await resolveIdentity({
       storage: memStorage(),
-      fetchSession: async () => ({ id: 'u_1', email: 'james@zabaca.com' }),
+      fetchSession: async () => ({ id: 'u_1', email: 'owner@example.com' }),
     });
-    expect(u).toMatchObject({ id: 'u_1', kind: 'user', name: 'james', email: 'james@zabaca.com' });
+    expect(u).toMatchObject({ id: 'u_1', kind: 'user', name: 'owner', email: 'owner@example.com' });
   });
 
   test('an explicit account name beats the email fallback', () => {
-    expect(sessionIdentity({ id: 'u_1', email: 'james@zabaca.com', name: 'James' }).name).toBe('James');
+    expect(sessionIdentity({ id: 'u_1', email: 'owner@example.com', name: 'James' }).name).toBe('James');
   });
 
   test('no session → a guest identity, stable across calls in the same browser', async () => {

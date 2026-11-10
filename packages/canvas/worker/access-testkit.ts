@@ -45,7 +45,7 @@ export const goodClaims = (extra: Record<string, unknown> = {}): Record<string, 
   aud: [AUD],
   exp: NOW / 1000 + 600,
   iat: NOW / 1000,
-  email: 'james@zabaca.com',
+  email: 'owner@example.com',
   ...extra,
 });
 

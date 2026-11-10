@@ -16,7 +16,7 @@ beforeEach(() => resetJwksCache());
 describe('verifyAssertion', () => {
   test('a valid assertion names its person', async () => {
     const v = await verifyAssertion(await sign(signer, goodClaims()), deps(jwksPort([signer])));
-    expect(v).toEqual({ kind: 'ok', subject: 'james@zabaca.com' });
+    expect(v).toEqual({ kind: 'ok', subject: 'owner@example.com' });
   });
 
   test('refuses an empty or malformed token without a key fetch', async () => {

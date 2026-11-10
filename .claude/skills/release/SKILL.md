@@ -300,7 +300,7 @@ not run, say so — do not imply a green path that was not walked.
   owns those, and a release migrates D1.
 - **Never print secrets.** `deploy.sh` reads production credentials through
   `sops exec-env packages/infra/environments/production/secrets.yaml`; keep it that way.
-- **Never file this as a GitHub issue or a Fredrin ticket.** A release is an act, not work to
+- **Never file this as a GitHub issue.** A release is an act, not work to
   track (`docs/agents/issue-tracker.md`).
 - **Never skip `bun run deploy:sandbox` because "nobody is on the canvas right now".** It is the
   default workspace, so the next person to open one gets whatever image was left there, and the
