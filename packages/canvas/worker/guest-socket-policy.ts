@@ -1,4 +1,5 @@
 import type { GuestCapabilities } from '../shared/guest-capabilities.ts';
+import { GUEST_BARE_NAME, markGuestName } from '../shared/guest-mark.ts';
 
 /**
  * Per-connection write policy for a guest's sync socket (#320).
@@ -79,33 +80,22 @@ export function narrowInteractPush<T>(message: T): T {
 // The guest badge is the CONNECTION's, not the client's (#339)
 // ---------------------------------------------------------------------------
 //
-// A guest shows in presence as `<name> (Guest)` and that mark is load-bearing: revoking a
-// share link is a manual judgement call (#320), so a member has to NOTICE an outsider before
-// they can act. The browser sets the mark itself (`src/presence.ts`, `tlUserFor`), which is
-// fine for a guest who plays along and nothing at all for one who sends the record without it.
+// A guest shows in presence with the mark in front of their name (`shared/guest-mark.ts`) and
+// that mark is load-bearing: revoking a share link is a manual judgement call (#320), so a
+// member has to NOTICE an outsider before they can act. The browser sets the mark itself
+// (`src/presence.ts`), which is fine for a guest who plays along and nothing at all for one who
+// sends the record without it.
 //
 // So the room stamps it. Every push from a guest connection passes through here on its way
 // to the room, and the `userName` it carries is made a marked one, whatever the client wrote.
 // What is left to the client is the name a guest chose, never whether they are labelled.
-
-/** The suffix the browser also uses; matching it makes the stamping idempotent, so a
- *  well-behaved client's own mark is kept rather than doubled. */
-export const GUEST_SUFFIX = ' (Guest)';
-
-/** A name that always reads as a guest's: trimmed, suffixed once, and the bare marked
- *  "Guest" when there is nothing usable (a missing, non-string, blank or already-bare one). */
-export function markGuestName(name: unknown): string {
-  const n = typeof name === 'string' ? name.trim() : '';
-  if (n === '' || n === 'Guest') return 'Guest';
-  return n.endsWith(GUEST_SUFFIX) ? n : `${n}${GUEST_SUFFIX}`;
-}
 
 /**
  * The same message with its presence record's `userName` marked. A presence PUT carries the
  * whole record; a PATCH carries only the fields that changed, so it is touched only when it
  * touches `userName` (a patch that does not leaves the stored, already-marked name alone).
  * A name change by any op other than a plain `put` (a `delete`, an `append`) cannot be marked
- * without knowing the old value, so it becomes the bare marked "Guest".
+ * without knowing the old value, so it becomes the bare "Guest".
  *
  * Non-push messages, and pushes with no presence, are returned untouched.
  */
@@ -126,7 +116,7 @@ export function markGuestPresence<T>(message: T): T {
     const diff = presence[1];
     if (!diff || typeof diff !== 'object' || Array.isArray(diff) || !('userName' in diff)) return message;
     const op = (diff as Record<string, unknown>).userName;
-    const next = isOp(op) && op[0] === 'put' ? markGuestName(op[1]) : 'Guest';
+    const next = isOp(op) && op[0] === 'put' ? markGuestName(op[1]) : GUEST_BARE_NAME;
     return { ...msg, presence: ['patch', { ...(diff as Record<string, unknown>), userName: ['put', next] }] } as T;
   }
 

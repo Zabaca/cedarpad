@@ -232,14 +232,32 @@ export class CanvasSyncRoom {
     // narrowed to what its capabilities allow (#320) and its presence badge stamped (#339).
     if (!isGuestSocket(a)) return this.room.handleSocketMessage(a.sessionId, message);
     // We have to assemble chunks before we can read one, so a guest session gets its own
-    // assembler — same lifetime as the room's own (both in-memory, both rebuilt on a wake), so
+    // assembler. It lives as long as the room's own (both in-memory, both rebuilt on a wake), so
     // it adds no failure mode a hibernation did not already have.
     const raw = typeof message === 'string' ? message : new TextDecoder().decode(message);
-    const res = this.assemblerFor(a.sessionId).handleMessage(raw);
+    let res: ReturnType<JsonChunkAssembler['handleMessage']>;
+    try {
+      res = this.assemblerFor(a.sessionId).handleMessage(raw);
+    } catch {
+      // A message that opens like JSON and is not (`{` then garbage) throws in the assembler.
+      res = { error: new Error('unparseable message') };
+    }
     if (!res) return; // more chunks to come
-    // Unassemblable: hand it on untouched so the room's own error handling runs.
-    if (!('data' in res)) return this.room.handleSocketMessage(a.sessionId, raw);
+    // NEVER forward what could not be assembled. Our assembler and the room's are separate, so a
+    // message ours rejects (a chunk header, then a whole push) is one the room's idle assembler
+    // would accept, and it would reach the room without the policy: an unmarked badge, or a
+    // document diff an interact-only guest may not push. A guest that sends something no
+    // honest client sends is dropped: the session ends and the client reconnects clean.
+    if (!('data' in res)) return this.reject(ws, a, 'invalid message');
     this.room.handleSocketMessage(a.sessionId, JSON.stringify(applyGuestPolicy(res.data, { interactOnly: !!a.interactOnly })));
+  }
+
+  /** End a connection that broke the protocol. The room is told first, so the session is gone
+   *  from its state before the socket dies; 1008 (policy violation), as `evict` uses. */
+  private reject(ws: WebSocket, a: SocketAttachment, reason: string): void {
+    this.assemblers.delete(a.sessionId);
+    this.room.handleSocketClose(a.sessionId);
+    ws.close(1008, reason);
   }
 
   /**

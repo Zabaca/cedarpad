@@ -2,47 +2,21 @@ import { describe, expect, test } from 'bun:test';
 import { RecordOpType, getTlsyncProtocolVersion } from '@tldraw/sync-core';
 
 import { createCanvasTLSchema } from '../src/tl-schema.ts';
-import { applyGuestPolicy, GUEST_SUFFIX, markGuestName, markGuestPresence } from './guest-socket-policy.ts';
+import { applyGuestPolicy, markGuestPresence } from './guest-socket-policy.ts';
 import { createCanvasSyncRoom } from './sync-room.ts';
 
 // #339: the "(Guest)" badge is what lets a member notice an outsider (revocation is a manual
 // call, #320). The browser used to set it, so a guest who sent their presence without it
 // appeared as an ordinary collaborator. The room now stamps it on the way in.
+// (The name rules themselves are tested with `shared/guest-mark.ts`.)
 
 const push = (presence: unknown, extra: Record<string, unknown> = {}) => ({ type: 'push', clientClock: 1, presence, ...extra });
 const presenceOf = (m: unknown) => (m as { presence: [string, Record<string, unknown>] }).presence;
 
-describe('markGuestName', () => {
-  test('appends the mark once', () => {
-    expect(markGuestName('Ada')).toBe(`Ada${GUEST_SUFFIX}`);
-  });
-
-  test('keeps a mark the client already added, so a well-behaved browser is not doubled', () => {
-    expect(markGuestName('Ada (Guest)')).toBe('Ada (Guest)');
-  });
-
-  test('trims, so whitespace cannot dodge or double the mark', () => {
-    expect(markGuestName('  Ada  ')).toBe('Ada (Guest)');
-    expect(markGuestName('Ada (Guest)  ')).toBe('Ada (Guest)');
-  });
-
-  test('a missing, blank, non-string or already-bare name is the bare "Guest"', () => {
-    for (const bad of [undefined, null, '', '   ', 42, {}, [], 'Guest']) {
-      expect(markGuestName(bad), String(bad)).toBe('Guest');
-    }
-  });
-
-  test('a name that merely contains or fakes the mark is still marked', () => {
-    expect(markGuestName('(Guest) Ada')).toBe('(Guest) Ada (Guest)');
-    expect(markGuestName('Ada(Guest)')).toBe('Ada(Guest) (Guest)');
-    expect(markGuestName('Ada (guest)')).toBe('Ada (guest) (Guest)');
-  });
-});
-
 describe('markGuestPresence', () => {
   test('a presence PUT with no mark gets one', () => {
     const out = markGuestPresence(push(['put', { id: 'instance_presence:x', userName: 'Ada', cursor: { x: 1 } }]));
-    expect(presenceOf(out)[1]).toEqual({ id: 'instance_presence:x', userName: 'Ada (Guest)', cursor: { x: 1 } });
+    expect(presenceOf(out)[1]).toEqual({ id: 'instance_presence:x', userName: '(Guest) Ada', cursor: { x: 1 } });
   });
 
   test('a presence PUT with no name at all is the marked "Guest"', () => {
@@ -51,7 +25,7 @@ describe('markGuestPresence', () => {
 
   test('a presence PATCH that renames the guest is marked', () => {
     const out = markGuestPresence(push(['patch', { userName: ['put', 'Admin'], cursor: ['put', {}] }]));
-    expect(presenceOf(out)[1]).toEqual({ userName: ['put', 'Admin (Guest)'], cursor: ['put', {}] });
+    expect(presenceOf(out)[1]).toEqual({ userName: ['put', '(Guest) Admin'], cursor: ['put', {}] });
   });
 
   test('a presence PATCH that removes or appends to the name becomes the bare "Guest"', () => {
@@ -91,14 +65,14 @@ describe('applyGuestPolicy', () => {
       { interactOnly: true },
     );
     expect(out).not.toHaveProperty('diff');
-    expect(presenceOf(out)[1]!.userName).toBe('Ada (Guest)');
+    expect(presenceOf(out)[1]!.userName).toBe('(Guest) Ada');
   });
 
   test('stamps the badge on a guest who may edit, and leaves their document diff alone', () => {
     const diff = { 'shape:c1': ['patch', { x: ['put', 400] }] };
     const out = applyGuestPolicy(push(['put', { userName: 'Ada' }], { diff }), { interactOnly: false });
     expect(out).toMatchObject({ diff });
-    expect(presenceOf(out)[1]!.userName).toBe('Ada (Guest)');
+    expect(presenceOf(out)[1]!.userName).toBe('(Guest) Ada');
   });
 });
 
@@ -171,7 +145,7 @@ describe('a member sees a guest who tried to drop the badge as a guest anyway', 
     room.handleSocketMessage('g', JSON.stringify(applyGuestPolicy(hostile, { interactOnly: false })));
 
     const told = JSON.stringify(member.messages());
-    expect(told).toContain('Ada (Guest)');
+    expect(told).toContain('(Guest) Ada');
     expect(told).not.toContain('"userName":"Ada"');
   });
 
@@ -183,7 +157,7 @@ describe('a member sees a guest who tried to drop the badge as a guest anyway', 
 
   test('a later patch that tries to rename the guest to an unmarked name is marked too', async () => {
     const { room, member } = memberAndGuest();
-    room.handleSocketMessage('g', JSON.stringify(applyGuestPolicy(push([RecordOpType.Put, presenceRecord('Ada (Guest)')]), { interactOnly: false })));
+    room.handleSocketMessage('g', JSON.stringify(applyGuestPolicy(push([RecordOpType.Put, presenceRecord('(Guest) Ada')]), { interactOnly: false })));
     // The room batches what it sends one session within a frame (~16ms); wait it out so the
     // second update is its own delivery.
     await new Promise((resolve) => setTimeout(resolve, 60));
@@ -194,7 +168,7 @@ describe('a member sees a guest who tried to drop the badge as a guest anyway', 
     await new Promise((resolve) => setTimeout(resolve, 60));
 
     const told = JSON.stringify(member.messages());
-    expect(told).toContain('James (Guest)');
+    expect(told).toContain('(Guest) James');
     expect(told).not.toContain('"James"');
   });
 });
