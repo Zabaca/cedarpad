@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { GUEST_BARE_NAME, GUEST_MARK, GUEST_NAME_MAX, markGuestName } from './guest-mark.ts';
+import { GUEST_BARE_NAME, GUEST_MARK, GUEST_NAME_MAX, GUEST_PALETTE, guestColor, markGuestName } from './guest-mark.ts';
 
 // #339: the mark is what lets a member notice a guest. tldraw cuts a long name off at its
 // END, so the mark goes first and the name is cleaned and capped.
@@ -57,6 +57,27 @@ describe('markGuestName', () => {
       const marked = markGuestName(name);
       expect(marked === GUEST_BARE_NAME || marked.startsWith(`${GUEST_MARK} `), name.slice(0, 12)).toBe(true);
       expect(Array.from(marked).length).toBeLessThanOrEqual(GUEST_MARK.length + 1 + GUEST_NAME_MAX);
+    }
+  });
+});
+
+// The room, not the client, picks a guest's colour: white on white is a label nobody reads.
+describe('guestColor', () => {
+  test('is always one of the palette, whatever the identity', () => {
+    for (const identity of ['guest:a', 'guest:', '', 'guest:⠀', 'x'.repeat(500)]) {
+      expect(GUEST_PALETTE as readonly string[]).toContain(guestColor(identity));
+    }
+  });
+
+  test('is stable for one connection and varies across connections', () => {
+    expect(guestColor('guest:s1')).toBe(guestColor('guest:s1'));
+    expect(new Set(Array.from({ length: 64 }, (_, i) => guestColor(`guest:${i}`))).size).toBeGreaterThan(3);
+  });
+
+  test('every palette colour is a six-digit hex that is neither white nor black', () => {
+    for (const c of GUEST_PALETTE) {
+      expect(c).toMatch(/^#[0-9a-f]{6}$/);
+      expect(['#ffffff', '#000000']).not.toContain(c);
     }
   });
 });

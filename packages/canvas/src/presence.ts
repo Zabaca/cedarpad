@@ -10,7 +10,7 @@
 
 import { atom, createUserId, UserRecordType, type TLUser, type TLUserStore } from 'tldraw';
 
-import { markGuestName } from '../shared/guest-mark';
+import { GUEST_BARE_NAME, markGuestName } from '../shared/guest-mark';
 import { loadGuestScope } from '../shared/guest-scope';
 import { currentUserSnapshot, subscribeIdentity, type CurrentUser } from './identity';
 
@@ -31,7 +31,7 @@ export function tlUserFor(u: CurrentUser | null, isGuest = false): TLUser | null
   const name = u.name?.trim();
   return UserRecordType.create({
     id: createUserId(u.id),
-    name: isGuest ? markGuestName(name) : name || 'Guest',
+    name: isGuest ? markGuestName(name) : name || GUEST_BARE_NAME,
     color: u.color,
   });
 }

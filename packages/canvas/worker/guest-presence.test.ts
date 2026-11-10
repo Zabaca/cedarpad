@@ -1,174 +1,222 @@
 import { describe, expect, test } from 'bun:test';
-import { RecordOpType, getTlsyncProtocolVersion } from '@tldraw/sync-core';
 
-import { createCanvasTLSchema } from '../src/tl-schema.ts';
-import { applyGuestPolicy, markGuestPresence } from './guest-socket-policy.ts';
-import { createCanvasSyncRoom } from './sync-room.ts';
+import { InstancePresenceRecordType } from '@tldraw/tlschema';
 
-// #339: the "(Guest)" badge is what lets a member notice an outsider (revocation is a manual
-// call, #320). The browser used to set it, so a guest who sent their presence without it
-// appeared as an ordinary collaborator. The room now stamps it on the way in.
-// (The name rules themselves are tested with `shared/guest-mark.ts`.)
+import { GUEST_BARE_NAME, GUEST_PALETTE } from '../shared/guest-mark.ts';
+import { applyGuestPolicy, stampGuestPresence, type GuestPresenceContext } from './guest-socket-policy.ts';
 
+// #339: what a member sees of a guest (the name, the colour, whether they are there at all) is the
+// room's to decide, not the client's. A guest who can choose how they look can choose not to be
+// noticed, and noticing is what revocation depends on (#320). The name rules themselves are tested
+// with `shared/guest-mark.ts`; the Durable Object's wiring in `canvas-sync-do-guest.test.ts`.
+
+const ctx = (over: Partial<GuestPresenceContext> = {}): GuestPresenceContext => ({ identity: 'guest:s1', now: 1_700_000_000_000, hasPresence: true, ...over });
 const push = (presence: unknown, extra: Record<string, unknown> = {}) => ({ type: 'push', clientClock: 1, presence, ...extra });
 const presenceOf = (m: unknown) => (m as { presence: [string, Record<string, unknown>] }).presence;
+const stamped = (presence: unknown, c: GuestPresenceContext = ctx()) => stampGuestPresence(push(presence), c);
 
-describe('markGuestPresence', () => {
-  test('a presence PUT with no mark gets one', () => {
-    const out = markGuestPresence(push(['put', { id: 'instance_presence:x', userName: 'Ada', cursor: { x: 1 } }]));
-    expect(presenceOf(out)[1]).toEqual({ id: 'instance_presence:x', userName: '(Guest) Ada', cursor: { x: 1 } });
+describe('a presence PUT: every field a member sees is the room\'s', () => {
+  const hostile = {
+    id: 'instance_presence:x',
+    userName: 'Ada',
+    userId: 'user:a-members-id',
+    lastActivityTimestamp: 1,
+    color: '#ffffff',
+    chatMessage: 'Maple Street Crew',
+    cursor: { x: 1, y: 2 },
+  };
+
+  test('name marked, timestamp the room\'s clock, id the connection\'s, colour from the palette, chat message empty', () => {
+    const { message, userName } = stamped(['put', hostile]);
+    const record = presenceOf(message)[1];
+    expect(record.userName).toBe('(Guest) Ada');
+    expect(record.lastActivityTimestamp).toBe(1_700_000_000_000);
+    expect(record.userId).toBe('user:guest:s1');
+    expect(GUEST_PALETTE as readonly string[]).toContain(record.color as string);
+    expect(record.chatMessage).toBe('');
+    expect(userName).toBe('(Guest) Ada');
   });
 
-  test('a presence PUT with no name at all is the marked "Guest"', () => {
-    expect(presenceOf(markGuestPresence(push(['put', { id: 'instance_presence:x' }])))[1]!.userName).toBe('Guest');
+  test('what the client is left with: the cursor, the camera and the rest, untouched', () => {
+    const record = presenceOf(stamped(['put', hostile]).message)[1];
+    expect(record.cursor).toEqual({ x: 1, y: 2 });
+    expect(record.id).toBe('instance_presence:x');
   });
 
-  test('a presence PATCH that renames the guest is marked', () => {
-    const out = markGuestPresence(push(['patch', { userName: ['put', 'Admin'], cursor: ['put', {}] }]));
-    expect(presenceOf(out)[1]).toEqual({ userName: ['put', '(Guest) Admin'], cursor: ['put', {}] });
+  test('fields the client left out are filled in, so a bare record is still owned', () => {
+    const record = presenceOf(stamped(['put', { id: 'instance_presence:x' }]).message)[1];
+    expect(record).toMatchObject({ userName: 'Guest', userId: 'user:guest:s1', lastActivityTimestamp: 1_700_000_000_000, chatMessage: '' });
   });
 
-  test('a presence PATCH that removes or appends to the name becomes the bare "Guest"', () => {
-    for (const op of [['delete'], ['append', 'x', 0]]) {
-      expect(presenceOf(markGuestPresence(push(['patch', { userName: op }])))[1]).toEqual({ userName: ['put', 'Guest'] });
+  test('an invalid or hidden colour never survives: white, nothing, a non-string, not a colour', () => {
+    for (const color of ['#ffffff', 'white', '', 42, null, 'url(javascript:x)', 'not a colour']) {
+      const record = presenceOf(stamped(['put', { ...hostile, color }]).message)[1];
+      expect(GUEST_PALETTE as readonly string[], String(color)).toContain(record.color as string);
     }
   });
 
-  test('a PATCH that does not touch the name is returned as it came', () => {
-    const msg = push(['patch', { cursor: ['put', { x: 5 }] }]);
-    expect(markGuestPresence(msg)).toEqual(msg);
+  test('a connection keeps one colour, and different connections can differ', () => {
+    const a = presenceOf(stamped(['put', hostile], ctx({ identity: 'guest:a' })).message)[1].color;
+    expect(presenceOf(stamped(['put', hostile], ctx({ identity: 'guest:a' })).message)[1].color).toBe(a);
+    const colours = new Set(Array.from({ length: 40 }, (_, i) => presenceOf(stamped(['put', hostile], ctx({ identity: `guest:${i}` })).message)[1].color));
+    expect(colours.size).toBeGreaterThan(1);
   });
 
   test('the document diff and every other field of the push are carried through', () => {
     const diff = { 'shape:c1': ['patch', { props: ['patch', { data: ['put', { n: 2 }] }] }] };
-    const out = markGuestPresence(push(['put', { userName: 'Ada' }], { diff }));
-    expect(out).toMatchObject({ type: 'push', clientClock: 1, diff });
+    const { message } = stampGuestPresence(push(['put', hostile], { diff }), ctx());
+    expect(message).toMatchObject({ type: 'push', clientClock: 1, diff });
+  });
+});
+
+describe('a presence PATCH is stamped like the put it amends', () => {
+  test('every presence push counts as activity: the room\'s timestamp is on every patch', () => {
+    const { message, userName } = stamped(['patch', { cursor: ['put', { x: 5 }] }]);
+    expect(presenceOf(message)[1]).toEqual({ cursor: ['put', { x: 5 }], lastActivityTimestamp: ['put', 1_700_000_000_000] });
+    expect(userName).toBeUndefined();
   });
 
-  test('messages that are not pushes, and pushes with no presence, are untouched', () => {
-    for (const msg of [{ type: 'connect', connectRequestId: 'r' }, { type: 'ping' }, { type: 'push', clientClock: 1, diff: {} }]) {
-      expect(markGuestPresence(msg)).toEqual(msg);
+  test('a patch that tries to age itself out gets the room\'s clock instead', () => {
+    expect(presenceOf(stamped(['patch', { lastActivityTimestamp: ['put', 1] }]).message)[1].lastActivityTimestamp).toEqual(['put', 1_700_000_000_000]);
+  });
+
+  test('a patch of userId, color or chatMessage is replaced, never forwarded', () => {
+    const patch = presenceOf(stamped(['patch', { userId: ['put', 'user:a-members-id'], color: ['put', '#ffffff'], chatMessage: ['put', 'Maple Street Crew'] }]).message)[1];
+    expect(patch.userId).toEqual(['put', 'user:guest:s1']);
+    expect(GUEST_PALETTE as readonly string[]).toContain((patch.color as [string, string])[1]);
+    expect(patch.chatMessage).toEqual(['put', '']);
+  });
+
+  test('a patch that renames the guest is marked', () => {
+    const { message, userName } = stamped(['patch', { userName: ['put', 'Admin'] }]);
+    expect(presenceOf(message)[1].userName).toEqual(['put', '(Guest) Admin']);
+    expect(userName).toBe('(Guest) Admin');
+  });
+
+  test('a delete of the name becomes the bare "Guest"', () => {
+    expect(presenceOf(stamped(['patch', { userName: ['delete'] }]).message)[1].userName).toEqual(['put', GUEST_BARE_NAME]);
+  });
+});
+
+// What a browser sends as its guest types: tldraw's diff of '(Guest) Ada' to '(Guest) Ada Quill'.
+describe('an honest guest extending their name', () => {
+  test('an append at the end of the name last forwarded is applied to it', () => {
+    const { message, userName } = stamped(['patch', { userName: ['append', ' Quill', 11] }], ctx({ lastName: '(Guest) Ada' }));
+    expect(presenceOf(message)[1].userName).toEqual(['put', '(Guest) Ada Quill']);
+    expect(userName).toBe('(Guest) Ada Quill');
+  });
+
+  test('and again, from the name that left behind', () => {
+    const first = stamped(['patch', { userName: ['append', ' Q', 11] }], ctx({ lastName: '(Guest) Ada' })).userName!;
+    expect(stamped(['patch', { userName: ['append', 'uill', first.length] }], ctx({ lastName: first })).userName).toBe('(Guest) Ada Quill');
+  });
+
+  test('an append that does not start where the name ends, or with nothing to extend, is the bare "Guest"', () => {
+    expect(stamped(['patch', { userName: ['append', ' Quill', 3] }], ctx({ lastName: '(Guest) Ada' })).userName).toBe(GUEST_BARE_NAME);
+    expect(stamped(['patch', { userName: ['append', ' Quill', 11] }]).userName).toBe(GUEST_BARE_NAME);
+    expect(stamped(['patch', { userName: ['append', 5, 11] }], ctx({ lastName: '(Guest) Ada' })).userName).toBe(GUEST_BARE_NAME);
+  });
+
+  test('extending past the cap is capped, not refused', () => {
+    const last = `(Guest) ${'x'.repeat(40)}`;
+    expect(stamped(['patch', { userName: ['append', 'more', last.length] }], ctx({ lastName: last })).userName).toBe(last);
+  });
+});
+
+describe('a push with no presence still counts as activity, and gives a guest a record to be seen by', () => {
+  const docOnly = { type: 'push', clientClock: 1, diff: { 'shape:c1': ['patch', { x: ['put', 500] }] } };
+
+  test('a guest with a record: the document-only push carries the room\'s timestamp as a presence patch', () => {
+    const { message } = stampGuestPresence(docOnly, ctx({ hasPresence: true }));
+    expect(presenceOf(message)).toEqual(['patch', { lastActivityTimestamp: ['put', 1_700_000_000_000] }]);
+    expect(message).toMatchObject({ diff: docOnly.diff });
+  });
+
+  test('a guest with NO record yet gets one, stamped, so members see who is editing', () => {
+    const { message, userName } = stampGuestPresence(docOnly, ctx({ hasPresence: false }));
+    const [op, record] = presenceOf(message);
+    expect(op).toBe('put');
+    expect(record).toMatchObject({ typeName: 'instance_presence', userName: 'Guest', userId: 'user:guest:s1', lastActivityTimestamp: 1_700_000_000_000, chatMessage: '' });
+    expect(GUEST_PALETTE as readonly string[]).toContain(record.color as string);
+    expect(userName).toBe('Guest');
+  });
+
+  test('a patch sent before any put (nothing to patch) becomes that first put', () => {
+    const { message } = stampGuestPresence(push(['patch', { cursor: ['put', { x: 1 }] }]), ctx({ hasPresence: false }));
+    expect(presenceOf(message)[0]).toBe('put');
+  });
+
+});
+
+describe('what is not a push is left alone', () => {
+  test('messages that are not pushes are untouched', () => {
+    for (const msg of [{ type: 'connect', connectRequestId: 'r' }, { type: 'ping' }]) {
+      expect(stampGuestPresence(msg, ctx())).toEqual({ message: msg });
     }
   });
 
-  test('a malformed presence is passed on for the room to refuse, never throws', () => {
-    for (const presence of ['x', 7, null, [], ['put'], ['put', 'not-a-record'], ['patch', 'nope'], ['weird', {}]]) {
-      expect(() => markGuestPresence(push(presence))).not.toThrow();
+  // The room ignores a presence it cannot read and still applies the push's document diff, so a hand-written
+  // push with one would edit unseen. Anything that is not a well-formed put or patch is treated as MISSING.
+  const malformed = ['x', 7, 0, false, true, '', null, [], ['remove'], ['zap', {}], ['put'], ['put', 'not-a-record'], ['put', null], ['put', []], ['patch', 'nope'], ['patch', null], ['patch', []], ['patch'], { 0: 'put' }];
+
+  test('a malformed presence is treated as missing: a timestamp patch for a guest with a record', () => {
+    for (const presence of malformed) {
+      const { message } = stampGuestPresence(push(presence, { diff: { 'shape:c1': ['patch', {}] } }), ctx({ hasPresence: true }));
+      expect(presenceOf(message), JSON.stringify(presence)).toEqual(['patch', { lastActivityTimestamp: ['put', 1_700_000_000_000] }]);
+      expect(message).toMatchObject({ diff: { 'shape:c1': ['patch', {}] } });
     }
+  });
+
+  test('a malformed presence from a guest with no record yet is the default put, so they are still seen', () => {
+    for (const presence of malformed) {
+      const { message } = stampGuestPresence(push(presence, { diff: {} }), ctx({ hasPresence: false }));
+      expect(presenceOf(message)[0], JSON.stringify(presence)).toBe('put');
+    }
+  });
+
+  test('and it never throws', () => {
+    for (const presence of malformed) {
+      expect(() => stampGuestPresence(push(presence), ctx()), JSON.stringify(presence)).not.toThrow();
+    }
+  });
+
+  test('the page is looked up only when a default record is built', () => {
+    let lookups = 0;
+    const pageId = () => (lookups++, 'page:second');
+    stampGuestPresence(push(undefined), ctx({ hasPresence: true, pageId }));
+    stampGuestPresence(push(['put', { userName: 'Ada' }]), ctx({ hasPresence: true, pageId }));
+    stampGuestPresence(push(['patch', { cursor: ['put', {}] }]), ctx({ hasPresence: true, pageId }));
+    stampGuestPresence(push(undefined), ctx({ hasPresence: false, pageId }));
+    expect(lookups).toBe(1);
+  });
+
+  test('the default record is a full, valid presence record', () => {
+    const record = presenceOf(stampGuestPresence(push(undefined), ctx({ hasPresence: false })).message)[1];
+    expect(InstancePresenceRecordType.isInstance(record)).toBe(true);
+    expect(() => InstancePresenceRecordType.validate(record)).not.toThrow();
+  });
+
+  test('the default record sits on the room\'s current page when it is told one', () => {
+    const { message } = stampGuestPresence(push(undefined), ctx({ hasPresence: false, pageId: () => 'page:second' }));
+    expect(presenceOf(message)[1].currentPageId).toBe('page:second');
+    expect(presenceOf(stampGuestPresence(push(undefined), ctx({ hasPresence: false })).message)[1].currentPageId).toBe('page:page');
   });
 });
 
 describe('applyGuestPolicy', () => {
-  test('stamps the badge on an interact-only guest after narrowing the document diff', () => {
-    const out = applyGuestPolicy(
+  test('stamps presence after narrowing the document diff of an interact-only guest', () => {
+    const { message } = applyGuestPolicy(
       push(['put', { userName: 'Ada' }], { diff: { 'shape:c1': ['patch', { x: ['put', 400] }] } }),
-      { interactOnly: true },
+      { ...ctx(), interactOnly: true },
     );
-    expect(out).not.toHaveProperty('diff');
-    expect(presenceOf(out)[1]!.userName).toBe('(Guest) Ada');
+    expect(message).not.toHaveProperty('diff');
+    expect(presenceOf(message)[1]!.userName).toBe('(Guest) Ada');
   });
 
-  test('stamps the badge on a guest who may edit, and leaves their document diff alone', () => {
+  test('stamps presence for a guest who may edit, and leaves their document diff alone', () => {
     const diff = { 'shape:c1': ['patch', { x: ['put', 400] }] };
-    const out = applyGuestPolicy(push(['put', { userName: 'Ada' }], { diff }), { interactOnly: false });
-    expect(out).toMatchObject({ diff });
-    expect(presenceOf(out)[1]!.userName).toBe('(Guest) Ada');
-  });
-});
-
-// The whole path through a real room: what a MEMBER's socket is told about a guest.
-describe('a member sees a guest who tried to drop the badge as a guest anyway', () => {
-  function fakeSocket() {
-    const sent: string[] = [];
-    const listeners: Record<string, (e: unknown) => void> = {};
-    return {
-      sent,
-      messages: () => sent.map((s) => JSON.parse(s) as Record<string, unknown>),
-      receive: (data: string) => listeners.message?.({ data }),
-      socket: {
-        readyState: 1,
-        send: (data: string) => void sent.push(data),
-        close() {},
-        addEventListener: (type: string, listener: (e: unknown) => void) => void (listeners[type] = listener),
-        removeEventListener: (type: string) => void delete listeners[type],
-      },
-    };
-  }
-  const connect = JSON.stringify({
-    type: 'connect',
-    connectRequestId: 'req_1',
-    schema: createCanvasTLSchema().serialize(),
-    protocolVersion: getTlsyncProtocolVersion(),
-    lastServerClock: 0,
-  });
-  const presenceRecord = (userName: string) => ({
-    id: 'instance_presence:guest',
-    typeName: 'instance_presence',
-    userId: 'user:guest',
-    userName,
-    lastActivityTimestamp: 1,
-    color: '#ff0000',
-    camera: { x: 0, y: 0, z: 1 },
-    cursor: { x: 10, y: 20, type: 'default', rotation: 0 },
-    screenBounds: { x: 0, y: 0, w: 1024, h: 768 },
-    followingUserId: null,
-    brush: null,
-    scribbles: [],
-    selectedShapeIds: [],
-    currentPageId: 'page:page',
-    chatMessage: '',
-    meta: {},
-  });
-
-  function memberAndGuest() {
-    const room = createCanvasSyncRoom({
-      initialSnapshot: {
-        clock: 1,
-        documents: [{ lastChangedClock: 1, state: { id: 'page:page', typeName: 'page', name: 'Page 1', index: 'a1', meta: {} } }],
-      },
-    });
-    const member = fakeSocket();
-    const guest = fakeSocket();
-    room.handleSocketConnect({ sessionId: 'm', socket: member.socket, meta: { userId: 'u_1' } });
-    member.receive(connect);
-    room.handleSocketConnect({ sessionId: 'g', socket: guest.socket, meta: { userId: 'guest:g' } });
-    guest.receive(connect);
-    member.sent.length = 0;
-    return { room, member, guest };
-  }
-
-  test('the unmarked presence a hostile guest sends reaches the member marked', () => {
-    const { room, member } = memberAndGuest();
-    const hostile = push([RecordOpType.Put, presenceRecord('Ada')]);
-
-    // What the Durable Object does with every guest message before the room sees it.
-    room.handleSocketMessage('g', JSON.stringify(applyGuestPolicy(hostile, { interactOnly: false })));
-
-    const told = JSON.stringify(member.messages());
-    expect(told).toContain('(Guest) Ada');
-    expect(told).not.toContain('"userName":"Ada"');
-  });
-
-  test('without the policy the badge is whatever the guest chose: the hole this closes', () => {
-    const { room, member } = memberAndGuest();
-    room.handleSocketMessage('g', JSON.stringify(push([RecordOpType.Put, presenceRecord('Ada')])));
-    expect(JSON.stringify(member.messages())).toContain('"userName":"Ada"');
-  });
-
-  test('a later patch that tries to rename the guest to an unmarked name is marked too', async () => {
-    const { room, member } = memberAndGuest();
-    room.handleSocketMessage('g', JSON.stringify(applyGuestPolicy(push([RecordOpType.Put, presenceRecord('(Guest) Ada')]), { interactOnly: false })));
-    // The room batches what it sends one session within a frame (~16ms); wait it out so the
-    // second update is its own delivery.
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    member.sent.length = 0;
-
-    const rename = push([RecordOpType.Patch, { userName: [RecordOpType.Put, 'James'] }], { clientClock: 2 });
-    room.handleSocketMessage('g', JSON.stringify(applyGuestPolicy(rename, { interactOnly: false })));
-    await new Promise((resolve) => setTimeout(resolve, 60));
-
-    const told = JSON.stringify(member.messages());
-    expect(told).toContain('(Guest) James');
-    expect(told).not.toContain('"James"');
+    const { message } = applyGuestPolicy(push(['put', { userName: 'Ada' }], { diff }), { ...ctx(), interactOnly: false });
+    expect(message).toMatchObject({ diff });
+    expect(presenceOf(message)[1]!.userName).toBe('(Guest) Ada');
   });
 });

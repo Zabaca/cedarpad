@@ -767,16 +767,30 @@ and reconnect/resume are the sync protocol's job now, not ours. What remains our
   confinement (SSE frame filter, member-conversation view-only rule, the own-tier check on
   component source, guest turns are plain chat turns). Member surface: the Share panel in the
   canvas picker (`SharePanel`, Shell.tsx).
-- **Guest marking** (#320) — a guest names themselves on arrival (`GuestNamePrompt`,
-  `setDisplayName`) and presence renders them as "<name> (Guest)". The mark rides tldraw's
-  own `userName`, so the cursor label and the people list carry it without a second visual
-  language. Load-bearing, not chrome: revocation is a manual judgement call, so a member has
-  to notice an outsider is editing before they can act. The browser adds the mark, but the
-  room STAMPS it (#339): every message from a guest connection passes through
-  `applyGuestPolicy` (`worker/guest-socket-policy.ts`) in the Durable Object, which makes
-  the presence `userName` a marked one whatever the client sent, so a guest cannot drop their
-  own badge. The name a guest chose is still theirs and is a display name, never an
-  authorization input (that is `guest:<sessionId>`).
+- **Guest marking and server-owned presence** (#320, #339): a guest names themselves on arrival
+  (`GuestNamePrompt`, `setDisplayName`) and presence renders them as "(Guest) <name>", the mark
+  FIRST because tldraw truncates a label at its end. The mark rides tldraw's own `userName`, so
+  the cursor label and the people list carry it without a second visual language. Load-bearing,
+  not chrome: revocation is a manual judgement call, so a member has to notice an outsider is
+  editing before they can act, and a guest who can choose how they look can choose not to be
+  noticed. So the room owns what a member sees of a guest. Every message from a guest connection
+  passes through `applyGuestPolicy` (`worker/guest-socket-policy.ts`) in the Durable Object:
+  - `userName` is made a marked one (`shared/guest-mark.ts`, also what the browser uses); an
+    `append` of a name is resolved against the name the room holds for that session;
+  - `lastActivityTimestamp` is the room's clock (tldraw hides a collaborator inactive for a
+    minute), `userId` is the connection's identity (`user:guest:<sessionId>`), `color` comes from
+    a fixed palette and `chatMessage` is empty;
+  - every guest push counts as activity: a push with no presence gains a timestamp patch, and a
+    guest the room holds no presence record for is given a default one, so a guest who only edits
+    is still seen. A presence the room could not read (a remove, an unknown op, a null or empty
+    patch) counts as missing, because the room ignores it and applies the diff anyway;
+  - whether a guest "has a record" is read from the ROOM on every push (`getSessionSnapshot`: null
+    before the session has connected, the record after, and it survives a wake), never from a
+    flag the Durable Object keeps. A message the policy cannot read ends the guest's session and
+    is never forwarded raw.
+
+  What a guest keeps is the name they chose (cleaned and capped), their cursor and their camera.
+  The name is a display name, never an authorization input (that is `guest:<sessionId>`).
 - **Revocation** — a tombstone on the row (stops the next connect) AND an eviction of the
   link's OPEN sockets (`evictGuestSockets` → the DO's `/evict`, `socketsForLink`). Both,
   because capabilities ride the handshake: the tombstone alone leaves the guest who is

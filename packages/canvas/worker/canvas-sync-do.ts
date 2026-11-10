@@ -181,18 +181,38 @@ export class CanvasSyncRoom {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    this.ctx.acceptWebSocket(server);
-    this.attach(server, {
+    this.admit(server, {
       sessionId,
-      meta: { userId: identity },
+      identity,
+      readonly,
       interactOnly,
-      ...(guestCaps ? { guest: true } : {}),
+      guest: !!guestCaps,
       // `||`, not `??`: an empty header is not a link id, and storing `''` would attach a
       // connection no revocation could ever name.
-      ...(guestCaps ? { linkId: request.headers.get(SYNC_GUEST_LINK_HEADER) || undefined } : {}),
+      linkId: guestCaps ? request.headers.get(SYNC_GUEST_LINK_HEADER) || undefined : undefined,
     });
-    this.room.handleSocketConnect({ sessionId, socket: server, isReadonly: readonly, meta: { userId: identity } });
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * Put an accepted socket into the room. tldraw REUSES a session id across reconnects (the client
+   * keeps it), so the guest assembler a previous socket of the same session left half-way through
+   * a chunked message is dropped here: otherwise the new socket's first message (its `connect`) is
+   * an error to a stale assembler and the guest is refused (1008) before they are in.
+   */
+  private admit(
+    server: WebSocket,
+    p: { sessionId: string; identity: string; readonly: boolean; interactOnly: boolean; guest: boolean; linkId: string | undefined },
+  ): void {
+    this.ctx.acceptWebSocket(server);
+    this.attach(server, {
+      sessionId: p.sessionId,
+      meta: { userId: p.identity },
+      interactOnly: p.interactOnly,
+      ...(p.guest ? { guest: true, linkId: p.linkId } : {}),
+    });
+    this.assemblers.delete(p.sessionId);
+    this.room.handleSocketConnect({ sessionId: p.sessionId, socket: server, isReadonly: p.readonly, meta: { userId: p.identity } });
   }
 
   /**
@@ -248,15 +268,36 @@ export class CanvasSyncRoom {
     // would accept, and it would reach the room without the policy: an unmarked badge, or a
     // document diff an interact-only guest may not push. A guest that sends something no
     // honest client sends is dropped: the session ends and the client reconnects clean.
-    if (!('data' in res)) return this.reject(ws, a, 'invalid message');
-    this.room.handleSocketMessage(a.sessionId, JSON.stringify(applyGuestPolicy(res.data, { interactOnly: !!a.interactOnly })));
+    if (!('data' in res)) return this.drop(ws, a, 'invalid message');
+    // What the guest has in presence is what the ROOM holds, not what this class last forwarded: the room only
+    // accepts presence from a connected session and ignores a push sent before `connect`, so a flag kept here
+    // could say "has a record" about one that does not exist. `getSessionSnapshot` is null until the session is
+    // connected, then carries the record (and survives a wake: sync-core restores it), and costs a map lookup.
+    const held = this.room.getSessionSnapshot(a.sessionId)?.presenceRecord as { userName?: unknown } | null | undefined;
+    const out = applyGuestPolicy(res.data, {
+      interactOnly: !!a.interactOnly,
+      identity: a.meta.userId,
+      now: Date.now(),
+      hasPresence: held != null,
+      lastName: typeof held?.userName === 'string' ? held.userName : undefined,
+      pageId: () => this.currentPageId(),
+    });
+    this.room.handleSocketMessage(a.sessionId, JSON.stringify(out.message));
   }
 
-  /** End a connection that broke the protocol. The room is told first, so the session is gone
-   *  from its state before the socket dies; 1008 (policy violation), as `evict` uses. */
-  private reject(ws: WebSocket, a: SocketAttachment, reason: string): void {
-    this.assemblers.delete(a.sessionId);
-    this.room.handleSocketClose(a.sessionId);
+  /** The room's first page, which a guest's default presence record sits on (a canvas has one). */
+  private currentPageId(): string | undefined {
+    return this.room.getCurrentSnapshot().documents.find((d) => d.state.typeName === 'page')?.state.id;
+  }
+
+  /** End a connection. The room is told first, so the session is gone from its state before the
+   *  socket dies; 1008 (policy violation) rather than a plain close, so a client does not read it
+   *  as a blip and reconnect-loop. Used for a guest that broke the protocol and for revocation. */
+  private drop(ws: WebSocket, a: SocketAttachment | null, reason: string): void {
+    if (a) {
+      this.assemblers.delete(a.sessionId);
+      this.room.handleSocketClose(a.sessionId);
+    }
     ws.close(1008, reason);
   }
 
@@ -269,14 +310,7 @@ export class CanvasSyncRoom {
    * client does not read it as a blip and reconnect-loop.
    */
   private evict(linkId: string): void {
-    for (const ws of socketsForLink(this.ctx.getWebSockets(), linkId)) {
-      const a = this.attachmentOf(ws);
-      if (a) {
-        this.assemblers.delete(a.sessionId);
-        this.room.handleSocketClose(a.sessionId);
-      }
-      ws.close(1008, 'share link revoked');
-    }
+    for (const ws of socketsForLink(this.ctx.getWebSockets(), linkId)) this.drop(ws, this.attachmentOf(ws), 'share link revoked');
   }
 
   private assemblerFor(sessionId: string): JsonChunkAssembler {
