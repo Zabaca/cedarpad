@@ -144,7 +144,7 @@ echo "→ bun run apply production canvas (shell build + Worker + container imag
 # Verify against the public /api/buildrev (#74): the ONE public path (only the SHA and
 # version, no health/client fields), answered by wherever the default workspace's stack
 # runs. When `default` is self-hosted (SELF_HOSTED_WORKSPACES in wrangler.jsonc), that is
-# the VM or the sandbox, which `bun run deploy:vm` or `bun run deploy:sandbox` ships and verifies,
+# the sandbox, which `bun run deploy:sandbox` ships and verifies,
 # so there is nothing on Cloudflare for this poll to prove, and it is skipped rather than
 # compared against the self-hosted SHA.
 # BOTH stamps must match (ADR-0025). Checking only the SHA would let a release ship with a
@@ -152,7 +152,7 @@ echo "→ bun run apply production canvas (shell build + Worker + container imag
 # check is a claim about the VERSION, so the version is exactly what has to be proven.
 if grep -q '"SELF_HOSTED_WORKSPACES": *"{[^"]*\\"default\\"' wrangler.jsonc; then
   echo "✅ deployed v$VERSION ($SHA). The default workspace is self-hosted, so /api/buildrev reports"
-  echo "   the VM or the sandbox: ship and verify that with \`bun run deploy:vm\` or \`bun run deploy:sandbox\`. Cloudflare containers take the"
+  echo "   the sandbox: ship and verify that with \`bun run deploy:sandbox\`. Cloudflare containers take the"
   echo "   new image on their next request."
   exit 0
 fi

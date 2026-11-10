@@ -1,7 +1,7 @@
 // Serving a workspace whose container is not a Cloudflare Container.
 //
-// One workspace's compute can live on hardware we own (an incus guest on
-// ryzen-9, reached through a Cloudflare Tunnel at ws.cedarpad.com) while every
+// One workspace's compute can live on hardware we own (today `default`, in an sbx
+// sandbox on the sandbox site, reached at its own addresses; ADR-0028) while every
 // other workspace runs on its CanvasContainer. The workspace's DATA does not move:
 // canvas state is in CanvasSyncRoom, platform rows are in D1, artifacts are in
 // R2 (ADR-0022 — content is records, not files). Only the process that serves
@@ -14,27 +14,31 @@
 // served referencing `chunk-U6BVBC5J.js` before the chunk was written, the
 // browser got a 404, tldraw never loaded, and the canvas stayed blank with no
 // retry. The aggressive idle reaper (90s) made a cold boot the common case
-// rather than the rare one. A guest with a persistent disk pre-bundles once and
-// never again.
+// rather than the rare one. A sandbox keeps its disk across sleep, so it pre-bundles
+// once and never again. (The first home of this path was an incus VM on ryzen-9, which
+// held 8.5 GiB of memory while idle; it was deleted on 2026-11-09.)
 //
 // ── The trust boundary is unchanged ───────────────────────────────────────
-// The browser NEVER talks to the guest. It talks to this Worker, which has
+// The browser NEVER talks to the sandbox. It talks to this Worker, which has
 // already run Better Auth and the workspace ownership check (shell-routing.ts),
 // exactly as it does for a container-backed workspace. The Worker then presents
-// a Cloudflare Access service token to reach the guest. So the guest's hostname
-// admits precisely one caller, and the authorization that matters still happens
-// here. That is why the Access policy carries no email rule: a human who could
+// a Cloudflare Access service token to reach the sandbox. So its two addresses
+// (each behind an Access application declared in Home) admit precisely one caller,
+// and the authorization that matters still happens here. That is why the Access policy carries no email rule: a human who could
 // satisfy Access directly would bypass the ownership check.
 //
 // ── Two kinds of target ───────────────────────────────────────────────────
-// The VM is reached through one tunnel hostname that routes `/__boot` to the
-// supervisor and everything else to vite, so its map entry is a plain origin.
-// A sandbox on the sandbox site (sbx) has one address per port instead: the
-// stack at `<name>.sbx.zabaca.com`, the supervisor at `4599-<name>.sbx.zabaca.com`.
-// Its entry names both, and it is the one that sleeps: every request the Worker
+// A sandbox on the sandbox site (sbx) has one address per port: the stack at
+// `<name>.sbx.zabaca.com`, the supervisor at `4599-<name>.sbx.zabaca.com`. Its map
+// entry names both, and it is the one that sleeps: every request the Worker
 // forwards to it asks sbx to wake it (`WAKE_HEADER`), and sbx's 410 ("lost") is
 // treated as a stack that is down, because a sandbox flagged start-fresh starts
 // again from its image when the boot arrives.
+//
+// The other form, a plain origin (one address for the stack and the supervisor, as the
+// retired VM's tunnel hostname had), is still parsed and tested and the admin page labels
+// it `VM`. Nothing is mapped that way now: it is supported code, left alone so this
+// clean-up does not refactor the Worker.
 
 import { z } from 'zod';
 

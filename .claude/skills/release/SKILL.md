@@ -20,9 +20,9 @@ Read the ADR before deviating from anything below — it carries the rejected al
 3. draft        classify, propose the bump, write entries in product voice
 4. commit       CHANGELOG.md + version bump → push to main
 5. deploy       deploy.sh (stamps buildRev AND version into the image)
-   +             bun run apply workspace (the ws.cedarpad.com Guest, same commit)
-6. verify       deploy.sh polls /api/buildrev for BOTH stamps
-   +             read the Guest's own stamps back over the incus remote
+   +             bun run deploy:sandbox (the default workspace's sbx sandbox, same commit)
+6. verify       deploy-sandbox.sh reads the stamps inside the sandbox (its "ok:" line)
+   +             /api/buildrev serves BOTH stamps once the workspace has been visited
 7. tag          ONLY after BOTH halves of 6 pass
 8. publish      bun run apply production www → check cedarpad.com/changelog
 ```
@@ -31,16 +31,18 @@ Read the ADR before deviating from anything below — it carries the rejected al
 makes `git tag` a ledger of what actually served — so a failed deploy costs nothing, the same
 version number is reused, and `v0.2.0` points at exactly the SHA `/api/buildrev` returns.
 
-**The workspace Guest is inside that rule, not appended after it.** `fb2525a` made it the
-DEFAULT workspace, so a tag with the container live and the Guest stale would claim a version
-most users are not getting. `www` is the opposite case and stays after the tag: the public page
-must never advertise a version that is not serving. Deploy targets go before the tag when the
-tag would over-claim, and after it when the page would.
+**The workspace sandbox is inside that rule, not appended after it.** `fb2525a` made the
+workspace on our own hardware the DEFAULT workspace (a VM then, an sbx sandbox since 2026-11-09,
+[ADR-0028](../../../docs/adr/0028-the-default-workspace-runs-in-an-sbx-sandbox.md)), so a tag with
+the Worker live and the sandbox stale would claim a version most users are not getting. `www` is
+the opposite case and stays after the tag: the public page must never advertise a version that
+is not serving. Deploy targets go before the tag when the tag would over-claim, and after it when
+the page would.
 
-**This buys a new failure mode, deliberately: a release now fails when ryzen-9 is
-unreachable.** That path had none before. It is the price of the default workspace being
-covered by the tag, and it is cheaper than the alternative — a tag that silently means "the
-container, and whatever the Guest happened to be running".
+**This buys a failure mode, deliberately: a release fails when the sandbox site (sbx on
+ryzen-9) is unreachable.** That is the price of the default workspace being covered by the tag,
+and it is cheaper than the alternative: a tag that silently means "the Worker, and whatever the
+sandbox happened to be running".
 
 ---
 
@@ -185,50 +187,57 @@ bash packages/canvas/scripts/deploy.sh     # run in the BACKGROUND — the image
 It stamps both `server/build-rev.txt` and `server/version.txt`, migrates D1, and runs
 `bun run apply production canvas` (Shell build, Worker + container image, secrets). There are no
 container rollouts to wait for (ADR-0027: each workspace's `CanvasContainer` takes a new image on
-its next request). When `default` runs on Cloudflare it then polls `/api/buildrev` until it serves
-**both** the new SHA and the new version (`✅ LIVE: v0.2.0 (abc1234)`); while `default` is
-self-hosted it says so and stops — the Guest step below is what proves the VM.
+its next request). Since `default` is self-hosted it does not poll `/api/buildrev`: it prints
+`deployed v… (…)`, says the default workspace is self-hosted, and stops. The sandbox step below
+is what proves the workspace.
 
 **If it fails, do not bump the version again.** Fix forward and re-run — the same version number
 is reused, and nothing was tagged. A re-run is always safe: there is no in-flight rollout for it
 to replace.
 
-## 5–6 (the Guest). Converge the workspace and read its stamps back
+## 5–6 (the sandbox). Ship the workspace and read its stamps back
 
-Run it after `deploy.sh` reports `✅ LIVE`, not beside it: the two share nothing at
-runtime, and serialising keeps one failure legible instead of two interleaved.
-
-```bash
-bun run apply workspace          # from the REPO ROOT
-```
-
-`ws-app` fetches `origin/main`, hard-resets to it, reinstalls, and stamps
-`server/build-rev.txt` and `server/version.txt` from the checkout — the same two
-files `deploy.sh` writes into the image, for the same reason (ADR-0025). `ws-service`
-then restarts the supervisor.
-
-Verify by reading the Guest's own stamps, not by asking the hostname:
+Run it after `deploy.sh` reports `deployed`, not beside it: the two share nothing at
+runtime, and serialising keeps one failure legible instead of two interleaved. **From James's
+Mac**: sbx's credentials and the build machine's identity are there.
 
 ```bash
-incus exec ryzen-9:cedarpad-ws --project zabaca -- \
-  sh -c 'cat /app/agent-canvas/packages/canvas/server/build-rev.txt; echo; \
-         cat /app/agent-canvas/packages/canvas/server/version.txt'
+bun run deploy:sandbox          # packages/canvas/scripts/deploy-sandbox.sh, from the REPO ROOT
 ```
 
-Both must match what step 4 pushed. **Why not `curl https://ws.cedarpad.com/api/buildrev`:**
-vite is booted on demand by the supervisor, so the canvas is not serving between
-sessions and a 502 there means "nobody is using it", not "the deploy failed" — and the
-hostname is behind Cloudflare Access, so the check would need the service token as well.
-The stamps are what the bridge will read when it does boot, so reading them answers the
-question one step earlier and with no credentials.
+It archives `origin/main`, builds the image on the site's build machine with the commit and
+version as build arguments (the same two stamps `deploy.sh` writes into the container image,
+for the same reason: ADR-0025), replaces the sandbox's image (it creates the sandbox the first
+time), and then **reads the stamps inside the sandbox**. Its last line is the proof:
 
-**If the converge fails, do not tag.** Fix forward and re-run — same version number,
-nothing tagged, exactly as on the container side. `bun run apply workspace ws-app` alone is
-enough to retry the checkout; the whole environment is a no-op when it is already right.
+```
+ok: cedarpad-default is on abc1234 (v0.2.0); the next request to the workspace boots the stack on it
+```
 
-**Requires the `ryzen-9` incus remote.** `incus remote list` should show it; if it does
-not, ask foundry for a token (`bun run incus-enrol cedarpad`) and
-`incus remote add ryzen-9 <token>`. See `packages/infra/environments/workspace/README.md`.
+Both must match what step 4 pushed; the script fails otherwise. That line is the sandbox's own
+stamp check, the equivalent of reading the VM's stamps used to be, and needs no credentials
+beyond the Mac's. After a replace the stack is down (the pod starts fresh from the new image);
+the next request boots it on the new code.
+
+**Then the live check, `/api/buildrev`, after the workspace has been visited.** The route is
+public and PASSIVE: it never wakes the sandbox and never boots its stack, so it answers 503
+while the sandbox sleeps or its stack is down. A 503 means nobody has opened the workspace since
+the deploy, not that the deploy failed, and the release must not wake it to make it answer. Have
+the workspace opened (James, or any signed-in visit), then:
+
+```bash
+curl -s https://app.cedarpad.com/api/buildrev     # {"buildRev":"abc1234","version":"0.2.0"}
+```
+
+Both fields must be what step 4 pushed. 503: wait for a visit, do not tag. A different SHA or
+version: stop; the sandbox is not on this release.
+
+**If the sandbox deploy fails, do not tag.** Fix forward and re-run: same version number,
+nothing tagged. The script is safe to re-run (a replace keeps the sandbox's name, address,
+environment and allow-list). `--dry-run` shows what it would do and changes nothing.
+
+**Requires sbx and its credentials on the Mac** (`sbx` on PATH, or Home's checkout; sops with
+this Mac's age key). The script says what is missing.
 
 ## 7. Tag
 
@@ -279,7 +288,12 @@ not run, say so — do not imply a green path that was not walked.
   `sops exec-env packages/infra/environments/production/secrets.yaml`; keep it that way.
 - **Never file this as a GitHub issue or a Fredrin ticket.** A release is an act, not work to
   track (`docs/agents/issue-tracker.md`).
-- **Never skip the workspace converge because "nobody is on the canvas right now".** It is the
-  default workspace, so the next person to open one gets whatever was left there — and the tag
-  will already have claimed otherwise. Unreachable ryzen-9 stops the release; it does not make
-  the step optional.
+- **Never skip `bun run deploy:sandbox` because "nobody is on the canvas right now".** It is the
+  default workspace, so the next person to open one gets whatever image was left there, and the
+  tag will already have claimed otherwise. An unreachable sandbox site stops the release; it does
+  not make the step optional.
+- **Never wake the sandbox to make `/api/buildrev` answer.** The route is passive on purpose (an
+  anonymous poll would keep the sandbox awake for good); a 503 there means "not visited yet". The
+  stamp check inside `deploy-sandbox.sh` is the proof that needs no visit.
+- **Never tag before both halves of step 6 pass:** the sandbox's own stamp check and a matching
+  `/api/buildrev`.

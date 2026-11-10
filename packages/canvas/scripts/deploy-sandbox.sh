@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Deploy origin/main to the workspace's sandbox on the sandbox site (sbx), the deploy target that serves the default
-# workspace once it has moved off the VM (scripts/deploy-vm.sh). The Cloudflare container (deploy.sh) is not touched.
+# workspace (ADR-0028). The Cloudflare container (deploy.sh) is not touched.
 # Run from James's Mac: sbx's credentials are there (its own file, else sops), and so is the incus identity that
 # `sbx image build` reaches the site's build machine with.
 #
 #   1. Archive origin/main (git archive, so the build context is exactly that commit and no repository credential goes
 #      to the box) and build the image's `sandbox` form on the site's build machine (packages/canvas/Dockerfile).
-#      The commit and the version go in as build arguments and become the stamps inside, as deploy.sh and the VM's
-#      app step write them (ADR-0025). The build pulls the image onto both workers and pins it.
+#      The commit and the version go in as build arguments and become the stamps inside, as deploy.sh writes
+#      them (ADR-0025). The build pulls the image onto both workers and pins it.
 #   2. Create the sandbox if it does not exist: its size, main port, the route, "start fresh when lost", the supervisor
 #      as its start command and the supervisor's bearer as its stored environment (read from sops, never typed or
 #      printed), and the supervisor's port as the only one reachable by prefix (--open-port; needs an sbx from

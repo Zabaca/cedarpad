@@ -31,23 +31,24 @@
     // data but its traffic is testing, not usage.
     "POSTHOG_KEY": "phc_zdrtBTi2f7hyq7D9odeyG5MKRnuVPy9sed5ajPHDHnJ9",
     // Workspaces served from our own hardware instead of a Cloudflare Container
-    // (worker/self-hosted.ts). `default` moved to an incus guest on ryzen-9 on
+    // (worker/self-hosted.ts). `default` moved to an incus VM on ryzen-9 on
     // 2026-08-14: the Cloudflare container rebuilds vite's dependency pre-bundle on
     // every cold boot (its filesystem does not survive sleep), and that raced page
-    // loads into 404s on tldraw's chunks — a blank canvas with no retry. The guest's
-    // disk is persistent, so it pre-bundles once and never again.
+    // loads into 404s on tldraw's chunks, a blank canvas with no retry. The VM's
+    // disk was persistent, so it pre-bundled once and never again.
     //
     // Deliberately NOT set on the preview environment below: that Worker would point
-    // at the same guest and two deploys would fight over one dev stack.
+    // at the same sandbox and two deploys would fight over one dev stack.
     //
     // Data does NOT move: canvas state stays in CanvasSyncRoom, rows in D1, artifacts
     // in R2 (ADR-0022). Only the process serving the pad changes address. Emptying
     // this map routes every workspace straight back to its container.
     //
-    // On 2026-11-09 (v0.5.1) `default` moved from the guest to a sandbox on the sandbox
-    // site (sbx), which sleeps when idle (scripts/deploy-sandbox.sh, sandbox/workspace.env):
-    // the stack and the supervisor are two addresses there. The guest is stopped and kept
-    // a week as the way back: start it and release `{"default":"https://ws.cedarpad.com"}`.
+    // On 2026-11-09 (v0.5.1) `default` moved from the VM to a sandbox on the sandbox
+    // site (sbx), which sleeps when idle (scripts/deploy-sandbox.sh, sandbox/workspace.env,
+    // ADR-0028): the stack and the supervisor are two addresses there. The VM no longer
+    // exists. Emptying this map routes `default` to the Cloudflare Container, whose agent
+    // cannot authenticate (its Claude secret is the placeholder only claude-mitm-proxy swaps).
     "SELF_HOSTED_WORKSPACES": "{\"default\":{\"stack\":\"https://cedarpad-default.sbx.zabaca.com\",\"supervisor\":\"https://4599-cedarpad-default.sbx.zabaca.com\"}}",
     "BETTER_AUTH_URL": "https://app.cedarpad.com",
     "WEB_ORIGIN": "https://app.cedarpad.com",
