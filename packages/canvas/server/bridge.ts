@@ -96,7 +96,8 @@ const BOOT_AT = Date.now();
 const webPocEnv = loadWebPocEnv();
 
 
-// Workspace blob storage: local disk in dev, R2 in the container (selected by env). It no
+// Workspace blob storage: local disk in dev, the edge's workspace-blob door in the container (selected by env;
+// the container holds no R2 credential, shared/workspace-blob.ts). It no
 // longer holds canvas state — ADR-0019 / #297 deleted that writer, and the retained
 // `canvas-state.json` blobs are read only by the cutover script (#295). Nor workspace
 // content: the tarballs went with their sinks in #366 and Components, data files and skills
@@ -171,7 +172,7 @@ function guestMayWrite(caps: GuestCapabilities, path: string, method: string): b
 
 // Per-chat durable state (ADR 0004): server-owned { sessionId, model, effort, forkNext },
 // the single home that replaces browser localStorage. Persisted via blobStore (local disk
-// in dev so a reload rehydrates; R2 in the container). Config is not data-loss-critical, so
+// in dev so a reload rehydrates; the edge's workspace-blob door in the container). Config is not data-loss-critical, so
 // a load error just starts empty.
 const chatMeta = new ChatMetaStore(blobStore, WORKSPACE);
 try {
@@ -421,7 +422,8 @@ const turnDeps: TurnDeps = {
   onSessionStart,
   stampSession: (chatId, sessionId) => chatMeta.set(chatId, { sessionId }),
   onTurnComplete,
-  // Mirror the transcript to R2 keyed by sessionId so resume can restore it after a recycle.
+  // Mirror the transcript to the workspace's storage (through the edge) keyed by sessionId so resume can restore it
+  // after a recycle.
   // Best-effort — never fails a turn.
   backupTranscript: (sessionId) =>
     transcripts.put(sessionId).catch((err) => console.error('[transcript] backup failed:', err)),
