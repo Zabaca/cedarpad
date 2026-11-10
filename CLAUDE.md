@@ -116,7 +116,7 @@ Typechecking is likewise split: `bun run typecheck` covers canvas + the edge Wor
 
 ### Issue tracker
 
-Issues are **Fredrin tickets**, driven by the `fredrin` CLI — not GitHub issues. See `docs/agents/issue-tracker.md`.
+Issues are GitHub issues, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Domain docs
 
