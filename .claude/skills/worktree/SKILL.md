@@ -22,7 +22,7 @@ parallel *processes* from colliding; this keeps you from writing to the wrong
 *checkout*.
 
 **The failure mode:** an agent in a worktree runs a command like
-`cd /Users/james/Projects/zabaca/cedarpad && …` (the *main* checkout) and edits
+`cd /path/to/cedarpad && …` (the *main* checkout) and edits
 or commits there instead of in its worktree. It has happened repeatedly. It's
 dangerous because the main checkout may hold the human's own uncommitted work, or
 another agent's — a stray write there can block a `git pull`, collide, or get lost.
@@ -32,7 +32,7 @@ problem, not a port problem.
 **Why the pull toward main exists — and how to resist each:**
 
 1. **Your environment says the project is at the main path.** The system context
-   advertises the repo's *main* working directory (`/Users/james/Projects/zabaca/cedarpad`).
+   advertises the repo's *main* working directory (`/path/to/cedarpad`).
    That is NOT where you are. Do not trust it as your cwd. **Run
    `git rev-parse --show-toplevel` first and treat *that* as your root** — it will be
    a `.claude/worktrees/agent-…` path.

@@ -11,7 +11,7 @@ import { SettingsStage } from './Settings';
 
 const MEMBERS = {
   members: [
-    { userId: 'u_owner', name: 'James', email: 'james@zabaca.com', role: 'owner' },
+    { userId: 'u_owner', name: 'James', email: 'owner@example.com', role: 'owner' },
     { userId: 'u_khoa', name: 'Khoa', email: 'khoa@example.com', role: 'member' },
   ],
 };
@@ -37,7 +37,7 @@ function stubEdge() {
       return Response.json({
         members: [
           { userId: 'u_khoa', name: 'Khoa', email: 'khoa@example.com', role: 'owner' },
-          { userId: 'u_owner', name: 'James', email: 'james@zabaca.com', role: 'member' },
+          { userId: 'u_owner', name: 'James', email: 'owner@example.com', role: 'member' },
         ],
       });
     }
@@ -85,7 +85,7 @@ describe('SettingsStage — members (#192)', () => {
     await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
     await flush();
     expect(host.textContent).toContain('James');
-    expect(host.textContent).toContain('james@zabaca.com');
+    expect(host.textContent).toContain('owner@example.com');
     expect(host.textContent).toContain('owner');
     expect(host.textContent).toContain('Khoa');
     expect(host.textContent).toContain('newbie@example.com');
