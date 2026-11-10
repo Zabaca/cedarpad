@@ -8,8 +8,8 @@ send a change.
 - **Open an issue first** for anything bigger than a small fix, so you don't build something we won't merge.
 - **Report a vulnerability privately**, not as an issue or a pull request: see [`SECURITY.md`](SECURITY.md).
 - **Sign the contributor agreement.** Read [`CLA.md`](CLA.md). Your first pull request needs a comment saying
-  "I have read the CLA and I agree to it." We can't merge a pull request without it. Why we ask is in the
-  agreement's first paragraph.
+  "I have read the CLA and I agree to it." A maintainer checks for it by hand before merging, and we don't merge a
+  pull request without it. Why we ask is in the agreement's first paragraph.
 
 ## Build and check
 

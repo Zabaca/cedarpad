@@ -52,9 +52,10 @@ Running cedarpad for people other than yourself takes three things this reposito
   `packages/infra` and the `wrangler.jsonc` files describe Zabaca's own account and domains. They are a worked
   example, not a template you can apply: Zabaca's secrets files in `packages/infra/environments` are encrypted to
   Zabaca's keys and open for nobody else.
-- **Your own tldraw licence key.** The canvas is tldraw 5.2.5, which has its own licence. It is free to develop
-  with and needs a trial or a licence key in production. cedarpad's licence does not change that, and no key is
-  in this repository. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+- **Your own tldraw licence key.** The canvas is tldraw 5.2.5, which has its own licence. Only development,
+  testing and staging, not reachable by end users or the public, are free: any real deployment that serves end users
+  needs a tldraw trial or licence key. cedarpad's licence does not change that, and no key is in this repository.
+  See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 - **A Claude credential** for the chat agent, supplied to the workspace's runtime.
 
 ## Licence
@@ -66,7 +67,7 @@ after each version is released, that version is also yours under the Apache Lice
 
 Third-party code is listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md); it keeps its own licences.
 
-**Trademarks.** "cedarpad" and the cedarpad logo are Zabaca's trademarks, and the licence does not grant them. A fork
+**Trademarks.** "cedarpad" and the cedarpad logo are Zabaca LLC's trademarks, and the licence does not grant them. A fork
 needs its own name and logo; it may say it is based on cedarpad.
 
 ## Contributing and security
@@ -74,4 +75,4 @@ needs its own name and logo; it may say it is based on cedarpad.
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request, and [`SECURITY.md`](SECURITY.md) to report a
 vulnerability, privately.
 
-Copyright 2026 Zabaca.
+Copyright 2026 Zabaca LLC.
