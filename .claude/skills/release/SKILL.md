@@ -40,7 +40,7 @@ is not serving. Deploy targets go before the tag when the tag would over-claim, 
 the page would.
 
 **This buys a failure mode, deliberately: a release fails when the sandbox site (sbx on
-ryzen-9) is unreachable.** That is the price of the default workspace being covered by the tag,
+ryzen-9, and the incus remote its build goes through) is unreachable.** That is the price of the default workspace being covered by the tag,
 and it is cheaper than the alternative: a tag that silently means "the Worker, and whatever the
 sandbox happened to be running".
 
@@ -202,10 +202,15 @@ runtime, and serialising keeps one failure legible instead of two interleaved. *
 Mac**: sbx's credentials and the build machine's identity are there.
 
 ```bash
-bun run deploy:sandbox          # packages/canvas/scripts/deploy-sandbox.sh, from the REPO ROOT
+REL=$(git rev-parse HEAD)       # the commit step 4 pushed, taken before anything else can move main
+SANDBOX_DEPLOY_REF=$REL bun run deploy:sandbox   # packages/canvas/scripts/deploy-sandbox.sh, from the REPO ROOT
 ```
 
-It archives `origin/main`, builds the image on the site's build machine with the commit and
+**Always pass `SANDBOX_DEPLOY_REF`.** Without it the script fetches `origin/main` again and
+builds and checks THAT, so a merge by another session while `deploy.sh` ran would put the
+sandbox on a commit that is not the release, and its `ok:` line would still pass. With the
+override the script builds `$REL` (the commit is already in this checkout, so nothing needs
+fetching) and checks the stamps against it. It archives that commit, builds the image on the site's build machine with the commit and
 version as build arguments (the same two stamps `deploy.sh` writes into the container image,
 for the same reason: ADR-0025), replaces the sandbox's image (it creates the sandbox the first
 time), and then **reads the stamps inside the sandbox**. Its last line is the proof:
@@ -214,12 +219,13 @@ time), and then **reads the stamps inside the sandbox**. Its last line is the pr
 ok: cedarpad-default is on abc1234 (v0.2.0); the next request to the workspace boots the stack on it
 ```
 
-Both must match what step 4 pushed; the script fails otherwise. That line is the sandbox's own
-stamp check, the equivalent of reading the VM's stamps used to be, and needs no credentials
-beyond the Mac's. After a replace the stack is down (the pod starts fresh from the new image);
+The script fails unless the stamps inside are the ref's. **Still compare the line yourself:** its
+SHA must be `git rev-parse --short $REL` and its version the one step 4 bumped to; on any
+mismatch, stop and do not tag. That line is the sandbox's own stamp check (the proof once given
+by reading the old VM's stamps) and needs no credentials beyond the Mac's. After a replace the stack is down (the pod starts fresh from the new image);
 the next request boots it on the new code.
 
-**The gate for the tag is `deploy.sh` succeeding plus that `ok:` line.** Neither needs a person
+**The gate for the tag is `deploy.sh` succeeding plus that `ok:` line matching step 4's SHA and version.** Neither needs a person
 to visit the workspace, so a release never waits on one.
 
 **`/api/buildrev` is the check that follows the next visit, not a gate.** The route is public and
@@ -241,11 +247,15 @@ nothing tagged. The script is safe to re-run (a replace keeps the sandbox's name
 environment and allow-list). `--dry-run` shows what it would do and changes nothing.
 
 **Requires sbx and its credentials on the Mac** (`sbx` on PATH, or Home's checkout; sops with
-this Mac's age key). The script says what is missing.
+this Mac's age key) **and the `ryzen-9` incus remote with Home's identity**: `sbx image build`
+drives the site's build machine, an incus guest on ryzen-9, over it (Home's
+`packages/sandboxes/src/image.ts`). The script says what is missing.
 
 ## 7. Tag
 
-Only now: `deploy.sh` printed `✅ deployed` and `deploy-sandbox.sh` printed its `ok:` line.
+Only now: `deploy.sh` succeeded (while `default` is self-hosted that is its `✅ deployed` line;
+only a Cloudflare-served `default` ends in `✅ LIVE`) and `deploy-sandbox.sh` printed its `ok:`
+line with step 4's SHA and version.
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0

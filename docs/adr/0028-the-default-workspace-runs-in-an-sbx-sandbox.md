@@ -40,7 +40,8 @@ in R2 (ADR-0022).
   (`NODE_EXTRA_CA_CERTS`). The sandbox may reach only the hosts in `sandbox/workspace.env`
   (`EGRESS_ALLOW`) beyond the site's own list.
 - **Deploy is `bun run deploy:sandbox`** (`packages/canvas/scripts/deploy-sandbox.sh`), from James's Mac.
-  It archives `origin/main`, builds the image on the site's build machine with the commit and version as
+  It archives `origin/main` (the release passes `SANDBOX_DEPLOY_REF=<the commit it pushed>` so a merge
+  meanwhile cannot move it), builds the image on the site's build machine with the commit and version as
   build arguments (the stamps inside, as `deploy.sh` writes them into the container image), creates the
   sandbox the first time or replaces its image after (name, address, environment, command and allow-list
   are kept), and fails unless the supervisor answers, the pre-bundle is present and the stamps read
@@ -58,7 +59,7 @@ a workspace whose own work is about 1.2 GiB and which started a dozen times in t
 already exits 90 seconds after the last tab stops sending its heartbeat, so what the VM kept was its
 disk, not a running stack). A sandbox that sleeps holds none of that while nobody is using it, and keeps
 the disk. The VM also kept the box's only guest-to-host firewall opening alive and had a deploy path
-only a machine with cedarpad's incus identity could run.
+of its own, a converge over incus with cedarpad's own identity.
 
 ## What was deleted
 
@@ -89,6 +90,8 @@ only a machine with cedarpad's incus identity could run.
   stored environment; a replace keeps it. Rotating it means deleting the sandbox, running
   `deploy:sandbox` again, and redeploying the Worker's secret to the same value.
 - **A release now needs the sandbox site reachable** and the sandbox's own stamp check to pass before the
-  tag. It no longer needs the `ryzen-9` incus remote.
+  tag. It still needs the `ryzen-9` incus remote on the Mac: `sbx image build` drives the site's build
+  machine (an incus guest on ryzen-9) over it with Home's identity. It no longer needs cedarpad's own
+  incus identity, which only the VM's converge used.
 - **The first request after idle is slower** than a VM's: the wake plus the stack's boot, with the
   pre-bundle on disk.

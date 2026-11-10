@@ -23,10 +23,12 @@
 # --dry-run resolves the commit, asks the site whether the sandbox exists and prints what it would do; it builds and
 # changes nothing.
 #
-# Env overrides, for proving the script without touching the real sandbox (use test values only):
+# Env overrides, for proving the script without touching the real sandbox (use test values only), except
+# SANDBOX_DEPLOY_REF, which the release always sets:
 #   SANDBOX_DEPLOY_NAME        a sandbox name other than the declared one
 #   SANDBOX_DEPLOY_IMAGE_NAME  an image repository other than the declared one (so a test image is its own to delete)
-#   SANDBOX_DEPLOY_REF         a git ref to build instead of origin/main (the stamp inside is then that ref's)
+#   SANDBOX_DEPLOY_REF         a git ref to build instead of origin/main (the stamp inside is then that ref's); the release
+#                              skill always passes the commit it pushed, so a later merge cannot move what is deployed
 #   SANDBOX_DEPLOY_SUPERVISOR_TOKEN  the supervisor's bearer, instead of reading it from sops (a TEST value: it is stored)
 #   SBX                        the sbx command (default: sbx on PATH, else Home's checkout)
 #

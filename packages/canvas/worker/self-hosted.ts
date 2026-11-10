@@ -24,8 +24,9 @@
 // exactly as it does for a container-backed workspace. The Worker then presents
 // a Cloudflare Access service token to reach the sandbox. So its two addresses
 // (each behind an Access application declared in Home) admit precisely one caller,
-// and the authorization that matters still happens here. That is why the Access policy carries no email rule: a human who could
-// satisfy Access directly would bypass the ownership check.
+// and the authorization that matters still happens here. That is why the Access
+// policy carries no email rule: a human who could satisfy Access directly would
+// bypass the ownership check.
 //
 // ── Two kinds of target ───────────────────────────────────────────────────
 // A sandbox on the sandbox site (sbx) has one address per port: the stack at
@@ -82,7 +83,7 @@ export const WAKE_HEADER = 'X-Sbx-Wake';
 
 /** Everything needed to reach one self-hosted workspace. */
 export interface SelfHostedTarget {
-  /** Origin of the stack (vite): the guest's tunnel, e.g. `https://ws.cedarpad.com`, or a sandbox's own address. */
+  /** Origin of the stack (vite): a plain-origin entry's address, or a sandbox's own address. */
   origin: string;
   /** Origin of the supervisor's `/__boot`: the same as `origin` behind the VM's tunnel, its own address on a sandbox. */
   supervisorOrigin: string;

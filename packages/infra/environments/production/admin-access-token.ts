@@ -16,8 +16,8 @@ import { cloudflareTokenModule } from '../../../../vendor/zbc/modules/cloudflare
 //     None are declared here (they are organisation-wide, not this app's).
 // No service-token groups: nothing here mints or admits one.
 //
-// `zones` is deliberately NOT set: the root token holds no "Zone Read" (see
-// workspace/ws-token.ts), and Access is account-scoped anyway.
+// `zones` is deliberately NOT set: the root token holds no "Zone Read", and
+// Access is account-scoped anyway.
 export default cloudflareTokenModule.instance({
   name: 'admin-access-token',
   config: {
