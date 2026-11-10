@@ -29,9 +29,9 @@ Not from a backup — there wasn't one. They were reconstructed by mining
 `sessions.tar` for `write_component` tool calls and taking the last complete
 source payload for each name.
 
-That is why there are three files and not five. `HenryAccessExplorer` and
-`HenryScenarioMap` were also destroyed, and no `write_component` call for either
-appears in any retained transcript. They are permanently lost. The Hudson Standup
+That is why there are three files and not five. `AccessExplorer` and
+`ScenarioMap` were also destroyed, and no `write_component` call for either
+appears in any retained transcript. They are permanently lost. The Standup
 canvas will still show two dead cards after #365; that is expected, and the cards
 should be removed rather than waited on.
 
@@ -40,7 +40,7 @@ should be removed rather than waited on.
 Each file is the last-written source, so it is exactly what the store would have
 held at the time of loss. Verified: none of the three import a sibling data file,
 so restoring them does not depend on [#360](https://github.com/Zabaca/cedarpad/issues/360).
-They were own-tier on the Hudson Standup canvas.
+They were own-tier on the Standup canvas.
 
 **Which is `cv_edd9bab6-8bae-4a7a-a694-9abfa9965db9`**, not `cv_4bfb07e3-cd4e-4fc8-a3ed-54a4b20d483b`
 as #365 and the notes above it assumed. That assumption came from `cv_4bfb07e3` having a
@@ -48,14 +48,14 @@ present-but-empty `components/` directory in `canvas-components.tar` — which i
 of loss, because it is also what a canvas that never had components looks like, and the
 directories in that archive are only whichever ones happened to exist on the container
 filesystem at flush time. The registry made it worse: `cv_4bfb07e3` is named "Cedarpad", and
-`cv_edd9bab6` is the actual "Hudson Standup".
+`cv_edd9bab6` is the actual "Standup".
 
 The evidence that settles it is **placed instances**, because a placed card resolves against
 its own canvas's tier — so wherever the cards are is where the source has to live. Read from
 the live room documents (`GET /api/canvas-sync/:id/snapshot`; the R2 blobs are stale, the
 Durable Object has been authoritative since ADR-0019) on 2026-07-29, `cv_edd9bab6` holds one
-card each of `AudioMeeting`, `ChatRoom`, `ComponentCatalog`, `HenryAccessExplorer` and
-`HenryScenarioMap`, and `cv_4bfb07e3` holds none of them.
+card each of `AudioMeeting`, `ChatRoom`, `ComponentCatalog`, `AccessExplorer` and
+`ScenarioMap`, and `cv_4bfb07e3` holds none of them.
 
 Two of the three are byte-identical to what was recovered. `ComponentCatalog.tsx`
 is **not**: as recovered it fetched `/api/custom/component-catalog`, a custom handler

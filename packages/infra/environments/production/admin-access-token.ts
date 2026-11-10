@@ -2,7 +2,7 @@ import { cloudflareTokenModule } from '../../../../vendor/zbc/modules/cloudflare
 
 // The credential `admin-access` converges the admin.cedarpad.com Zero Trust
 // application with, minted per-apply from CLOUDFLARE_ROOT_TOKEN and never at
-// rest — games' railmid-access-token.ts is the pattern, for the same reason: the
+// rest, as another Zabaca stack's Access token module does, for the same reason: the
 // deploy token (CLOUDFLARE_API_TOKEN) carries Workers, R2, D1 and containers, and
 // widening it to Access in the dashboard would be a fix in nobody's file.
 //

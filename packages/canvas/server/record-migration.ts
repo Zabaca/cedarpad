@@ -43,7 +43,7 @@ import type { PlatformRpc } from './platform-rpc-client.ts';
 export const MIGRATION_WORKSPACE = 'default';
 
 /**
- * The canvas every own-tier Record here belongs to — registered as **"Hudson Standup"**.
+ * The canvas every own-tier Record here belongs to, registered as **"Standup"**.
  *
  * THIS ID WAS WRONG UNTIL IT WAS CHECKED AGAINST THE SHAPES. #365 and the incident notes both
  * name `cv_4bfb07e3-cd4e-4fc8-a3ed-54a4b20d483b`, on the strength of that canvas having a
@@ -52,23 +52,23 @@ export const MIGRATION_WORKSPACE = 'default';
  * looks like, and the directories in the tar are only whichever ones existed on the container
  * filesystem at flush time. (`cv_edd9bab6`'s directory was not in the archive at all this
  * morning; it appeared when `WorkflowGraph` was authored.) The registry compounded it —
- * `cv_4bfb07e3` is named "Cedarpad", and this one is the actual "Hudson Standup".
+ * `cv_4bfb07e3` is named "Cedarpad", and this one is the actual "Standup".
  *
  * The decisive evidence is PLACED INSTANCES, because a placed card resolves against its own
  * canvas's tier: wherever the cards are is where the source has to live. Reading the LIVE room
  * documents (`GET /api/canvas-sync/:id/snapshot`, not the stale R2 blobs — the Durable Object
  * has been authoritative since ADR-0019) on 2026-07-29:
  *
- *   cv_edd9bab6 (this one)  AudioMeeting, ChatRoom, ComponentCatalog, HenryAccessExplorer,
- *                           HenryScenarioMap, 2x Outliner — five dead cards
+ *   cv_edd9bab6 (this one)  AudioMeeting, ChatRoom, ComponentCatalog, AccessExplorer,
+ *                           ScenarioMap, 2x Outliner: five dead cards
  *   cv_4bfb07e3             no instance of any of them
  *
  * Aimed at `cv_4bfb07e3` this migration would have written four Records nobody can see and
- * reported complete success while Hudson Standup stayed broken. Every own-tier entry below
+ * reported complete success while Standup stayed broken. Every own-tier entry below
  * carries its own placement evidence in `why` for that reason: a canvas id with no
  * justification beside it is exactly how the wrong one got written down.
  */
-export const HUDSON_STANDUP_CANVAS = 'cv_edd9bab6-8bae-4a7a-a694-9abfa9965db9';
+export const STANDUP_CANVAS = 'cv_edd9bab6-8bae-4a7a-a694-9abfa9965db9';
 
 /**
  * The four archives, spelled out rather than imported.
@@ -148,14 +148,14 @@ export const MIGRATION_PLAN: readonly PlannedRecord[] = [
     bytes: 13126,
     sha256: '060a91dc1ed41f02887f0fcfe603e09f9c836b1a423a457714b5311060ccd5bb',
     origin: { kind: 'archive', key: SHARED_ARCHIVE_KEY, path: 'Outliner.tsx' },
-    // SHARED because it is placed on more than one canvas: 2 instances on Hudson Standup and
+    // SHARED because it is placed on more than one canvas: 2 instances on Standup and
     // 1 on cv_4bfb07e3 ("Cedarpad"), live. One shared Record resolves for all three.
     why: 'the only substantial survivor in R2 — the shared library never lost its archive; 3 placed instances across 2 canvases',
   },
   {
     name: 'AudioMeeting',
     tier: 'own',
-    canvasId: HUDSON_STANDUP_CANVAS,
+    canvasId: STANDUP_CANVAS,
     bytes: 13410,
     sha256: 'eac89ecdfd6c6d2fbc36ea529bef79707ae216c57cd9c61ee7942c2157b7cdb1',
     origin: { kind: 'recovered', file: 'AudioMeeting.tsx' },
@@ -164,7 +164,7 @@ export const MIGRATION_PLAN: readonly PlannedRecord[] = [
   {
     name: 'ChatRoom',
     tier: 'own',
-    canvasId: HUDSON_STANDUP_CANVAS,
+    canvasId: STANDUP_CANVAS,
     bytes: 16076,
     sha256: '96e443566b60eab1845ff599988551d851d7078eb1272cd3c0f627b8f525cd17',
     origin: { kind: 'recovered', file: 'ChatRoom.tsx' },
@@ -176,7 +176,7 @@ export const MIGRATION_PLAN: readonly PlannedRecord[] = [
   {
     name: 'ComponentCatalog',
     tier: 'own',
-    canvasId: HUDSON_STANDUP_CANVAS,
+    canvasId: STANDUP_CANVAS,
     bytes: 6947,
     sha256: 'e68a1618c4351f715349a3bb1d269180fd8ddbd70a8145b49517ab875a3c826e',
     origin: { kind: 'recovered', file: 'ComponentCatalog.tsx' },
@@ -185,10 +185,10 @@ export const MIGRATION_PLAN: readonly PlannedRecord[] = [
   {
     name: 'WorkflowGraph',
     tier: 'own',
-    canvasId: HUDSON_STANDUP_CANVAS,
+    canvasId: STANDUP_CANVAS,
     bytes: 25019,
     sha256: 'dbe821f0413099cb129cf123e8a8e8fd71a2b602a7ea5de961ecaf90c3fe8b0c',
-    origin: { kind: 'archive', key: CANVAS_ARCHIVE_KEY, path: `canvas-${HUDSON_STANDUP_CANVAS}/components/WorkflowGraph.tsx` },
+    origin: { kind: 'archive', key: CANVAS_ARCHIVE_KEY, path: `canvas-${STANDUP_CANVAS}/components/WorkflowGraph.tsx` },
     // Verified as migratable AS-IS: one import (`react`), no `fetch(`, no `/api/`, no relative
     // import — so unlike ComponentCatalog it needs no repoint. Its header comment references
     // "the skill's SCHEMA.md"; there is no `ticket-forge` skill in `skills.tar`, none in the
@@ -205,8 +205,8 @@ export const MIGRATION_PLAN: readonly PlannedRecord[] = [
  *  the 49 MB of `sessions.tar` on 2026-07-29: 4 mentions each, none of them a write), and R2
  *  has no object versioning. Named here, and named in every report, so "three of five" is
  *  stated rather than inferred from a success message. Both have a live placed instance on
- *  `HUDSON_STANDUP_CANVAS`; those cards stay dead and should be removed rather than waited on. */
-export const PERMANENTLY_LOST: readonly string[] = ['HenryAccessExplorer', 'HenryScenarioMap'];
+ *  `STANDUP_CANVAS`; those cards stay dead and should be removed rather than waited on. */
+export const PERMANENTLY_LOST: readonly string[] = ['AccessExplorer', 'ScenarioMap'];
 
 /** One archive entry deliberately left where it is. Keyed by archive AND path, because the
  *  survey classifies against this list: a bare filename would let a same-named file in a

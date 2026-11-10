@@ -31,7 +31,7 @@
     // data but its traffic is testing, not usage.
     "POSTHOG_KEY": "phc_zdrtBTi2f7hyq7D9odeyG5MKRnuVPy9sed5ajPHDHnJ9",
     // Workspaces served from our own hardware instead of a Cloudflare Container
-    // (worker/self-hosted.ts). `default` moved to an incus VM on ryzen-9 on
+    // (worker/self-hosted.ts). `default` moved to a self-hosted VM on
     // 2026-08-14: the Cloudflare container rebuilds vite's dependency pre-bundle on
     // every cold boot (its filesystem does not survive sleep), and that raced page
     // loads into 404s on tldraw's chunks, a blank canvas with no retry. The VM's

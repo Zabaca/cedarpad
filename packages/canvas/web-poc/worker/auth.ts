@@ -51,7 +51,7 @@ export function createAuth(db: Database, env: Bindings) {
       // user row yet, and their first click is exactly what must create it.
       //
       // Non-allowed addresses get the SAME silent ok as allowed ones (the endpoint
-      // never confirms who has an account) — the foothill-inbox pattern.
+      // never confirms who has an account).
       magicLink({
         // 15 minutes, not the 5-minute default: these links cross a mail hop, and
         // an invite may sit unopened for a few minutes.

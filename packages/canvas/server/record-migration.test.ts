@@ -14,7 +14,7 @@ import {
   CUSTOM_ARCHIVE_KEY,
   MIGRATION_PLAN,
   MIGRATION_WORKSPACE,
-  HUDSON_STANDUP_CANVAS,
+  STANDUP_CANVAS,
   NOT_MIGRATED,
   PERMANENTLY_LOST,
   SHARED_ARCHIVE_KEY,
@@ -76,7 +76,7 @@ beforeAll(async () => {
   // migration cannot mint rows for a canvas the registry does not place in the workspace.
   // Named as production names them, which is not how #365's prose names them.
   await db.insert(schema.canvases).values([
-    { id: HUDSON_STANDUP_CANVAS, workspaceId: MIGRATION_WORKSPACE, name: 'Hudson Standup' },
+    { id: STANDUP_CANVAS, workspaceId: MIGRATION_WORKSPACE, name: 'Standup' },
     // The canvas the plan used to be aimed at, seeded so a test could write to it — it is a
     // real canvas in the same workspace, just not the one holding the cards.
     { id: OTHER_CANVAS, workspaceId: MIGRATION_WORKSPACE, name: 'Cedarpad' },
@@ -150,9 +150,9 @@ function fakeSources(opts: { over?: Partial<Record<string, string>>; extra?: Ext
       // aiming at it. It must stay in the fixture: the survey has to ignore it as not-content.
       { name: `canvas-${OTHER_CANVAS}/`, type: '5' },
       { name: `canvas-${OTHER_CANVAS}/components/`, type: '5' },
-      { name: `canvas-${HUDSON_STANDUP_CANVAS}/`, type: '5' },
-      { name: `canvas-${HUDSON_STANDUP_CANVAS}/components/`, type: '5' },
-      { name: `canvas-${HUDSON_STANDUP_CANVAS}/components/WorkflowGraph.tsx`, body: text('WorkflowGraph') },
+      { name: `canvas-${STANDUP_CANVAS}/`, type: '5' },
+      { name: `canvas-${STANDUP_CANVAS}/components/`, type: '5' },
+      { name: `canvas-${STANDUP_CANVAS}/components/WorkflowGraph.tsx`, body: text('WorkflowGraph') },
       { name: 'canvas-default/', type: '5' },
       { name: 'canvas-default/components/', type: '5' },
       { name: 'canvas-default/components/zz_test_data_cd0fc124.json', body: '{"zz":true}\n' },
@@ -231,16 +231,16 @@ describe('the allowlist', () => {
     expect(planned('Outliner').tier).toBe('shared');
     for (const name of ['AudioMeeting', 'ChatRoom', 'ComponentCatalog', 'WorkflowGraph']) {
       expect(planned(name).tier).toBe('own');
-      expect(planned(name).canvasId).toBe(HUDSON_STANDUP_CANVAS);
+      expect(planned(name).canvasId).toBe(STANDUP_CANVAS);
     }
   });
 
   test('the own tier is cv_edd9bab6, NOT the canvas #365 named — the cards decide, not the title', () => {
     // A placed card resolves against its own canvas's tier, so the shapes say where the
     // source has to live. The live rooms hold AudioMeeting, ChatRoom, ComponentCatalog and
-    // both Henrys on cv_edd9bab6 and none of them on cv_4bfb07e3. Aimed at the latter, this
+    // both lost cards on cv_edd9bab6 and none of them on cv_4bfb07e3. Aimed at the latter, this
     // migration would have written Records nobody can see and reported success.
-    expect(HUDSON_STANDUP_CANVAS).toBe('cv_edd9bab6-8bae-4a7a-a694-9abfa9965db9');
+    expect(STANDUP_CANVAS).toBe('cv_edd9bab6-8bae-4a7a-a694-9abfa9965db9');
     expect(MIGRATION_PLAN.every((p) => p.canvasId !== OTHER_CANVAS)).toBe(true);
   });
 
@@ -277,7 +277,7 @@ describe('surveying the archives', () => {
     expect(survey.unrecognised).toEqual([]);
     expect(survey.planned.map((p) => p.path).sort()).toEqual([
       'Outliner.tsx',
-      `canvas-${HUDSON_STANDUP_CANVAS}/components/WorkflowGraph.tsx`,
+      `canvas-${STANDUP_CANVAS}/components/WorkflowGraph.tsx`,
     ]);
     // The residue is the whole test skill (both files), the guest stub, the test data file
     // and the image's hello.ts.
@@ -438,7 +438,7 @@ describe('writing', () => {
     expect(report.outcomes.every((o) => o.rev === 1)).toBe(true);
     const shared = await rpc.componentRead({ workspaceId: MIGRATION_WORKSPACE, canvasId: 'default', tier: 'shared', name: 'Outliner' });
     expect(shared).toBe(filler('Outliner'));
-    const own = await rpc.componentRead({ workspaceId: MIGRATION_WORKSPACE, canvasId: HUDSON_STANDUP_CANVAS, tier: 'own', name: 'ChatRoom' });
+    const own = await rpc.componentRead({ workspaceId: MIGRATION_WORKSPACE, canvasId: STANDUP_CANVAS, tier: 'own', name: 'ChatRoom' });
     expect(own).toBe(filler('ChatRoom'));
   });
 
@@ -451,7 +451,7 @@ describe('writing', () => {
 
     const versions = await rpc.componentHistory({
       workspaceId: MIGRATION_WORKSPACE,
-      canvasId: HUDSON_STANDUP_CANVAS,
+      canvasId: STANDUP_CANVAS,
       tier: 'own',
       name: 'AudioMeeting',
     });
@@ -474,7 +474,7 @@ describe('idempotence', () => {
     expect(second.ok).toBe(true);
     const versions = await rpc.componentHistory({
       workspaceId: MIGRATION_WORKSPACE,
-      canvasId: HUDSON_STANDUP_CANVAS,
+      canvasId: STANDUP_CANVAS,
       tier: 'own',
       name: 'AudioMeeting',
     });
@@ -486,7 +486,7 @@ describe('idempotence', () => {
     await migrateRecords(rpc, resolved, { write: true });
     await rpc.componentWrite({
       workspaceId: MIGRATION_WORKSPACE,
-      canvasId: HUDSON_STANDUP_CANVAS,
+      canvasId: STANDUP_CANVAS,
       tier: 'own',
       userId: null,
       name: 'ChatRoom',
@@ -496,7 +496,7 @@ describe('idempotence', () => {
     const again = await migrateRecords(rpc, resolved, { write: true });
     expect(again.outcomes.find((o) => o.item.name === 'ChatRoom')?.action).toBe('differs');
     expect(again.ok).toBe(false);
-    expect(await rpc.componentRead({ workspaceId: MIGRATION_WORKSPACE, canvasId: HUDSON_STANDUP_CANVAS, tier: 'own', name: 'ChatRoom' })).toBe(
+    expect(await rpc.componentRead({ workspaceId: MIGRATION_WORKSPACE, canvasId: STANDUP_CANVAS, tier: 'own', name: 'ChatRoom' })).toBe(
       '// somebody improved this\n',
     );
   });
@@ -557,10 +557,10 @@ describe('verification', () => {
   });
 
   test('an unplanned Record on the OTHER own tier the plan touches is reported too', async () => {
-    // The plan names two canvases: Hudson Standup for the own tier, and the legacy `default`
+    // The plan names two canvases: Standup for the own tier, and the legacy `default`
     // canvas as the shared write's entitlement proof. `component.list` answers for a canvas's
     // own library plus the workspace's shared one, so `default`'s own tier is invisible from
-    // Hudson Standup — a check scoped to one canvas would not see this.
+    // Standup, and a check scoped to one canvas would not see this.
     const resolved = await resolveSources(synthetic(), fakeSources());
     await migrateRecords(rpc, resolved, { write: true });
     await rpc.componentWrite({
@@ -600,7 +600,7 @@ describe('verification', () => {
     await migrateRecords(rpc, resolved, { write: true });
 
     expect((await verifyMigration(rpc, resolved)).lost).toEqual(PERMANENTLY_LOST);
-    expect(PERMANENTLY_LOST).toEqual(['HenryAccessExplorer', 'HenryScenarioMap']);
+    expect(PERMANENTLY_LOST).toEqual(['AccessExplorer', 'ScenarioMap']);
   });
 
   test('the platform tier is not mistaken for migrated content', async () => {

@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { buildClaudeRequest } from './claude.ts';
 
 // The huddle brain (ADR-0017): raw streaming /v1/messages under the subscription OAuth
-// token (Bearer + oauth beta + the Claude Code identity as FIRST system block — the lov
-// pattern, spiked 2026-07-18). An API key, when present, wins with no code change.
+// token (Bearer + oauth beta + the Claude Code identity as FIRST system block, spiked
+// 2026-07-18). An API key, when present, wins with no code change.
 const msgs = [{ role: 'user' as const, content: 'Cedar, place the chart' }];
 
 describe('buildClaudeRequest — auth precedence and the OAuth identity contract', () => {

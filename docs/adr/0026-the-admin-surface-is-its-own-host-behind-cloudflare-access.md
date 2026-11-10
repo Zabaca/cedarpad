@@ -10,7 +10,7 @@ The operator view lives at **`admin.cedarpad.com`**, served by the same `agent-c
 Worker, behind a **Cloudflare Zero Trust (Access) application** that admits one address,
 `james@zabaca.com`. Both the application and its policy are declared in zbc
 (`packages/infra/environments/production/admin-access.ts`, with its own minted credential
-`admin-access-token.ts`), copied from games' `railmid-access`, which runs on the same
+`admin-access-token.ts`), copied from another Zabaca admin surface's Access application, which runs on the same
 account and team (`zabaca.cloudflareaccess.com`).
 
 The Worker **verifies the Access assertion itself** (`worker/access-jwt.ts`, ported from
@@ -36,7 +36,7 @@ hostname without a path rule on the product host, keeps the product's cookies an
 out of play, and keeps the admin page out of reach of anything a canvas component can
 script on `app.`.
 
-Every other zabaca admin surface (railmid, zabaca-web, qom, leeandco) protects a PATH on a
+Every other Zabaca admin surface protects a PATH on a
 public host. This one is a deliberate exception, for the reason above.
 
 ## Consequences

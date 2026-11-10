@@ -2,8 +2,8 @@ import type { SendEmailBinding } from "./context.js";
 
 // The outbound email seam. One place holds the wire envelope (sender identity +
 // the `send_email` binding call); callers only build a message and name a log tag.
-// Ported in shape from foothill-metabolic's Resend transport — same contract, with
-// Cloudflare Email Sending in place of the Resend fetch.
+// Ported in shape from a Resend transport used in another Zabaca product, same contract,
+// with Cloudflare Email Sending in place of the Resend fetch.
 //
 // It lives here, beside the binding type and the Better Auth config that is its
 // first consumer, so the canvas edge imports it DOWNWARD like everything else in

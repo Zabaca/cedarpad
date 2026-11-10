@@ -93,7 +93,7 @@ export default cloudflareModule.instance({
       // One FREDRIN_<LABEL>_KEY per extra Fredrin project → the `fredrin-<label>` connection.
       'FREDRIN_CEDARPAD_KEY',
       // The admin host's Access application (ADR-0026). Not secret in themselves, but pushed
-      // as secrets (games' railmid.ts does the same) so they persist across deploys that do
+      // as secrets (Zabaca's other stacks do the same) so they persist across deploys that do
       // not go through zbc: either missing makes admin.cedarpad.com refuse everything.
       { name: 'ACCESS_TEAM_DOMAIN', from: 'admin-access', output: 'teamDomain' },
       { name: 'ACCESS_AUD', from: 'admin-access', output: 'aud' },

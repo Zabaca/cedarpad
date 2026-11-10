@@ -96,7 +96,7 @@ describe('respondToSelectPage', () => {
   });
 });
 
-// The size cap. Hudson Standup's Franklin page (24 pasted screenshots) exported at full size
+// The size cap. A page of 24 pasted screenshots, exported at full size,
 // came back as 8–13 MB, landed after the bridge's deadline, and was too big for a model.
 describe('screenshotScale', () => {
   test('shrinks a big page so its longest edge fits the cap', () => {

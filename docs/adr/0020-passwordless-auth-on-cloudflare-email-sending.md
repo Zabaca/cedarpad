@@ -25,7 +25,7 @@ Two things changed the calculus:
   one. Once mail can be sent, the password and the invite-accept form are the same mechanism
   written twice.
 
-Resend was the obvious alternative and is what foothill-metabolic uses for exactly this class of
+Resend was the obvious alternative and is what another Zabaca product uses for exactly this class of
 mail (its agent inbox sends replies over Cloudflare but its magic links over Resend). Rejected here
 because it reintroduces the secret we would otherwise not have, for a deliverability edge we have no
 evidence we need at this volume.
@@ -43,7 +43,7 @@ evidence we need at this volume.
 
    So a link is only ever **delivered** to an address that already holds an account or holds a
    pending invitation. Both outcomes return the same silent ok, so the endpoint never confirms who
-   has access. (Pattern taken from foothill-inbox, which allowlists against its operator table.)
+   has access. (Pattern taken from another Zabaca product, which allowlists against its operator table.)
 
 3. **Invitations collapse into that one mechanism.** Issuing an invitation writes the row *first* —
    which is what makes the address eligible — then emails a magic link whose `callbackURL` is
@@ -65,7 +65,7 @@ evidence we need at this volume.
    before changing anything zone-wide.
 
 5. **Provisioned as code.** Wrangler has no surface for Email Sending onboarding, so the
-   `cloudflare-email` module was ported from foothill-metabolic and instantiated as `canvas-email`.
+   `cloudflare-email` module was ported from another Zabaca product and instantiated as `canvas-email`.
    `canvas` **imports** it, which makes the ordering enforced rather than conventional: the
    `send_email` binding names no domain and would deploy happily without it, but auth is
    passwordless, so a worker sending from an unenabled domain is a **login outage**, not a degraded

@@ -204,7 +204,7 @@ describe('detectPaste: GitHub repo references', () => {
     expect(paste('https://github.com/vercel/next.js')).toEqual({
       kind: 'github', repo: 'vercel/next.js', url: 'https://github.com/vercel/next.js',
     });
-    expect(paste('https://www.github.com/hudsonts/app.git')).toMatchObject({ repo: 'hudsonts/app' });
+    expect(paste('https://www.github.com/example/app.git')).toMatchObject({ repo: 'example/app' });
   });
 
   test('deep links (tree/blob/pull) normalize to owner/name but keep the deep URL', () => {
@@ -214,8 +214,8 @@ describe('detectPaste: GitHub repo references', () => {
   });
 
   test('the SSH clone string is claimed and normalized to an https URL', () => {
-    expect(paste('git@github.com:hudsonts/app.git')).toEqual({
-      kind: 'github', repo: 'hudsonts/app', url: 'https://github.com/hudsonts/app',
+    expect(paste('git@github.com:example/app.git')).toEqual({
+      kind: 'github', repo: 'example/app', url: 'https://github.com/example/app',
     });
   });
 
