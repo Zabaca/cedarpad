@@ -41,3 +41,20 @@ export function markGuestName(name: unknown): string {
   n = Array.from(n).slice(0, GUEST_NAME_MAX).join('').trim();
   return n === '' || n === GUEST_BARE_NAME ? GUEST_BARE_NAME : `${GUEST_MARK} ${n}`;
 }
+
+/**
+ * The colours a guest's cursor and label may have, chosen by the room, never by the client. A
+ * guest who picks their own can pick white on white, or a string that is not a colour, and a
+ * label nobody can read is a guest nobody notices. Mid-lightness, so each reads on both themes.
+ */
+export const GUEST_PALETTE = ['#e11d48', '#ea580c', '#ca8a04', '#16a34a', '#0d9488', '#2563eb', '#7c3aed', '#c026d3'] as const;
+
+/** A stable palette colour for one connection identity (FNV-1a over its code units). */
+export function guestColor(identity: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < identity.length; i++) {
+    h ^= identity.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return GUEST_PALETTE[h % GUEST_PALETTE.length]!;
+}
