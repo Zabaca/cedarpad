@@ -224,6 +224,16 @@ key of the workspace the request names (the payload's `workspaceId`, or the work
 the canvas in the path). A key for workspace A verifies nothing claimed for workspace B, so a
 caller cannot name a real, coherent (workspace, canvas) pair it does not own.
 
+**A container holds no R2 credential.** The bucket is shared by every workspace (and holds the canvas
+images and the retained blobs), and the S3 keys that used to be handed to a container reach all of it, so one
+workspace's container could read or overwrite another's objects without going through the edge. A container now
+keeps exactly two things in the bucket, and does it through the edge (`shared/workspace-blob.ts`,
+`worker/workspace-blobs-api.ts`): its chat meta (`workspaces/<ws>/chat-meta.json`) and its session transcripts
+(`workspaces/<ws>/sessions/<id>/transcript.jsonl`). The bearer is derived from the workspace key and checked against
+the workspace named in the path, and the edge derives the bucket key, so there is no way to name an object outside
+those two kinds or another workspace's. Transcripts written before they were workspace-scoped (flat `sessions/<id>/`)
+are still readable by the legacy `default` workspace, which wrote them, and by no other.
+
 **Materialization timing is not uniform, and the difference is the point.** A Component is
 materialized **lazily**, when vite requests the module — the client already walks own → shared
 → base and retries with backoff, so a miss is a normal path. A Workspace skill has no such

@@ -14,6 +14,11 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { CanvasState } from '../src/shapes.ts';
+import {
+  refForBlobKey,
+  workspaceBlobPath,
+  workspaceBlobToken,
+} from '../shared/workspace-blob.ts';
 import type { ChatMeta } from './chat-meta.ts';
 
 /** workspace-scoped per-canvas board state. */
@@ -82,8 +87,8 @@ export const fsBackend = (root: string): BlobBackend => ({
   },
 });
 
-/** Prod backend: R2 via Bun's S3-compatible client. Creds read from env at the
- * call site (no central config). Untested here — exercised by the deploy. */
+/** R2 via Bun's S3-compatible client, for OPERATOR scripts that run with the bucket's credentials
+ * from sops (`scripts/migrate-*.ts`). A container never uses it: it holds no such credential. */
 export const s3Backend = (): BlobBackend => {
   const client = new Bun.S3Client({
     accessKeyId: process.env.R2_ACCESS_KEY_ID,
@@ -108,9 +113,70 @@ export const s3Backend = (): BlobBackend => {
   };
 };
 
-/** Pick a backend from env: `R2_BUCKET` set → R2, else local disk at `fsRoot`. */
-export const selectBackend = (fsRoot: string): BlobBackend =>
-  process.env.R2_BUCKET ? s3Backend() : fsBackend(fsRoot);
+/**
+ * The container's backend: the edge's workspace-blob door (shared/workspace-blob.ts), not R2.
+ * A container holds no bucket credential, so the only objects it can reach are its own chat meta
+ * and session transcripts, and every other key is refused here before a request is made.
+ *
+ * `get` is null for an absent object and THROWS for a real failure, as `BlobBackend` requires: a
+ * 404 is the only status that means "absent", so an unreachable or refusing edge can never read as
+ * an empty history (the 2026-07-29 shape).
+ */
+export function edgeBackend(config: {
+  origin: string;
+  workspaceKey: string;
+  workspaceId: string;
+  fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;
+}): BlobBackend {
+  const origin = config.origin.replace(/\/$/, '');
+  const doFetch = config.fetchImpl ?? fetch;
+  const call = async (key: string, method: 'GET' | 'HEAD' | 'PUT', body?: Uint8Array): Promise<Response> => {
+    const ref = refForBlobKey(key, config.workspaceId);
+    if (!ref) throw new Error(`a workspace container may not use the blob "${key}"`);
+    return doFetch(`${origin}${workspaceBlobPath(ref)}`, {
+      method,
+      headers: { authorization: `Bearer ${await workspaceBlobToken(config.workspaceKey)}` },
+      ...(body ? { body: new Blob([body as BlobPart]) } : {}),
+    });
+  };
+  const failed = (what: string, res: Response) => new Error(`the workspace store refused ${what} (${res.status})`);
+  return {
+    get: async (key) => {
+      const res = await call(key, 'GET');
+      if (res.status === 404) return null;
+      if (!res.ok) throw failed(`a read of ${key}`, res);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+    put: async (key, data) => {
+      const res = await call(key, 'PUT', data);
+      if (!res.ok) throw failed(`a write of ${key}`, res);
+    },
+    exists: async (key) => {
+      const res = await call(key, 'HEAD');
+      if (res.status === 404) return false;
+      if (!res.ok) throw failed(`a probe of ${key}`, res);
+      return true;
+    },
+    // The door has no listing: a container asks for the objects it knows by name.
+    list: async () => {
+      throw new Error('a workspace container cannot list the bucket');
+    },
+  };
+}
+
+/** Pick the container's backend from env (the bridge's, which has derived the workspace key in local
+ *  dev: `loadWebPocEnv`): the edge door when the container was told to use it
+ *  (`WORKSPACE_BLOBS=edge`, which `worker/container-env.ts` sets), else local disk at `fsRoot`
+ *  (local dev and tests). Never R2 directly: that path, and the credentials for it, are gone. */
+export function selectBackend(fsRoot: string, env: Record<string, string | undefined> = process.env): BlobBackend {
+  if (env.WORKSPACE_BLOBS === 'edge') {
+    const origin = env.PLATFORM_RPC_ORIGIN;
+    const workspaceKey = env.WORKSPACE_KEY;
+    if (!origin || !workspaceKey) throw new Error('WORKSPACE_BLOBS=edge needs PLATFORM_RPC_ORIGIN and WORKSPACE_KEY');
+    return edgeBackend({ origin, workspaceKey, workspaceId: env.CANVAS_WORKSPACE || 'default' });
+  }
+  return fsBackend(fsRoot);
+}
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();

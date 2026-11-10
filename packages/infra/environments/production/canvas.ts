@@ -14,9 +14,12 @@ import adminAccess from './admin-access'
  * Cloudflare worker in place (same account 99a1…4372b that owns the cedarpad.com
  * zone + R2 bucket) — no new worker, no domain re-bind, no R2 migration.
  *
- * Requires in the environment's secrets.yaml: CLOUDFLARE_API_TOKEN (deploy),
- * CLAUDE_CODE_OAUTH_TOKEN (the agent) and four
- * R2 S3 creds R2_BUCKET / R2_ENDPOINT / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY.
+ * Requires in the environment's secrets.yaml: CLOUDFLARE_API_TOKEN (deploy) and
+ * CLAUDE_CODE_OAUTH_TOKEN (the agent). The file also holds four R2 S3 creds, R2_BUCKET /
+ * R2_ENDPOINT / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY, for the OPERATOR scripts that run
+ * under `sops exec-env` (`packages/canvas/scripts/`). They are not worker secrets: the Worker
+ * reaches the bucket through its binding, and a workspace container is handed no R2 credential
+ * and keeps its objects through the Worker (shared/workspace-blob.ts).
  *
  * R2 cred coupling: the R2 S3 creds are derived from the CF API token
  * (accessKeyId = token id, secretAccessKey = sha256hex(token value)), so rotating
@@ -75,10 +78,6 @@ export default cloudflareModule.instance({
       'CF_ACCESS_CLIENT_ID',
       'CF_ACCESS_CLIENT_SECRET',
       'CLAUDE_CODE_OAUTH_TOKEN',
-      'R2_BUCKET',
-      'R2_ENDPOINT',
-      'R2_ACCESS_KEY_ID',
-      'R2_SECRET_ACCESS_KEY',
       // The platform data layer's Better Auth secret. Must exist in production/secrets.yaml.
       // (BETTER_AUTH_URL / WEB_ORIGIN are non-secret vars in the package's wrangler.jsonc.)
       'BETTER_AUTH_SECRET',

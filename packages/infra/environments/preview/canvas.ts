@@ -37,15 +37,11 @@ export default cloudflareModule.instance({
     // Selects env.preview in packages/canvas/wrangler.jsonc → agent-canvas-preview.
     wranglerEnv: 'preview',
     // Same secrets as production (web-poc rides the canvas worker) — currently the
-    // SAME values (preview/secrets.yaml copies production/secrets.yaml), so R2_* points
-    // at prod's bucket (see the ⚠️ in the header).
+    // SAME values (preview/secrets.yaml copies production/secrets.yaml). The Worker holds no R2
+    // S3 credential (it uses its binding, which points at prod's bucket: see the ⚠️ in the header).
     // BETTER_AUTH_URL / WEB_ORIGIN are non-secret vars in env.preview, not here.
     workerSecrets: [
       'CLAUDE_CODE_OAUTH_TOKEN',
-      'R2_BUCKET',
-      'R2_ENDPOINT',
-      'R2_ACCESS_KEY_ID',
-      'R2_SECRET_ACCESS_KEY',
       'BETTER_AUTH_SECRET',
     ],
     // The Shell SPA build (see production canvas.ts).

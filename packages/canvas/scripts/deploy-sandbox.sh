@@ -13,7 +13,7 @@
 #      printed), and the supervisor's port as the only one reachable by prefix (--open-port; needs an sbx from
 #      Home's slice 5 fix round on). If it exists, replace its image: same name, address, environment, command and allow-list; the pod
 #      starts fresh from the new image, so the stack is down and the Worker's next request boots it on the new code.
-#   3. Set its allow-list additions.
+#   3. Set its allow-list additions, and remove the ones workspace.env no longer lists (`sbx egress allow` only adds).
 #   4. Fail unless the supervisor answers, the pre-bundle is there and the stamps inside are origin/main's.
 #
 # What the sandbox is (name, size, port, route, allow-list) is packages/canvas/sandbox/workspace.env.
@@ -147,6 +147,20 @@ shape_ok "$("$SBX" get "$NAME")" || fail "$NAME is not as declared after the dep
 echo "-> allow-list: $EGRESS_ALLOW"
 # shellcheck disable=SC2086  # a space-separated list of hosts
 "$SBX" egress "$NAME" allow $EGRESS_ALLOW >/dev/null
+# `allow` only adds, so a host removed from workspace.env would stay reachable on a sandbox that already exists:
+# take away the sandbox's own additions the declaration no longer lists (sandbox/workspace.env is the whole
+# truth, and the site-wide list is never touched). The listing is captured first so a failed `sbx egress` stops
+# the deploy (set -e) instead of reading as "nothing stale".
+# shellcheck source=packages/canvas/scripts/sandbox-egress.sh
+source "$REPO_ROOT/packages/canvas/scripts/sandbox-egress.sh"
+EGRESS_NOW=$("$SBX" egress "$NAME") || fail "sbx egress $NAME failed: cannot tell what it may reach"
+STALE_EGRESS=$(stale_egress "$EGRESS_ALLOW" <<<"$EGRESS_NOW")
+if [ -n "$STALE_EGRESS" ]; then
+  echo "-> removing allow-list additions workspace.env no longer lists: $(tr '\n' ' ' <<<"$STALE_EGRESS")"
+  # shellcheck disable=SC2086  # one host per line
+  "$SBX" egress "$NAME" remove $STALE_EGRESS >/dev/null
+  [ -z "$(stale_egress "$EGRESS_ALLOW" <<<"$("$SBX" egress "$NAME")")" ] || fail "$NAME may still reach hosts workspace.env does not list (see sbx egress $NAME)"
+fi
 
 # The supervisor is the start command: answering means the command ran with its stored environment (it refuses to
 # start without the bearer). The stack stays down until the Worker pushes its environment.
