@@ -29,14 +29,14 @@ const TOKEN_LABEL = 'platform-rpc/v1';
  * localhost, the generated dev wrangler config as a `vars` default that a real `.dev.vars`
  * overrides — so the hop works out of the box and cannot half-configure into a silent 401.
  *
- * Safe to keep in the repo because it is only ever reachable across localhost, and the bridge
- * refuses it for any non-localhost edge (server/bridge.ts). It is not a production credential
- * and must never become one.
+ * Safe to keep in the repo because it is only ever reachable across localhost, and a process
+ * only derives a workspace key from it for a localhost edge (`withDevWorkspaceKey`,
+ * server/platform-rpc-env.ts). It is not a production credential and must never become one.
  */
 export const LOCAL_DEV_PLATFORM_SECRET = 'local-dev-platform-secret-not-for-production-use';
 
 /**
- * The bearer a container presents — `HMAC-SHA256(workspaceKey, 'platform-rpc/v1')`, where
+ * The bearer a container presents, `HMAC-SHA256(workspaceKey, 'platform-rpc/v1')`, where
  * `workspaceKey` is the key of the workspace the container serves (`shared/workspace-key.ts`,
  * #374). The container holds that key and nothing it could derive another workspace's from; the
  * edge derives the key of the workspace the payload NAMES and verifies against it, so a bearer

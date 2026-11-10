@@ -83,7 +83,7 @@ export async function handleCanvasMutate(
   // container either way. We take the honest version: a SERVICE CREDENTIAL, minted as
   // ADR-0018's platform RPC mints its own (own label, derived from the container's
   // per-workspace key, no new secret in sops), admitted as `CONTAINER_PRINCIPAL`, and NOT run
-  // through `canReach` — there is no user for that question to be about. Blast radius, stated
+  // through `canReach` (there is no user for that question to be about). Blast radius, stated
   // plainly: a caller holding this bearer may write to any canvas OF ITS OWN WORKSPACE (#374:
   // the key is the workspace's, and the edge checks it against the canvas's owner). That is
   // the trust the container already has: it serves the workspace's canvases and holds their

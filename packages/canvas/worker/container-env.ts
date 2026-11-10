@@ -41,9 +41,13 @@ export const containerEnv = async (env: Env, coords: SandboxCoords): Promise<Rec
   // #374: that key is `WORKSPACE_KEY`, derived for THIS workspace only (shared/workspace-key.ts),
   // and BETTER_AUTH_SECRET itself is deliberately NOT here any more. With the secret a container
   // could mint the bearer for any workspace and name any workspace's canvas; with its own key it
-  // can authenticate as its own workspace and no other, and the secret cannot be recovered from
-  // the key. Every bearer the container presents (platform RPC, canvas mutation, asset read) is
-  // derived from this one value.
+  // can authenticate to the EDGE as its own workspace and no other, and the secret cannot be
+  // recovered from the key. Every bearer the container presents (platform RPC, canvas mutation,
+  // asset read) is derived from this one value.
+  //
+  // What this does NOT bound: the R2 keys above are the shared bucket's, with no per-workspace
+  // prefix restriction, so a compromised container can still read or overwrite another
+  // workspace's objects directly in R2. That is a separate gap (it does not go through the edge).
   WORKSPACE_KEY: env.BETTER_AUTH_SECRET ? await workspaceKey(env.BETTER_AUTH_SECRET, coords.canvasWorkspace) : '',
   // Single source of truth for the runtime cwd (#133): the bridge runs + resumes product
   // sessions with `cwd: CANVAS_CWD`, matching START's cd — one derivation, no drift that

@@ -22,7 +22,7 @@
 //   --target <origin>  a deployed Worker, e.g. https://app.cedarpad.com. Authenticates with
 //                      the platform-RPC bearer derived from the workspace's key, which is
 //                      derived from BETTER_AUTH_SECRET in the ENVIRONMENT (sops provides it)
-//                      — nothing on the command line.
+//                      (nothing on the command line).
 //
 // SOURCES
 //   The three recovered Components are read from the repository. `Outliner.tsx` is read out

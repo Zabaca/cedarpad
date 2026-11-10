@@ -85,9 +85,10 @@ const BOOT_AT = Date.now();
 
 // --- platform env ----------------------------------------------------------
 // The platform data layer's env — since ADR-0018 / #266 that means just the two values the
-// PLATFORM RPC needs (its edge origin and the shared trust root the bearer derives from). The
+// PLATFORM RPC needs (its edge origin and the workspace key its bearers derive from, #374). The
 // container gets them as real process.env; local dev reads them from web-poc/.dev.vars, the
-// same file `wrangler dev` loads for the edge Worker, so both ends of the hop agree.
+// same file `wrangler dev` loads for the edge Worker, and derives its workspace key from the
+// dev secret there, so both ends of the hop agree.
 //
 // web-poc's own Hono app is NOT mounted here any more: #263 put the edge Worker into the dev
 // loop, which is where `/api/auth/*` is served from now.

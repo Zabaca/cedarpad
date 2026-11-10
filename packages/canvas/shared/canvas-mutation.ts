@@ -21,7 +21,7 @@ export const canvasMutatePath = (canvasId: string): string => `/api/canvas-sync/
  *  token minted for the chat-lifecycle RPC must not be replayable as a canvas write. */
 const TOKEN_LABEL = 'canvas-mutate/v1';
 
-/** The bearer the bridge presents — `HMAC-SHA256(workspaceKey, 'canvas-mutate/v1')`, the same
+/** The bearer the bridge presents, `HMAC-SHA256(workspaceKey, 'canvas-mutate/v1')`, the same
  *  shape as ADR-0018's platform RPC (#305), and like it bound to the workspace its container
  *  serves (#374): the edge verifies it against the key of the workspace the canvas in the
  *  PATH belongs to, so a container can write only its own workspace's canvases. */

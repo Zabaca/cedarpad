@@ -20,7 +20,7 @@ describe('containerEnv — the workspace, not a user', () => {
 describe('containerEnv — a fixed field list', () => {
   const coords: SandboxCoords = { sandboxId: 'canvas', r2Prefix: 'workspaces/default/', canvasWorkspace: 'default' };
 
-  test('containerEnv reads only its fixed fields — nothing else in the Worker env can ride along', async () => {
+  test('containerEnv reads only its fixed fields, so nothing else in the Worker env can ride along', async () => {
     expect(containerEnv.length).toBe(2);
     const env = { PLATFORM_DB: 'x' } as never;
     const result = await containerEnv(env, coords);
