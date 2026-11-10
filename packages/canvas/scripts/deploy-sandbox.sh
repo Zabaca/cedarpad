@@ -89,10 +89,18 @@ if [ "$EXISTS" = 1 ] && ! shape_ok "$SANDBOX"; then
   fail "$NAME exists but is not as this script makes it (an image of its own, start fresh, port $STACK_PORT, route $ROUTE, prefixed ports [$SUPERVISOR_PORT]; see sbx get $NAME): delete it and deploy again"
 fi
 
+# shellcheck source=packages/canvas/scripts/sandbox-egress.sh
+source "$REPO_ROOT/packages/canvas/scripts/sandbox-egress.sh"
+
 if [ "$DRY_RUN" = 1 ]; then
   echo "dry run: would build $IMAGE_REPO from $REF ($DOCKERFILE, IMAGE_KIND=sandbox, BUILD_REV=$WANT, BUILD_VERSION=$VERSION)"
   if [ "$EXISTS" = 1 ]; then echo "dry run: $NAME exists: would replace its image"; else echo "dry run: $NAME does not exist: would create it"; fi
   echo "dry run: would allow $EGRESS_ALLOW and check the stamps are $WANT / $VERSION"
+  if [ "$EXISTS" = 1 ]; then
+    DRY_NOW=$("$SBX" egress "$NAME") || fail "sbx egress $NAME failed: cannot tell what it may reach"
+    DRY_STALE=$(stale_egress "$EGRESS_ALLOW" <<<"$DRY_NOW")
+    if [ -n "$DRY_STALE" ]; then echo "dry run: would remove the allow-list additions workspace.env no longer lists: $(tr '\n' ' ' <<<"$DRY_STALE")"; else echo "dry run: no allow-list additions to remove"; fi
+  fi
   exit 0
 fi
 
@@ -151,15 +159,14 @@ echo "-> allow-list: $EGRESS_ALLOW"
 # take away the sandbox's own additions the declaration no longer lists (sandbox/workspace.env is the whole
 # truth, and the site-wide list is never touched). The listing is captured first so a failed `sbx egress` stops
 # the deploy (set -e) instead of reading as "nothing stale".
-# shellcheck source=packages/canvas/scripts/sandbox-egress.sh
-source "$REPO_ROOT/packages/canvas/scripts/sandbox-egress.sh"
 EGRESS_NOW=$("$SBX" egress "$NAME") || fail "sbx egress $NAME failed: cannot tell what it may reach"
 STALE_EGRESS=$(stale_egress "$EGRESS_ALLOW" <<<"$EGRESS_NOW")
 if [ -n "$STALE_EGRESS" ]; then
   echo "-> removing allow-list additions workspace.env no longer lists: $(tr '\n' ' ' <<<"$STALE_EGRESS")"
   # shellcheck disable=SC2086  # one host per line
   "$SBX" egress "$NAME" remove $STALE_EGRESS >/dev/null
-  [ -z "$(stale_egress "$EGRESS_ALLOW" <<<"$("$SBX" egress "$NAME")")" ] || fail "$NAME may still reach hosts workspace.env does not list (see sbx egress $NAME)"
+  EGRESS_AFTER=$("$SBX" egress "$NAME") || fail "sbx egress $NAME failed after the removal: cannot tell what it may reach"
+  [ -z "$(stale_egress "$EGRESS_ALLOW" <<<"$EGRESS_AFTER")" ] || fail "$NAME may still reach hosts workspace.env does not list (see sbx egress $NAME)"
 fi
 
 # The supervisor is the start command: answering means the command ran with its stored environment (it refuses to

@@ -9,7 +9,9 @@ send a change.
 - **Report a vulnerability privately**, not as an issue or a pull request: see [`SECURITY.md`](SECURITY.md).
 - **Sign the contributor agreement.** Read [`CLA.md`](CLA.md). Your first pull request needs a comment saying
   "I have read the CLA and I agree to it." A maintainer checks for it by hand, adds you to
-  [`CONTRIBUTORS-CLA.md`](CONTRIBUTORS-CLA.md), and we don't merge a pull request without it. Why we ask is in the agreement's first paragraph.
+  [`CONTRIBUTORS-CLA.md`](CONTRIBUTORS-CLA.md), and we don't merge a pull request without it. Why we ask is in the
+  agreement's first paragraph. (Zabaca LLC's own staff and its contractors do not sign: their work is covered by their
+  own agreements with it.)
 
 ## Build and check
 

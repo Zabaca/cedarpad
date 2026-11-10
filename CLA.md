@@ -37,7 +37,8 @@ Zabaca LLC.
    maintainer checks for the comment before merging and records it by adding you to
    [`CONTRIBUTORS-CLA.md`](CONTRIBUTORS-CLA.md), a committed file, with your GitHub username, the number of the pull
    request and the date, in or before the commit that merges your first Contribution. That file is the record. No
-   automated check enforces this today.
+   automated check enforces this today. Zabaca LLC's own staff and its contractors, whose work is covered by their
+   own agreements with it, do not sign and are not listed there.
 
 This is a plain-language agreement. If you need your company's lawyers to review it first, tell us in the pull
 request.
