@@ -251,7 +251,7 @@ describe('runTurnAsync: the turn is attributed to whoever started it', () => {
   };
 
   test('the send’s author reaches runChat', async () => {
-    expect(await lastArg({ author: 'u_jae' })).toBe('u_jae');
+    expect(await lastArg({ author: 'u_ada' })).toBe('u_ada');
   });
 
   test('no author ⇒ null, never a fixed user', async () => {

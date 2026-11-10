@@ -1,6 +1,6 @@
 // Test-only: a Cloudflare Access team of our own — an RSA key, its JWKS served through a
 // fetch port, and assertions signed with it. Shared by access-jwt.test.ts and
-// admin-page.test.ts; ported from games' apps/server/test/access.ts.
+// admin-page.test.ts; ported from another Zabaca app.
 
 import { issuerOf, jwksUrl } from './access-jwt.ts';
 

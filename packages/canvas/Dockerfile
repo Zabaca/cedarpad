@@ -7,7 +7,7 @@
 #                            last stage, which resolves to this form when IMAGE_KIND is unset).
 #   sandbox                  the workspace as an sbx sandbox (scripts/deploy-sandbox.sh builds it with
 #                            `--build-arg IMAGE_KIND=sandbox`): the same install, with sbx's in-sandbox daemon as its
-#                            first process in place of the stack's start script, claude-mitm-proxy's public certificate,
+#                            first process in place of the stack's start script, the model-route proxy's public certificate,
 #                            the release stamps and a vite pre-bundle made at build time.
 #
 # What the retired sandbox base provided that the stack still uses is replicated in the base step:
@@ -21,7 +21,7 @@ ARG IMAGE_KIND=container
 FROM docker.io/library/node:22-bookworm-slim AS node
 
 # sbx's in-sandbox daemon, built from source at a pinned tag and checked against the commit the tag pointed at when it
-# was chosen. KEEP IN STEP with the generic sandbox image's (Home, packages/sandboxes/image/Dockerfile): it is the same
+# was chosen. KEEP IN STEP with the generic sandbox image's (maintained outside this repository): it is the same
 # daemon, and the contract is the generic image's (the two ports below). Only the sandbox form uses it.
 FROM docker.io/library/golang:1.27.2 AS sandboxd
 ARG AGENT_SANDBOX_TAG=v1.0.8
@@ -75,7 +75,7 @@ ENTRYPOINT ["bun", "scripts/container-start.ts"]
 FROM base AS image-sandbox
 COPY --from=sandboxd /sandboxd /usr/local/bin/sandboxd
 
-# The proxy's certificate: the agent's api.anthropic.com traffic is passed on by sbx to claude-mitm-proxy, which
+# The proxy's certificate: the agent's api.anthropic.com traffic is passed on by sbx to the model-route proxy, which
 # presents a leaf this CA signed. The sandbox's stored environment names this path (sandbox/workspace.env).
 RUN install -D -m 644 sandbox/claude-proxy-ca.crt /etc/cedarpad/claude-proxy-ca.crt
 

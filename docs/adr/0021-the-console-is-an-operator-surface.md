@@ -7,8 +7,8 @@ was revised the same day after a measured spike — see Consequences. Vocabulary
 A **Console** is a Quake-style drop-down terminal (`Ctrl+\``) giving a Workspace **owner** a
 real PTY into that workspace's container, running Claude Code with full capability. It is
 deliberately **outside** the model that governs turns: no Inbox row, no `ChatMeta`, no
-assignee, no `end_turn`. Two proven precedents feed it — `zabaca/ceo`'s
-`packages/claude-sandbox-poc` for the transport, and a third-party agent environment for the
+assignee, no `end_turn`. Two proven precedents feed it, an earlier Zabaca
+sandbox POC for the transport, and the Fredrin agent environment for the
 replay/resize discipline.
 
 ## Why
@@ -76,7 +76,7 @@ process-topology decision at all.
    container to one runtime; a measured spike killed that. **node-pty does not work under
    bun at all** — see the spike result in Consequences. So the container runs bun (bridge,
    vite, extension server) *and* node (the PTY server), which is precisely what
-   `zabaca/ceo`'s POC does — `node /app/pty-server.mjs` inside a bun-first image. That now
+   the earlier POC does, `node /app/pty-server.mjs` inside a bun-first image. That now
    reads as a forced move rather than an arbitrary one.
 
 7. **One Console per workspace, with explicit takeover.** A second attach takes over and the
@@ -139,7 +139,7 @@ process-topology decision at all.
   are routine, and each one replays scrollback. Fredrin's **fit-before-replay** and
   **`inputReady` gate** are required — without the latter, replayed device queries (OSC 11,
   `\x1b[6n`) are re-answered by xterm and echo as garbage at the prompt on every reopen. The
-  ceo POC writes its buffer raw and has neither.
+  earlier POC writes its buffer raw and has neither.
 - **Fredrin's resize machinery is deliberately NOT ported, and should stay unported.**
   Converge-on-ack, the `ptyCols` echo, and the pre-registration queue exist because its
   transport is lossy pub/sub plus a polled DB row; ours is a direct ordered WebSocket, so if

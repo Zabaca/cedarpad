@@ -22,7 +22,7 @@
 //
 //     "apply": "bun packages/infra/check-zbc-pin.ts && zbc apply"
 //
-// the same shape foundry uses to stop an apply running from a worktree. Every
+// the same shape another Zabaca tool uses to stop an apply running from a worktree. Every
 // apply in this repo passes through it (production and preview),
 // including `packages/canvas/scripts/deploy.sh`, which now calls `bun run apply`
 // instead of an unpinned `bunx`.

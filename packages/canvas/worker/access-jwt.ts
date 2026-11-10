@@ -8,7 +8,7 @@
  * naming the person and the application it was minted for. But this Worker is also
  * reachable on app.cedarpad.com and on workers.dev, where Access is not in
  * front of it, so the assertion is verified again here against the team's published
- * keys — the documented pattern, ported from games' apps/server/src/access.ts.
+ * keys, the documented pattern, ported from another Zabaca app.
  *
  * Value-fed: a `fetch`-shaped port, the team domain, the audience tag and the clock.
  * It names no binding, so the suite mints its own RSA key and serves its own JWKS.

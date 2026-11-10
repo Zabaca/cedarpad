@@ -698,7 +698,7 @@ describe('writer routes attribute to the edge-stamped author', () => {
     );
 
   test('component PUT and PATCH, data PUT and skill PUT each bind to the author', async () => {
-    expect((await write('PUT', `/api/components/${MOD}`, { source: 'export const v = 1;' }, 'u_jae')).status).toBe(200);
+    expect((await write('PUT', `/api/components/${MOD}`, { source: 'export const v = 1;' }, 'u_ada')).status).toBe(200);
     expect(
       (await write('PATCH', `/api/components/${MOD}`, { old_string: 'v = 1', new_string: 'v = 2' }, 'u_kim')).status,
     ).toBe(200);
@@ -706,7 +706,7 @@ describe('writer routes attribute to the edge-stamped author', () => {
     expect(
       (await write('PUT', `/api/skills/${SKILL}`, { files: [{ path: 'SKILL.md', content: '---\nname: t\n---\nb' }] }, 'u_ray')).status,
     ).toBe(200);
-    expect(authors).toEqual(['u_jae', 'u_kim', 'u_lee', 'u_ray']);
+    expect(authors).toEqual(['u_ada', 'u_kim', 'u_lee', 'u_ray']);
   });
 
   test('no author header ⇒ the write is unattributed, never a fixed user', async () => {
@@ -725,11 +725,11 @@ describe('a turn is attributed to whoever started it', () => {
     try {
       const req = new Request('http://localhost/api/chat/chat_authored/send', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-canvas-author': 'u_jae' },
+        headers: { 'content-type': 'application/json', 'x-canvas-author': 'u_ada' },
         body: JSON.stringify({ message: 'hi' }),
       });
       expect((await handleRequest(req)).status).toBe(202);
-      expect(seen).toEqual(['u_jae']);
+      expect(seen).toEqual(['u_ada']);
     } finally {
       restore();
       chatHub.resetForTests();
@@ -742,8 +742,8 @@ describe('a turn is attributed to whoever started it', () => {
       seen.push(args[11]);
     });
     try {
-      expect(sendToChat('shape:other', 'hello', 'cv_route', 'u_jae')).toEqual({ ok: true });
-      expect(seen).toEqual(['u_jae']);
+      expect(sendToChat('shape:other', 'hello', 'cv_route', 'u_ada')).toEqual({ ok: true });
+      expect(seen).toEqual(['u_ada']);
     } finally {
       restore();
     }

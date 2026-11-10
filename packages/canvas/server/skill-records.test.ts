@@ -119,7 +119,7 @@ describe('with no edge in front of the container, the filesystem is all there is
 });
 
 // Where a chat turn's skills come from: exactly two plugin areas, nothing implicit — not the
-// foundry home (~/.claude), not the repo's own developer .claude/skills, not CLAUDE.md.
+// process home (~/.claude), not the repo's own developer .claude/skills, not CLAUDE.md.
 describe('chatSkillSources: platform + workspace, and nothing else', () => {
   test('both areas are local plugins, and workspace skills render inside the workspace one', async () => {
     const { chatSkillSources } = await import('./skills.ts');

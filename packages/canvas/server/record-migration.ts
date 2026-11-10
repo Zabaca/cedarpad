@@ -59,8 +59,9 @@ export const MIGRATION_WORKSPACE = 'default';
  * documents (`GET /api/canvas-sync/:id/snapshot`, not the stale R2 blobs — the Durable Object
  * has been authoritative since ADR-0019) on 2026-07-29:
  *
- *   cv_edd9bab6 (this one)  AudioMeeting, ChatRoom, ComponentCatalog, AccessExplorer,
- *                           ScenarioMap, 2x Outliner: five dead cards
+ *   cv_edd9bab6 (this one)  AudioMeeting, ChatRoom, ComponentCatalog, two components
+ *                           whose names are withheld for publication, 2x Outliner:
+ *                           five dead cards
  *   cv_4bfb07e3             no instance of any of them
  *
  * Aimed at `cv_4bfb07e3` this migration would have written four Records nobody can see and
@@ -203,10 +204,11 @@ export const MIGRATION_PLAN: readonly PlannedRecord[] = [
 /** The two Components destroyed in the same flush with no surviving copy anywhere — no
  *  `write_component` call for either appears in any retained transcript (re-checked against
  *  the 49 MB of `sessions.tar` on 2026-07-29: 4 mentions each, none of them a write), and R2
- *  has no object versioning. Named here, and named in every report, so "three of five" is
- *  stated rather than inferred from a success message. Both have a live placed instance on
+ *  has no object versioning. Counted here, and in every report, so "three of five" is
+ *  stated rather than inferred from a success message. Their names are withheld for
+ *  publication: a report says that two components were lost, not which. Both have a live placed instance on
  *  `STANDUP_CANVAS`; those cards stay dead and should be removed rather than waited on. */
-export const PERMANENTLY_LOST: readonly string[] = ['AccessExplorer', 'ScenarioMap'];
+export const PERMANENTLY_LOST: readonly string[] = ['a component (name withheld for publication)', 'a second component (name withheld for publication)'];
 
 /** One archive entry deliberately left where it is. Keyed by archive AND path, because the
  *  survey classifies against this list: a bare filename would let a same-named file in a

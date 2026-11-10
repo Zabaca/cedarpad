@@ -48,7 +48,7 @@
     // site (sbx), which sleeps when idle (scripts/deploy-sandbox.sh, sandbox/workspace.env,
     // ADR-0028): the stack and the supervisor are two addresses there. The VM no longer
     // exists. Emptying this map routes `default` to the Cloudflare Container, whose agent
-    // cannot authenticate (its Claude secret is the placeholder only claude-mitm-proxy swaps).
+    // cannot authenticate (its Claude secret is the placeholder only the model-route proxy swaps).
     "SELF_HOSTED_WORKSPACES": "{\"default\":{\"stack\":\"https://cedarpad-default.sbx.zabaca.com\",\"supervisor\":\"https://4599-cedarpad-default.sbx.zabaca.com\"}}",
     "BETTER_AUTH_URL": "https://app.cedarpad.com",
     "WEB_ORIGIN": "https://app.cedarpad.com",

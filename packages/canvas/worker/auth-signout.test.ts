@@ -103,8 +103,8 @@ describe('sign-out actually clears the edge session (repro for "signout doesn\'t
   test('magic-link sign in -> sign out -> authenticate() sees no session', async () => {
     // An existing account is one half of the magic-link allowlist (a pending invitation
     // is the other), so seeding the row is what makes this address eligible for a link.
-    await db.insert(schema.user).values({ id: 'jae_1', name: 'Jae', email: 'jae@example.com' });
-    const cookie = await signInByMagicLink('jae@example.com');
+    await db.insert(schema.user).values({ id: 'ada_1', name: 'Ada', email: 'ada@example.com' });
+    const cookie = await signInByMagicLink('ada@example.com');
 
     // The session is live: Better Auth resolves a user from the cookie.
     const beforeSignOut = await sessionFor(cookie);

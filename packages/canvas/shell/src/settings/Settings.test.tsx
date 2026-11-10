@@ -12,7 +12,7 @@ import { SettingsStage } from './Settings';
 const MEMBERS = {
   members: [
     { userId: 'u_owner', name: 'James', email: 'owner@example.com', role: 'owner' },
-    { userId: 'u_khoa', name: 'Khoa', email: 'khoa@example.com', role: 'member' },
+    { userId: 'u_noor', name: 'Noor', email: 'noor@example.com', role: 'member' },
   ],
 };
 const INVITATIONS = { invitations: [{ token: 'tok_1', email: 'newbie@example.com', url: '/invite/tok_1', expiresAt: 1752000000000 }] };
@@ -36,7 +36,7 @@ function stubEdge() {
     if (url.startsWith('/api/workspaces/ws_abc/members/') && method === 'PATCH') {
       return Response.json({
         members: [
-          { userId: 'u_khoa', name: 'Khoa', email: 'khoa@example.com', role: 'owner' },
+          { userId: 'u_noor', name: 'Noor', email: 'noor@example.com', role: 'owner' },
           { userId: 'u_owner', name: 'James', email: 'owner@example.com', role: 'member' },
         ],
       });
@@ -87,11 +87,11 @@ describe('SettingsStage — members (#192)', () => {
     expect(host.textContent).toContain('James');
     expect(host.textContent).toContain('owner@example.com');
     expect(host.textContent).toContain('owner');
-    expect(host.textContent).toContain('Khoa');
+    expect(host.textContent).toContain('Noor');
     expect(host.textContent).toContain('newbie@example.com');
     // owner affordances: invite + remove + revoke
     expect(host.querySelector('.settings-invite')).not.toBeNull();
-    expect(host.querySelectorAll('.settings-remove').length).toBe(1); // Khoa only, never the owner
+    expect(host.querySelectorAll('.settings-remove').length).toBe(1); // Noor only, never the owner
     expect(host.querySelectorAll('.settings-revoke').length).toBe(1);
   });
 
@@ -99,7 +99,7 @@ describe('SettingsStage — members (#192)', () => {
     ownerView = false;
     await act(async () => root.render(<SettingsStage workspaceId="ws_abc" />));
     await flush();
-    expect(host.textContent).toContain('Khoa');
+    expect(host.textContent).toContain('Noor');
     expect(host.textContent).not.toContain('newbie@example.com');
     expect(host.querySelector('.settings-invite')).toBeNull();
     expect(host.querySelectorAll('.settings-remove').length).toBe(0);
@@ -177,7 +177,7 @@ describe('SettingsStage — members (#192)', () => {
     });
     await flush();
     window.confirm = confirmReal;
-    expect(calls).toContain('DELETE /api/workspaces/ws_abc/members/u_khoa');
+    expect(calls).toContain('DELETE /api/workspaces/ws_abc/members/u_noor');
     // roster re-fetched after the delete
     expect(calls.filter((c) => c === 'GET /api/workspaces/ws_abc/members').length).toBe(2);
   });
@@ -192,9 +192,9 @@ describe('SettingsStage — members (#192)', () => {
     });
     await flush();
     window.confirm = confirmReal;
-    expect(calls).toContain('PATCH /api/workspaces/ws_abc/members/u_khoa');
+    expect(calls).toContain('PATCH /api/workspaces/ws_abc/members/u_noor');
     expect(host.querySelectorAll('.settings-role-owner').length).toBe(1);
-    expect(host.textContent).toContain('Khoa');
+    expect(host.textContent).toContain('Noor');
   });
 });
 

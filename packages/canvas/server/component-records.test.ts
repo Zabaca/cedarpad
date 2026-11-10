@@ -362,13 +362,13 @@ describe('the author a container stamps on a Record', () => {
 
   test('every write carries the author the store was bound to', async () => {
     const { rpc, seen } = recordingRpc();
-    const records = componentRecordsOver(rpc, WS, 'user_jae');
+    const records = componentRecordsOver(rpc, WS, 'user_ada');
     await records.write('own', CANVAS, 'Card', 'x');
     await records.restore('own', CANVAS, 'Card', 1);
     await records.promote(CANVAS, 'Card');
     await records.adopt(CANVAS, 'Card');
     await records.writeData(CANVAS, 'd.json', '{}');
-    expect(seen.map((s) => s.userId)).toEqual(['user_jae', 'user_jae', 'user_jae', 'user_jae', 'user_jae']);
+    expect(seen.map((s) => s.userId)).toEqual(['user_ada', 'user_ada', 'user_ada', 'user_ada', 'user_ada']);
   });
 
   test('no known author ⇒ null, rather than a string that is not one', async () => {

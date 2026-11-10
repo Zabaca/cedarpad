@@ -602,7 +602,7 @@ describe('verification', () => {
     await migrateRecords(rpc, resolved, { write: true });
 
     expect((await verifyMigration(rpc, resolved)).lost).toEqual(PERMANENTLY_LOST);
-    expect(PERMANENTLY_LOST).toEqual(['AccessExplorer', 'ScenarioMap']);
+    expect(PERMANENTLY_LOST).toHaveLength(2);
   });
 
   test('the platform tier is not mistaken for migrated content', async () => {
