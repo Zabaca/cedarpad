@@ -164,7 +164,7 @@ export default {
     if (canonical) return canonical;
 
     // Public build stamp (#74): the SHA the default workspace's stack is running, answered by
-    // wherever that stack lives — the self-hosted VM when `default` is mapped there, its
+    // wherever that stack lives: the self-hosted sandbox when `default` is mapped there, its
     // CanvasContainer otherwise (the bridge's /api/buildrev returns ONLY the SHA, never
     // /api/status's health/client counts). It carries no Better Auth session, so it's routed
     // HERE, ahead of the edge gate. This is the one unauthenticated path that can cold-boot a

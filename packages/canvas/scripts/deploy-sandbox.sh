@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Deploy origin/main to the workspace's sandbox on the sandbox site (sbx), the deploy target that serves the default
-# workspace once it has moved off the VM (scripts/deploy-vm.sh). The Cloudflare container (deploy.sh) is not touched.
+# workspace (ADR-0028). The Cloudflare container (deploy.sh) is not touched.
 # Run from James's Mac: sbx's credentials are there (its own file, else sops), and so is the incus identity that
 # `sbx image build` reaches the site's build machine with.
 #
 #   1. Archive origin/main (git archive, so the build context is exactly that commit and no repository credential goes
 #      to the box) and build the image's `sandbox` form on the site's build machine (packages/canvas/Dockerfile).
-#      The commit and the version go in as build arguments and become the stamps inside, as deploy.sh and the VM's
-#      app step write them (ADR-0025). The build pulls the image onto both workers and pins it.
+#      The commit and the version go in as build arguments and become the stamps inside, as deploy.sh writes
+#      them (ADR-0025). The build pulls the image onto both workers and pins it.
 #   2. Create the sandbox if it does not exist: its size, main port, the route, "start fresh when lost", the supervisor
 #      as its start command and the supervisor's bearer as its stored environment (read from sops, never typed or
 #      printed), and the supervisor's port as the only one reachable by prefix (--open-port; needs an sbx from
@@ -23,10 +23,12 @@
 # --dry-run resolves the commit, asks the site whether the sandbox exists and prints what it would do; it builds and
 # changes nothing.
 #
-# Env overrides, for proving the script without touching the real sandbox (use test values only):
+# Env overrides, for proving the script without touching the real sandbox (use test values only), except
+# SANDBOX_DEPLOY_REF, which the release always sets:
 #   SANDBOX_DEPLOY_NAME        a sandbox name other than the declared one
 #   SANDBOX_DEPLOY_IMAGE_NAME  an image repository other than the declared one (so a test image is its own to delete)
-#   SANDBOX_DEPLOY_REF         a git ref to build instead of origin/main (the stamp inside is then that ref's)
+#   SANDBOX_DEPLOY_REF         a git ref to build instead of origin/main (the stamp inside is then that ref's); the release
+#                              skill always passes the commit it pushed, so a later merge cannot move what is deployed
 #   SANDBOX_DEPLOY_SUPERVISOR_TOKEN  the supervisor's bearer, instead of reading it from sops (a TEST value: it is stored)
 #   SBX                        the sbx command (default: sbx on PATH, else Home's checkout)
 #
@@ -48,6 +50,9 @@ REPO_ROOT=$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)
 source "$REPO_ROOT/packages/canvas/sandbox/workspace.env"
 NAME=${SANDBOX_DEPLOY_NAME:-$SANDBOX_NAME}
 IMAGE_REPO=${SANDBOX_DEPLOY_IMAGE_NAME:-$IMAGE_NAME}
+# Set but empty is refused rather than read as unset: a release passes the commit it pushed, and a variable lost between two
+# shell calls would otherwise deploy whatever origin/main is by then while the stamp check still passed.
+if [ "${SANDBOX_DEPLOY_REF+set}" = set ] && [ -z "$SANDBOX_DEPLOY_REF" ]; then fail "SANDBOX_DEPLOY_REF is set but empty"; fi
 REF=${SANDBOX_DEPLOY_REF:-origin/main}
 
 HOME_SBX="$HOME/Library/Application Support/Varnick/Home/packages/sandboxes/sbx"

@@ -26,7 +26,7 @@ import { comparePin, declaredTag, declaredVersion } from './check-zbc-pin'
 // problem rather than a fix. So the enforcement is wired into `bun run apply`
 // itself — `"apply": "bun packages/infra/check-zbc-pin.ts && zbc apply"` — the
 // same shape foundry uses to stop an apply from a worktree. Every apply in this
-// repo passes through it: production, preview and workspace alike, including
+// repo passes through it: production and preview alike, including
 // `deploy.sh`, which now calls `bun run apply` rather than an unpinned `bunx`.
 //
 // This file tests the comparison. The `&&` is what makes it bite.
@@ -167,9 +167,7 @@ describe('this repo agrees with itself', () => {
 
   test('no markdown outside the ADRs documents an unpinned apply', () => {
     // Documentation is the other half. The ADRs are excluded deliberately —
-    // they record what was decided when, not what to type today — and
-    // `workspace/README.md` narrates what this repo USED to say, which is the
-    // one place the old string belongs.
+    // they record what was decided when, not what to type today.
     //
     // `CHANGELOG.md` is excluded on the ADRs' reasoning rather than on its own:
     // an entry is a record of a release that already shipped, written in the
@@ -198,7 +196,6 @@ describe('this repo agrees with itself', () => {
     const hits = found
       .filter((l) => !l.startsWith('docs/adr/'))
       .filter((l) => !l.startsWith('CHANGELOG.md'))
-      .filter((l) => !l.startsWith('packages/infra/environments/workspace/README.md'))
       .filter((l) => !/`bun run apply/.test(l))
     expect(hits).toEqual([])
   })
