@@ -1,41 +1,21 @@
 name: gates
 
-# The unit tests, typechecks and lint that a release requires — run per commit,
+# The unit tests, typechecks and lint that a release requires, run per commit,
 # where the commit that breaks them is still on screen.
 #
-# Until now `e2e.yml` was the only workflow and `bun run test:e2e` its only step,
-# so NONE of the checks below ever ran in CI. They ran for the first time in the
-# release skill's preflight, against a batch of every commit since the last tag
-# — typically 10 to 18 of them, four or five days apart. Everything broken in
-# that window surfaced at once, at the moment someone was trying to ship, which
-# is how "release cedarpad" became a multi-day activity in which no product
-# change shipped between v0.2.4 and now.
-#
-# ── Where each job runs, decided by measurement rather than preference ─────
-# This went up on ubuntu-latest for both jobs, on the reasoning that neither
-# needs the box. `www` does not, and stays there. `canvas` does, and the PR that
-# introduced this file is what proved it: 2110 pass / 13 skip / 63 fail on a
-# clean ubuntu runner against 2186 / 0 on a dev machine, spanning the inbox API,
-# git worktree helpers, the `gh` PR path and the UI rail. Adding the local D1
-# migrate below fixed none of it — the count stayed at exactly 63.
-#
-# So the canvas suite is NOT hermetic: it passes on a machine that development
-# has configured and nowhere else. That is worth fixing and is not this change's
-# job; running it here on the one runner where it demonstrably passes is what
-# gets these gates running per commit today. The cost is that canvas queues with
-# e2e on the single `ryzen-cedarpad` runner — tolerable while e2e is ~90s, and
-# the thing to revisit if e2e grows back toward its 20-minute timeout.
-#
-# `www` moved onto the runner too, on 2026-09-24. It stayed on ubuntu-latest so
-# a red there could never be blamed on the box and the changelog guard would run
-# while the box was down, but GitHub stopped starting it: "recent account
-# payments have failed or your spending limit needs to be increased". Every
-# gates run since at least 2026-09-07 failed on a job that never ran, so the guard was
-# already guarding nothing. A box that is sometimes down beats a runner that
-# never starts. It queues behind canvas and e2e on `ryzen-cedarpad`; it is
-# seconds of work.
-#
-# e2e stays exactly where it is. It genuinely needs the runner.
+# ── Public repository: what a fork's pull request can and cannot reach ─────
+# Everything here runs on GitHub's own runners, for a repository where they cost
+# nothing. A pull request from a fork runs THIS file as the fork wrote it, so what
+# keeps it harmless is what no version of the file can reach:
+#   - no secret is used anywhere, and a fork's run is given none by GitHub;
+#   - no job names a self-hosted runner (a fork could name any label the
+#     repository has), and none is registered;
+#   - the token is read-only for the whole workflow;
+#   - there is no `pull_request_target` or `workflow_run` trigger, which would run
+#     with the base repository's secrets and write token.
+# packages/infra/workflows.test.ts fails the build if any of that changes.
+# The repository setting "Require approval for all outside collaborators" holds EVERY
+# run of a fork's pull request until a maintainer approves it.
 
 on:
   push:
@@ -43,23 +23,24 @@ on:
   pull_request:
     branches: [main]
   # The release preflight has to be able to ASK for these gates on main. Without
-  # this it could only ever read a run some other event happened to create — and
-  # on 2026-08-26 there was none: pushes to main silently stopped producing runs
-  # after v0.2.6, so the two commits in that release had no gates run at all and
-  # the preflight had nothing to read. e2e.yml already carried this trigger,
-  # which is the only reason half the gate was satisfiable that day.
+  # this it could only ever read a run some other event happened to create.
   workflow_dispatch:
 
 concurrency:
   group: gates-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   canvas:
-    runs-on: [self-hosted, ryzen]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # wrangler refuses to run under bun and resolves `node` off PATH; pinned
       # here for the same reason e2e.yml pins it rather than assuming it.
@@ -74,19 +55,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # NEVER `bun test` bare in packages/canvas — it collects web-poc's vitest
+      # NEVER `bun test` bare in packages/canvas: it collects web-poc's vitest
       # specs under the wrong runner and manufactures ~10 failures that are not
       # real. The package script scopes the directories. (CLAUDE.md says this;
       # it is repeated here because this file is where it would be got wrong.)
-      # The server tests run against a REAL local D1 (miniflare), not a stub —
-      # the Record stores and friends create rows and read them back. On a dev box
-      # `.wrangler/state` already exists because someone migrated it once, so this
-      # step is invisible there; on a fresh runner there is no database and 63
-      # tests fail with "the workspace store is unreachable". Found by this
-      # workflow failing on its own PR, which is the reason it went up as a PR.
-      #
-      # Local-only: miniflare's D1 is a file under `.wrangler/state`, so this
-      # needs no Cloudflare credentials and touches nothing remote.
+      # The server tests run against a REAL local D1 (miniflare), not a stub, so a
+      # fresh runner needs the database created first. Local-only: miniflare's D1
+      # is a file under `.wrangler/state`, so this needs no Cloudflare credentials
+      # and touches nothing remote.
       - name: Create the local D1
         run: bun run webpoc:db:migrate:local
         working-directory: packages/canvas
@@ -108,10 +84,12 @@ jobs:
         working-directory: packages/canvas
 
   www:
-    runs-on: [self-hosted, ryzen]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -126,9 +104,7 @@ jobs:
 
       # This one is the changelog guard: it parses the committed CHANGELOG.md
       # and throws on a malformed entry. It is the only thing standing between a
-      # format slip and content silently missing from the public page — and with
-      # the release skill's human gate gone, it is now the ONLY thing checking
-      # an entry nobody read before it shipped.
+      # format slip and content silently missing from the public page.
       - name: www tests
         run: bun run test
         working-directory: packages/www
@@ -140,3 +116,28 @@ jobs:
       - name: www lint
         run: bun run lint
         working-directory: packages/www
+
+  infra:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The zbc pin check, and the guard that keeps a fork's pull request away from
+      # secrets and self-hosted runners (see the header).
+      - name: infra tests
+        run: bun run test
+        working-directory: packages/infra
+
+      - name: infra typecheck
+        run: bun run typecheck
+        working-directory: packages/infra

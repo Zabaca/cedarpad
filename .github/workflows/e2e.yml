@@ -4,26 +4,30 @@ name: e2e
 # remove it. Roughly 45% of commits on main here are pushed directly and never
 # open a PR (checked against the commits/pulls API over the last 60 commits), so
 # dropping this trigger would leave nearly half of main with no e2e coverage at
-# all. Dropping it was proposed to save billed minutes; that argument no longer
-# applies now that this runs on a self-hosted runner, where the minutes are free.
+# all.
+#
+# Runs on GitHub's own runners and uses no secret, so a fork's pull request can run
+# it safely. gates.yml's header says what keeps it that way.
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
 
-# A force-push supersedes the run it interrupts, so cancel the old one. The point is
-# freeing the single self-hosted runner, not saving money: these minutes are not billed.
-# Note this also cancels an in-flight main run when pushes land close together. That
-# costs attribution, not coverage, because a run on main tests the tip and the tip
-# already contains the commit whose run was cancelled.
+# A force-push supersedes the run it interrupts, so cancel the old one. Note this
+# also cancels an in-flight main run when pushes land close together. That costs
+# attribution, not coverage, because a run on main tests the tip and the tip already
+# contains the commit whose run was cancelled.
 concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   e2e:
-    runs-on: [self-hosted, ryzen]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       CI: 'true'
@@ -32,22 +36,15 @@ jobs:
         working-directory: packages/canvas
     steps:
       - uses: actions/checkout@v4
-
-      # ONE runner + `cancel-in-progress` + no reaper = a cancelled run poisons the next one.
-      # Playwright's webServer children (bridge, vite, `wrangler dev`) are orphaned when the
-      # job is killed mid-step and keep their ports; the next run's wrangler then cannot bind,
-      # nothing listens on the edge port, and every test fails at auth setup with
-      # ECONNREFUSED. Re-running does not clear it. See scripts/ci-reap.sh for the incident.
-      - name: Reap orphans from a cancelled run
-        run: bash scripts/ci-reap.sh
+        with:
+          persist-credentials: false
 
       # wrangler REQUIRES node and refuses to run under bun. `scripts/wrangler-local.ts`
-      # spawns `node_modules/.bin/wrangler`, whose shebang resolves `node` off PATH — so when
-      # node vanished from this runner host (2026-08-04) the shim fell through to bun,
-      # wrangler's inspector WebSocket died with "Unexpected server response: 101", the edge
-      # Worker never bound its port, and every spec failed at auth setup with ECONNREFUSED
-      # (1 failed, 22 never ran). The workflow pinned bun but only ASSUMED node; pinning it
-      # makes the runtime wrangler needs a property of the workflow, not of the box.
+      # spawns `node_modules/.bin/wrangler`, whose shebang resolves `node` off PATH, so
+      # without node the shim falls through to bun, wrangler's inspector WebSocket dies
+      # with "Unexpected server response: 101", the edge Worker never binds its port and
+      # every spec fails at auth setup with ECONNREFUSED. The workflow pins node so the
+      # runtime wrangler needs is a property of the workflow, not of the runner.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -60,11 +57,10 @@ jobs:
         run: bun install --frozen-lockfile
         working-directory: .
 
-      # No --with-deps: the system libraries are provisioned once on the runner host,
-      # not per run, and apt-get on that host is currently wedged. ~/.cache/ms-playwright
-      # persists between runs, so this is usually a no-op cache hit.
+      # A hosted runner is a fresh machine every run, so the browser and its system
+      # libraries are installed each time.
       - name: Install Playwright browser
-        run: bunx playwright install chromium
+        run: bunx playwright install --with-deps chromium
 
       - name: Run e2e
         run: bun run test:e2e
@@ -76,11 +72,3 @@ jobs:
           name: playwright-report
           path: packages/canvas/playwright-report/
           retention-days: 7
-
-      # `always()` covers CANCELLATION, which is the case that matters: leaving the box clean
-      # for the next run is the whole point, and the run most likely to strand processes is
-      # the one that gets superseded. The step above is the safety net for when even this
-      # does not get to run.
-      - name: Leave the runner clean
-        if: always()
-        run: bash scripts/ci-reap.sh
