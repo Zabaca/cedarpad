@@ -224,7 +224,7 @@ export async function handleCanvasesApi(
  * on rows that were already deleted. Nothing a canvas deletion does can reach it.
  *
  * OWNER-only, which is strictly more than a Record write needs — a write is authorized by the
- * platform-RPC bearer (a constant, so a consistency check rather than a tenancy one, #374),
+ * platform-RPC bearer (bound to the workspace it names since #374),
  * while this carries a real member session and asks for the strongest role in the workspace.
  * A purge is the only operation in the system that destroys source, so it gets the strongest
  * gate the system has.

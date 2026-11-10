@@ -20,8 +20,7 @@ import { sseComment } from './sse.ts';
 import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import { isLocalhostEdge, loadWebPocEnv } from './platform-rpc-env.ts';
-import { LOCAL_DEV_PLATFORM_SECRET } from '../shared/platform-rpc.ts';
+import { loadWebPocEnv } from './platform-rpc-env.ts';
 import {
   BRIDGE_ROUTES,
   CANVAS_AUTHOR_HEADER,
@@ -86,9 +85,10 @@ const BOOT_AT = Date.now();
 
 // --- platform env ----------------------------------------------------------
 // The platform data layer's env — since ADR-0018 / #266 that means just the two values the
-// PLATFORM RPC needs (its edge origin and the shared trust root the bearer derives from). The
+// PLATFORM RPC needs (its edge origin and the workspace key its bearers derive from, #374). The
 // container gets them as real process.env; local dev reads them from web-poc/.dev.vars, the
-// same file `wrangler dev` loads for the edge Worker, so both ends of the hop agree.
+// same file `wrangler dev` loads for the edge Worker, and derives its workspace key from the
+// dev secret there, so both ends of the hop agree.
 //
 // web-poc's own Hono app is NOT mounted here any more: #263 put the edge Worker into the dev
 // loop, which is where `/api/auth/*` is served from now.
@@ -462,9 +462,9 @@ export function sendToChat(targetChatId: string, message: string, canvasId?: str
 // there is no cached store here to go stale behind a human's edits.
 const canvasEdgeConfig = {
   origin: webPocEnv.PLATFORM_RPC_ORIGIN,
-  secret:
-    webPocEnv.BETTER_AUTH_SECRET ||
-    (isLocalhostEdge(webPocEnv.PLATFORM_RPC_ORIGIN) ? LOCAL_DEV_PLATFORM_SECRET : undefined),
+  // This container's workspace key (#374; derived by `loadWebPocEnv` in local dev), never the
+  // shared secret: it authenticates this workspace's canvases and no other's.
+  secret: webPocEnv.WORKSPACE_KEY,
 };
 const productionRoomOpener = canvasRoomOpener(canvasEdgeConfig);
 /** How `read_image` reaches the pixels: they live behind the edge's asset route since #290,

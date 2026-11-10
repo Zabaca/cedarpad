@@ -216,9 +216,13 @@ edge mints the null itself: a workspace's shared library is reachable only by na
 the registry places inside it, which is the same check an own-tier write already passes. (That
 is also why a shared module's dev-server URL carries `?c=<canvasId>`: materializing it goes
 through the edge.) Skills have no canvas at all, so they fall back to "the workspace is real".
-Both are **consistency** checks, not tenancy checks — the platform-RPC bearer is a constant
-with no workspace identity in it, so neither can stop a caller that names a real, coherent
-workspace it does not own (#374).
+What makes them **tenancy** checks (#374) is that the container's bearer is bound to its
+workspace: the container is handed `WORKSPACE_KEY` (`HMAC(BETTER_AUTH_SECRET, 'workspace-key/v1:'
++ workspaceId)`, `shared/workspace-key.ts`) and never the secret, derives its per-surface bearers
+(platform RPC, canvas mutation, asset read) from that key, and the edge verifies each against the
+key of the workspace the request names (the payload's `workspaceId`, or the workspace that owns
+the canvas in the path). A key for workspace A verifies nothing claimed for workspace B, so a
+caller cannot name a real, coherent (workspace, canvas) pair it does not own.
 
 **Materialization timing is not uniform, and the difference is the point.** A Component is
 materialized **lazily**, when vite requests the module — the client already walks own → shared

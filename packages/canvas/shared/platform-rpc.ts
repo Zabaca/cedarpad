@@ -19,34 +19,36 @@ import { serviceToken, verifyServiceToken } from './service-token.ts';
  * container process, which has no Better Auth cookie. */
 export const PLATFORM_RPC_PATH = '/api/platform-rpc';
 
-/** The HMAC message. Key separation: the bearer is derived from BETTER_AUTH_SECRET rather
- * than being it, so this credential can never be replayed as anything else. */
+/** The HMAC message. Key separation: the bearer is derived from a key rather than being it,
+ * so this credential can never be replayed as anything else. */
 const TOKEN_LABEL = 'platform-rpc/v1';
 
-
-/**
- * The bearer both sides derive from the shared trust root — `HMAC-SHA256(BETTER_AUTH_SECRET,
- * 'platform-rpc/v1')`. Same pattern and same secret as the guest cookie
- * (`worker/guest-session.ts`): "same trust root as member sessions, no second secret to
- * rotate" — so this slice adds no new secret to sops, and therefore no deploy gate.
- */
 /**
  * The trust root LOCAL DEV falls back to when there is no `web-poc/.dev.vars` (a fresh
  * checkout or worktree). Both ends read it — the bridge for `PLATFORM_RPC_ORIGIN` pointing at
  * localhost, the generated dev wrangler config as a `vars` default that a real `.dev.vars`
  * overrides — so the hop works out of the box and cannot half-configure into a silent 401.
  *
- * Safe to keep in the repo because it is only ever reachable across localhost, and the bridge
- * refuses it for any non-localhost edge (server/bridge.ts). It is not a production credential
- * and must never become one.
+ * Safe to keep in the repo because it is only ever reachable across localhost, and a process
+ * only derives a workspace key from it for a localhost edge (`withDevWorkspaceKey`,
+ * server/platform-rpc-env.ts). It is not a production credential and must never become one.
  */
 export const LOCAL_DEV_PLATFORM_SECRET = 'local-dev-platform-secret-not-for-production-use';
 
-export const platformRpcToken = (secret: string): Promise<string> => serviceToken(secret, TOKEN_LABEL);
+/**
+ * The bearer a container presents, `HMAC-SHA256(workspaceKey, 'platform-rpc/v1')`, where
+ * `workspaceKey` is the key of the workspace the container serves (`shared/workspace-key.ts`,
+ * #374). The container holds that key and nothing it could derive another workspace's from; the
+ * edge derives the key of the workspace the payload NAMES and verifies against it, so a bearer
+ * only ever authenticates the workspace it was minted for. No new secret enters sops: the keys
+ * derive from BETTER_AUTH_SECRET, the same trust root the guest cookie is signed with.
+ */
+export const platformRpcToken = (workspaceKey: string): Promise<string> => serviceToken(workspaceKey, TOKEN_LABEL);
 
-/** Verify a presented bearer. Constant-time by construction — see `shared/service-token.ts`. */
-export const verifyPlatformRpcToken = (secret: string, presented: string): Promise<boolean> =>
-  verifyServiceToken(secret, TOKEN_LABEL, presented);
+/** Verify a presented bearer against one workspace's key. Constant-time by construction, see
+ *  `shared/service-token.ts`. */
+export const verifyPlatformRpcToken = (workspaceKey: string, presented: string): Promise<boolean> =>
+  verifyServiceToken(workspaceKey, TOKEN_LABEL, presented);
 
 /**
  * The **Record** verbs (ADR-0022). Component source stops being a
@@ -68,11 +70,9 @@ export const verifyPlatformRpcToken = (secret: string, presented: string): Promi
  * therefore reachable only by naming a canvas the registry places inside it — the container
  * never sends the null and never picks the tier's key.
  *
- * Be precise about what that buys, though: it makes the shared tier exactly as protected as
- * the own tier, and no more. Both are **consistency** checks — the bearer above is a constant
- * with no workspace identity in it, so neither can stop a caller that names a real, coherent
- * (workspace, canvas) pair it does not own. That is #374, and it is a property of the token,
- * not of these verbs.
+ * It makes the shared tier exactly as protected as the own tier. Both rest on the bearer
+ * being bound to the workspace the payload names (#374): the edge verifies it against that
+ * workspace's key, so a caller cannot name a coherent (workspace, canvas) pair it does not own.
  *
  * These verbs break the "best-effort" rule that governs every operation above them, and
  * deliberately: a Component write that cannot be persisted must FAIL the tool call so the

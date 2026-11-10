@@ -3,9 +3,16 @@ import { describe, expect, test } from 'bun:test';
 import type { Env } from './index.ts';
 import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.ts';
 import { canvasMutateToken, CONTAINER_PRINCIPAL } from '../shared/canvas-mutation.ts';
+import { workspaceKey } from '../shared/workspace-key.ts';
 import { SYNC_USER_HEADER } from './sync-api.ts';
 
 const SECRET = 'test-secret';
+
+/** Which workspace owns the canvas, as the registry would say. `null`: the registry has never heard of it. */
+const ownedBy = (workspaceId: string | null) => async () => workspaceId;
+
+/** The bearer a container for `workspaceId` presents (#374). */
+const bearerFor = async (workspaceId: string) => `Bearer ${await canvasMutateToken(await workspaceKey(SECRET, workspaceId))}`;
 
 const post = (body: unknown, headers: Record<string, string> = {}) =>
   new Request('https://app.test/api/canvas-sync/c1/mutate', { method: 'POST', body: JSON.stringify(body), headers });
@@ -63,21 +70,80 @@ describe('handleCanvasMutate', () => {
   test('admits the container service bearer with no user session', async () => {
     const { env, seen } = fakeNamespace();
     const res = await handleCanvasMutate(
-      post({ op: 'read' }, { authorization: `Bearer ${await canvasMutateToken(SECRET)}` }),
+      post({ op: 'read' }, { authorization: await bearerFor('ws_a') }),
       env,
       'c1',
       null,
-      async () => false, // no user ⇒ the per-user reachability check must not decide this
+      async () => false, // no user => the per-user reachability check must not decide this
+      ownedBy('ws_a'),
     );
     expect(res.status).toBe(200);
     expect(seen[0]?.headers.get(SYNC_USER_HEADER)).toBe(CONTAINER_PRINCIPAL);
   });
 
-  test('a wrong bearer with no session is still 401', async () => {
+  // #374: the bearer is the container's WORKSPACE's. A container for workspace B holds a key that
+  // verifies for no canvas of workspace A, whatever canvas it names in the path.
+  test("a container for another workspace is refused on this workspace's canvas", async () => {
     const { env, seen } = fakeNamespace();
-    const res = await handleCanvasMutate(post({ op: 'read' }, { authorization: 'Bearer nope' }), env, 'c1', null, async () => true);
+    const res = await handleCanvasMutate(
+      post({ op: 'read' }, { authorization: await bearerFor('ws_b') }),
+      env,
+      'c1',
+      null,
+      async () => false,
+      ownedBy('ws_a'),
+    );
     expect(res.status).toBe(401);
     expect(seen).toHaveLength(0);
+  });
+
+  test('a canvas the registry does not know admits no container', async () => {
+    const { env, seen } = fakeNamespace();
+    const res = await handleCanvasMutate(
+      post({ op: 'read' }, { authorization: await bearerFor('ws_a') }),
+      env,
+      'c1',
+      null,
+      async () => false,
+      ownedBy(null),
+    );
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(0);
+  });
+
+  test('the old constant bearer, derived straight from the secret, is refused', async () => {
+    const { env, seen } = fakeNamespace();
+    const res = await handleCanvasMutate(
+      post({ op: 'read' }, { authorization: `Bearer ${await canvasMutateToken(SECRET)}` }),
+      env,
+      'c1',
+      null,
+      async () => false,
+      ownedBy('ws_a'),
+    );
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(0);
+  });
+
+  test('a wrong bearer with no session is still 401', async () => {
+    const { env, seen } = fakeNamespace();
+    const res = await handleCanvasMutate(post({ op: 'read' }, { authorization: 'Bearer nope' }), env, 'c1', null, async () => true, ownedBy('ws_a'));
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(0);
+  });
+
+  test('a member session still works when a bearer is also presented and wrong for the workspace', async () => {
+    const { env, seen } = fakeNamespace();
+    const res = await handleCanvasMutate(
+      post({ op: 'read' }, { authorization: await bearerFor('ws_b') }),
+      env,
+      'c1',
+      { id: 'u1' } as never,
+      async () => true,
+      ownedBy('ws_a'),
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0]?.headers.get(SYNC_USER_HEADER)).toBe('u1');
   });
 
   test('a malformed payload is a 400 that never reaches the room', async () => {

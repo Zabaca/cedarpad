@@ -102,7 +102,7 @@ export class CanvasContainer {
     const url = new URL(request.url);
     const coords = JSON.parse(request.headers.get(COORDS_HEADER) ?? 'null') as SandboxCoords | null;
     if (!coords) return new Response('canvas container: no workspace coordinates', { status: 400 });
-    const env = { ...containerEnv(this.env, coords), IS_SANDBOX: '1' };
+    const env = { ...(await containerEnv(this.env, coords)), IS_SANDBOX: '1' };
 
     if (url.pathname === RECYCLE_PATH) {
       const r = await this.container.destroy().then(() => 'destroyed', (e: unknown) => messageOf(e));

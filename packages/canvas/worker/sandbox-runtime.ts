@@ -32,7 +32,7 @@ export async function serveWorkspace(
   // is allowed to reach it. Returns null unless the workspace is mapped AND all
   // three credentials are present, so a partial rollout serves from the container.
   const selfHosted = selfHostedTarget(env, coords.canvasWorkspace);
-  if (selfHosted) return serveSelfHosted(request, selfHosted, containerEnv(env, coords), coords, opts);
+  if (selfHosted) return serveSelfHosted(request, selfHosted, await containerEnv(env, coords), coords, opts);
   return serveCanvasContainer(request, env, coords);
 }
 

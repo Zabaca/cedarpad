@@ -21,11 +21,13 @@ export const canvasMutatePath = (canvasId: string): string => `/api/canvas-sync/
  *  token minted for the chat-lifecycle RPC must not be replayable as a canvas write. */
 const TOKEN_LABEL = 'canvas-mutate/v1';
 
-/** The bearer the bridge presents — `HMAC-SHA256(BETTER_AUTH_SECRET, 'canvas-mutate/v1')`,
- *  the same trust root and the same shape as ADR-0018's platform RPC (#305). */
-export const canvasMutateToken = (secret: string): Promise<string> => serviceToken(secret, TOKEN_LABEL);
-export const verifyCanvasMutateToken = (secret: string, presented: string): Promise<boolean> =>
-  verifyServiceToken(secret, TOKEN_LABEL, presented);
+/** The bearer the bridge presents, `HMAC-SHA256(workspaceKey, 'canvas-mutate/v1')`, the same
+ *  shape as ADR-0018's platform RPC (#305), and like it bound to the workspace its container
+ *  serves (#374): the edge verifies it against the key of the workspace the canvas in the
+ *  PATH belongs to, so a container can write only its own workspace's canvases. */
+export const canvasMutateToken = (workspaceKey: string): Promise<string> => serviceToken(workspaceKey, TOKEN_LABEL);
+export const verifyCanvasMutateToken = (workspaceKey: string, presented: string): Promise<boolean> =>
+  verifyServiceToken(workspaceKey, TOKEN_LABEL, presented);
 
 /**
  * The identity a container-authenticated mutation acts under, stamped by the edge and read

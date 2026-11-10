@@ -1,10 +1,12 @@
-// A bearer a CONTAINER presents to the EDGE, derived from the shared trust root.
+// A bearer a CONTAINER presents to the EDGE, derived from a key.
 //
 // Extracted from `shared/platform-rpc.ts` (ADR-0018), which established the pattern:
-// `HMAC-SHA256(BETTER_AUTH_SECRET, <label>)`, the same secret the guest cookie is signed
-// with, so no new secret enters sops and no deploy gate appears. The LABEL is the key
-// separation: a token minted for one surface can never be replayed on another, which is
-// why every new container→edge surface takes its own label rather than reusing a token.
+// `HMAC-SHA256(<key>, <label>)`. For a container the key is its workspace's key
+// (`shared/workspace-key.ts`, #374), itself derived from BETTER_AUTH_SECRET, the secret the
+// guest cookie is signed with, so no new secret enters sops and no deploy gate appears.
+// The LABEL is the key separation: a token minted for one surface can never be replayed on
+// another, which is why every new container→edge surface takes its own label rather than
+// reusing a token.
 
 const b64url = (bytes: ArrayBuffer): string =>
   btoa(String.fromCharCode(...new Uint8Array(bytes))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');

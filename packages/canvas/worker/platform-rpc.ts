@@ -1,5 +1,4 @@
 import type { Database } from '../web-poc/lib/db/client.ts';
-import * as canvasRegistry from '../web-poc/lib/db/queries/canvases.ts';
 import { getWorkspaceRecord } from '../web-poc/lib/db/queries/workspaces.ts';
 import {
   type ComponentHistoryOutput,
@@ -14,13 +13,15 @@ import {
   type SkillWriteOutput,
   verifyPlatformRpcToken,
 } from '../shared/platform-rpc.ts';
+import { workspaceKey } from '../shared/workspace-key.ts';
+import { workspaceOfCanvas } from './canvas-workspace.ts';
 import { componentCatalog } from './component-catalog.ts';
 import { componentStore } from './component-store.ts';
 import { dataStore } from './data-store.ts';
 import { d1RecordStore } from './record-store.ts';
 import { d1SkillFileStore } from './skill-file-store.ts';
 import { skillStore } from './skill-store.ts';
-import { DEFAULT_CANVAS_ID, DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
+import { DEFAULT_WORKSPACE_ID } from './shell-routing.ts';
 
 // The edge half of the platform RPC (ADR-0018). See `shared/platform-rpc.ts` for the contract
 // and for why this is a behavioural surface rather than a data-access one.
@@ -50,12 +51,22 @@ export function platformRpcDeps(db: Database): PlatformRpcDeps {
   return { db };
 }
 
-/** Bearer check: the caller must present the token derived from the shared trust root. */
-async function authorized(request: Request, env: PlatformRpcEnv): Promise<boolean> {
-  const secret = env.BETTER_AUTH_SECRET;
-  if (!secret) return false;
-  const presented = request.headers.get('authorization')?.replace(/^Bearer /, '');
-  return !!presented && (await verifyPlatformRpcToken(secret, presented));
+/**
+ * Bearer check (#374): the caller must present the bearer derived from the key of the workspace
+ * it NAMES. The bearer is `HMAC(workspaceKey(secret, W), 'platform-rpc/v1')`, so it verifies for
+ * exactly one workspace id, and the edge learns which one to check from the payload's
+ * `workspaceId`: a container for workspace A that names workspace B derives B's key here and
+ * its bearer fails. The credential, not the payload, decides which workspace a caller is.
+ *
+ * Runs BEFORE the contract parse, so it reads only the one field it needs, loosely: a body with no
+ * workspace id string has nothing to authenticate against and is the same 401 as no bearer.
+ * Once it passes, `canvasBelongsToWorkspace` and `workspaceExists` below are tenancy checks, not
+ * only consistency ones: the workspace they test is the one the caller's credential names.
+ */
+async function authorized(secret: string, presented: string, body: unknown): Promise<boolean> {
+  const claimed = (body as { input?: { workspaceId?: unknown } } | null)?.input?.workspaceId;
+  if (typeof claimed !== 'string' || claimed === '') return false;
+  return verifyPlatformRpcToken(await workspaceKey(secret, claimed), presented);
 }
 
 /**
@@ -66,9 +77,7 @@ async function authorized(request: Request, env: PlatformRpcEnv): Promise<boolea
  * the legacy `default` workspace by hand.
  */
 async function canvasBelongsToWorkspace(db: Database, workspaceId: string, canvasId: string): Promise<boolean> {
-  if (canvasId === DEFAULT_CANVAS_ID) return workspaceId === DEFAULT_WORKSPACE_ID;
-  const row = await canvasRegistry.get(db, canvasId);
-  return row?.workspaceId === workspaceId;
+  return (await workspaceOfCanvas(db, canvasId)) === workspaceId;
 }
 
 /**
@@ -80,9 +89,8 @@ async function canvasBelongsToWorkspace(db: Database, workspaceId: string, canva
  * The shared Component tier (#359) raised the same question and answered it WITHOUT needing
  * this: a shared Component operation names the canvas it acts from, so the containment check
  * above still applies and `tierCanvas` mints the null key here. Skills have no such canvas, so
- * this stays the weaker of the two. Both are CONSISTENCY checks, not tenancy checks — the
- * platform-RPC bearer is a constant with no workspace identity, so neither can stop a caller
- * that names a real, coherent workspace it does not own (#374).
+ * this stays the weaker of the two, and with the bearer bound to the workspace it names (#374)
+ * the caller can only name its own, so "is it real" is all that is left to ask.
  *
  * The legacy `default` workspace has no `workspaces` row (it predates the registry, exactly as
  * the legacy `default` canvas does) and is therefore pinned by hand, like `canvasBelongsToWorkspace`.
@@ -104,10 +112,15 @@ const tierCanvas = (tier: 'own' | 'shared', canvasId: string): string | null => 
 
 /** `POST /api/platform-rpc` — the named operations, nothing else. */
 export async function handlePlatformRpc(request: Request, env: PlatformRpcEnv, deps: PlatformRpcDeps): Promise<Response> {
-  if (!(await authorized(request, env))) return Response.json({ error: 'unauthorized' }, { status: 401 });
+  const secret = env.BETTER_AUTH_SECRET;
+  const presented = request.headers.get('authorization')?.replace(/^Bearer /, '');
+  // No secret or no bearer is a 401 before any body is read.
+  if (!secret || !presented) return Response.json({ error: 'unauthorized' }, { status: 401 });
+  const body: unknown = await request.json().catch(() => null);
+  if (!(await authorized(secret, presented, body))) return Response.json({ error: 'unauthorized' }, { status: 401 });
   // Parse at the boundary (CLAUDE.md §7): an unparseable body is a contract violation, not a
   // dispatchable operation.
-  const parsed = PlatformRpcRequest.safeParse(await request.json().catch(() => null));
+  const parsed = PlatformRpcRequest.safeParse(body);
   if (!parsed.success) return Response.json({ error: 'invalid request' }, { status: 400 });
 
   // The Record verbs (ADR-0022). Validation already happened in the parse above — the name

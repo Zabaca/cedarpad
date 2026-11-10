@@ -1,3 +1,4 @@
+import { workspaceKey } from '../shared/workspace-key.ts';
 import type { Env } from './index.ts';
 import type { SandboxCoords } from './sandbox-resolver.ts';
 
@@ -21,7 +22,7 @@ export const CANVAS_CONTAINER_CWD = '/app/agent-canvas/packages/canvas';
 
 // Container env injected at process spawn (PRD: ANTHROPIC_API_KEY intentionally
 // absent so it can't override the OAuth token).
-export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, string> => ({
+export const containerEnv = async (env: Env, coords: SandboxCoords): Promise<Record<string, string>> => ({
   R2_BUCKET: env.R2_BUCKET,
   R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
   R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
@@ -35,8 +36,19 @@ export const containerEnv = (env: Env, coords: SandboxCoords): Record<string, st
   // no credential; deleting those two lines IS this ADR. (`VOYAGE_API_KEY`, `BETTER_AUTH_URL`
   // and `WEB_ORIGIN` went with them — all three existed for the in-process web-poc mount that
   // the same slice removed. Better Auth is an edge route.) What remains below is
-  // the platform RPC's bearer root, which is a credential for talking to US, not to a database.
-  BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET ?? '',
+  // the container's key for talking to US, not to a database.
+  //
+  // #374: that key is `WORKSPACE_KEY`, derived for THIS workspace only (shared/workspace-key.ts),
+  // and BETTER_AUTH_SECRET itself is deliberately NOT here any more. With the secret a container
+  // could mint the bearer for any workspace and name any workspace's canvas; with its own key it
+  // can authenticate to the EDGE as its own workspace and no other, and the secret cannot be
+  // recovered from the key. Every bearer the container presents (platform RPC, canvas mutation,
+  // asset read) is derived from this one value.
+  //
+  // What this does NOT bound: the R2 keys above are the shared bucket's, with no per-workspace
+  // prefix restriction, so a compromised container can still read or overwrite another
+  // workspace's objects directly in R2. That is a separate gap (it does not go through the edge).
+  WORKSPACE_KEY: env.BETTER_AUTH_SECRET ? await workspaceKey(env.BETTER_AUTH_SECRET, coords.canvasWorkspace) : '',
   // Single source of truth for the runtime cwd (#133): the bridge runs + resumes product
   // sessions with `cwd: CANVAS_CWD`, matching START's cd — one derivation, no drift that
   // could orphan a session's JSONL by project-dir name.
