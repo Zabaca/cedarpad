@@ -48,8 +48,8 @@ in R2 (ADR-0022).
   is `packages/canvas/sandbox/workspace.env`; no zbc module exists for sandboxes, so that file and the
   script are the record. The release skill runs it before the tag (ADR-0025).
 - **`/api/buildrev` is passive for a sandbox.** It never wakes the sandbox or boots its stack, so it
-  answers 503 while the sandbox sleeps. The release's live check is that route after the workspace has
-  been visited; the script's own stamp check is the proof that needs no visit.
+  answers 503 while the sandbox sleeps. The script's own stamp check, with `deploy.sh`'s success, is
+  the gate for the tag and needs no visit; that route is read after the next visit and is pending until then.
 
 ## Why
 

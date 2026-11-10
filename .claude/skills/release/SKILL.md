@@ -22,9 +22,9 @@ Read the ADR before deviating from anything below — it carries the rejected al
 5. deploy       deploy.sh (stamps buildRev AND version into the image)
    +             bun run deploy:sandbox (the default workspace's sbx sandbox, same commit)
 6. verify       deploy-sandbox.sh reads the stamps inside the sandbox (its "ok:" line)
-   +             /api/buildrev serves BOTH stamps once the workspace has been visited
-7. tag          ONLY after BOTH halves of 6 pass
+7. tag          ONLY after deploy.sh succeeded AND the sandbox's "ok:" line printed
 8. publish      bun run apply production www → check cedarpad.com/changelog
+   later         /api/buildrev serves BOTH stamps once someone has visited the workspace
 ```
 
 **Never tag before step 6.** Tagging first mints tags for code that never shipped. Tagging after
@@ -219,18 +219,22 @@ stamp check, the equivalent of reading the VM's stamps used to be, and needs no 
 beyond the Mac's. After a replace the stack is down (the pod starts fresh from the new image);
 the next request boots it on the new code.
 
-**Then the live check, `/api/buildrev`, after the workspace has been visited.** The route is
-public and PASSIVE: it never wakes the sandbox and never boots its stack, so it answers 503
-while the sandbox sleeps or its stack is down. A 503 means nobody has opened the workspace since
-the deploy, not that the deploy failed, and the release must not wake it to make it answer. Have
-the workspace opened (James, or any signed-in visit), then:
+**The gate for the tag is `deploy.sh` succeeding plus that `ok:` line.** Neither needs a person
+to visit the workspace, so a release never waits on one.
+
+**`/api/buildrev` is the check that follows the next visit, not a gate.** The route is public and
+PASSIVE: it never wakes the sandbox and never boots its stack, so it answers 503 while the
+sandbox sleeps or its stack is down. A 503 means nobody has opened the workspace since the
+deploy, not that the deploy failed, and the release must not wake it to make it answer. After
+the next visit (James's, or any signed-in one), read it:
 
 ```bash
 curl -s https://app.cedarpad.com/api/buildrev     # {"buildRev":"abc1234","version":"0.2.0"}
 ```
 
-Both fields must be what step 4 pushed. 503: wait for a visit, do not tag. A different SHA or
-version: stop; the sandbox is not on this release.
+Both fields must be what step 4 pushed. A different SHA or version means the sandbox is not on
+this release: investigate, and say so in the report. Report this check as pending when no visit
+has happened yet.
 
 **If the sandbox deploy fails, do not tag.** Fix forward and re-run: same version number,
 nothing tagged. The script is safe to re-run (a replace keeps the sandbox's name, address,
@@ -241,7 +245,7 @@ this Mac's age key). The script says what is missing.
 
 ## 7. Tag
 
-Only now, and only on `✅ LIVE`:
+Only now: `deploy.sh` printed `✅ deployed` and `deploy-sandbox.sh` printed its `ok:` line.
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
@@ -271,7 +275,7 @@ not run, say so — do not imply a green path that was not walked.
 
 ## Never
 
-- **Never tag before the live check** — see the top of this file.
+- **Never tag before step 6** (`deploy.sh` succeeded and the sandbox's `ok:` line printed), see the top of this file.
 - **Never bump the version because a deploy failed.** The number belongs to the content, not to
   the attempt.
 - **Never rewrite what shipped when.** A released entry is a record of one artifact, so never
@@ -295,5 +299,5 @@ not run, say so — do not imply a green path that was not walked.
 - **Never wake the sandbox to make `/api/buildrev` answer.** The route is passive on purpose (an
   anonymous poll would keep the sandbox awake for good); a 503 there means "not visited yet". The
   stamp check inside `deploy-sandbox.sh` is the proof that needs no visit.
-- **Never tag before both halves of step 6 pass:** the sandbox's own stamp check and a matching
-  `/api/buildrev`.
+- **Never make the tag wait for a visit.** `/api/buildrev` is read after the next visit and is
+  reported as pending until then; the sandbox's own stamp check is the gate.
