@@ -1,4 +1,5 @@
 import type { GuestCapabilities } from '../shared/guest-capabilities.ts';
+import { GUEST_BARE_NAME, markGuestName } from '../shared/guest-mark.ts';
 
 /**
  * Per-connection write policy for a guest's sync socket (#320).
@@ -73,4 +74,60 @@ export function narrowInteractPush<T>(message: T): T {
   if (permitted) return message;
   const { diff: _dropped, ...rest } = msg;
   return rest as T;
+}
+
+// ---------------------------------------------------------------------------
+// The guest badge is the CONNECTION's, not the client's (#339)
+// ---------------------------------------------------------------------------
+//
+// A guest shows in presence with the mark in front of their name (`shared/guest-mark.ts`) and
+// that mark is load-bearing: revoking a share link is a manual judgement call (#320), so a
+// member has to NOTICE an outsider before they can act. The browser sets the mark itself
+// (`src/presence.ts`), which is fine for a guest who plays along and nothing at all for one who
+// sends the record without it.
+//
+// So the room stamps it. Every push from a guest connection passes through here on its way
+// to the room, and the `userName` it carries is made a marked one, whatever the client wrote.
+// What is left to the client is the name a guest chose, never whether they are labelled.
+
+/**
+ * The same message with its presence record's `userName` marked. A presence PUT carries the
+ * whole record; a PATCH carries only the fields that changed, so it is touched only when it
+ * touches `userName` (a patch that does not leaves the stored, already-marked name alone).
+ * A name change by any op other than a plain `put` (a `delete`, an `append`) cannot be marked
+ * without knowing the old value, so it becomes the bare "Guest".
+ *
+ * Non-push messages, and pushes with no presence, are returned untouched.
+ */
+export function markGuestPresence<T>(message: T): T {
+  const msg = message as { type?: unknown; presence?: unknown };
+  if (!msg || typeof msg !== 'object' || msg.type !== 'push') return message;
+  const presence = msg.presence;
+  if (!Array.isArray(presence)) return message;
+
+  if (presence[0] === 'put') {
+    const record = presence[1];
+    if (!record || typeof record !== 'object' || Array.isArray(record)) return message;
+    const marked = { ...(record as Record<string, unknown>), userName: markGuestName((record as { userName?: unknown }).userName) };
+    return { ...msg, presence: ['put', marked] } as T;
+  }
+
+  if (presence[0] === 'patch') {
+    const diff = presence[1];
+    if (!diff || typeof diff !== 'object' || Array.isArray(diff) || !('userName' in diff)) return message;
+    const op = (diff as Record<string, unknown>).userName;
+    const next = isOp(op) && op[0] === 'put' ? markGuestName(op[1]) : GUEST_BARE_NAME;
+    return { ...msg, presence: ['patch', { ...(diff as Record<string, unknown>), userName: ['put', next] }] } as T;
+  }
+
+  return message;
+}
+
+/**
+ * What a guest connection's message becomes before the room sees it: narrowed to what its
+ * capabilities allow (when it may only interact), then its presence badge stamped. The
+ * Durable Object calls this for every message from a guest and nothing else touches them.
+ */
+export function applyGuestPolicy<T>(message: T, opts: { interactOnly: boolean }): T {
+  return markGuestPresence(opts.interactOnly ? narrowInteractPush(message) : message);
 }

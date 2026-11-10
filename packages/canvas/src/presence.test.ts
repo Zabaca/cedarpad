@@ -33,7 +33,7 @@ describe('tlUserFor', () => {
   // tldraw already renders on the cursor label AND in the people list — so an
   // unlabelled guest is impossible without also being invisible.
   test('a share-link guest is marked, named or not', () => {
-    expect(tlUserFor({ id: 'g1', name: 'Sam', color: 'red', kind: 'guest' }, true)?.name).toBe('Sam (Guest)');
+    expect(tlUserFor({ id: 'g1', name: 'Sam', color: 'red', kind: 'guest' }, true)?.name).toBe('(Guest) Sam');
     expect(tlUserFor({ id: 'g1', color: 'red', kind: 'guest' }, true)?.name).toBe('Guest');
   });
 

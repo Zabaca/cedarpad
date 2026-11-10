@@ -10,7 +10,7 @@ import type { TLRecord } from '@tldraw/tlschema';
 import { CanvasMutation, mutationError } from '../shared/canvas-mutation.ts';
 import { readGuestCapabilities } from '../shared/guest-capabilities.ts';
 import { applyMutation, MutationRejected } from './canvas-mutate.ts';
-import { isInteractOnly, narrowInteractPush } from './guest-socket-policy.ts';
+import { applyGuestPolicy, isInteractOnly } from './guest-socket-policy.ts';
 import type { Env } from './index.ts';
 import { handleSnapshotRequest } from './snapshot-io.ts';
 import { isReadonlyRequest, SYNC_GUEST_CAPS_HEADER, SYNC_GUEST_LINK_HEADER, SYNC_USER_HEADER } from './sync-api.ts';
@@ -41,11 +41,23 @@ interface SocketAttachment {
    *  attachment because it is a property of the CONNECTION — established at the handshake
    *  from the link's capabilities — and it has to survive hibernation with the socket. */
   interactOnly?: boolean;
+  /** #339: this connection is a guest's. Every message it sends passes through
+   *  `applyGuestPolicy` (the presence badge is stamped here, not trusted to the client). It
+   *  rides the attachment because it is a property of the CONNECTION and has to survive
+   *  hibernation. Attachments written before this field existed are guests when they carry
+   *  a `linkId`; see `isGuestSocket`. */
+  guest?: boolean;
   /** #320: which share link admitted this guest connection. Absent on a member's. It is
    *  not identity (that is `meta.userId`) — it is the handle revocation drops sockets by,
    *  and it rides the attachment because it must survive hibernation with the socket. */
   linkId?: string;
   snapshot?: SessionStateSnapshot;
+}
+
+/** Is this connection a guest's? `guest` is the field; `linkId` covers a socket that
+ *  hibernated with an attachment written before `guest` existed. A member carries neither. */
+export function isGuestSocket(a: Pick<SocketAttachment, 'guest' | 'linkId'>): boolean {
+  return a.guest === true || a.linkId !== undefined;
 }
 
 /**
@@ -66,7 +78,7 @@ export class CanvasSyncRoom {
   private readonly room: TLSocketRoom<TLRecord, SyncSessionMeta>;
   protected readonly ctx: DurableObjectState;
   /** Chunk reassembly for the sessions whose messages we have to READ before forwarding
-   *  (interact-only guests, #320). Members' messages are forwarded untouched. */
+   *  (guests: #320 narrowing, #339 presence badge). Members' messages are forwarded untouched. */
   private readonly assemblers = new Map<string, JsonChunkAssembler>();
 
   constructor(ctx: DurableObjectState, _env: Env) {
@@ -174,6 +186,7 @@ export class CanvasSyncRoom {
       sessionId,
       meta: { userId: identity },
       interactOnly,
+      ...(guestCaps ? { guest: true } : {}),
       // `||`, not `??`: an empty header is not a link id, and storing `''` would attach a
       // connection no revocation could ever name.
       ...(guestCaps ? { linkId: request.headers.get(SYNC_GUEST_LINK_HEADER) || undefined } : {}),
@@ -215,17 +228,36 @@ export class CanvasSyncRoom {
   webSocketMessage(ws: WebSocket, message: ArrayBuffer | string) {
     const a = this.attachmentOf(ws);
     if (!a) return;
-    if (!a.interactOnly) return this.room.handleSocketMessage(a.sessionId, message);
-    // An interact-only guest's pushes are narrowed per message (#320). We have to assemble
-    // chunks before we can read one, so this session gets its own assembler — same
-    // lifetime as the room's own (both in-memory, both rebuilt on a wake), so it adds no
-    // failure mode a hibernation did not already have.
+    // Members' messages are forwarded untouched. A guest's pass through `applyGuestPolicy`:
+    // narrowed to what its capabilities allow (#320) and its presence badge stamped (#339).
+    if (!isGuestSocket(a)) return this.room.handleSocketMessage(a.sessionId, message);
+    // We have to assemble chunks before we can read one, so a guest session gets its own
+    // assembler. It lives as long as the room's own (both in-memory, both rebuilt on a wake), so
+    // it adds no failure mode a hibernation did not already have.
     const raw = typeof message === 'string' ? message : new TextDecoder().decode(message);
-    const res = this.assemblerFor(a.sessionId).handleMessage(raw);
+    let res: ReturnType<JsonChunkAssembler['handleMessage']>;
+    try {
+      res = this.assemblerFor(a.sessionId).handleMessage(raw);
+    } catch {
+      // A message that opens like JSON and is not (`{` then garbage) throws in the assembler.
+      res = { error: new Error('unparseable message') };
+    }
     if (!res) return; // more chunks to come
-    // Unassemblable: hand it on untouched so the room's own error handling runs.
-    if (!('data' in res)) return this.room.handleSocketMessage(a.sessionId, raw);
-    this.room.handleSocketMessage(a.sessionId, JSON.stringify(narrowInteractPush(res.data)));
+    // NEVER forward what could not be assembled. Our assembler and the room's are separate, so a
+    // message ours rejects (a chunk header, then a whole push) is one the room's idle assembler
+    // would accept, and it would reach the room without the policy: an unmarked badge, or a
+    // document diff an interact-only guest may not push. A guest that sends something no
+    // honest client sends is dropped: the session ends and the client reconnects clean.
+    if (!('data' in res)) return this.reject(ws, a, 'invalid message');
+    this.room.handleSocketMessage(a.sessionId, JSON.stringify(applyGuestPolicy(res.data, { interactOnly: !!a.interactOnly })));
+  }
+
+  /** End a connection that broke the protocol. The room is told first, so the session is gone
+   *  from its state before the socket dies; 1008 (policy violation), as `evict` uses. */
+  private reject(ws: WebSocket, a: SocketAttachment, reason: string): void {
+    this.assemblers.delete(a.sessionId);
+    this.room.handleSocketClose(a.sessionId);
+    ws.close(1008, reason);
   }
 
   /**

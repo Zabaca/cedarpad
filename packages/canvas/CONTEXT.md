@@ -761,8 +761,12 @@ and reconnect/resume are the sync protocol's job now, not ours. What remains our
   `setDisplayName`) and presence renders them as "<name> (Guest)". The mark rides tldraw's
   own `userName`, so the cursor label and the people list carry it without a second visual
   language. Load-bearing, not chrome: revocation is a manual judgement call, so a member has
-  to notice an outsider is editing before they can act. Client-supplied and unverified — it
-  is a display name, never an authorization input (that is `guest:<sessionId>`).
+  to notice an outsider is editing before they can act. The browser adds the mark, but the
+  room STAMPS it (#339): every message from a guest connection passes through
+  `applyGuestPolicy` (`worker/guest-socket-policy.ts`) in the Durable Object, which makes
+  the presence `userName` a marked one whatever the client sent, so a guest cannot drop their
+  own badge. The name a guest chose is still theirs and is a display name, never an
+  authorization input (that is `guest:<sessionId>`).
 - **Revocation** — a tombstone on the row (stops the next connect) AND an eviction of the
   link's OPEN sockets (`evictGuestSockets` → the DO's `/evict`, `socketsForLink`). Both,
   because capabilities ride the handshake: the tombstone alone leaves the guest who is

@@ -10,6 +10,7 @@
 
 import { atom, createUserId, UserRecordType, type TLUser, type TLUserStore } from 'tldraw';
 
+import { markGuestName } from '../shared/guest-mark';
 import { loadGuestScope } from '../shared/guest-scope';
 import { currentUserSnapshot, subscribeIdentity, type CurrentUser } from './identity';
 
@@ -18,17 +19,19 @@ import { currentUserSnapshot, subscribeIdentity, type CurrentUser } from './iden
  *
  * `isGuest` marks a share-link guest (#320): the mark rides `userName`, which tldraw
  * already renders both on the cursor label and in the people list, so there is no second
- * visual language to keep in step. It is load-bearing rather than decorative — revoking a
- * link is a manual judgement call, so a member has to notice an outsider is editing first. */
+ * visual language to keep in step. It is load-bearing rather than decorative: revoking a
+ * link is a manual judgement call, so a member has to notice an outsider is editing first.
+ * The wording comes from `shared/guest-mark.ts`, the same function the room stamps with
+ * (#339), so what the browser sends is what the room would have made of it. */
 export function tlUserFor(u: CurrentUser | null, isGuest = false): TLUser | null {
   if (!u) return null;
   // `||`, NOT `??`: a whitespace-only name trims to `''`, which is nullish-coalescing's
-  // blind spot — it would render a blank, UNMARKED cursor, which is the exact case the
-  // mark exists for. Every empty value falls back to the marked "Guest".
+  // blind spot, and it would render a blank cursor. Every empty value falls back to "Guest".
+  // A guest's name is whatever `markGuestName` makes of it (empty included).
   const name = u.name?.trim();
   return UserRecordType.create({
     id: createUserId(u.id),
-    name: name ? (isGuest ? `${name} (Guest)` : name) : 'Guest',
+    name: isGuest ? markGuestName(name) : name || 'Guest',
     color: u.color,
   });
 }

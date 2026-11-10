@@ -4,7 +4,7 @@
 // revoked guest connected or disconnect innocent members.
 import { describe, expect, test } from 'bun:test';
 
-import { socketsForLink } from './canvas-sync-do.ts';
+import { isGuestSocket, socketsForLink } from './canvas-sync-do.ts';
 
 /** A hibernation socket is only ever read through its attachment; that is all this needs. */
 const socket = (attachment: unknown) => ({ deserializeAttachment: () => attachment }) as unknown as WebSocket;
@@ -25,5 +25,25 @@ describe('socketsForLink', () => {
     expect(socketsForLink([member('s4')], 'sl_1')).toEqual([]);
     // …and neither is a socket whose attachment never arrived (a wake mid-flight).
     expect(socketsForLink([socket(null)], 'sl_1')).toEqual([]);
+  });
+});
+
+// #339: which connections have their messages stamped. A guest is a guest by the flag the
+// handshake wrote, or (a socket that hibernated before the flag existed) by the link that
+// admitted it; a member carries neither and is never touched.
+describe('isGuestSocket', () => {
+  test('a guest connection, by its flag or by its link', () => {
+    expect(isGuestSocket({ guest: true })).toBe(true);
+    expect(isGuestSocket({ linkId: 'sl_1' })).toBe(true);
+    expect(isGuestSocket({ guest: true, linkId: 'sl_1' })).toBe(true);
+  });
+
+  test('a guest whose link header was empty is still a guest: the flag does not depend on the link', () => {
+    expect(isGuestSocket({ guest: true, linkId: undefined })).toBe(true);
+  });
+
+  test('a member connection is not', () => {
+    expect(isGuestSocket({})).toBe(false);
+    expect(isGuestSocket({ guest: undefined, linkId: undefined })).toBe(false);
   });
 });
