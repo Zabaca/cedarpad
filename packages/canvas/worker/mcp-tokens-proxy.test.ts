@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+
+import * as realMcpTokens from '../web-poc/lib/db/queries/mcp-tokens.ts';
 
 // The shared header-attach helper used by both proxy points (worker/index.ts's same-origin
 // fallthrough and worker/inbox-bridge.ts). Exercised directly so its own contract — no
@@ -7,10 +9,25 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 
 let tokens: Record<string, string> = {};
 
+// Delegate + restore (see worker/index.test.ts and mcp-tokens-api.test.ts): bun's mock.module rebinds
+// the module for every LATER test file in this process, and the order test files run in is the file
+// system's, not alphabetical. A mock that offered only `listTokens` and was never undone made
+// mcp-tokens-api.test.ts fail to import `setToken` when it ran after this file, and its own leaked
+// mock then broke every real-DB suite after it (platform RPC, members, shell, mcp tools...): 86
+// failures on a runner whose directory order differed from the one the suite had passed on. So keep
+// every export, swap only `listTokens`, and hand it back after this file. The real function is
+// captured BY VALUE first (the live namespace would resolve to the wrapper itself).
+const realListTokens = realMcpTokens.listTokens;
+let listTokensImpl: typeof realListTokens = () => Promise.resolve(tokens);
+
 mock.module('../web-poc/worker/runtime.ts', () => ({ createDbForWorker: () => ({}) }));
 mock.module('../web-poc/lib/db/queries/mcp-tokens.ts', () => ({
-  listTokens: () => Promise.resolve(tokens),
+  ...realMcpTokens,
+  listTokens: (...args: Parameters<typeof realListTokens>) => listTokensImpl(...args),
 }));
+afterAll(() => {
+  listTokensImpl = realListTokens;
+});
 
 const { withMcpTokensHeader, IS_CHAT_SEND } = await import('./mcp-tokens-proxy.ts');
 
