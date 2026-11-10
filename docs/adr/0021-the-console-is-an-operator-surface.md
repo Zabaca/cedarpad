@@ -8,7 +8,7 @@ A **Console** is a Quake-style drop-down terminal (`Ctrl+\``) giving a Workspace
 real PTY into that workspace's container, running Claude Code with full capability. It is
 deliberately **outside** the model that governs turns: no Inbox row, no `ChatMeta`, no
 assignee, no `end_turn`. Two proven precedents feed it — `zabaca/ceo`'s
-`packages/claude-sandbox-poc` for the transport, and `jaequery/fredrin` for the
+`packages/claude-sandbox-poc` for the transport, and a third-party agent environment for the
 replay/resize discipline.
 
 ## Why

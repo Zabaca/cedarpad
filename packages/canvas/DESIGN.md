@@ -296,7 +296,7 @@ or a 2px inner ring, never a blurred halo.
 - **Rail:** a narrow Surface column. Icons are Text Muted at rest, Text on hover.
   The active section is marked by a 2px Cedar Ember left indicator and a Surface
   Overlay row, not by a colored icon.
-- **Panel:** breadcrumb header (`Canvases › Cloner POC`), a mono UPPERCASE section
+- **Panel:** breadcrumb header (`Canvases › Roadmap`), a mono UPPERCASE section
   label (`PAGES`), then rows. The active row uses `nav-item-active` (Surface Overlay
   + Text); inactive rows are `nav-item` (Text Muted) and hover to Surface Raised.
 - **Workspace switcher / page list** share these exact row tokens.

@@ -1,5 +1,5 @@
 // The huddle brain's request builder (ADR-0017): raw streaming /v1/messages.
-// Auth precedence mirrors lov / authProbe: an API key wins if present; otherwise the
+// Auth precedence: an API key wins if present; otherwise the
 // Claude subscription OAuth token (claude setup-token) with the oauth beta header —
 // spiked 2026-07-18: streaming + tool_use round-trips work. If Anthropic tightens OAuth
 // enforcement, minting an API key restores service with no code change.

@@ -42,7 +42,7 @@ import {
   type MigrationReport,
   type MigrationRpc,
   type MigrationSources,
-  HUDSON_STANDUP_CANVAS,
+  STANDUP_CANVAS,
   NOT_MIGRATED,
   SOURCE_ARCHIVES,
   type VerifyReport,
@@ -169,7 +169,7 @@ function printLost(lost: readonly string[]) {
     `\n⚠️  ${lost.length} Component(s) are PERMANENTLY LOST and are not part of this migration:\n` +
       `   ${lost.join(', ')}\n` +
       '   Destroyed in the same 2026-07-29 flush, with no `write_component` call in any retained\n' +
-      `   transcript and no object versioning in R2. Their cards on ${HUDSON_STANDUP_CANVAS}\n` +
+      `   transcript and no object versioning in R2. Their cards on ${STANDUP_CANVAS}\n` +
       '   stay dead and should be REMOVED from the canvas rather than waited on.\n' +
       '   Three of five restored, not five of five.',
   );
@@ -224,7 +224,7 @@ if (import.meta.main) {
   const write = cmd === 'migrate' && process.argv.includes('--write');
   const { rpc, label, detail } = await target();
   console.log(`workspace ${MIGRATION_WORKSPACE}`);
-  console.log(`canvas    ${HUDSON_STANDUP_CANVAS}  ("Hudson Standup" — where the dead cards are)`);
+  console.log(`canvas    ${STANDUP_CANVAS}  ("Standup", where the dead cards are)`);
   console.log(`target    ${label}${write ? '   *** WRITING ***' : '   (read-only)'}`);
   if (detail) console.log(`          ${detail}`);
   if (cmd === 'migrate') printPlan();

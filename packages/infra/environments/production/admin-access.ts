@@ -5,7 +5,7 @@ import accessToken from './admin-access-token'
 // the whole host, and who may pass it (ADR-0026).
 //
 // ── The host IS the application ──────────────────────────────────────────
-// Every other zabaca admin surface (railmid, zabaca-web, qom, leeandco) is a PATH
+// Every other Zabaca admin surface is a PATH
 // on a public host. This one is a host of its own on purpose: the admin page reads
 // no Better Auth session at all, so nothing on app.cedarpad.com — its cookies, its
 // sign-in, its role checks — is in play, and Access can gate the entire hostname
@@ -21,7 +21,7 @@ import accessToken from './admin-access-token'
 //
 // ── What is deliberately NOT declared ────────────────────────────────────
 // `identityProviders` and `orgName` belong to the whole organisation (Zabaca,
-// zabaca.cloudflareaccess.com — railmid-access.ts in games checked it 2026-09-07);
+// zabaca.cloudflareaccess.com, checked against another Zabaca stack on 2026-09-07);
 // declaring them here would converge them behind every application on the
 // account. `teamDomain` is declared because it is COMPARED, never chosen.
 // No service token: the only caller is a person in a browser.

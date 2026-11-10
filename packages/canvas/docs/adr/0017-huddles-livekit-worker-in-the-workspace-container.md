@@ -44,7 +44,7 @@ runs.
 - **The brain is the subscription OAuth token, not an API key.** The voice loop drives the
   streaming Messages API directly with `CLAUDE_CODE_OAUTH_TOKEN` (Bearer +
   `anthropic-beta: oauth-2025-04-20` + the Claude Code identity string as the first system
-  block — the lov pattern, spiked 2026-07-18: streaming + tool_use confirmed). Precedence: an
+  block; spiked 2026-07-18: streaming + tool_use confirmed). Precedence: an
   `ANTHROPIC_API_KEY` in env wins if ever present, so tightened OAuth enforcement is a
   key-mint away from restored service, no code change.
 - **Tools are in-process, not MCP.** The worker defines a narrow canvas-scoped toolset

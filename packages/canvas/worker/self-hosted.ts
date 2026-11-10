@@ -15,7 +15,7 @@
 // browser got a 404, tldraw never loaded, and the canvas stayed blank with no
 // retry. The aggressive idle reaper (90s) made a cold boot the common case
 // rather than the rare one. A sandbox keeps its disk across sleep, so it pre-bundles
-// once and never again. (The first home of this path was an incus VM on ryzen-9, which
+// once and never again. (The first home of this path was a self-hosted VM, which
 // held 8.5 GiB of memory while idle; it was deleted on 2026-11-09.)
 //
 // ── The trust boundary is unchanged ───────────────────────────────────────

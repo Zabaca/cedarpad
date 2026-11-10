@@ -59,7 +59,6 @@ import { type TurnDeps, runTurn } from './turn.ts';
 import type { ChatFrame } from '../shared/chat-wire.ts';
 import { SkillName, UploadSkillInput } from '../shared/skills-wire.ts';
 import { materializeSkills, skillRecordsFor, writeSkill } from './skills.ts';
-import { CAPTURE_ROOT, listCaptures, saveCapture } from './capture.ts';
 import { createHuddleSupervisor } from './huddle-supervisor.ts';
 
 // Build stamps: scripts/deploy.sh writes both files right before the image build, so the
@@ -1069,63 +1068,6 @@ export async function handleRequest(req: Request): Promise<Response> {
     // #297: the shape count went with the in-process store. Liveness is what this answers.
     if (path === '/api/health') return json({ ok: true });
 
-    // Avatar-capture handoff: persist a recorded clip to disk so the next pipeline
-    // step can read it. Browser sends FormData { file, session, shot, mime, duration }.
-    if (path === '/api/capture/save' && req.method === 'POST') {
-      const form = await req.formData();
-      const file = form.get('file');
-      const session = String(form.get('session') ?? '');
-      const shot = String(form.get('shot') ?? '');
-      const mime = String(form.get('mime') ?? 'video/webm');
-      const duration = Number(form.get('duration') ?? 0);
-      if (!(file instanceof Blob) || !session || !shot)
-        return json({ error: 'file, session, shot required' }, 400);
-      const res = await saveCapture(session, shot, mime, duration, await file.arrayBuffer());
-      return json({ ok: true, ...res });
-    }
-    if (path === '/api/capture/list' && req.method === 'GET') {
-      const session = url.searchParams.get('session') ?? '';
-      if (!session) return json({ error: 'session required' }, 400);
-      return json({ root: CAPTURE_ROOT, clips: await listCaptures(session) });
-    }
-
-    // Mint a LiveAvatar (HeyGen) session token from our server-held API key, so the
-    // key never touches the browser. Verified against docs.liveavatar.com:
-    //   POST https://api.liveavatar.com/v1/sessions/token
-    //   header  X-API-KEY: <key>
-    //   body    { mode, avatar_id, avatar_persona? }
-    //   token   response.data.session_token
-    // The avatar is chosen HERE at token mint (the SDK constructor takes only the
-    // token), so an avatar_id is required. We mint in FULL mode: LITE mode has no
-    // text-to-speech at all (the SDK throws "Not permitted in LITE mode" for
-    // repeat()/message() — LITE only lip-syncs to audio you supply via repeatAudio),
-    // so FULL is required for the avatar to speak typed text (and later, voice/mic).
-    // avatar_persona fields are all optional, BUT without a context_id the avatar is
-    // in "restricted mode" — it speaks typed text back verbatim and never replies to
-    // speech. A context (system prompt + default LLM, created via POST /v1/contexts)
-    // is what makes it converse, so LIVE_AVATAR_CONTEXT_ID drives the conversational
-    // brain for both text and mic. FULL is ~$0.20/min vs LITE ~$0.10/min. NOTE: a
-    // LiveAvatar key is NOT a HeyGen key — get both from app.liveavatar.com/developers.
-    if (path === '/api/live-avatar-token' && req.method === 'GET') {
-      const key = process.env.LIVE_AVATAR_KEY;
-      const avatarId = process.env.LIVE_AVATAR_ID;
-      const contextId = process.env.LIVE_AVATAR_CONTEXT_ID;
-      if (!key) return json({ error: 'LIVE_AVATAR_KEY not set (LiveAvatar API key from app.liveavatar.com/developers, not a HeyGen key)' }, 503);
-      if (!avatarId) return json({ error: 'LIVE_AVATAR_ID not set (a LiveAvatar avatar_id UUID — the token is minted for one avatar)' }, 503);
-      const persona: Record<string, unknown> = { language: 'en' };
-      if (contextId) persona.context_id = contextId; // omit -> restricted mode (no replies)
-      const res = await fetch('https://api.liveavatar.com/v1/sessions/token', {
-        method: 'POST',
-        headers: { 'X-API-KEY': key, 'content-type': 'application/json' },
-        body: JSON.stringify({ mode: 'FULL', avatar_id: avatarId, avatar_persona: persona }),
-      });
-      const data = (await res.json().catch(() => null)) as { data?: { session_token?: string } } | null;
-      if (!res.ok) return json({ error: `LiveAvatar token exchange failed: ${res.status}`, detail: data }, 502);
-      const token = data?.data?.session_token;
-      if (!token) return json({ error: 'No data.session_token in LiveAvatar response', detail: data }, 502);
-      return json({ token });
-    }
-
     return json({ error: `not found: ${path}` }, 404);
 }
 
@@ -1136,7 +1078,9 @@ if (import.meta.main) {
   const server = Bun.serve({
     port: PORT,
     idleTimeout: 0, // SSE streams must not be reaped
-    maxRequestBodySize: 2 * 1024 * 1024 * 1024, // 2GB: avatar-capture clips can be large
+    // 2GB: the limit from when avatar-capture clips (removed) were the largest bodies. No route here is
+    // known to need this much; lowering it is a separate decision.
+    maxRequestBodySize: 2 * 1024 * 1024 * 1024,
     fetch: handleRequest,
     error: (e) => {
       if (e instanceof NoCanvasError) return Response.json({ error: e.message }, { status: 400 });
