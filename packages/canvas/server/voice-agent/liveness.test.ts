@@ -32,9 +32,9 @@ describe('huddle liveness — exit when the last human leaves', () => {
     let exited = false;
     const l = createLiveness({ graceMs: 20, isAgent: () => false, onExit: () => { exited = true; } });
     l.join('james');
-    l.join('khoa');
+    l.join('noor');
     l.leave('james');
     await wait(40);
-    expect(exited).toBe(false); // khoa still in the room
+    expect(exited).toBe(false); // noor still in the room
   });
 });

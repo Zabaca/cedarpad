@@ -262,7 +262,7 @@ describe('the workspace popover invites (owner-only, #179)', () => {
     let promptCount = 0;
     (globalThis as { prompt?: (msg?: string, def?: string) => string | null }).prompt = (msg?: string, def?: string) => {
       prompts.push(`${msg ?? ''}|${def ?? ''}`);
-      return promptCount++ === 0 ? 'jae@example.com' : null; // first prompt: the email; second: the link display
+      return promptCount++ === 0 ? 'ada@example.com' : null; // first prompt: the email; second: the link display
     };
     const inviteUrl = '/api/workspaces/ws_abc/invitations';
     const stubbed = globalThis.fetch;
@@ -274,7 +274,7 @@ describe('the workspace popover invites (owner-only, #179)', () => {
       }
       if (url === inviteUrl && init?.method === 'POST') {
         calls.push(`POST ${url}`);
-        return Response.json({ token: 'wi_t1', email: 'jae@example.com', url: '/invite/wi_t1', expiresAt: 1 }, { status: 201 });
+        return Response.json({ token: 'wi_t1', email: 'ada@example.com', url: '/invite/wi_t1', expiresAt: 1 }, { status: 201 });
       }
       return stubbed(input as never, init);
     }) as typeof fetch;

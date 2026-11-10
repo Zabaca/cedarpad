@@ -66,11 +66,11 @@ describe('handleInvitationsApi — owner-only issuance/list/revoke (#179)', () =
   test('the owner invites an email and gets a link token; the invitation is listed pending', async () => {
     const ws = await createWorkspace(database, { name: 'inv-ws', ownerUserId: OWNER.id });
     const spy = linkSpy();
-    const res = await handleInvitationsApi(inviteReq('POST', { email: 'Jae@Example.com' }), database, OWNER, ws.id, undefined, spy.deps);
+    const res = await handleInvitationsApi(inviteReq('POST', { email: 'Ada@Example.com' }), database, OWNER, ws.id, undefined, spy.deps);
     expect(res.status).toBe(201);
     const body = await readJson(res);
     expect(body.url).toBe(`/invite/${body.token}`);
-    expect(body.email).toBe('jae@example.com'); // normalized binding
+    expect(body.email).toBe('ada@example.com'); // normalized binding
 
     const listed = await readJson(
       await handleInvitationsApi(inviteReq('GET'), database, OWNER, ws.id, undefined, spy.deps),

@@ -29,8 +29,7 @@ Not from a backup — there wasn't one. They were reconstructed by mining
 `sessions.tar` for `write_component` tool calls and taking the last complete
 source payload for each name.
 
-That is why there are three files and not five. `AccessExplorer` and
-`ScenarioMap` were also destroyed, and no `write_component` call for either
+That is why there are three files and not five. Two other components (their names are withheld for publication) were also destroyed, and no `write_component` call for either
 appears in any retained transcript. They are permanently lost. The Standup
 canvas will still show two dead cards after #365; that is expected, and the cards
 should be removed rather than waited on.
@@ -54,8 +53,8 @@ The evidence that settles it is **placed instances**, because a placed card reso
 its own canvas's tier — so wherever the cards are is where the source has to live. Read from
 the live room documents (`GET /api/canvas-sync/:id/snapshot`; the R2 blobs are stale, the
 Durable Object has been authoritative since ADR-0019) on 2026-07-29, `cv_edd9bab6` holds one
-card each of `AudioMeeting`, `ChatRoom`, `ComponentCatalog`, `AccessExplorer` and
-`ScenarioMap`, and `cv_4bfb07e3` holds none of them.
+card each of `AudioMeeting`, `ChatRoom`, `ComponentCatalog` and the two components whose
+names are withheld for publication, and `cv_4bfb07e3` holds none of them.
 
 Two of the three are byte-identical to what was recovered. `ComponentCatalog.tsx`
 is **not**: as recovered it fetched `/api/custom/component-catalog`, a custom handler

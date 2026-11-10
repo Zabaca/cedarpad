@@ -178,7 +178,7 @@ from the site.
   `/var/lib/foundry-provision` to `/var/lib/zbc-provision`, and `vm` no longer defaults its
   `sshUser`. The `exit 0` trap above is fixed upstream in the same version, so no consumer can
   reach it again.
-- The ws.cedarpad.com Guest is declared here and converged over ryzen-9's incus remote, rather
+- The ws.cedarpad.com Guest is declared here and converged over the self-hosted host's incus remote, rather
   than by the repository that owns the box.
 - The infra engine comes from `vendor/zbc`; `@cedarpad/infra` retires.
 - Khoa's age key, and the re-key that makes it work. (#409)

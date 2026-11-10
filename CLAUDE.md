@@ -116,7 +116,7 @@ Typechecking is likewise split: `bun run typecheck` covers canvas + the edge Wor
 
 ### Issue tracker
 
-Issues are GitHub issues, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues are GitHub issues, driven by the `gh` CLI: public reports and outside contributions come through them (see `docs/agents/issue-tracker.md` and `CONTRIBUTING.md`). Zabaca's own planning and tickets are tracked outside this repository, in Fredrin.
 
 ### Domain docs
 

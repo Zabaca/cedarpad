@@ -16,9 +16,9 @@ Zabaca LLC.
    distribute your Contribution and derivative works of it, under any licence terms Zabaca chooses, including terms
    that are not open source.
 2. **Patents.** You grant Zabaca and everyone who receives the software a perpetual, worldwide, non-exclusive,
-   royalty-free, irrevocable patent licence to make, use, sell, offer to sell, import and otherwise transfer your
-   Contribution, where the patent claims are infringed by your Contribution alone or by it combined with the
-   software it was submitted to. If any entity brings patent litigation against you or anyone else (including a
+   royalty-free, irrevocable patent licence, under the patent claims you can license that are necessarily infringed
+   by your Contribution alone or by it combined with the software it was submitted to, to make, use, sell, offer to
+   sell, import and otherwise transfer your Contribution. If any entity brings patent litigation against you or anyone else (including a
    cross-claim or counterclaim) alleging that your Contribution, or the software it was submitted to, infringes a
    patent, every patent licence this agreement gives that entity for your Contribution ends on the day the claim is
    filed.
@@ -34,8 +34,10 @@ Zabaca LLC.
    regard to its conflict-of-laws rules.
 7. **How you agree, and how it is recorded.** Comment "I have read the CLA and I agree to it." on your first pull
    request. That comment is your signature, and it covers your later Contributions until you say otherwise. A
-   maintainer checks for the comment before merging and records it by keeping the pull request and its comment in
-   the repository's history. No automated check enforces this today.
+   maintainer checks for the comment before merging and records it by adding you to
+   [`CONTRIBUTORS-CLA.md`](CONTRIBUTORS-CLA.md), a committed file, with your GitHub username, the number of the pull
+   request and the date, in or before the commit that merges your first Contribution. That file is the record. No
+   automated check enforces this today.
 
 This is a plain-language agreement. If you need your company's lawyers to review it first, tell us in the pull
 request.

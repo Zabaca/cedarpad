@@ -25,7 +25,7 @@ import { comparePin, declaredTag, declaredVersion } from './check-zbc-pin'
 // file here would be run by nobody, which is a more comfortable form of the
 // problem rather than a fix. So the enforcement is wired into `bun run apply`
 // itself — `"apply": "bun packages/infra/check-zbc-pin.ts && zbc apply"` — the
-// same shape foundry uses to stop an apply from a worktree. Every apply in this
+// same shape another Zabaca tool uses to stop an apply from a worktree. Every apply in this
 // repo passes through it: production and preview alike, including
 // `deploy.sh`, which now calls `bun run apply` rather than an unpinned `bunx`.
 //

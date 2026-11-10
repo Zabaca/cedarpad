@@ -14,7 +14,7 @@ Worker, behind a **Cloudflare Zero Trust (Access) application** that admits one 
 account and team (`zabaca.cloudflareaccess.com`).
 
 The Worker **verifies the Access assertion itself** (`worker/access-jwt.ts`, ported from
-games): RS256 against the team's published keys, `iss`, `aud`, `exp`, `nbf`. The team domain
+another Zabaca app): RS256 against the team's published keys, `iss`, `aud`, `exp`, `nbf`. The team domain
 and audience tag reach the Worker as secrets from the access instance's outputs. Missing
 config, a missing assertion or any verification failure is a refusal. This matters because
 the same Worker also answers on `app.cedarpad.com` and (preview) `workers.dev`, where
