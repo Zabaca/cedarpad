@@ -605,7 +605,7 @@ export const CHAT_TOOLS = ['Skill', 'WebSearch', 'WebFetch', 'TodoWrite'] as con
 
 /** Secrets the bridge holds that the agent's own process never needs. The SDK hands its
  *  subprocess process.env wholesale unless told otherwise. */
-const TURN_ENV_DENY = ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'BETTER_AUTH_SECRET'];
+const TURN_ENV_DENY = ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'BETTER_AUTH_SECRET', 'WORKSPACE_KEY'];
 
 export function turnEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
   const out = { ...env };

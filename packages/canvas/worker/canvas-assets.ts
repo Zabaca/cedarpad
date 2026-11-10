@@ -7,7 +7,8 @@ import {
 } from '../shared/canvas-operator-token.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
-import { canReachCanvas } from './sync-api.ts';
+import { workspaceKey } from '../shared/workspace-key.ts';
+import { canReachCanvas, workspaceOfCanvasForEnv } from './sync-api.ts';
 
 // Where canvas image/video bytes live (ADR-0019). The tldraw document carries a URL on
 // this route; R2 carries the pixels. The old plane inlined a base64 data URL into the
@@ -63,6 +64,8 @@ export async function handleCanvasAsset(
   user: GateUser | null,
   /** Injected so the gate is testable without a database; production uses the default. */
   canReach: (env: Env, canvasId: string, userId: string) => Promise<boolean> = canReachCanvas,
+  /** Injected for the same reason: which workspace owns the canvas. */
+  workspaceOf: (env: Env, canvasId: string) => Promise<string | null> = workspaceOfCanvasForEnv,
 ): Promise<Response> {
   // The operator principal (#329), checked only when a bearer is presented — a browser
   // sends none, so the member path below is unchanged. It exists because the migration
@@ -78,8 +81,11 @@ export async function handleCanvasAsset(
     // pixels it must show the agent are behind this door. Its own static label, checked
     // ONLY on the read half — so the credential a chat turn carries can never overwrite a
     // canvas's bytes. See shared/canvas-asset-read.ts for why it is not `canvas-asset/v1`.
+    // Bound to the container's workspace (#374): checked against the key of the workspace that
+    // owns THIS canvas, so one workspace's container cannot read another's images.
     const isRead = request.method === 'GET' || request.method === 'HEAD';
-    if (isRead && (await verifyCanvasAssetReadToken(secret, presented))) {
+    const owner = isRead ? await workspaceOf(env, ref.canvasId) : null;
+    if (owner !== null && (await verifyCanvasAssetReadToken(await workspaceKey(secret, owner), presented))) {
       // authorized as the container; fall through to the bucket
     } else {
       const result = await verifyCanvasOperatorToken(secret, CANVAS_ASSET_LABEL, ref.canvasId, presented);

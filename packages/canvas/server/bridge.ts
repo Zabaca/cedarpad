@@ -20,8 +20,7 @@ import { sseComment } from './sse.ts';
 import { ChatMetaStore } from './chat-meta.ts';
 import { PersistSink } from './persistable.ts';
 import { loadSessionTranscript } from './session-transcript.ts';
-import { isLocalhostEdge, loadWebPocEnv } from './platform-rpc-env.ts';
-import { LOCAL_DEV_PLATFORM_SECRET } from '../shared/platform-rpc.ts';
+import { loadWebPocEnv } from './platform-rpc-env.ts';
 import {
   BRIDGE_ROUTES,
   CANVAS_AUTHOR_HEADER,
@@ -462,9 +461,9 @@ export function sendToChat(targetChatId: string, message: string, canvasId?: str
 // there is no cached store here to go stale behind a human's edits.
 const canvasEdgeConfig = {
   origin: webPocEnv.PLATFORM_RPC_ORIGIN,
-  secret:
-    webPocEnv.BETTER_AUTH_SECRET ||
-    (isLocalhostEdge(webPocEnv.PLATFORM_RPC_ORIGIN) ? LOCAL_DEV_PLATFORM_SECRET : undefined),
+  // This container's workspace key (#374; derived by `loadWebPocEnv` in local dev), never the
+  // shared secret: it authenticates this workspace's canvases and no other's.
+  secret: webPocEnv.WORKSPACE_KEY,
 };
 const productionRoomOpener = canvasRoomOpener(canvasEdgeConfig);
 /** How `read_image` reaches the pixels: they live behind the edge's asset route since #290,

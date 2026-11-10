@@ -72,7 +72,8 @@ export interface PlatformRpcConfig {
   /** The edge origin (PLATFORM_RPC_ORIGIN, injected by worker/container-env.ts). Unset outside
    * a container, which is what makes "no edge in front of me" an explicit state. */
   origin: string | undefined;
-  /** The shared trust root the bearer is derived from (BETTER_AUTH_SECRET). */
+  /** The key the bearer is derived from: this container's workspace key (WORKSPACE_KEY, #374),
+   *  which authenticates its own workspace and no other. Never BETTER_AUTH_SECRET. */
   secret: string | undefined;
   /** Test seam. Just the call signature — `typeof fetch` would also demand Bun's `preconnect`. */
   fetchImpl?: (input: string, init: RequestInit) => Promise<Response>;

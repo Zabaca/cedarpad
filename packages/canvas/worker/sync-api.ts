@@ -1,5 +1,6 @@
 import type { Bindings } from '../web-poc/worker/context.ts';
 import { resolveCanvasWorkspace } from './access.ts';
+import { workspaceOfCanvas } from './canvas-workspace.ts';
 import type { GateUser } from './auth-gate.ts';
 import type { Env } from './index.ts';
 import { syncRoomName } from './sync-room.ts';
@@ -25,6 +26,12 @@ export function parseSyncPath(pathname: string): string | null {
 export async function canReachCanvas(env: Env, canvasId: string, userId: string): Promise<boolean> {
   const db = createDbForWorker(env as unknown as Bindings);
   return !!(await resolveCanvasWorkspace(db, canvasId, userId));
+}
+
+/** Which workspace owns this canvas, or null. What a container's bearer is checked against
+ *  (#374): the bearer is bound to the container's workspace, so the edge asks the canvas. */
+export async function workspaceOfCanvasForEnv(env: Env, canvasId: string): Promise<string | null> {
+  return workspaceOfCanvas(createDbForWorker(env as unknown as Bindings), canvasId);
 }
 
 /** What a resolved guest brings to the handshake: which link let them in, and what that

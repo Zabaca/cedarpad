@@ -4,6 +4,7 @@ import { canvasAssetReadToken } from '../shared/canvas-asset-read.ts';
 import { canvasMutateToken } from '../shared/canvas-mutation.ts';
 import { bearer, CANVAS_ASSET_LABEL, CANVAS_SNAPSHOT_LABEL, canvasOperatorToken } from '../shared/canvas-operator-token.ts';
 import { REQUEST_BOUND_WINDOW_MS } from '../shared/service-token.ts';
+import { workspaceKey } from '../shared/workspace-key.ts';
 import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
 
 // The canvas asset route is the R2 half of ADR-0019's asset store: image bytes leave the
@@ -158,7 +159,7 @@ describe('handleCanvasAsset — the operator principal', () => {
 
   test('rejects a CONTAINER read token on the write half — a read credential is not a write one', async () => {
     const b = bucketStub();
-    const res = await put(b, await canvasAssetReadToken(SECRET));
+    const res = await put(b, await canvasAssetReadToken(await workspaceKey(SECRET, 'ws_a')));
     expect(res.status).toBe(401);
     expect(b.objects.size).toBe(0);
   });
@@ -177,25 +178,48 @@ describe('handleCanvasAsset — the operator principal', () => {
 // pixels it needs are behind this door, not in the shape record. Its own static label
 // (shared/canvas-asset-read.ts), accepted for reads only.
 describe('handleCanvasAsset — the container read principal', () => {
+  /** Which workspace owns the canvas, as the registry would say. */
+  const ownedBy = (workspaceId: string | null) => async () => workspaceId;
+  /** The read bearer of the container for `workspaceId` (#374). */
+  const readTokenFor = async (workspaceId: string) => canvasAssetReadToken(await workspaceKey(SECRET, workspaceId));
+
   const seeded = async () => {
     const b = bucketStub();
     await b.bucket.put('canvas-assets/canvas_y/k.png', new Uint8Array([7, 8, 9]).buffer as ArrayBuffer);
     return b;
   };
-  const get = (b: ReturnType<typeof bucketStub>, token: string, method = 'GET') =>
+  const get = (b: ReturnType<typeof bucketStub>, token: string, method = 'GET', owner: string | null = 'ws_a') =>
     handleCanvasAsset(
       new Request('https://x.test/api/canvas-assets/canvas_y/k.png', { method, headers: bearer(token) }),
       env(b),
       { canvasId: 'canvas_y', key: 'k.png' },
       null,
       canReach,
+      ownedBy(owner),
     );
 
   test('reads a canvas the caller could never REACH as a member — the container has no session', async () => {
     const b = await seeded();
-    const res = await get(b, await canvasAssetReadToken(SECRET));
+    const res = await get(b, await readTokenFor('ws_a'));
     expect(res.status).toBe(200);
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([7, 8, 9]));
+  });
+
+  // #374: the read bearer is the container's WORKSPACE's. Another workspace's container, the old
+  // constant bearer and a canvas the registry does not know all read nothing.
+  test("a container for another workspace cannot read this workspace's images", async () => {
+    const b = await seeded();
+    expect((await get(b, await readTokenFor('ws_b'))).status).toBe(401);
+  });
+
+  test('the old constant bearer, derived straight from the secret, is refused', async () => {
+    const b = await seeded();
+    expect((await get(b, await canvasAssetReadToken(SECRET))).status).toBe(401);
+  });
+
+  test('a canvas the registry does not know admits no container', async () => {
+    const b = await seeded();
+    expect((await get(b, await readTokenFor('ws_a'), 'GET', null)).status).toBe(401);
   });
 
   test('is refused on PUT — the read label is not a write capability', async () => {
@@ -204,12 +228,13 @@ describe('handleCanvasAsset — the container read principal', () => {
       new Request('https://x.test/api/canvas-assets/canvas_y/k.png', {
         method: 'PUT',
         body: 'evil',
-        headers: bearer(await canvasAssetReadToken(SECRET)),
+        headers: bearer(await readTokenFor('ws_a')),
       }),
       env(b),
       { canvasId: 'canvas_y', key: 'k.png' },
       null,
       canReach,
+      ownedBy('ws_a'),
     );
     expect(res.status).toBe(401);
     expect(b.objects.get('canvas-assets/canvas_y/k.png')).toEqual(new Uint8Array([7, 8, 9]));
@@ -217,6 +242,6 @@ describe('handleCanvasAsset — the container read principal', () => {
 
   test('rejects a token minted for another container↔edge surface', async () => {
     const b = await seeded();
-    expect((await get(b, await canvasMutateToken(SECRET))).status).toBe(401);
+    expect((await get(b, await canvasMutateToken(await workspaceKey(SECRET, 'ws_a')))).status).toBe(401);
   });
 });

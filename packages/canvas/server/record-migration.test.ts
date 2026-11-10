@@ -6,6 +6,7 @@ import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 
 import { platformRpcToken } from '../shared/platform-rpc.ts';
+import { workspaceKey } from '../shared/workspace-key.ts';
 import * as schema from '../web-poc/lib/db/schema.ts';
 import { handlePlatformRpc } from '../worker/platform-rpc.ts';
 import { platformRpc } from './platform-rpc-client.ts';
@@ -64,7 +65,8 @@ const OTHER_CANVAS = 'cv_4bfb07e3-cd4e-4fc8-a3ed-54a4b20d483b';
 /** The container's own client, wired to the real handler in this process. No HTTP, same code. */
 const rpc = platformRpc({
   origin: 'http://edge.invalid',
-  secret: SECRET,
+  // The container's credential is its workspace's key (#374), not the shared secret.
+  secret: await workspaceKey(SECRET, MIGRATION_WORKSPACE),
   fetchImpl: (url, init) =>
     handlePlatformRpc(new Request(url, init), { BETTER_AUTH_SECRET: SECRET }, { db: db as never }),
 })!;

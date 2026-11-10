@@ -2,8 +2,8 @@
 // pixels now that a shape's `src` is an `/api/canvas-assets/...` URL rather than an
 // inline data URL (#290).
 //
-// Same trust root and same STATIC form as `canvas-mutate/v1` (shared/canvas-mutation.ts):
-// this token never leaves the container↔edge hop, so the request-bound/expiring form the
+// Same STATIC form as `canvas-mutate/v1` (shared/canvas-mutation.ts), derived from the same
+// per-workspace key (shared/workspace-key.ts, #374): this token never leaves the container↔edge hop, so the request-bound/expiring form the
 // OPERATOR credential uses (#329) would buy nothing — that form exists because an
 // operator token is handed to a shell or a CI job and travels separately from the secret.
 //
@@ -19,13 +19,14 @@
 // this token is not a write capability even by accident.
 //
 // It grants no reach the container did not already have: `canvas-mutate/v1` already reads
-// and writes the SHAPES of any canvas, and the asset bytes are strictly less than that.
+// and writes the SHAPES of its workspace's canvases, and the asset bytes are strictly less than
+// that. Both are accepted only for a canvas in the workspace the key belongs to.
 
 import { serviceToken, verifyServiceToken } from './service-token.ts';
 
 const TOKEN_LABEL = 'canvas-asset-read/v1';
 
-export const canvasAssetReadToken = (secret: string): Promise<string> => serviceToken(secret, TOKEN_LABEL);
+export const canvasAssetReadToken = (workspaceKey: string): Promise<string> => serviceToken(workspaceKey, TOKEN_LABEL);
 
-export const verifyCanvasAssetReadToken = (secret: string, presented: string): Promise<boolean> =>
-  verifyServiceToken(secret, TOKEN_LABEL, presented);
+export const verifyCanvasAssetReadToken = (workspaceKey: string, presented: string): Promise<boolean> =>
+  verifyServiceToken(workspaceKey, TOKEN_LABEL, presented);

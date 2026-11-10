@@ -21,6 +21,7 @@ import {
   SkillWriteOutput,
   platformRpcToken,
 } from '../shared/platform-rpc.ts';
+import { workspaceKey } from '../shared/workspace-key.ts';
 import { handlePlatformRpc } from './platform-rpc.ts';
 import { d1RecordStore } from './record-store.ts';
 import { d1SkillFileStore } from './skill-file-store.ts';
@@ -53,17 +54,24 @@ async function freshDb() {
 
 const SECRET = 'better-auth-test-secret';
 
+/** The bearer a container for `workspaceId` presents (#374): derived from that workspace's key. */
+const bearerFor = async (workspaceId: string) => platformRpcToken(await workspaceKey(SECRET, workspaceId));
+
+/** The workspace a payload names, which is the workspace whose container sends it. */
+const namedWorkspace = (body: unknown): string => (body as { input?: { workspaceId?: string } })?.input?.workspaceId ?? '';
+
 const rpc = async (
   body: unknown,
   opts: {
     db: Awaited<ReturnType<typeof freshDb>>;
+    /** Override the bearer. `null` sends none. Default: the bearer of the workspace the body names. */
     token?: string | null;
   },
 ): Promise<Response> =>
   handlePlatformRpc(
     new Request(`https://app.cedarpad.com${PLATFORM_RPC_PATH}`, {
       method: 'POST',
-      headers: opts.token === null ? {} : { authorization: `Bearer ${opts.token ?? (await platformRpcToken(SECRET))}` },
+      headers: opts.token === null ? {} : { authorization: `Bearer ${opts.token ?? (await bearerFor(namedWorkspace(body)))}` },
       body: JSON.stringify(body),
     }),
     { BETTER_AUTH_SECRET: SECRET } as never,
@@ -76,6 +84,93 @@ describe('platform RPC: the edge authenticates the caller', () => {
     const res = await rpc(
       { op: 'component.read', input: { workspaceId: 'w', canvasId: 'c', tier: 'own', name: 'Card' } },
       { db, token: null },
+    );
+    expect(res.status).toBe(401);
+  });
+});
+
+// #374: the bearer proves WHICH WORKSPACE a container is, not only that it is one. Before, every
+// container minted the identical constant, and the edge's ownership checks could only reject a
+// mismatched (workspace, canvas) pair: a container naming a real, consistent pair that belonged
+// to someone else passed them all.
+describe('platform RPC: the bearer is bound to the workspace the payload names (#374)', () => {
+  const component = (workspaceId: string, canvasId: string, source = 'export default () => null;') => ({
+    op: 'component.write' as const,
+    input: { workspaceId, canvasId, userId: 'u_1', name: 'KpiCard', source },
+  });
+
+  test("a container for workspace A cannot write workspace B's canvas, even with a coherent (B, canvas of B) pair", async () => {
+    const db = await freshDb();
+    const canvasB = await registerCanvas(db, 'ws_b');
+
+    // The attack: A's own bearer, a payload that names B and one of B's real canvases.
+    const res = await rpc(component('ws_b', canvasB, 'export default () => "owned";'), { db, token: await bearerFor('ws_a') });
+    expect(res.status).toBe(401);
+
+    // Nothing landed in B's Record, and B's own container still reads an empty library.
+    const read = await rpc({ op: 'component.read', input: { workspaceId: 'ws_b', canvasId: canvasB, name: 'KpiCard' } }, { db });
+    expect(ComponentReadOutput.parse(await read.json()).source).toBeNull();
+  });
+
+  test('the same holds for every operation: reads, history, restore, promote, data and skills', async () => {
+    const db = await freshDb();
+    const canvasB = await registerCanvas(db, 'ws_b');
+    const asA = await bearerFor('ws_a');
+    const bodies = [
+      { op: 'component.read', input: { workspaceId: 'ws_b', canvasId: canvasB, name: 'KpiCard' } },
+      { op: 'component.history', input: { workspaceId: 'ws_b', canvasId: canvasB, name: 'KpiCard' } },
+      { op: 'component.list', input: { workspaceId: 'ws_b', canvasId: canvasB } },
+      { op: 'component.restore', input: { workspaceId: 'ws_b', canvasId: canvasB, userId: 'u_1', name: 'KpiCard', version: 1 } },
+      { op: 'component.promote', input: { workspaceId: 'ws_b', canvasId: canvasB, userId: 'u_1', name: 'KpiCard' } },
+      { op: 'component.adopt', input: { workspaceId: 'ws_b', canvasId: canvasB, userId: 'u_1', name: 'KpiCard' } },
+      { op: 'data.write', input: { workspaceId: 'ws_b', canvasId: canvasB, userId: 'u_1', name: 'rows.json', source: '[]' } },
+      { op: 'data.read', input: { workspaceId: 'ws_b', canvasId: canvasB, name: 'rows.json' } },
+      { op: 'skill.list', input: { workspaceId: 'ws_b' } },
+      { op: 'skill.write', input: { workspaceId: 'ws_b', userId: 'u_1', skill: 'poison', files: [{ path: 'SKILL.md', content: 'x' }] } },
+    ];
+    for (const body of bodies) {
+      expect((await rpc(body, { db, token: asA })).status, body.op).toBe(401);
+    }
+  });
+
+  test("workspace B's own bearer works for B, so the check is not simply refusing everything", async () => {
+    const db = await freshDb();
+    const canvasB = await registerCanvas(db, 'ws_b');
+    expect((await rpc(component('ws_b', canvasB), { db })).status).toBe(200);
+  });
+
+  test('the old constant bearer, derived straight from the secret, opens no workspace', async () => {
+    const db = await freshDb();
+    const canvasA = await registerCanvas(db, 'ws_a');
+    const legacy = await platformRpcToken(SECRET);
+    expect((await rpc(component('ws_a', canvasA), { db, token: legacy })).status).toBe(401);
+    expect((await rpc(component('default', 'default'), { db, token: legacy })).status).toBe(401);
+  });
+
+  test('a payload that names no workspace cannot be authenticated: 401, not 400', async () => {
+    const db = await freshDb();
+    const bodies = [{}, { op: 'component.read' }, { op: 'component.read', input: {} }, { op: 'component.read', input: { workspaceId: '' } }, null];
+    for (const body of bodies) {
+      expect((await rpc(body, { db, token: await bearerFor('ws_a') })).status, JSON.stringify(body)).toBe(401);
+    }
+  });
+
+  test('a good bearer with a body that fails the contract is still a 400', async () => {
+    const db = await freshDb();
+    const res = await rpc({ op: 'component.read', input: { workspaceId: 'ws_a' } }, { db });
+    expect(res.status).toBe(400);
+  });
+
+  test('with no secret configured at the edge nothing is admitted', async () => {
+    const db = await freshDb();
+    const res = await handlePlatformRpc(
+      new Request(`https://app.cedarpad.com${PLATFORM_RPC_PATH}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${await bearerFor('ws_a')}` },
+        body: JSON.stringify({ op: 'skill.list', input: { workspaceId: 'ws_a' } }),
+      }),
+      {} as never,
+      { db },
     );
     expect(res.status).toBe(401);
   });

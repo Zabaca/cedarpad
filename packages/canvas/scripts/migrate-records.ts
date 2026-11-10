@@ -20,8 +20,9 @@
 //                      real path: the container's own RPC client, the real edge handler, the
 //                      real row store. Needs `bun run webpoc:db:migrate:local` first.
 //   --target <origin>  a deployed Worker, e.g. https://app.cedarpad.com. Authenticates with
-//                      the platform-RPC bearer derived from BETTER_AUTH_SECRET in the
-//                      ENVIRONMENT (sops provides it) — nothing on the command line.
+//                      the platform-RPC bearer derived from the workspace's key, which is
+//                      derived from BETTER_AUTH_SECRET in the ENVIRONMENT (sops provides it)
+//                      — nothing on the command line.
 //
 // SOURCES
 //   The three recovered Components are read from the repository. `Outliner.tsx` is read out
@@ -50,6 +51,7 @@ import {
   verifyMigration,
 } from '../server/record-migration.ts';
 import { createDb } from '../web-poc/lib/db/client.ts';
+import { workspaceKey } from '../shared/workspace-key.ts';
 import { handlePlatformRpc } from '../worker/platform-rpc.ts';
 
 const RECOVERED = new URL('../../../docs/incidents/2026-07-29-empty-archive-overwrite/recovered/', import.meta.url);
@@ -76,7 +78,7 @@ function sources(): MigrationSources {
  * client, so a migration write is the same call a `write_component` tool call makes — the
  * local one just answers it in this process instead of over the wire.
  */
-function target(): { rpc: MigrationRpc; label: string; detail?: string } {
+async function target(): Promise<{ rpc: MigrationRpc; label: string; detail?: string }> {
   const chosen = flag('target') ?? 'local';
   if (chosen !== 'local') {
     const secret = process.env.BETTER_AUTH_SECRET;
@@ -86,7 +88,9 @@ function target(): { rpc: MigrationRpc; label: string; detail?: string } {
           '   It is never passed on the command line — the bearer is derived from it per request.',
       );
     }
-    const rpc = platformRpc({ origin: chosen, secret });
+    // The bearer is bound to the workspace it names (#374), so an operator mints the key of the
+    // one workspace this migration writes to, exactly as the edge hands a container its own.
+    const rpc = platformRpc({ origin: chosen, secret: await workspaceKey(secret, MIGRATION_WORKSPACE) });
     if (!rpc) throw new Error(`could not build a client for ${chosen}`);
     return { rpc, label: chosen };
   }
@@ -98,7 +102,7 @@ function target(): { rpc: MigrationRpc; label: string; detail?: string } {
   const secret = crypto.randomUUID();
   const rpc = platformRpc({
     origin: 'http://local.invalid',
-    secret,
+    secret: await workspaceKey(secret, MIGRATION_WORKSPACE),
     fetchImpl: (url, init) =>
       handlePlatformRpc(new Request(url, init), { BETTER_AUTH_SECRET: secret }, { db }),
   });
@@ -218,7 +222,7 @@ if (import.meta.main) {
   }
 
   const write = cmd === 'migrate' && process.argv.includes('--write');
-  const { rpc, label, detail } = target();
+  const { rpc, label, detail } = await target();
   console.log(`workspace ${MIGRATION_WORKSPACE}`);
   console.log(`canvas    ${HUDSON_STANDUP_CANVAS}  ("Hudson Standup" — where the dead cards are)`);
   console.log(`target    ${label}${write ? '   *** WRITING ***' : '   (read-only)'}`);

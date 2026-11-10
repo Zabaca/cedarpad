@@ -342,7 +342,7 @@ describe('a chat turn changes things only through MCP tools', () => {
   });
 
   test('the agent process is not handed the bridge’s storage or platform secrets', () => {
-    const env = turnEnv({ PATH: '/bin', R2_ACCESS_KEY_ID: 'a', R2_SECRET_ACCESS_KEY: 'b', BETTER_AUTH_SECRET: 'c', CLAUDE_CODE_OAUTH_TOKEN: 't' });
+    const env = turnEnv({ PATH: '/bin', R2_ACCESS_KEY_ID: 'a', R2_SECRET_ACCESS_KEY: 'b', BETTER_AUTH_SECRET: 'c', WORKSPACE_KEY: 'k', CLAUDE_CODE_OAUTH_TOKEN: 't' });
     expect(env).toEqual({ PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 't' });
   });
 });

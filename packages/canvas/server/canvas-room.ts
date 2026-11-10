@@ -13,7 +13,8 @@ import { canvasMutatePath, canvasMutateToken } from '../shared/canvas-mutation.t
 export interface CanvasRoomConfig {
   /** The edge origin (PLATFORM_RPC_ORIGIN, injected by worker/container-env.ts). */
   origin: string | undefined;
-  /** The shared trust root the service bearer is derived from (BETTER_AUTH_SECRET). */
+  /** The key the service bearers are derived from: this container's workspace key
+   *  (WORKSPACE_KEY, #374), which authenticates its own workspace and no other. */
   secret: string | undefined;
   /** Test seam, as `platformRpcConfig`'s. */
   fetchImpl?: typeof fetch;
