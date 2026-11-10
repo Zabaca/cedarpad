@@ -1,7 +1,9 @@
 # Issue tracker: GitHub
 
-Issues for this repo live as GitHub issues on `Zabaca/cedarpad`. Use the `gh` CLI for all operations; it infers the
-repository from `git remote -v` inside a clone.
+GitHub issues on `Zabaca/cedarpad` are for **public reports and outside contributions**: a bug someone found, a
+feature request, a discussion before a pull request. **Zabaca's own planning and tickets are tracked outside this
+repository, in Fredrin**, and do not become GitHub issues (see `CLAUDE.md`). Use the `gh` CLI for the GitHub side; it
+infers the repository from `git remote -v` inside a clone.
 
 ## Conventions
 
@@ -15,11 +17,13 @@ repository from `git remote -v` inside a clone.
 
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue. A spec is an issue; the work cut from it is further issues that link to it (`Part of #<spec>`).
+For Zabaca's own work, publish to Fredrin, not here: a spec is the goal's plan there, and the work cut from it is tickets
+under that goal. Create a GitHub issue only when the thing is a public report or a discussion with outside contributors;
+then the work cut from it is further issues that link to it (`Part of #<spec>`).
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --comments`.
+For a GitHub issue (a public report), run `gh issue view <number> --comments`. For Zabaca's own ticket, read it in Fredrin.
 
 ## Pull requests
 
