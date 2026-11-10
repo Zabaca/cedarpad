@@ -31,10 +31,7 @@ describe('containerEnv — a fixed field list', () => {
         'CANVAS_WORKSPACE',
         'CLAUDE_CODE_OAUTH_TOKEN',
         'PLATFORM_RPC_ORIGIN',
-        'R2_ACCESS_KEY_ID',
-        'R2_BUCKET',
-        'R2_ENDPOINT',
-        'R2_SECRET_ACCESS_KEY',
+        'WORKSPACE_BLOBS',
         'WORKSPACE_KEY',
       ].sort(),
     );
@@ -95,5 +92,25 @@ describe('containerEnv: the container holds a workspace key, not BETTER_AUTH_SEC
 
   test('an edge with no secret configured hands out no key, so the container is unconfigured rather than keyed to nothing', async () => {
     expect((await containerEnv({} as never, coordsFor('ws_a'))).WORKSPACE_KEY).toBe('');
+  });
+});
+
+// The container reaches the bucket only through the edge (shared/workspace-blob.ts), so it is
+// handed no R2 credential: with the shared bucket's keys one workspace's container could read or
+// overwrite another's objects without touching the edge.
+describe('containerEnv: no R2 credential (the bucket is reached through the edge)', () => {
+  const coords: SandboxCoords = { sandboxId: 'canvas', r2Prefix: 'workspaces/default/', canvasWorkspace: 'default' };
+
+  test('the Worker may hold the bucket\'s S3 keys and none of it reaches the container', async () => {
+    const env = { R2_BUCKET: 'fake-bucket-name', R2_ENDPOINT: 'https://acct.r2.cloudflarestorage.com', R2_ACCESS_KEY_ID: 'AKIAFAKE', R2_SECRET_ACCESS_KEY: 'fake-r2-secret' } as never;
+    const result = await containerEnv(env, coords);
+    expect(Object.keys(result).filter((k) => k.startsWith('R2_'))).toEqual([]);
+    for (const v of ['fake-bucket-name', 'acct.r2.cloudflarestorage.com', 'AKIAFAKE', 'fake-r2-secret']) {
+      expect(Object.values(result).some((value) => String(value).includes(v)), v).toBe(false);
+    }
+  });
+
+  test('it is told to use the edge door for its blobs', async () => {
+    expect((await containerEnv({} as never, coords)).WORKSPACE_BLOBS).toBe('edge');
   });
 });

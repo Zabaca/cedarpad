@@ -89,11 +89,11 @@
     ]
   },
   // Native R2 binding: the edge Worker (workerd) reads canvas assets and canvas-state.json
-  // straight off this — no container wake. Named for the retired marts (ADR-0017). Separate from
-  // the R2_* S3-compat vars above, which only ever get forwarded into the container's Bun
-  // runtime (Bun.S3Client isn't available in workerd). Same bucket as R2_BUCKET; the name
-  // here is a judgment call matching the container-env test fixture — confirm against the
-  // real deploy secret before relying on this in prod.
+  // straight off this, no container wake, and keeps each workspace container's chat meta and
+  // transcripts for it (worker/workspace-blobs-api.ts). Named for the retired marts (ADR-0017).
+  // The Worker holds no S3 credential and a container is handed none: the R2_* S3 keys in the
+  // sops files are for operator scripts only. The bucket is `agent-canvas` in production and in
+  // preview (the same bucket, checked against both environments' R2_BUCKET on 2026-11-10).
   "r2_buckets": [{ "binding": "MART_BUCKET", "bucket_name": "agent-canvas" }],
   // Cloudflare Email Sending: outbound magic links + invitations (no vendor key —
   // the binding IS the credential). Sends as the APEX `cedarpad.com`, which MUST be

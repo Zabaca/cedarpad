@@ -27,6 +27,8 @@ import { handleCanvasMutate, parseCanvasMutatePath } from './canvas-mutate-api.t
 import { handleCanvasSnapshot, parseCanvasSnapshotPath } from './canvas-snapshot-api.ts';
 import { evictGuestSockets, handleSyncUpgrade, parseSyncPath } from './sync-api.ts';
 import { handleCanvasAsset, parseAssetPath } from './canvas-assets.ts';
+import { isWorkspaceBlobPath, parseWorkspaceBlobPath } from '../shared/workspace-blob.ts';
+import { handleWorkspaceBlob } from './workspace-blobs-api.ts';
 import { getActiveShareLink } from '../web-poc/lib/db/queries/share-links.ts';
 import { ensureHuddleWorker, handleGuestHuddleJoin, handleHuddleJoin } from './huddle.ts';
 import { IS_CHAT_SEND, effectiveMcpTokens, withMcpTokensHeader } from './mcp-tokens-proxy.ts';
@@ -76,16 +78,11 @@ export interface Env {
   // Workers static-assets binding for the Shell SPA build (shell/dist). Served AFTER the
   // edge session gate — it's app content, so an unauthenticated hit gets the login.
   ASSETS: Fetcher;
-  R2_BUCKET: string;
-  R2_ACCESS_KEY_ID: string;
-  R2_SECRET_ACCESS_KEY: string;
-  R2_ENDPOINT: string;
-  // Native R2 binding — separate from the R2_* S3-compat creds above, which only ever get
-  // forwarded into the container's Bun runtime. Same bucket as R2_BUCKET; a native binding,
-  // not the S3 client, because Bun.S3Client isn't available in workerd. The canvas asset
-  // bucket (ADR-0019): tldraw image/video bytes live here under `canvas-assets/`. Named for
-  // the retired marts, which read it first.
-  MART_BUCKET: import('./canvas-assets.ts').AssetBucket;
+  // Native R2 binding. The Worker holds the bucket as a binding and no S3 credential: a
+  // container is handed none either, and reaches the bucket only through this Worker
+  // (worker/workspace-blobs-api.ts). The canvas asset bucket (ADR-0019): tldraw image/video
+  // bytes live here under `canvas-assets/`. Named for the retired marts, which read it first.
+  MART_BUCKET: R2Bucket;
   CLAUDE_CODE_OAUTH_TOKEN: string;
   // web-poc (mounted at the edge): the platform data layer on D1 (ADR-0018) + auth.
   // BETTER_AUTH_SECRET comes from workerSecrets; the two origins are plain vars in
@@ -238,6 +235,16 @@ export default {
     const assetRef = parseAssetPath(url.pathname);
     if (assetRef) {
       return handleCanvasAsset(request, env, assetRef, session?.user ?? null);
+    }
+
+    // A workspace's container keeping its chat meta and session transcripts (shared/workspace-blob.ts).
+    // Self-gating like the doors above: the caller is a process with no session. This is the only
+    // way a container reaches the bucket, since it is handed no R2 credential.
+    // Anything under the prefix is this door's: a path that names no valid blob is a 404 here, not a
+    // fall-through to the gate below, which answers a process with the login page at 200.
+    if (isWorkspaceBlobPath(url.pathname)) {
+      const blobRef = parseWorkspaceBlobPath(url.pathname);
+      return blobRef ? handleWorkspaceBlob(request, env, blobRef) : new Response('not found', { status: 404 });
     }
 
     // #179: the invite accept flow — reachable WITHOUT a session (the email-bound,

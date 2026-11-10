@@ -29,8 +29,11 @@ export interface BlobPutter {
   put(key: string, data: Uint8Array): Promise<void>;
 }
 
-/** Pure, stable R2 key for a session's transcript. Global (keyed by the SDK's
- * already-unique sessionId), NOT workspace-scoped. */
+/** The key a session's transcript had in the bucket when this store wrote it directly: global (keyed
+ * by the SDK's already-unique sessionId), NOT workspace-scoped. A container no longer reaches the
+ * bucket (`edgeBackend`, shared/workspace-blob.ts): it names this key and the edge stores the
+ * transcript under `workspaces/<ws>/sessions/<id>/`, falling back to this flat key only to read the
+ * legacy `default` workspace's old ones. */
 export const transcriptKey = (sessionId: string): string => `sessions/${sessionId}/transcript.jsonl`;
 
 /** Locate + read the raw session JSONL bytes on disk (nesting-robust via findSessionJsonl); an

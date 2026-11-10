@@ -23,10 +23,11 @@ export const CANVAS_CONTAINER_CWD = '/app/agent-canvas/packages/canvas';
 // Container env injected at process spawn (PRD: ANTHROPIC_API_KEY intentionally
 // absent so it can't override the OAuth token).
 export const containerEnv = async (env: Env, coords: SandboxCoords): Promise<Record<string, string>> => ({
-  R2_BUCKET: env.R2_BUCKET,
-  R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID,
-  R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
-  R2_ENDPOINT: env.R2_ENDPOINT,
+  // The container holds NO R2 credential. Its chat meta and session transcripts go through the
+  // edge (shared/workspace-blob.ts, authenticated by the workspace key below), which holds the
+  // bucket as a binding and derives the keys, so a container can reach its own workspace's two
+  // objects and nothing else in the bucket.
+  WORKSPACE_BLOBS: 'edge',
   CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
   // Per-workspace R2 isolation (#46): the resolver derives this — `'default'` for the
   // legacy/prod container (preserving `workspaces/default/`), the workspace id otherwise.
@@ -44,10 +45,6 @@ export const containerEnv = async (env: Env, coords: SandboxCoords): Promise<Rec
   // can authenticate to the EDGE as its own workspace and no other, and the secret cannot be
   // recovered from the key. Every bearer the container presents (platform RPC, canvas mutation,
   // asset read) is derived from this one value.
-  //
-  // What this does NOT bound: the R2 keys above are the shared bucket's, with no per-workspace
-  // prefix restriction, so a compromised container can still read or overwrite another
-  // workspace's objects directly in R2. That is a separate gap (it does not go through the edge).
   WORKSPACE_KEY: env.BETTER_AUTH_SECRET ? await workspaceKey(env.BETTER_AUTH_SECRET, coords.canvasWorkspace) : '',
   // Single source of truth for the runtime cwd (#133): the bridge runs + resumes product
   // sessions with `cwd: CANVAS_CWD`, matching START's cd — one derivation, no drift that

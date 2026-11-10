@@ -19,9 +19,8 @@
 // `workspaceId`, or the workspace of the canvas in the path), derives THAT workspace's key,
 // and verifies the bearer against it. A key for workspace A verifies nothing claimed for
 // workspace B, and the secret cannot be recovered from a key, so a compromised container can
-// act toward the EDGE as its own workspace only. It does not bound what a container can reach
-// without the edge: the R2 credentials it also holds are the shared bucket's (see
-// worker/container-env.ts).
+// act as its own workspace only. A container holds no other credential that reaches shared
+// storage: it has no R2 keys either (shared/workspace-blob.ts).
 //
 // Rotation is unchanged in kind: rotating BETTER_AUTH_SECRET rotates every key (and signs
 // every user out), and a workspace's key reaches the container with its other env at boot.

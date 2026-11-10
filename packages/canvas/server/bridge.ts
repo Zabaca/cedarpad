@@ -110,7 +110,7 @@ const DEFAULT_CANVAS_ID: string | null = process.env.CANVAS_ID ?? (WORKSPACE ===
 const PKG_ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
 // Capture the raw backend too: the transcript backup/restore keys blobs by sessionId
 // (transcript-store), so it needs the low-level get/put seam, not BlobStore's canvas API.
-const blobBackend = selectBackend(`${PKG_ROOT}.persist`);
+const blobBackend = selectBackend(`${PKG_ROOT}.persist`, webPocEnv);
 const blobStore = new BlobStore(blobBackend);
 
 // Per-canvas screenshot channels, keyed by canvasId — the only thing left of the old
@@ -692,8 +692,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       const canvasClients = screenshotChannels.get(canvasIdFrom(req, url)).clients;
       return json({
         buildRev: BUILD_REV,
-        backend: process.env.R2_BUCKET ? 'r2' : 'fs',
-        bucket: process.env.R2_BUCKET ?? null,
+        backend: webPocEnv.WORKSPACE_BLOBS === 'edge' ? 'edge' : 'fs',
         // ADR 0003: the turn-completion artifacts (sessions/components/skills) report
         // health here, so a silent save failure is visible.
         artifacts: sink.healthSnapshot(),

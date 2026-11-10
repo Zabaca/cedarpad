@@ -26,7 +26,7 @@ const ms = () => `+${Date.now() - t0}ms`;
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url)); // package root, trailing slash
 console.log(
-  `[boot] env present: R2_BUCKET=${!!process.env.R2_BUCKET} R2_ACCESS_KEY_ID=${!!process.env.R2_ACCESS_KEY_ID} CLAUDE_CODE_OAUTH_TOKEN=${!!process.env.CLAUDE_CODE_OAUTH_TOKEN}`,
+  `[boot] env present: WORKSPACE_KEY=${!!process.env.WORKSPACE_KEY} WORKSPACE_BLOBS=${process.env.WORKSPACE_BLOBS ?? 'unset'} CLAUDE_CODE_OAUTH_TOKEN=${!!process.env.CLAUDE_CODE_OAUTH_TOKEN}`,
 );
 
 // Run the dev stack (vite :4510 + bridge :4511); take the process down with it.
