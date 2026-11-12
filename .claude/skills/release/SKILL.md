@@ -40,7 +40,7 @@ is not serving. Deploy targets go before the tag when the tag would over-claim, 
 the page would.
 
 **This buys a failure mode, deliberately: a release fails when the sandbox site (sbx on
-ryzen-9, and the incus remote its build goes through) is unreachable.** That is the price of the default workspace being covered by the tag,
+ryzen-9, and the cluster's API its build goes through) is unreachable.** That is the price of the default workspace being covered by the tag,
 and it is cheaper than the alternative: a tag that silently means "the Worker, and whatever the
 sandbox happened to be running".
 
@@ -199,7 +199,7 @@ to replace.
 
 Run it after `deploy.sh` reports `deployed`, not beside it: the two share nothing at
 runtime, and serialising keeps one failure legible instead of two interleaved. **From James's
-Mac**: sbx's credentials and the build machine's identity are there.
+Mac**: sbx's credentials and the key to the site's builder are there.
 
 ```bash
 REL=$(git rev-parse HEAD)       # the commit step 4 pushed, taken before anything else can move main
@@ -210,7 +210,7 @@ SANDBOX_DEPLOY_REF=$REL bun run deploy:sandbox   # packages/canvas/scripts/deplo
 builds and checks THAT, so a merge by another session while `deploy.sh` ran would put the
 sandbox on a commit that is not the release, and its `ok:` line would still pass. With the
 override the script builds `$REL` (the commit is already in this checkout, so nothing needs
-fetching) and checks the stamps against it. It archives that commit, builds the image on the site's build machine with the commit and
+fetching) and checks the stamps against it. It archives that commit, builds the image in the site's builder with the commit and
 version as build arguments (the same two stamps `deploy.sh` writes into the container image,
 for the same reason: ADR-0025), replaces the sandbox's image (it creates the sandbox the first
 time), and then **reads the stamps inside the sandbox**. Its last line is the proof:
@@ -247,9 +247,10 @@ nothing tagged. The script is safe to re-run (a replace keeps the sandbox's name
 environment and allow-list). `--dry-run` shows what it would do and changes nothing.
 
 **Requires sbx and its credentials on the Mac** (`sbx` on PATH, or Home's checkout; sops with
-this Mac's age key) **and the `ryzen-9` incus remote with Home's identity**: `sbx image build`
-drives the site's build machine, an incus guest on ryzen-9, over it (Home's
-`packages/sandboxes/src/image.ts`). The script says what is missing.
+this Mac's age key), **`kubectl`, ssh to ryzen-9 and the image service's builder credential, kept in the
+operator's private repo**: `sbx image build` builds in the site's builder, a BuildKit pod it scales up
+and back to zero, through the tunnel to the cluster's API (Home's `packages/sandboxes/src/image.ts`).
+No incus remote or identity is needed (the build guest is gone). `sbx image build` says what is missing.
 
 ## 7. Tag
 

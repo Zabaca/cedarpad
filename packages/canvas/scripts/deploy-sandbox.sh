@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Deploy origin/main to the workspace's sandbox on the sandbox site (sbx), the deploy target that serves the default
 # workspace (ADR-0028). The Cloudflare container (deploy.sh) is not touched.
-# Run from James's Mac: sbx's credentials are there (its own file, else sops), and so is the incus identity that
-# `sbx image build` reaches the site's build machine with.
+# Run from James's Mac: sbx's credentials are there (its own file, else sops), and so is what `sbx image build` reaches
+# the site's builder with: `kubectl`, ssh to ryzen-9 (the tunnel to the cluster's API) and the image service's
+# builder credential, kept in the operator's private repo. No incus identity is needed (the build guest is gone).
 #
 #   1. Archive origin/main (git archive, so the build context is exactly that commit and no repository credential goes
-#      to the box) and build the image's `sandbox` form on the site's build machine (packages/canvas/Dockerfile).
+#      to the box) and build the image's `sandbox` form in the site's builder (packages/canvas/Dockerfile).
 #      The commit and the version go in as build arguments and become the stamps inside, as deploy.sh writes
 #      them (ADR-0025). The build pulls the image onto both workers and pins it.
 #   2. Create the sandbox if it does not exist: its size, main port, the route, "start fresh when lost", the supervisor
@@ -125,7 +126,7 @@ trap 'rm -rf "$TMP"' EXIT
 echo "-> archiving $REF"
 git -C "$REPO_ROOT" archive --format=tar.gz -o "$TMP/context.tgz" "$REF"
 
-echo "-> building $IMAGE_REPO on the site's build machine (about 4 minutes from nothing; it starts and stops the build machine)"
+echo "-> building $IMAGE_REPO in the site's builder (about 4 minutes from nothing; it scales the builder pod up and back to zero)"
 IMAGE=$("$SBX" image build "$TMP/context.tgz" --name "$IMAGE_REPO" --dockerfile "$DOCKERFILE" \
   --build-arg IMAGE_KIND=sandbox --build-arg "BUILD_REV=$WANT" --build-arg "BUILD_VERSION=$VERSION" | tail -1)
 case "$IMAGE" in
